@@ -1,0 +1,55 @@
+# Clearing contract implementation
+
+`contracts/RFQClearing.sol` is the first executable version of the clearing design. It is a local prototype and not an audited production contract.
+
+## Settlement state
+
+USDC uses six decimals, base positions use 18 decimals and rates use twelve decimals. Each account stores signed realized collateral and two positions. A position contains signed base size, average entry price and its last funding index. Keeping collateral separate from entry price means opening and withdrawal margin can ignore positive unrealized PnL while maintenance equity includes it.
+
+The global state separately records customer collateral, maker backing and insurance. A realized customer gain debits maker backing; a realized customer loss credits it. Funding follows the same transfer rule. Fees debit the customer and credit insurance/maker according to the configured target rule. Tests require these buckets to equal actual tokens held after every tested transition, accounting for tokens paid to liquidation keepers.
+
+## Trade path
+
+```mermaid
+flowchart LR
+    R[Verified oracle report] --> F[Accrue global funding]
+    F --> A[Settle account funding]
+    A --> U[Verify user EIP-712 or ERC-1271]
+    U --> Q[Verify two distinct approvers]
+    Q --> B[Check report hash, price and fee bounds]
+    B --> I[Check current inventory impact]
+    I --> P[Realize PnL and update position]
+    P --> M[Check account margin]
+    M --> S[Check maker stress and market caps]
+    S --> E[Commit events and state]
+```
+
+The transaction sender has no authority in this flow. The API gas wallet, another sponsor or the user can submit the identical signed payload. The user signature binds account, market, base delta, limit price, fee ceiling, nonce, deadline, reduce-only flag, leader epoch and policy version. The maker approval additionally binds exact execution price, impact charge, oracle report hash and signer-set version.
+
+The contract recomputes impact from settled aggregate BTC/ETH inventory and requires the execution price to deliver at least that signed impact relative to the directional oracle bid/ask. This closes the gap where an approval could state a safe impact charge without placing it into the actual price.
+
+## Oracle boundary
+
+`contracts/oracle/ChainlinkDataStreamsV3Adapter.sol` is intentionally narrow. Only the clearing contract may call it. It forwards the report to the configured Chainlink VerifierProxy, accepts only the two configured feed IDs, rejects nonpositive or inverted bid/ask values and normalizes the configured feed decimals to USDC decimals. Clearing separately checks age, expiry and width.
+
+The adapter follows Chainlink's published v3 fields and `verifier.verify(unverifiedReport, bytes(""))` subscription-billing pattern. Production deployment must obtain and verify the current Base VerifierProxy, feed IDs, decimals and billing behavior; none are guessed in source.
+
+## Margin, liquidation and resolution
+
+Initial and maintenance requirements add across markets using the version 0.1 tiers. Opening and withdrawals count negative unrealized PnL but no positive unrealized PnL. A paused market still allows a margin-safe withdrawal; global resolution does not.
+
+Liquidation values longs at bid and shorts at ask. It closes a small enough amount to target 22% equity, capped at 25% per transaction; positions at or below $10,000 or accounts with nonpositive equity close fully. The penalty is capped by positive collateral. The keeper receives the smaller of 10 bps of closed notional and 20% of the collected penalty; the remainder goes to insurance. Deficits consume insurance and then maker backing. Any remainder atomically pauses the system and starts resolution.
+
+Resolution cannot iterate an unbounded account set in one transaction. New depositors are registered on-chain, with a $10 minimum first deposit to make dust-account expansion costly. After resolution begins, anyone may submit verified observations. The contract uses the first three monotonically timed observations for each market spanning at least 30 seconds and fixes each median. Anyone can then crystallize the account registry in bounded batches. Once complete, each account can withdraw its pro-rata entitlement. Later recoveries increase entitlements without changing claim priority, and payouts never exceed the original claim when assets are abundant.
+
+## Upgrades and authority
+
+The implementation follows OpenZeppelin's initializer and UUPS pattern. The implementation constructor disables initialization; the proxy initializes once. Only `governance` may authorize an upgrade, unpause, rotate approvers or replace the oracle. Production sets this address to the self-administered timelock, rather than an individual wallet. The emergency council may pause or disable a market and cannot unpause, upgrade or add authority.
+
+Approver rotation replaces all three addresses atomically and increments both signer-set version and leader epoch. An API failover increments the epoch. Existing nonces and financial state survive either operation and the tested V2 upgrade.
+
+## Current engineering limits
+
+The runtime bytecode is 23,963 bytes, close to the EVM limit. The next contract change should first extract resolution or read-only calculation code into a reviewable module. Optimizing solely for bytecode size would make review harder and leave no safe extension room.
+
+The current implementation still needs owner-signed relayed withdrawals, scoped session certificates, nonce cancellation, a fallback exit oracle, a controlled maker-withdrawal path, a production timelock deployment and live Chainlink/Base validation. Its tests do not replace independent economic review, invariant fuzzing, formal accounting checks or external audits.

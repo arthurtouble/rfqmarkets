@@ -1,0 +1,26 @@
+{
+  "name": "rfq-markets-design",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "compile:contracts": "node scripts/compile-contracts.mjs",
+    "validate:upgrades": "npm run compile:contracts && openzeppelin-upgrades-core validate artifacts/build-info --contract RFQClearing",
+    "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs",
+    "test:python": "cd simulator && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -v",
+    "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "4.0.15",
+    "@openzeppelin/contracts": "5.6.1",
+    "@openzeppelin/contracts-upgradeable": "5.6.1",
+    "@openzeppelin/upgrades-core": "1.46.0",
+    "chai": "6.2.2",
+    "ethers": "6.17.0",
+    "hardhat": "3.16.0",
+    "mocha": "12.0.0",
+    "solc": "0.8.34"
+  },
+  "overrides": {
+    "tmp": "0.2.7"
+  }
+}
