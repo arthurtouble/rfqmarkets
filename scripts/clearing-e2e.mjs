@@ -114,6 +114,17 @@ async function order({ nonce, delta, executionPrice, limitPrice, impactCharge, r
   return { intent, approval, userSignature, sigA:await approverA.signTypedData(domain,approvalTypes,approval), sigB:await approverB.signTypedData(domain,approvalTypes,approval) };
 }
 
+// The emergency council fences a failed API leader without gaining upgrade or fund authority.
+const epochSnapshot=await ethers.provider.send("evm_snapshot",[]);
+const oldEpochReport=(await observation(0,99_990_000_000n,100_010_000_000n)).report;
+const oldEpochOrder=await order({nonce:89n,delta:1_000_000_000_000_000n,executionPrice:100_010_000_000n,limitPrice:100_100_000_000n,impactCharge:0n,report:oldEpochReport});
+await reject(clearing.connect(relayer).advanceLeaderEpoch(1),"an arbitrary account cannot promote a leader");
+await (await clearing.connect(emergency).advanceLeaderEpoch(1)).wait();
+assert.equal(await clearing.leaderEpoch(),2n);
+await reject(clearing.connect(emergency).advanceLeaderEpoch(1),"competing promotions must serialize on the expected epoch");
+await reject(clearing.connect(relayer).executeTrade(oldEpochOrder.intent,oldEpochOrder.approval,oldEpochReport,oldEpochOrder.userSignature,oldEpochOrder.sigA,oldEpochOrder.sigB),"old leader approvals must be fenced");
+assert.equal(await ethers.provider.send("evm_revert",[epochSnapshot]),true);
+
 // Owner actions can be sponsored without granting the sender withdrawal authority.
 const actionBlock = await ethers.provider.getBlock("latest");
 const actionDeadline = BigInt(actionBlock.timestamp + 120);
@@ -224,4 +235,4 @@ await (await upgraded.connect(relayer).claimResolution()).wait();
 assert.equal(await token.balanceOf(relayer.address) - relayerBefore, relayerClaim * pool / totalClaims);
 assert(pool < totalClaims, "fault injection must exercise a real pro-rata haircut");
 
-console.log("Clearing E2E passed: proxy, custody, relayed exits, cancellation, maker floor, trade, margin, liquidation, upgrade, resolution");
+console.log("Clearing E2E passed: proxy, custody, scoped sessions, relayed exits, epoch failover, maker floor, trade, margin, liquidation, upgrade, resolution");

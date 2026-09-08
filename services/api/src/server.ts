@@ -33,7 +33,7 @@ const closeExecuteSchema=signedActionSchema.extend({intent:z.object({account:z.s
 const sessionPrepareSchema=actionBaseSchema.extend({session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxCumulativeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxFee:z.string().regex(/^\d+(\.\d{1,6})?$/),durationSeconds:z.number().int().min(300).max(2_592_000)});
 const sessionExecuteSchema=signedActionSchema.extend({grant:z.object({account:z.string(),session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeNotional:z.string().regex(/^\d+$/),maxCumulativeNotional:z.string().regex(/^\d+$/),maxFee:z.string().regex(/^\d+$/),validUntil:z.string().regex(/^\d+$/),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
 type DepositRoute={intent:DepositIntent;fromToken:"USDC"|"USDT"|"ETH";amount:string;expectedUsdc:bigint;status:"quoted"|"authorized"|"deposited";destinationTxHash?:string;transaction?:{hash:string;blockNumber:number;collateral:string}};
-type ProtocolVersions={leaderEpoch:bigint;signerSetVersion:bigint;policyVersion:bigint;blockNumber:number};
+type ProtocolVersions={leaderEpoch:bigint;signerSetVersion:bigint;policyVersion:bigint;blockNumber:number;blockTimestamp:number};
 
 export function buildApi(options: ApiOptions = {}) {
   const app = Fastify({ logger:false, bodyLimit:16_384 });
@@ -56,6 +56,7 @@ export function buildApi(options: ApiOptions = {}) {
   };
   const fetchImpl = options.fetchImpl ?? fetch;
   const provider=options.chain?new JsonRpcProvider(options.chain.rpcUrl):undefined;
+  if(provider&&options.chain?.devFund)provider.pollingInterval=50;
   const sponsor=provider&&options.chain?new Wallet(options.chain.sponsorPrivateKey,provider):undefined;
   const sender=provider&&sponsor?new DurableSender(provider,sponsor,journal):undefined;
   const clearing=options.chain&&provider?new Contract(options.chain.clearingAddress,[
@@ -82,17 +83,18 @@ export function buildApi(options: ApiOptions = {}) {
     for (const [id,quote] of quotes) if (quote.expiresAtMs+60_000<=now) { quotes.delete(id); quoteVersions.delete(id); }
   }
   function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string):TradeIntent {
-    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(Math.floor(quote.expiresAtMs/1_000)),leaderEpoch:versions.leaderEpoch,policyVersion:versions.policyVersion,reduceOnly:false };
+    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(versions.blockTimestamp+30),leaderEpoch:versions.leaderEpoch,policyVersion:versions.policyVersion,reduceOnly:false };
   }
   async function readProtocolVersions():Promise<ProtocolVersions>{
-    if(!clearing||!provider)return {leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n,blockNumber:0};
-    const blockNumber=await provider.getBlockNumber();
-    const [leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=await Promise.all([
+    if(!clearing||!provider)return {leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n,blockNumber:0,blockTimestamp:Math.floor(Date.now()/1_000)};
+    const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));
+    const [block,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=await Promise.all([
+      provider.getBlock(blockNumber),
       clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
       clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),
     ]);
-    if(paused||resolutionRequired)throw new Error("market is paused");
-    return {leaderEpoch:BigInt(leaderEpoch),signerSetVersion:BigInt(signerSetVersion),policyVersion:BigInt(policyVersion),blockNumber};
+    if(!block||paused||resolutionRequired)throw new Error("market is paused");
+    return {leaderEpoch:BigInt(leaderEpoch),signerSetVersion:BigInt(signerSetVersion),policyVersion:BigInt(policyVersion),blockNumber,blockTimestamp:block.timestamp};
   }
   async function advanceLocalChainTime(){
     if(!provider)throw new Error("local chain unavailable");
@@ -101,7 +103,7 @@ export function buildApi(options: ApiOptions = {}) {
     await provider.send("evm_setNextBlockTimestamp",[timestamp]);await provider.send("evm_mine",[]);return timestamp;
   }
 
-  app.get("/health",async()=>({ok:true,role:"leader",epoch:1,chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,sender:sender?.status()}));
+  app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,sender:sender?.status()}));
   app.get("/v1/config",async()=>({chainId:`0x${domain.chainId.toString(16)}`,chainName:options.chain?.devFund?"RFQ Local":"Base",rpcUrl:options.chain?.rpcUrl,clearingAddress:domain.verifyingContract,tokenAddress:options.chain?.tokenAddress}));
   app.get("/v1/account/:address",async(request,reply)=>{
     if(!clearing)return reply.code(503).send({error:"chain unavailable"});
@@ -160,16 +162,17 @@ export function buildApi(options: ApiOptions = {}) {
       prune(); prices[parsed.data.market].observedAtMs=Date.now();
       let versions:ProtocolVersions;
       if(clearing&&provider){
-        const blockNumber=await provider.getBlockNumber();
-        const [btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=await Promise.all([
+        const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));
+        const [block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=await Promise.all([
+          provider.getBlock(blockNumber),
           clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),
           clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
           clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),
         ]);
-        if(paused||resolutionRequired)throw new Error("market is paused");
+        if(!block||paused||resolutionRequired)throw new Error("market is paused");
         settled.BTC=BigInt(btc.aggregateBase)*(prices.BTC.bid+prices.BTC.ask)/2n/BASE;
         settled.ETH=BigInt(eth.aggregateBase)*(prices.ETH.bid+prices.ETH.ask)/2n/BASE;
-        versions={leaderEpoch:BigInt(leaderEpoch),signerSetVersion:BigInt(signerSetVersion),policyVersion:BigInt(policyVersion),blockNumber};
+        versions={leaderEpoch:BigInt(leaderEpoch),signerSetVersion:BigInt(signerSetVersion),policyVersion:BigInt(policyVersion),blockNumber,blockTimestamp:block.timestamp};
       } else versions=await readProtocolVersions();
       const quote=constructQuote(parsed.data,{...prices[parsed.data.market]},settled,pending,Date.now());
       quotes.set(quote.quoteId,quote);quoteVersions.set(quote.quoteId,versions); return quoteToWire(quote);

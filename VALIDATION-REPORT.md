@@ -56,7 +56,7 @@ Direct development versions are exact-pinned in `package.json` and resolved in `
 
 Ponder 0.17.10 was evaluated for the read model and then removed from the executable dependency set. Its 2026-09-08 production audit produced seven findings (five high, two moderate) through pinned Hono, Drizzle, Kysely and Vite dependencies. The executable local indexer therefore uses the platform SQLite API with no added runtime dependency. Adopting Ponder remains gated until upstream releases a clean compatible tree or tested overrides pass behavior and audit checks.
 
-`RFQClearing` is 23,889 bytes with the Solidity IR optimizer and optimizer runs set to 1, below both the repository's 24,000-byte gate and the EVM's 24,576-byte runtime limit. Portfolio impact and stress calculations are in a separately deployed stateless `RFQRiskMath` library linked into the implementation. The build includes scoped sessions and owner actions, but remains larger than the desired production review unit and has only 111 bytes of project-gate headroom. The current artifact is suitable for local validation, not a final deployment shape.
+`RFQClearing` is 23,939 bytes with the Solidity IR optimizer and optimizer runs set to 1, below both the repository's 24,000-byte gate and the EVM's 24,576-byte runtime limit. Portfolio impact, stress and liquidation calculations are in a separately deployed stateless `RFQRiskMath` library linked into the implementation. The build includes scoped sessions, owner actions and expected-epoch failover, but remains larger than the desired production review unit and has only 61 bytes of project-gate headroom. The current artifact is suitable for local validation, not a final deployment shape.
 
 ## What is still unproven
 
@@ -66,7 +66,9 @@ The Solidity suite is example-based with a deterministic arithmetic sample, not 
 
 The service integration now exercises SQLite signer logs, exact contract-shaped typed approvals, one unavailable approver, local-chain settlement and process restart. Each local approver reads a pinned RPC snapshot and independently checks live epochs, membership, pause state, market exposure, report chain-time validity and the contract impact floor. The sender serializes nonces, signs and journals raw transactions before broadcast, rebroadcasts identical hashes, records canonical inclusion and classifies nonce replacements during startup reconciliation. The indexer detects head-hash changes and rebuilds disposable projections; the hedge worker uses finalized exposure and stable client IDs across restart.
 
-Automatic fee-bumped sender replacement, independent oracle acquisition per signer, RPC-divergence quorum, Base-specific reorg injection, on-chain leader promotion fencing, separately killed signer processes and real Hyperliquid credential fencing remain open. Flashblocks-to-sealed reconciliation, Data Streams access failures, venue API behavior and high-frequency venue basis/depth replay also remain open.
+`npm run smoke:failover` proves that an expected-epoch emergency-council transition immediately rejects a prepared old-epoch intent and that the same running stack reads the new epoch, obtains fresh approvals and settles without a cooldown. It also led to replacing cached critical head reads and deriving intent deadlines from the pinned chain timestamp rather than API wall time.
+
+Automatic fee-bumped sender replacement, independent oracle acquisition per signer, RPC-divergence quorum, Base-specific reorg injection, separately killed signer processes and real Hyperliquid credential fencing remain open. Flashblocks-to-sealed reconciliation, Data Streams access failures, venue API behavior and high-frequency venue basis/depth replay also remain open.
 
 No test is independent review. Before real capital, the remaining sequence is:
 

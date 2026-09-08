@@ -26,7 +26,7 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     uint256 internal constant BASE = 1e18;
     uint256 internal constant RATE = 1e12;
     uint256 internal constant YEAR = 365 days;
-    uint256 internal constant MAX_ORACLE_AGE = 8;
+    uint256 internal constant MAX_ORACLE_AGE = 15;
     uint256 internal constant MAX_WIDTH_BPS = 100;
     uint256 internal constant MAX_TRADE_NOTIONAL = 25_000e6;
     uint256 internal constant MAX_MARKET_NOTIONAL = 250_000e6;
@@ -52,7 +52,6 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     bytes32 internal constant SESSION_GRANT_TYPEHASH = keccak256(
         "SessionGrant(address account,address session,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline)"
     );
-
     struct Position { int256 size; uint256 entryPrice; int256 lastFundingIndex; }
     struct Account { int256 collateral; mapping(uint8 => Position) positions; }
     struct Market {
@@ -305,32 +304,18 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     }
 
     function _liquidationClose(address account, uint8 market, IPriceOracle.Observation memory observation) private returns (uint256 closed, uint256 mark) {
-        if (maintenanceEquity(account) >= int256(maintenanceMargin(account))) revert Margin();
-        Position storage position = _accounts[account].positions[market];
-        uint256 absoluteBase = _abs(position.size);
-        mark = position.size > 0 ? observation.bid : observation.ask;
-        uint256 notional = absoluteBase * mark / BASE;
         int256 equity = maintenanceEquity(account);
-        if (notional <= 10_000e6 || equity <= 0) closed = absoluteBase;
-        else {
-            uint256 shortfall = 2_200 * notional > uint256(equity) * 10_000
-                ? 2_200 * notional - uint256(equity) * 10_000 : 0;
-            uint256 neededNotional = (shortfall + 2_149) / 2_150;
-            uint256 closeNotional = neededNotional < notional / 4 ? neededNotional : notional / 4;
-            closed = (closeNotional * BASE + mark - 1) / mark;
-            if (closed > absoluteBase) closed = absoluteBase;
-        }
+        if (equity >= int256(maintenanceMargin(account))) revert Margin();
+        Position storage position = _accounts[account].positions[market];
+        mark = position.size > 0 ? observation.bid : observation.ask;
+        closed = RFQRiskMath.liquidationClose(position.size, mark, equity);
         int256 delta = position.size > 0 ? -int256(closed) : int256(closed);
         _applyPosition(account, market, delta, mark);
     }
 
     function _collectLiquidationPenalty(address account, uint256 closed, uint256 mark) private returns (uint256 penalty, uint256 reward) {
-        penalty = closed * mark / BASE * LIQUIDATION_PENALTY_BPS / 10_000;
         uint256 available = _accounts[account].collateral > 0 ? uint256(_accounts[account].collateral) : 0;
-        penalty = penalty < available ? penalty : available;
-        reward = closed * mark / BASE * KEEPER_REWARD_BPS / 10_000;
-        uint256 rewardCap = penalty / 5;
-        if (reward > rewardCap) reward = rewardCap;
+        (penalty, reward) = RFQRiskMath.liquidationCharge(closed, mark, available);
         _changeCollateral(account, -int256(penalty));
         insuranceBalance += penalty - reward;
     }
@@ -350,6 +335,9 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
 
     function pause() external onlyEmergencyOrGovernance { paused = true; ++leaderEpoch; emit EpochAdvanced(leaderEpoch); }
     function unpause() external onlyGovernance { if (resolutionRequired) revert Insolvent(); paused = false; }
+    function advanceLeaderEpoch(uint64 expectedEpoch) external onlyEmergencyOrGovernance {
+        if (expectedEpoch != leaderEpoch) revert Stale(); ++leaderEpoch; emit EpochAdvanced(leaderEpoch);
+    }
     function rotateApprovers(address[3] calldata next) external onlyGovernance { _setApprovers(next); ++signerSetVersion; ++leaderEpoch; emit EpochAdvanced(leaderEpoch); }
     function setOracle(address next) external onlyGovernance { if (next == address(0)) revert Unauthorized(); oracle = IPriceOracle(next); ++policyVersion; }
     function setMarketEnabled(uint8 market, bool enabled) external onlyEmergencyOrGovernance {

@@ -36,6 +36,25 @@ library RFQRiskMath {
         return type(uint256).max;
     }
 
+    function liquidationClose(int256 size, uint256 mark, int256 equity) public pure returns (uint256 closed) {
+        uint256 absoluteBase = uint256(size < 0 ? -size : size);
+        uint256 notional = absoluteBase * mark / 1e18;
+        if (notional <= 10_000e6 || equity <= 0) return absoluteBase;
+        uint256 shortfall = 2_200 * notional > uint256(equity) * 10_000
+            ? 2_200 * notional - uint256(equity) * 10_000 : 0;
+        uint256 neededNotional = (shortfall + 2_149) / 2_150;
+        uint256 closeNotional = neededNotional < notional / 4 ? neededNotional : notional / 4;
+        closed = (closeNotional * 1e18 + mark - 1) / mark;
+        if (closed > absoluteBase) closed = absoluteBase;
+    }
+
+    function liquidationCharge(uint256 closed, uint256 mark, uint256 available) public pure returns (uint256 penalty, uint256 reward) {
+        penalty = closed * mark / 1e18 * 50 / 10_000;
+        if (penalty > available) penalty = available;
+        reward = closed * mark / 1e18 * 10 / 10_000;
+        if (reward > penalty / 5) reward = penalty / 5;
+    }
+
     function scenario(int256 btc, int256 eth, int256 btcReturn, int256 ethReturn) private pure returns (int256) {
         return floorDiv(btc * btcReturn, 100) + floorDiv(eth * ethReturn, 100);
     }

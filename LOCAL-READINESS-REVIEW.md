@@ -40,7 +40,7 @@ Code modules can be separated without creating more servers. The frontend was sp
 | Cross-chain deposit | Signed local route simulator | LI.FI or Socket quote/execution adapter, allowance safety, destination verification, refunds and failure recovery. |
 | Hedging | Deterministic local venue adapter | Hyperliquid testnet agent wallet/subaccount, real order/fill reconciliation, rate limits and fenced failover. |
 | Governance | Contract roles | Deployed multisigs, 72-hour timelock, selector review and recovery drill. |
-| Availability | Manual local leader | Signed epoch promotion, warm-standby reconciliation, independent RPCs and process/network fault injection. |
+| Availability | Expected-epoch council transition and live fencing drill | Production 2-of-3 council/Safe, warm-standby reconciliation, independent RPCs and process/network fault injection. |
 | Contract shape | 23,889-byte IR build plus linked stateless risk library | Further production module split, linked-library verification and repeated storage/upgrade validation. |
 | Assurance | Internal deterministic tests | Stateful fuzzing, economic stress calibration and independent contract/infrastructure audits. |
 

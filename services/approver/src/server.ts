@@ -16,7 +16,7 @@ const requestSchema=z.object({
   oracleAgeMs:z.number().nonnegative(),
 });
 
-export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string }
+export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; maxFutureSeconds?:number }
 
 export function buildApprover(options:ApproverOptions) {
   const app=Fastify({logger:false,bodyLimit:16_384}); const wallet=new Wallet(options.privateKey); const database=new DatabaseSync(options.databasePath);
@@ -40,7 +40,7 @@ export function buildApprover(options:ApproverOptions) {
     } catch{return reply.code(400).send({error:"invalid typed data"});}
     if(domain.name!==DOMAIN_NAME||domain.version!==DOMAIN_VERSION||(options.expectedChainId!==undefined&&domain.chainId!==options.expectedChainId)||(options.expectedVerifyingContract&&domain.verifyingContract!==getAddress(options.expectedVerifyingContract)))return reply.code(409).send({error:"domain mismatch"});
     const now=Date.now(),expiryMs=Number(intent.deadline)*1_000;
-    if(expiryMs<=now||expiryMs>now+31_000)return reply.code(409).send({error:"invalid expiry"});
+    if(expiryMs<=now||expiryMs>now+(31+(options.maxFutureSeconds??5))*1_000)return reply.code(409).send({error:"invalid expiry"});
     if((options.expectedEpoch!==undefined&&(intent.leaderEpoch!==BigInt(options.expectedEpoch)||approval.leaderEpoch!==BigInt(options.expectedEpoch)))||(options.expectedPolicyVersion!==undefined&&(intent.policyVersion!==BigInt(options.expectedPolicyVersion)||approval.policyVersion!==BigInt(options.expectedPolicyVersion)))||(options.expectedSignerSetVersion!==undefined&&approval.signerSetVersion!==BigInt(options.expectedSignerSetVersion)))return reply.code(409).send({error:"version mismatch"});
     const market=input.quote.market==="BTC"?0:1;
     if(intent.market!==market||intent.baseDelta.toString()!==input.quote.baseDelta||intent.limitPrice.toString()!==input.quote.worstPrice||intent.maxFee.toString()!==input.quote.fee||approval.executionPrice.toString()!==input.quote.expectedPrice||approval.impactCharge.toString()!==input.quote.impactCharge||approval.fee.toString()!==input.quote.fee||approval.deadline!==intent.deadline)return reply.code(409).send({error:"inconsistent envelope"});
@@ -55,12 +55,12 @@ export function buildApprover(options:ApproverOptions) {
         if(keccak256(input.report)!==approval.oracleReportHash)return reply.code(409).send({error:"oracle hash mismatch"});
         const [observation]=AbiCoder.defaultAbiCoder().decode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],input.report);
         const nowSeconds=BigInt(Math.floor(now/1_000));
-        if(observation.market!==BigInt(market)||observation.bid!==BigInt(input.quote.bid)||observation.ask!==BigInt(input.quote.ask)||observation.bid<=0n||observation.ask<observation.bid||observation.observedAt>nowSeconds+5n||nowSeconds>observation.validUntil||(observation.observedAt<=nowSeconds&&nowSeconds-observation.observedAt>8n))return reply.code(409).send({error:"oracle report rejected"});
+        if(observation.market!==BigInt(market)||observation.bid!==BigInt(input.quote.bid)||observation.ask!==BigInt(input.quote.ask)||observation.bid<=0n||observation.ask<observation.bid||observation.observedAt>nowSeconds+BigInt(options.maxFutureSeconds??5)||nowSeconds>observation.validUntil||(observation.observedAt<=nowSeconds&&nowSeconds-observation.observedAt>8n))return reply.code(409).send({error:"oracle report rejected"});
       } catch{return reply.code(409).send({error:"oracle report rejected"});}
     }
     if(clearing&&provider){
       try{
-        const blockNumber=await provider.getBlockNumber();
+        const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));
         const [block,epoch,setVersion,policy,paused,resolution,member,btc,eth,session]=await Promise.all([
           provider.getBlock(blockNumber),clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
           clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),clearing.isApprover(wallet.address,{blockTag:blockNumber}),

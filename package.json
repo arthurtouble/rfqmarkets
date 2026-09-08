@@ -14,10 +14,11 @@
     "dev:services": "tsx scripts/local-stack.ts",
     "dev:web": "vite apps/web",
     "dev:admin": "vite apps/admin",
-    "dev:chain": "hardhat node --network hardhatOp --hostname 127.0.0.1 --port 8545",
+    "dev:chain": "hardhat --verbosity 0 node --network hardhatOp --hostname 127.0.0.1 --port 8545",
     "deploy:local": "node --import tsx scripts/deploy-local.ts",
     "smoke:local": "node --import tsx scripts/live-smoke.ts",
     "smoke:reorg": "node --import tsx scripts/reorg-smoke.ts",
+    "smoke:failover": "node --import tsx scripts/leader-failover-smoke.ts",
     "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin"
   },
   "devDependencies": {

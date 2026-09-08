@@ -34,7 +34,7 @@ The contract recomputes impact from settled aggregate BTC/ETH inventory and requ
 
 `contracts/oracle/ChainlinkDataStreamsV3Adapter.sol` is intentionally narrow. Only the clearing contract may call it. It forwards the report to the configured Chainlink VerifierProxy, accepts only the two configured feed IDs, rejects nonpositive or inverted bid/ask values and normalizes the configured feed decimals to USDC decimals. Clearing separately checks age, expiry and width.
 
-The adapter follows Chainlink's published v3 fields and `verifier.verify(unverifiedReport, bytes(""))` subscription-billing pattern. Production deployment must obtain and verify the current Base VerifierProxy, feed IDs, decimals and billing behavior; none are guessed in source.
+The adapter follows Chainlink's published v3 fields and `verifier.verify(unverifiedReport, bytes(""))` subscription-billing pattern. Approvers require an observation no more than eight seconds old when signing; the contract permits up to fifteen seconds so a valid approval has bounded inclusion time. Production deployment must obtain and verify the current Base VerifierProxy, feed IDs, decimals and billing behavior; none are guessed in source.
 
 ## Margin, liquidation and resolution
 
@@ -48,7 +48,7 @@ Resolution cannot iterate an unbounded account set in one transaction. New depos
 
 The implementation follows OpenZeppelin's initializer and UUPS pattern. The implementation constructor disables initialization; the proxy initializes once. Only `governance` may authorize an upgrade, unpause, rotate approvers or replace the oracle. Production sets this address to the self-administered timelock, rather than an individual wallet. The emergency council may pause or disable a market and cannot unpause, upgrade or add authority.
 
-Approver rotation replaces all three addresses atomically and increments both signer-set version and leader epoch. An API failover increments the epoch. Existing nonces and financial state survive either operation and the tested V2 upgrade.
+Approver rotation replaces all three addresses atomically and increments both signer-set version and leader epoch. The emergency council or governance can advance only the exact current leader epoch; this fences old approvals and serializes competing API failovers without granting upgrade or fund-transfer authority. Existing nonces and financial state survive either operation and the tested V2 upgrade.
 
 Owner withdrawals can be direct or sponsored. A sponsored `WithdrawalIntent` binds the account, recipient, exact amount, nonce and deadline; the sponsor cannot redirect or increase it. Both paths settle funding, reject stale marks for open positions and preserve opening margin. When governance or the emergency council pauses trading, an owner can directly or indirectly close an entire position at the conservative verified oracle side without maker approvals. This path is unavailable while ordinary trading is live, which prevents it from bypassing RFQ inventory pricing.
 
@@ -56,6 +56,6 @@ Governance can withdraw maker capital only when the remaining backing stays abov
 
 ## Current engineering limits
 
-The compiler uses the Solidity IR pipeline. Runtime bytecode is 23,889 bytes after adding scoped sessions and moving portfolio impact/stress calculations into the stateless linked `RFQRiskMath` library. This is below the repository's 24,000-byte gate and the EVM limit, but only 111 bytes below the project gate. The library address is fixed in each implementation's bytecode and must be verified with the implementation. Further clearing features require a deliberate module split rather than more contract growth.
+The compiler uses the Solidity IR pipeline. Runtime bytecode is 23,939 bytes after adding scoped sessions and expected-epoch failover and moving portfolio impact, stress and liquidation calculations into the stateless linked `RFQRiskMath` library. This is below the repository's 24,000-byte gate and the EVM limit, but only 61 bytes below the project gate. The library address is fixed in each implementation's bytecode and must be verified with the implementation. Further clearing features require a deliberate module split rather than more contract growth.
 
 The current implementation still needs an oracle path independent of the primary API for prolonged outages, a production timelock deployment and live Chainlink/Base validation. The browser prototype keeps the limited session secret in tab-scoped storage; production requires a strict content-security policy, no unreviewed third-party scripts and a provider/session design chosen after wallet testing. Its tests do not replace independent economic review, invariant fuzzing, formal accounting checks or external audits.

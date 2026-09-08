@@ -14,7 +14,7 @@ const approverConfigs = [];
 const servers: Array<{close():Promise<void>}> = [];
 for (let index=0; index<3; index++) {
   const token = `local-transport-${index}-${crypto.randomUUID()}`;
-  const app = buildApprover({ privateKey:deployment.approvers[index].privateKey, transportToken:token, databasePath:resolve(state,`approver-${index}.sqlite`),expectedChainId:chainId,expectedVerifyingContract:verifyingContract,rpcUrl:deployment.rpcUrl });
+  const app = buildApprover({ privateKey:deployment.approvers[index].privateKey, transportToken:token, databasePath:resolve(state,`approver-${index}.sqlite`),expectedChainId:chainId,expectedVerifyingContract:verifyingContract,rpcUrl:deployment.rpcUrl,maxFutureSeconds:30 });
   const url = await app.listen({host:"127.0.0.1",port:4201+index});
   approverConfigs.push({url,token}); servers.push(app);
 }

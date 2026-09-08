@@ -169,7 +169,7 @@ Approver policy, signer set, intent schema, leader epoch and economic parameters
 
 Every approver durably records digest, epoch, expiry and its signature before replying. The API journals reservation and transaction state locally before the corresponding external action. A reservation that never obtained two signatures can be discarded after recovery; any digest signed by two approvers is treated as escaped and executable until invalidated.
 
-On API failure, the candidate standby obtains a 2-of-3 promotion certificate, submits the expected-current-epoch transition, waits for sealed inclusion, gathers unexpired signature logs from all reachable approvers, reconciles old-epoch fills, and then admits new-epoch work with its separate gas sender. The epoch transition invalidates all remaining old maker approvals. User intents retain their original nonce, limit and deadline and may be freshly approved only if still valid.
+On API failure, the 2-of-3 emergency council submits the expected-current-epoch transition and waits for sealed inclusion. The candidate standby gathers unexpired signature logs from all reachable approvers, reconciles old-epoch fills, and then admits new-epoch work with its separate gas sender. The epoch transition invalidates all remaining old maker approvals. User intents retain their original nonce, limit and deadline and may be freshly approved only if still valid.
 
 This removes the need for a distributed application database: two durable signer logs prove every potentially executable 2-of-3 bundle. Exact log storage, retention and disaster restore still require implementation testing.
 
