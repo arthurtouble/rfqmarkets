@@ -131,3 +131,21 @@ test("an unexpired deposit authorization survives an API leader restart",async()
   const result=await restarted.inject({method:"POST",url:"/v1/deposit/execute",payload:{routeId:route.routeId,userSignature:signature}});
   assert.equal(result.statusCode,503,result.body);await restarted.close();
 });
+
+test("owner exit and cancellation actions are exactly signed before sponsorship",async()=>{
+  const nonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString();
+  const withdrawal=(await api.inject({method:"POST",url:"/v1/withdraw/prepare",payload:{account:user.address,amount:"25.5",nonce}})).json();
+  assert.equal(withdrawal.intent.recipient,user.address);assert.equal(withdrawal.intent.amount,"25500000");
+  const withdrawalSignature=await user.signTypedData(withdrawal.domain,withdrawal.types,withdrawal.intent);
+  assert.equal((await api.inject({method:"POST",url:"/v1/withdraw/execute",payload:{intent:withdrawal.intent,userSignature:withdrawalSignature}})).statusCode,503);
+  const attacker=Wallet.createRandom(),badWithdrawal=await attacker.signTypedData(withdrawal.domain,withdrawal.types,withdrawal.intent);
+  assert.equal((await api.inject({method:"POST",url:"/v1/withdraw/execute",payload:{intent:withdrawal.intent,userSignature:badWithdrawal}})).statusCode,401);
+
+  const cancel=(await api.inject({method:"POST",url:"/v1/nonce/cancel/prepare",payload:{account:user.address,nonce:(BigInt(nonce)+1n).toString()}})).json();
+  const cancelSignature=await user.signTypedData(cancel.domain,cancel.types,cancel.intent);
+  assert.equal((await api.inject({method:"POST",url:"/v1/nonce/cancel/execute",payload:{intent:cancel.intent,userSignature:cancelSignature}})).statusCode,503);
+
+  const close=(await api.inject({method:"POST",url:"/v1/close/prepare",payload:{account:user.address,market:"BTC",nonce:(BigInt(nonce)+2n).toString()}})).json();
+  const closeSignature=await user.signTypedData(close.domain,close.types,close.intent);
+  assert.equal((await api.inject({method:"POST",url:"/v1/close/execute",payload:{intent:close.intent,userSignature:closeSignature}})).statusCode,503);
+});

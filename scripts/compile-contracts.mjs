@@ -20,6 +20,7 @@ const input = {
   language: "Solidity",
   sources,
   settings: {
+    viaIR: true,
     optimizer: { enabled: true, runs: 1 },
     outputSelection: { "*": {
       "": ["ast"],

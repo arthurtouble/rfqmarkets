@@ -85,6 +85,16 @@ const approvalTypes = { MakerApproval: [
   {name:"fee",type:"uint256"},{name:"oracleReportHash",type:"bytes32"},{name:"deadline",type:"uint64"},
   {name:"leaderEpoch",type:"uint64"},{name:"signerSetVersion",type:"uint64"},{name:"policyVersion",type:"uint64"},
 ] };
+const withdrawalTypes = { WithdrawalIntent: [
+  {name:"account",type:"address"},{name:"recipient",type:"address"},{name:"amount",type:"uint256"},
+  {name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},
+] };
+const cancelTypes = { CancelIntent: [
+  {name:"account",type:"address"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},
+] };
+const closeTypes = { CloseIntent: [
+  {name:"account",type:"address"},{name:"market",type:"uint8"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},
+] };
 async function order({ nonce, delta, executionPrice, limitPrice, impactCharge, report, reduceOnly = false }) {
   const block = await ethers.provider.getBlock("latest");
   const deadline = BigInt(block.timestamp + 60);
@@ -95,11 +105,39 @@ async function order({ nonce, delta, executionPrice, limitPrice, impactCharge, r
   return { intent, approval, userSignature, sigA:await approverA.signTypedData(domain,approvalTypes,approval), sigB:await approverB.signTypedData(domain,approvalTypes,approval) };
 }
 
+// Owner actions can be sponsored without granting the sender withdrawal authority.
+const actionBlock = await ethers.provider.getBlock("latest");
+const actionDeadline = BigInt(actionBlock.timestamp + 120);
+const withdrawal = { account:user.address, recipient:relayer.address, amount:100_000_000n, nonce:90n, deadline:actionDeadline };
+const withdrawalSignature = await user.signTypedData(domain, withdrawalTypes, withdrawal);
+const relayerBeforeWithdrawal = await token.balanceOf(relayer.address);
+await (await clearing.connect(keeper).withdrawWithSignature(user.address, relayer.address, withdrawal.amount, withdrawal.nonce, withdrawal.deadline, withdrawalSignature)).wait();
+assert.equal(await token.balanceOf(relayer.address) - relayerBeforeWithdrawal, withdrawal.amount);
+assert.equal(await clearing.nonceUsed(user.address, withdrawal.nonce), true);
+await reject(clearing.connect(keeper).withdrawWithSignature(user.address, relayer.address, withdrawal.amount, withdrawal.nonce, withdrawal.deadline, withdrawalSignature), "relayed withdrawal must not replay");
+
+await (await clearing.connect(user).cancelNonce(91n)).wait();
+const cancel = { account:user.address, nonce:92n, deadline:actionDeadline };
+const cancelSignature = await user.signTypedData(domain, cancelTypes, cancel);
+await (await clearing.connect(relayer).cancelNonceWithSignature(user.address, cancel.nonce, cancel.deadline, cancelSignature)).wait();
+assert.equal(await clearing.nonceUsed(user.address, 91n), true);
+assert.equal(await clearing.nonceUsed(user.address, 92n), true);
+
+// Maker withdrawals cannot cross the configured capital floor.
+await reject(clearing.connect(governance).withdrawMakerExcess(maker.address, 1n), "maker floor must remain locked");
+await (await token.mint(maker.address, 10_000_000n)).wait();
+await (await clearing.connect(maker).fundMaker(10_000_000n)).wait();
+const makerBeforeWithdrawal = await token.balanceOf(maker.address);
+await (await clearing.connect(governance).withdrawMakerExcess(maker.address, 10_000_000n)).wait();
+assert.equal(await token.balanceOf(maker.address) - makerBeforeWithdrawal, 10_000_000n);
+
 const initialOracle = await observation(0, 99_990_000_000n, 100_010_000_000n);
+const cancelledOrder = await order({ nonce:91n, delta:10_000_000_000_000_000n, executionPrice:100_020_000_000n, limitPrice:100_030_000_000n, impactCharge:1_000_000n, report:initialOracle.report });
+await reject(clearing.connect(relayer).executeTrade(cancelledOrder.intent,cancelledOrder.approval,initialOracle.report,cancelledOrder.userSignature,cancelledOrder.sigA,cancelledOrder.sigB),"cancelled nonce must block a later trade");
 const opening = await order({ nonce:1n, delta:249_900_000_000_000_000n, executionPrice:100_023_000_000n, limitPrice:100_030_000_000n, impactCharge:3_123_000n, report:initialOracle.report });
 await (await clearing.connect(relayer).executeTrade(opening.intent, opening.approval, initialOracle.report, opening.userSignature, opening.sigA, opening.sigB)).wait();
 assert.equal((await clearing.positionOf(user.address, 0)).size, 249_900_000_000_000_000n);
-assert.equal(await clearing.collateralOf(user.address), 6_998_000_000n);
+assert.equal(await clearing.collateralOf(user.address), 6_898_000_000n);
 
 // Positive unrealized PnL cannot be withdrawn as opening collateral.
 const up = await observation(0, 119_990_000_000n, 120_010_000_000n);
@@ -111,6 +149,7 @@ const down = await observation(0, 78_990_000_000n, 79_010_000_000n);
 await (await clearing.connect(keeper).liquidate(user.address, 0, down.report)).wait();
 assert.equal((await clearing.positionOf(user.address, 0)).size, 187_425_000_000_000_000n);
 assert((await clearing.insuranceBalance()) > 150_000_000_000n);
+await reject(clearing.connect(user).closePosition(0,down.report),"fallback close must only operate while trading is paused");
 
 // Internal buckets reconcile exactly to tokens held after the keeper reward transfer.
 const internal = (await clearing.makerBacking()) + (await clearing.insuranceBalance()) + (await clearing.totalCustomerCollateral());
@@ -125,6 +164,12 @@ assert.equal((await upgraded.positionOf(user.address, 0)).size, 187_425_000_000_
 
 // Deterministic, batched global resolution uses three observations over >=30s.
 await (await upgraded.connect(governance).pause()).wait();
+const closeBlock = await ethers.provider.getBlock("latest");
+const closeIntent = { account:user.address, market:0, nonce:93n, deadline:BigInt(closeBlock.timestamp + 60) };
+const closeSignature = await user.signTypedData(domain, closeTypes, closeIntent);
+const closeReport = await observation(0, 78_990_000_000n, 79_010_000_000n);
+await (await upgraded.connect(relayer).closePositionWithSignature(user.address, 0, closeIntent.nonce, closeIntent.deadline, closeReport.report, closeSignature)).wait();
+assert.equal((await upgraded.positionOf(user.address, 0)).size, 0n);
 await (await upgraded.connect(governance).declareResolution()).wait();
 const preBurnBalance = await token.balanceOf(await upgraded.getAddress());
 await (await token.burn(await upgraded.getAddress(), preBurnBalance - 2_000_000_000n)).wait();
@@ -153,4 +198,4 @@ await (await upgraded.connect(relayer).claimResolution()).wait();
 assert.equal(await token.balanceOf(relayer.address) - relayerBefore, relayerClaim * pool / totalClaims);
 assert(pool < totalClaims, "fault injection must exercise a real pro-rata haircut");
 
-console.log("Clearing E2E passed: proxy, custody, trade, margin, liquidation, conservation, open-position upgrade, pro-rata resolution");
+console.log("Clearing E2E passed: proxy, custody, relayed exits, cancellation, maker floor, trade, margin, liquidation, upgrade, resolution");

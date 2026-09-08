@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { API, INDEXER, dollars } from "./config.js";
+import { API, INDEXER, base, dollars } from "./config.js";
 import type { AccountState, Market, Quote, Side, WalletProvider } from "./types.js";
 
 const chains = { 1: "Ethereum", 42161: "Arbitrum", 10: "Optimism", 8453: "Base" } as const;
@@ -17,6 +17,10 @@ export function TradePage() {
   const [sourceToken, setSourceToken] = useState<"ETH" | "USDC" | "USDT">("ETH");
   const [depositAmount, setDepositAmount] = useState("1");
   const [depositStatus, setDepositStatus] = useState("Local route simulator");
+  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState("100");
+  const [withdrawStatus, setWithdrawStatus] = useState("Withdrawal gas is sponsored");
+  const [paused, setPaused] = useState(false);
 
   async function requestQuote(signal?: AbortSignal) {
     const response = await fetch(`${API}/v1/quote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ market, side, amount }), signal });
@@ -30,10 +34,13 @@ export function TradePage() {
     return result;
   }
   async function refreshAccount(address: string) {
+    const protocolRequest=fetch(`${INDEXER}/v1/protocol`).then(response=>response.ok?response.json():null).catch(()=>null);
     let response = await fetch(`${INDEXER}/v1/account/${address}`);
     if (!response.ok) response = await fetch(`${API}/v1/account/${address}`);
     if (response.ok) setAccountState(await response.json());
+    const protocol=await protocolRequest;if(protocol)setPaused(Boolean(protocol.paused));
   }
+  const randomNonce=()=>BigInt(`0x${[...crypto.getRandomValues(new Uint8Array(32))].map(value => value.toString(16).padStart(2, "0")).join("")}`).toString();
   useEffect(() => {
     const controller = new AbortController();
     const refresh = async () => {
@@ -73,8 +80,7 @@ export function TradePage() {
       const current = quote.expiresAtMs - Date.now() < 1_200 ? await requestQuote() : quote;
       if (current !== quote) setQuote(current);
       const connected = await wallet();
-      const bytes = crypto.getRandomValues(new Uint8Array(32));
-      const nonce = BigInt(`0x${[...bytes].map(value => value.toString(16).padStart(2, "0")).join("")}`).toString();
+      const nonce = randomNonce();
       const prepared = await post("/v1/prepare", { quoteId: current.quoteId, account: connected.account, nonce });
       const userSignature = await signTyped(connected, prepared, "TradeIntent");
       setStatus("Requesting two approvals…");
@@ -94,9 +100,27 @@ export function TradePage() {
       setDepositStatus(`Deposited ${dollars(result.expectedUsdc)} · block ${result.transaction.blockNumber}`); await refreshAccount(connected.account);
     } catch (error) { setDepositStatus(error instanceof Error ? error.message : "Deposit unavailable"); }
   }
+  async function withdraw() {
+    setWithdrawStatus("Waiting for wallet…");
+    try {
+      const connected=await wallet();
+      const prepared=await post("/v1/withdraw/prepare",{account:connected.account,amount:withdrawAmount,nonce:randomNonce()});
+      const userSignature=await signTyped(connected,prepared,"WithdrawalIntent");setWithdrawStatus("Submitting sponsored withdrawal…");
+      const result=await post("/v1/withdraw/execute",{intent:prepared.intent,userSignature});
+      setWithdrawStatus(`Withdrawn ${withdrawAmount} USDC · block ${result.transaction.blockNumber}`);await refreshAccount(connected.account);
+    }catch(error){setWithdrawStatus(error instanceof Error?error.message:"Withdrawal unavailable");}
+  }
+  async function emergencyClose(closeMarket:Market){
+    setStatus("Waiting for emergency close signature…");
+    try{
+      const connected=await wallet();const prepared=await post("/v1/close/prepare",{account:connected.account,market:closeMarket,nonce:randomNonce()});
+      const userSignature=await signTyped(connected,prepared,"CloseIntent");setStatus("Submitting conservative close…");
+      const result=await post("/v1/close/execute",{intent:prepared.intent,userSignature});setStatus(`Closed ${closeMarket} in block ${result.transaction.blockNumber}`);await refreshAccount(connected.account);
+    }catch(error){setStatus(error instanceof Error?error.message:"Close unavailable");}
+  }
 
   return <section className="trade-card">
-    {accountState && <div className="balance"><span>Collateral</span><strong>{dollars(accountState.collateral)}</strong><small>BTC {accountState.positions.BTC.size} · ETH {accountState.positions.ETH.size}</small></div>}
+    {accountState && <><div className="balance"><span>Collateral</span><strong>{dollars(accountState.collateral)}</strong><small>BTC {base(accountState.positions.BTC.size)} · ETH {base(accountState.positions.ETH.size)}</small><button className="balance-action" onClick={()=>setShowWithdraw(value=>!value)}>{showWithdraw?"Close":"Withdraw"}</button></div>{showWithdraw&&<section className="depositPanel accountPanel"><label>Withdraw to connected wallet</label><div className="amount compact"><input aria-label="Withdrawal amount" inputMode="decimal" value={withdrawAmount} onChange={event=>setWithdrawAmount(event.target.value)}/><b>USDC</b></div><button className="route" onClick={withdraw}>Sign & withdraw</button><p className="status">{withdrawStatus}</p></section>}{paused&&(BigInt(accountState.positions.BTC.size)!==0n||BigInt(accountState.positions.ETH.size)!==0n)&&<section className="emergencyPanel"><strong>Trading paused</strong><span>Close at the verified directional oracle price.</span><div>{BigInt(accountState.positions.BTC.size)!==0n&&<button onClick={()=>emergencyClose("BTC")}>Close BTC</button>}{BigInt(accountState.positions.ETH.size)!==0n&&<button onClick={()=>emergencyClose("ETH")}>Close ETH</button>}</div></section>}</>}
     <div className="markets">{(["BTC", "ETH"] as Market[]).map(value => <button key={value} className={market === value ? "active" : ""} onClick={() => setMarket(value)}>{value}-PERP</button>)}</div>
     <label>Amount <span>USDC</span></label><div className="amount"><input aria-label="Trade amount" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} /><b>USDC</b></div>
     <div className="sides"><button className={side === "buy" ? "buy active" : "buy"} onClick={() => setSide("buy")}>Buy</button><button className={side === "sell" ? "sell active" : "sell"} onClick={() => setSide("sell")}>Sell</button></div>

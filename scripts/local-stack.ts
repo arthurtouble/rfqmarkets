@@ -5,9 +5,9 @@ import { buildApi } from "../services/api/src/server.js";
 import { buildIndexer } from "../services/indexer/src/server.js";
 import { buildHedger } from "../services/hedger/src/server.js";
 
-const state = resolve(".local-state", "runtime");
+const deployment=JSON.parse(readFileSync(resolve(".local-state","deployment.json"),"utf8")) as {deploymentId?:string;rpcUrl:string;chainId:string;clearingAddress:string;tokenAddress:string;sponsorPrivateKey:string;deploymentBlock?:number;approvers:Array<{address:string;privateKey:string}>};
+const state = resolve(".local-state", deployment.deploymentId??"legacy-runtime");
 mkdirSync(state, { recursive:true });
-const deployment=JSON.parse(readFileSync(resolve(".local-state","deployment.json"),"utf8")) as {rpcUrl:string;chainId:string;clearingAddress:string;tokenAddress:string;sponsorPrivateKey:string;deploymentBlock?:number;approvers:Array<{address:string;privateKey:string}>};
 const chainId=BigInt(deployment.chainId);
 const verifyingContract=deployment.clearingAddress;
 const approverConfigs = [];

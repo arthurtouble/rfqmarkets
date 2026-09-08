@@ -41,7 +41,8 @@ main.wide .app-frame { width: min(100%, 1180px); }
 .trade-card { padding: 22px; }
 .balance { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #283145; border-radius: 12px; background: #111620; }
 .balance span, .balance small { color: #7f8aa3; font-size: 12px; }
-.balance small { grid-column: 1/-1; }
+.balance small { grid-column: 1; }
+.balance-action { grid-column: 2; grid-row: 2; justify-self: end; padding: 0; border: 0; color: #77e0b5; background: transparent; cursor: pointer; font-size: 12px; }
 .markets, .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 4px; border-radius: 12px; background: #090c12; }
 .markets button, .sides button { border: 0; padding: 10px; border-radius: 9px; color: #8994aa; background: transparent; cursor: pointer; }
 .markets .active { color: white; background: #242c3d; }
@@ -72,6 +73,11 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 .amount.compact input { padding: 10px 0; font-size: 20px; }
 .route { margin-top: 12px; color: #eef2ff; background: #27344a; }
 .depositPanel .status { min-height: 16px; }
+.accountPanel { margin: -7px 0 16px; }
+.emergencyPanel { display: grid; gap: 5px; margin: -7px 0 16px; padding: 13px 14px; border: 1px solid #6f5332; border-radius: 12px; background: #211910; }
+.emergencyPanel span { color: #ad987a; font-size: 12px; }
+.emergencyPanel div { display: flex; gap: 8px; margin-top: 6px; }
+.emergencyPanel button { padding: 7px 10px; border: 1px solid #7b5d36; border-radius: 8px; color: #efc07b; background: #2b2116; cursor: pointer; }
 .public-dashboard { padding: 28px; }
 .public-dashboard.empty { min-height: 280px; }
 .dashboard-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 24px; }

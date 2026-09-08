@@ -41,6 +41,15 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     bytes32 internal constant APPROVAL_TYPEHASH = keccak256(
         "MakerApproval(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion)"
     );
+    bytes32 internal constant WITHDRAWAL_TYPEHASH = keccak256(
+        "WithdrawalIntent(address account,address recipient,uint256 amount,uint256 nonce,uint64 deadline)"
+    );
+    bytes32 internal constant CANCEL_TYPEHASH = keccak256(
+        "CancelIntent(address account,uint256 nonce,uint64 deadline)"
+    );
+    bytes32 internal constant CLOSE_TYPEHASH = keccak256(
+        "CloseIntent(address account,uint8 market,uint256 nonce,uint64 deadline)"
+    );
 
     struct Position { int256 size; uint256 entryPrice; int256 lastFundingIndex; }
     struct Account { int256 collateral; mapping(uint8 => Position) positions; }
@@ -100,6 +109,9 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
 
     event Deposited(address indexed account, uint256 amount);
     event Withdrawn(address indexed account, uint256 amount);
+    event NonceCancelled(address indexed account, uint256 indexed nonce);
+    event PositionClosed(address indexed account, uint8 indexed market, int256 baseDelta, uint256 price);
+    event MakerWithdrawn(address indexed recipient, uint256 amount);
     event TradeExecuted(bytes32 indexed intentHash, address indexed account, uint8 market, int256 baseDelta, uint256 price, uint256 fee);
     event Liquidated(address indexed account, uint8 market, uint256 closedBase, uint256 penalty, uint256 keeperReward);
     event DeficitAbsorbed(address indexed account, uint256 insuranceUsed, uint256 makerUsed, uint256 unresolved);
@@ -183,13 +195,43 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     }
 
     function withdraw(uint256 amount) external nonReentrant {
-        if (resolutionRequired || amount == 0) revert InvalidTrade();
-        _requireFreshPositions(msg.sender);
-        _settleAllFunding(msg.sender);
-        _changeCollateral(msg.sender, -int256(amount));
-        if (_accounts[msg.sender].collateral < 0 || openingEquity(msg.sender) < int256(initialMargin(msg.sender))) revert Margin();
-        usdc.safeTransfer(msg.sender, amount);
-        emit Withdrawn(msg.sender, amount);
+        _withdraw(msg.sender, msg.sender, amount);
+    }
+
+    /// @notice Gas-sponsored withdrawal authorized by the collateral owner.
+    function withdrawWithSignature(
+        address account, address recipient, uint256 amount, uint256 nonce, uint64 deadline, bytes calldata signature
+    ) external nonReentrant {
+        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(WITHDRAWAL_TYPEHASH, account, recipient, amount, nonce, deadline)));
+        _consumeUserAuthorization(account, nonce, deadline, digest, signature);
+        _withdraw(account, recipient, amount);
+    }
+
+    /// @notice Invalidates a trade or action nonce without trusting the API.
+    function cancelNonce(uint256 nonce) external {
+        _cancelNonce(msg.sender, nonce);
+    }
+
+    /// @notice Gas-sponsored nonce cancellation authorized by the account owner.
+    function cancelNonceWithSignature(address account, uint256 nonce, uint64 deadline, bytes calldata signature) external {
+        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(CANCEL_TYPEHASH, account, nonce, deadline)));
+        if (block.timestamp > deadline || account == address(0) || nonceUsed[account][nonce]) revert Replay();
+        if (!SignatureChecker.isValidSignatureNowCalldata(account, digest, signature)) revert InvalidSignature();
+        _cancelNonce(account, nonce);
+    }
+
+    /// @notice Conservative owner exit while trading is paused but before global resolution.
+    function closePosition(uint8 market, bytes calldata report) external payable nonReentrant {
+        _closePosition(msg.sender, market, report);
+    }
+
+    /// @notice Gas-sponsored paused-market close authorized by the account owner.
+    function closePositionWithSignature(
+        address account, uint8 market, uint256 nonce, uint64 deadline, bytes calldata report, bytes calldata signature
+    ) external payable nonReentrant {
+        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(CLOSE_TYPEHASH, account, market, nonce, deadline)));
+        _consumeUserAuthorization(account, nonce, deadline, digest, signature);
+        _closePosition(account, market, report);
     }
 
     function executeTrade(
@@ -296,6 +338,19 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         if (market > 1 || (enabled && msg.sender != governance)) revert Unauthorized(); markets[market].enabled = enabled;
     }
 
+    /// @notice Releases only maker capital above both the configured floor and live stress requirement.
+    function withdrawMakerExcess(address recipient, uint256 amount) external onlyGovernance nonReentrant {
+        if (resolutionRequired || recipient == address(0) || amount == 0 || amount > makerBacking) revert InvalidTrade();
+        uint256 remaining = makerBacking - amount;
+        if (remaining < baseRiskCapitalTarget) revert Margin();
+        int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE);
+        int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE);
+        if (_stressLoss(btc, eth) > remaining / 4) revert Margin();
+        makerBacking = remaining;
+        usdc.safeTransfer(recipient, amount);
+        emit MakerWithdrawn(recipient, amount);
+    }
+
     function declareResolution() external onlyGovernance {
         if (!paused) revert InvalidTrade();
         _startResolution();
@@ -370,6 +425,43 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     }
 
     function _authorizeUpgrade(address) internal override onlyGovernance {}
+
+    function _consumeUserAuthorization(
+        address account, uint256 nonce, uint64 deadline, bytes32 digest, bytes calldata signature
+    ) private {
+        if (block.timestamp > deadline || account == address(0) || nonceUsed[account][nonce]) revert Replay();
+        if (!SignatureChecker.isValidSignatureNowCalldata(account, digest, signature)) revert InvalidSignature();
+        nonceUsed[account][nonce] = true;
+    }
+
+    function _cancelNonce(address account, uint256 nonce) private {
+        if (nonceUsed[account][nonce]) revert Replay();
+        nonceUsed[account][nonce] = true;
+        emit NonceCancelled(account, nonce);
+    }
+
+    function _withdraw(address account, address recipient, uint256 amount) private {
+        if (resolutionRequired || recipient == address(0) || amount == 0) revert InvalidTrade();
+        _requireFreshPositions(account);
+        _settleAllFunding(account);
+        _changeCollateral(account, -int256(amount));
+        if (_accounts[account].collateral < 0 || openingEquity(account) < int256(initialMargin(account))) revert Margin();
+        usdc.safeTransfer(recipient, amount);
+        emit Withdrawn(account, amount);
+    }
+
+    function _closePosition(address account, uint8 market, bytes calldata report) private {
+        if (!paused || resolutionRequired || market > 1) revert InvalidTrade();
+        IPriceOracle.Observation memory observation = _verifyReport(report, market);
+        _recordObservation(observation);
+        _updateFunding(market, (observation.bid + observation.ask) / 2);
+        _settleFunding(account, market);
+        int256 size = _accounts[account].positions[market].size;
+        if (size == 0) revert InvalidTrade();
+        uint256 price = size > 0 ? observation.bid : observation.ask;
+        _applyPosition(account, market, -size, price);
+        emit PositionClosed(account, market, -size, price);
+    }
 
     function _startResolution() private {
         if (!resolutionRequired) {

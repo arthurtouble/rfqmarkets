@@ -30,6 +30,18 @@ export const depositTypes:Record<string,Array<{name:string;type:string}>> = {
     {name:"deadline",type:"uint64"},{name:"nonce",type:"uint256"},
   ],
 };
+export const withdrawalTypes:Record<string,Array<{name:string;type:string}>> = {
+  WithdrawalIntent: [
+    {name:"account",type:"address"},{name:"recipient",type:"address"},{name:"amount",type:"uint256"},
+    {name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},
+  ],
+};
+export const cancelTypes:Record<string,Array<{name:string;type:string}>> = {
+  CancelIntent: [{name:"account",type:"address"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"}],
+};
+export const closeTypes:Record<string,Array<{name:string;type:string}>> = {
+  CloseIntent: [{name:"account",type:"address"},{name:"market",type:"uint8"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"}],
+};
 
 export interface SigningDomain { name: string; version: string; chainId: bigint; verifyingContract: string }
 export interface TradeIntent {
@@ -41,11 +53,17 @@ export interface MakerApproval {
   deadline:bigint; leaderEpoch:bigint; signerSetVersion:bigint; policyVersion:bigint;
 }
 export interface DepositIntent {account:string;routeId:string;sourceChainId:bigint;sourceTokenHash:string;sourceAmount:bigint;minimumUsdc:bigint;deadline:bigint;nonce:bigint}
+export interface WithdrawalIntent {account:string;recipient:string;amount:bigint;nonce:bigint;deadline:bigint}
+export interface CancelIntent {account:string;nonce:bigint;deadline:bigint}
+export interface CloseIntent {account:string;market:number;nonce:bigint;deadline:bigint}
 
 export const hashIntent = (domain: SigningDomain, intent: TradeIntent) => TypedDataEncoder.hash(domain, intentTypes, intent);
 export const hashApproval = (domain: SigningDomain, approval: MakerApproval) => TypedDataEncoder.hash(domain, approvalTypes, approval);
 export const recoverIntentSigner = (domain: SigningDomain, intent: TradeIntent, signature: string) => getAddress(verifyTypedData(domain, intentTypes, intent, signature));
 export const recoverDepositSigner = (domain:SigningDomain,intent:DepositIntent,signature:string)=>getAddress(verifyTypedData(domain,depositTypes,intent,signature));
+export const recoverWithdrawalSigner = (domain:SigningDomain,intent:WithdrawalIntent,signature:string)=>getAddress(verifyTypedData(domain,withdrawalTypes,intent,signature));
+export const recoverCancelSigner = (domain:SigningDomain,intent:CancelIntent,signature:string)=>getAddress(verifyTypedData(domain,cancelTypes,intent,signature));
+export const recoverCloseSigner = (domain:SigningDomain,intent:CloseIntent,signature:string)=>getAddress(verifyTypedData(domain,closeTypes,intent,signature));
 
 export const intentToWire = (intent: TradeIntent) => ({
   ...intent, baseDelta:intent.baseDelta.toString(), limitPrice:intent.limitPrice.toString(), maxFee:intent.maxFee.toString(),
@@ -57,3 +75,6 @@ export const approvalToWire = (approval: MakerApproval) => ({
   deadline:approval.deadline.toString(), leaderEpoch:approval.leaderEpoch.toString(), signerSetVersion:approval.signerSetVersion.toString(), policyVersion:approval.policyVersion.toString(),
 });
 export const depositToWire=(intent:DepositIntent)=>({...intent,sourceChainId:intent.sourceChainId.toString(),sourceAmount:intent.sourceAmount.toString(),minimumUsdc:intent.minimumUsdc.toString(),deadline:intent.deadline.toString(),nonce:intent.nonce.toString()});
+export const withdrawalToWire=(intent:WithdrawalIntent)=>({...intent,amount:intent.amount.toString(),nonce:intent.nonce.toString(),deadline:intent.deadline.toString()});
+export const cancelToWire=(intent:CancelIntent)=>({...intent,nonce:intent.nonce.toString(),deadline:intent.deadline.toString()});
+export const closeToWire=(intent:CloseIntent)=>({...intent,nonce:intent.nonce.toString(),deadline:intent.deadline.toString()});

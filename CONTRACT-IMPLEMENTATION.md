@@ -24,7 +24,7 @@ flowchart LR
     S --> E[Commit events and state]
 ```
 
-The transaction sender has no authority in this flow. The API gas wallet, another sponsor or the user can submit the identical signed payload. The user signature binds account, market, base delta, limit price, fee ceiling, nonce, deadline, reduce-only flag, leader epoch and policy version. The maker approval additionally binds exact execution price, impact charge, oracle report hash and signer-set version.
+The transaction sender has no authority in this flow. The API gas wallet, another sponsor or the user can submit the identical signed payload. The user signature binds account, market, base delta, limit price, fee ceiling, nonce, deadline, reduce-only flag, leader epoch and policy version. The maker approval additionally binds exact execution price, impact charge, oracle report hash and signer-set version. Users may cancel any unused nonce directly or through an exact EIP-712 cancellation signed for a sponsor.
 
 The contract recomputes impact from settled aggregate BTC/ETH inventory and requires the execution price to deliver at least that signed impact relative to the directional oracle bid/ask. This closes the gap where an approval could state a safe impact charge without placing it into the actual price.
 
@@ -48,8 +48,12 @@ The implementation follows OpenZeppelin's initializer and UUPS pattern. The impl
 
 Approver rotation replaces all three addresses atomically and increments both signer-set version and leader epoch. An API failover increments the epoch. Existing nonces and financial state survive either operation and the tested V2 upgrade.
 
+Owner withdrawals can be direct or sponsored. A sponsored `WithdrawalIntent` binds the account, recipient, exact amount, nonce and deadline; the sponsor cannot redirect or increase it. Both paths settle funding, reject stale marks for open positions and preserve opening margin. When governance or the emergency council pauses trading, an owner can directly or indirectly close an entire position at the conservative verified oracle side without maker approvals. This path is unavailable while ordinary trading is live, which prevents it from bypassing RFQ inventory pricing.
+
+Governance can withdraw maker capital only when the remaining backing stays above the configured capital target and four times the live portfolio stress loss. It cannot withdraw during resolution. The production governance address remains subject to the timelock requirement.
+
 ## Current engineering limits
 
-The runtime bytecode is 23,963 bytes, close to the EVM limit. The next contract change should first extract resolution or read-only calculation code into a reviewable module. Optimizing solely for bytecode size would make review harder and leave no safe extension room.
+The compiler now uses the Solidity IR pipeline. Runtime bytecode is 22,487 bytes after adding the signed owner-action and controlled maker-withdrawal paths, compared with 23,963 bytes before the compiler change. This creates useful headroom but remains above the desired production review size. Resolution and risk calculation should still move behind carefully tested module/library boundaries before the session-key intent version is added.
 
-The current implementation still needs owner-signed relayed withdrawals, scoped session certificates, nonce cancellation, a fallback exit oracle, a controlled maker-withdrawal path, a production timelock deployment and live Chainlink/Base validation. Its tests do not replace independent economic review, invariant fuzzing, formal accounting checks or external audits.
+The current implementation still needs scoped session certificates, an oracle path independent of the primary API for prolonged outages, a production timelock deployment and live Chainlink/Base validation. Its tests do not replace independent economic review, invariant fuzzing, formal accounting checks or external audits.
