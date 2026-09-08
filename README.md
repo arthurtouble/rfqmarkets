@@ -14,6 +14,8 @@ The [contract implementation guide](CONTRACT-IMPLEMENTATION.md) explains the cle
 
 The [local application guide](LOCAL-DEVELOPMENT.md) covers the Fastify API leader, three durable-log approvers, signed-before-broadcast sender, chain indexer, hedge worker and React ticket.
 
+The [local readiness review](LOCAL-READINESS-REVIEW.md) states what is complete, what remains simulated, which boundaries should stay separate and the shortest safe path to a Base testnet pilot.
+
 The [indexer design](INDEXER-DESIGN.md) defines the chain-derived account/history schema, query surface, reorg behavior and current Ponder dependency gate.
 
 The [wallet and deposit design](WALLET-AND-DEPOSITS.md) defines the provider-neutral wallet boundary, signed cross-chain route intent, local route simulator and the production rule that only confirmed Base clearing state creates collateral.
