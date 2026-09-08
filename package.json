@@ -7,18 +7,40 @@
     "validate:upgrades": "npm run compile:contracts && openzeppelin-upgrades-core validate artifacts/build-info --contract RFQClearing",
     "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs",
     "test:python": "cd simulator && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -v",
-    "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python"
+    "test:services": "node --import tsx --test services/**/*.test.ts",
+    "typecheck": "tsc",
+    "build:web": "vite build apps/web --outDir ../../dist/web --emptyOutDir",
+    "build:admin": "vite build apps/admin --outDir ../../dist/admin --emptyOutDir",
+    "dev:services": "tsx scripts/local-stack.ts",
+    "dev:web": "vite apps/web",
+    "dev:admin": "vite apps/admin",
+    "dev:chain": "hardhat node --network hardhatOp --hostname 127.0.0.1 --port 8545",
+    "deploy:local": "node --import tsx scripts/deploy-local.ts",
+    "smoke:local": "node --import tsx scripts/live-smoke.ts",
+    "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin"
   },
   "devDependencies": {
+    "@fastify/cors": "11.3.0",
     "@nomicfoundation/hardhat-ethers": "4.0.15",
     "@openzeppelin/contracts": "5.6.1",
     "@openzeppelin/contracts-upgradeable": "5.6.1",
     "@openzeppelin/upgrades-core": "1.46.0",
+    "@types/node": "26.5.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.1.1",
     "chai": "6.2.2",
     "ethers": "6.17.0",
+    "fastify": "5.12.3",
     "hardhat": "3.16.0",
     "mocha": "12.0.0",
-    "solc": "0.8.34"
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "solc": "0.8.34",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "zod": "3.25.76"
   },
   "overrides": {
     "tmp": "0.2.7"

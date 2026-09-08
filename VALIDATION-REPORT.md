@@ -4,11 +4,15 @@ Status date: 2026-09-08. This separates executable evidence from architectural i
 
 ## What now runs
 
-`npm test` performs three local gates:
+`npm test` performs local contract, model, service and frontend gates:
 
 1. Compiles the contracts with Solidity 0.8.34 and executes two suites on Hardhat's OP Stack-compatible local EVM. The authorization suite verifies two distinct approvers, the user price bound, sender-independent sponsorship, nonce consumption, stale inventory-impact rejection and leader-epoch fencing, plus 400 deterministic arithmetic invariant calls. The clearing suite verifies proxy initialization, USDC custody, EIP-3009 deposit routing, oracle-bound trade settlement, positive-uPnL withdrawal restrictions, partial liquidation, insurance allocation, exact internal/token conservation, an upgrade with an open position, and a real pro-rata insolvency haircut.
 2. Runs OpenZeppelin's upgrade-safety validator against the compiler build information and `RFQClearing`; it passes.
 3. Runs 28 Python tests over floating-point research economics, integer contract-shaped arithmetic, lifecycle faults, accounting and historical data parsing.
+4. Runs eight HTTP/service integration tests across the API, three independently keyed approvers and hedge worker. They verify exact EIP-712 user, deposit and maker signatures, pinned domain separation, cryptographic response identity, two-of-three availability, durable-before-response signing, rejection of unauthorized capacity reservations, worse second same-direction pricing, restart recovery and idempotent hedge client IDs.
+5. Type-checks the TypeScript workspace and builds the React production bundle. Browser passes verified BTC/ETH and Buy/Sell state, live quote refresh, restart recovery, wallet detection and persistent completion feedback. The first pass found and fixed a stale-display expiry path.
+
+`npm run smoke:local` exercises the separately running processes over loopback with a fresh EOA. It signs a source-bound `DepositIntent`, settles simulated destination USDC into clearing, obtains two independently chain-checked `MakerApproval` signatures, submits through the signed-before-broadcast gas journal, verifies indexed account/activity state and triggers finalized hedge reconciliation. The latest post-restart combined path succeeded at local block 65.
 
 `python3 -B simulator/fault_harness.py` passes five deterministic drills:
 
@@ -48,6 +52,8 @@ This is a risk replay, not evidence of expected profit. Hourly closes understate
 
 Direct development versions are exact-pinned in `package.json` and resolved in `package-lock.json`. The transitive `tmp` dependency is overridden to 0.2.7. `npm audit --omit=dev` reports zero runtime vulnerabilities. A full audit reports five low-severity advisories in the development-only OpenZeppelin upgrade validator's legacy crypto dependency chain; npm reports no upstream fix. That CLI is not linked into deployed bytecode. Generated artifacts are reproducible with `npm run compile:contracts`.
 
+Ponder 0.17.10 was evaluated for the read model and then removed from the executable dependency set. Its 2026-09-08 production audit produced seven findings (five high, two moderate) through pinned Hono, Drizzle, Kysely and Vite dependencies. The executable local indexer therefore uses the platform SQLite API with no added runtime dependency. Adopting Ponder remains gated until upstream releases a clean compatible tree or tested overrides pass behavior and audit checks.
+
 `RFQClearing` is 23,963 bytes with optimizer runs set to 1, below both the repository's 24,000-byte gate and the EVM's 24,576-byte runtime limit. This is too close for further production development. Resolution or view logic should move behind a narrow module boundary before adding features; the current artifact is suitable for local validation, not a final deployment shape.
 
 ## What is still unproven
@@ -56,12 +62,14 @@ The clearing contract is still a prototype. The Chainlink adapter is tested agai
 
 The Solidity suite is example-based with a deterministic arithmetic sample, not exhaustive invariant fuzzing or formal verification. Liquidation races, multiple accounts across both markets, rounding reserves, repeated funding catch-up, oracle-fee refunds, malicious ERC-1271 wallets, storage upgrades beyond the no-storage V2 example, and resolution recoveries after partial payouts need more tests. The code has received an internal review during implementation, not an independent audit.
 
-The service drill is a deterministic model, not multiple killed processes on independent hosts. It does not yet exercise real durable signer logs, RPC disagreement, Base reorgs, Flashblocks-to-sealed reconciliation, transaction replacement, data-stream access failures, venue credential revocation, Ponder rebuild, or backup restore time. Historical replay needs high-frequency shock windows and venue basis/depth data before parameter calibration.
+The service integration now exercises SQLite signer logs, exact contract-shaped typed approvals, one unavailable approver, local-chain settlement and process restart. Each local approver reads a pinned RPC snapshot and independently checks live epochs, membership, pause state, market exposure, report chain-time validity and the contract impact floor. The sender serializes nonces, signs and journals raw transactions before broadcast, rebroadcasts identical hashes, records canonical inclusion and classifies nonce replacements during startup reconciliation. The indexer detects head-hash changes and rebuilds disposable projections; the hedge worker uses finalized exposure and stable client IDs across restart.
+
+Automatic fee-bumped sender replacement, independent oracle acquisition per signer, RPC-divergence quorum, adversarial Base reorg injection, on-chain leader promotion fencing, separately killed signer processes and real Hyperliquid credential fencing remain open. Flashblocks-to-sealed reconciliation, Data Streams access failures, venue API behavior, PostgreSQL restore time and high-frequency venue basis/depth replay also remain open.
 
 No test is independent review. Before real capital, the remaining sequence is:
 
 1. Split the nearly full-size prototype into reviewable production modules; implement the remaining withdrawal/session/fallback paths and add differential Python/Solidity stateful fuzzing.
-2. Connect a locally running API, three separately keyed approvers, journals, hedge adapter and keepers; run process/network fault injection.
+2. Extend the now-connected local API, three approvers, sender journal, indexer and mock hedge adapter with keepers and systematic process/network fault injection.
 3. Deploy to Base Sepolia with synthetic collateral; measure p50/p95/p99 quote, approval and inclusion latency and perform reorg/RPC/oracle/gas/restore drills.
 4. Freeze a review commit and commission independent economic, smart-contract and infrastructure/key-management reviews. Remediate findings and repeat the relevant gates.
 5. Start a capped canary only after every launch gate in `CURRENT-ARCHITECTURE.md` has recorded evidence and an accountable owner.

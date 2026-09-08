@@ -12,6 +12,14 @@ The [design research synthesis](DESIGN-RESEARCH-SYNTHESIS.md) records which meth
 
 The [contract implementation guide](CONTRACT-IMPLEMENTATION.md) explains the clearing state, settlement order, oracle adapter, liquidation, resolution and authority boundaries. The [validation report](VALIDATION-REPORT.md) records what has actually run and what remains before testnet or capital. The [research simulator](simulator/README.md) contains fixed-point and floating-point economics, stateful lifecycle tests, historical replay and deterministic service-fault drills.
 
+The [local application guide](LOCAL-DEVELOPMENT.md) covers the Fastify API leader, three durable-log approvers, signed-before-broadcast sender, chain indexer, hedge worker and React ticket.
+
+The [indexer design](INDEXER-DESIGN.md) defines the chain-derived account/history schema, query surface, reorg behavior and current Ponder dependency gate.
+
+The [wallet and deposit design](WALLET-AND-DEPOSITS.md) defines the provider-neutral wallet boundary, signed cross-chain route intent, local route simulator and the production rule that only confirmed Base clearing state creates collateral.
+
+The [hedging and operations design](HEDGING-OPERATIONS.md) defines separate venue capital and API-wallet authority, finalized exposure targeting, retry/reconciliation rules, the private operations dashboard and Chainlink Data Streams credential boundary.
+
 Run the current local gate with `npm test`; run the fault report with `python3 -B simulator/fault_harness.py`.
 
 [The simplified design](SIMPLIFIED-DESIGN.md) supplies detailed API and recovery discussion. [The earlier system design](SYSTEM-DESIGN.md) retains financial background, with its superseded service layout clearly marked. The consolidated overview takes precedence where earlier documents differ.

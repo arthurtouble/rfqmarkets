@@ -1,6 +1,6 @@
 # RFQ Markets — consolidated architecture and status
 
-2026-09-08. Canonical overview. Supersedes conflicting topology/status statements in earlier documents. Detailed requirements remain in SIMPLIFIED-DESIGN.md, ADVERSARIAL-FLOW.md and ARCHITECTURE-REVIEW.md. No code, contracts or infrastructure have been implemented, deployed or audited in this workspace.
+2026-09-08. Canonical overview. Supersedes conflicting topology/status statements in earlier documents. Detailed requirements remain in SIMPLIFIED-DESIGN.md, ADVERSARIAL-FLOW.md and ARCHITECTURE-REVIEW.md. Contracts, models and the first local application slice are implemented and tested; nothing has been deployed or independently audited.
 
 ## Readiness
 
@@ -64,7 +64,7 @@ The oracle report bundle accompanies applicable settlement/keeper calls for on-c
 
 | Element | Baseline technology | Responsibility / authority |
 | --- | --- | --- |
-| Frontend | React, TypeScript; viem/wagmi proposed wallet stack | Quotes, user limits, signatures, positions, collateral and transaction state. Never trusted accounting. |
+| Frontend | React, TypeScript; injected EIP-1193 wallet through ethers | Quotes, generated user limits, exact typed signatures, positions, collateral and transaction state. Never trusted accounting. |
 | Public ingress | Managed edge candidate plus independent fallback | Static delivery, abuse limits and routing; cannot approve trades. Exact vendor configuration pending. |
 | API leader + warm standby | TypeScript, Fastify, WebSockets | Pricing, portfolio admission, reservation, approval collection, gas signing and broadcast in one application. |
 | API journal | SQLite baseline candidate for one writer; tested recovery | Pending intents, escaped approvals, reservations, sender nonces and replacements. No second customer balance ledger. |
@@ -72,7 +72,7 @@ The oracle report bundle accompanies applicable settlement/keeper calls for on-c
 | Clearing system | Solidity, stable upgradeable proxy; Foundry for tests | Authoritative collateral, positions, funding, settlement, margin, risk, replay and resolution rules. |
 | Oracle adapter | Chainlink Data Streams candidate | Contract verification and exact feed/schema/time/selection rules; independent reference feeds only supplement approval safety. |
 | Live chain observers | Independent RPC subscriptions plus reconciled reads | Fresh state for API, approvers, hedging and keepers; checkpointed disposable caches. |
-| User read model | Ponder + PostgreSQL | Sole chain-derived application read model, exposed through bounded HTTP queries. |
+| User read model | Ponder + local PGlite / production PostgreSQL | Sole chain-derived application read model, exposed through bounded HTTP queries. |
 | Hedge executor | TypeScript/venue adapter candidate + SQLite operational journal | Actual external orders, fills and reconciled hedge exposure; separate trade authority. |
 | Keepers | Independent lightweight services | Permissionless contract-defined liquidation and fallback execution; direct chain inputs. |
 | Gas reserve | Capped funding mechanism plus operations trigger | Automatically supplies allowlisted gas senders under independently enforced limits. |
@@ -125,7 +125,7 @@ Hedge failover separately requires venue credential revocation or otherwise veri
 
 ## Data, gas and availability
 
-Base is authoritative; Ponder is the one customer read model. Ponder's PostgreSQL stays private, near the service, with bounded public HTTP queries. [Ponder self-hosting](https://ponder.sh/docs/production/self-hosting). API intent/sender and hedge journals record different operational facts, not duplicated authoritative balances. Lost chain-derived data is rebuildable; unknown external or signed commitments require reconciliation before resuming risk.
+Base is authoritative; Ponder is the one customer read model. Local development can use Ponder's embedded PGlite, while production uses private PostgreSQL near the service with bounded public HTTP queries. [Ponder database documentation](https://ponder.sh/docs/database). API intent/sender and hedge journals record different operational facts, not duplicated authoritative balances. Lost chain-derived data is rebuildable; unknown external or signed commitments require reconciliation before resuming risk. The current Ponder release is not yet installed in the executable workspace because its audited transitive dependency set contains unresolved high-severity findings; see [INDEXER-DESIGN.md](INDEXER-DESIGN.md).
 
 Trading is sponsored by API gas wallets; ordinary automatic top-ups come from a separate allowlisted reserve under individual/global caps, maximum balances, refill rates and a finite allowance. API cannot raise those limits. Independent refill triggering has recovery gas. Treasury replenishment is periodic. UX-AND-INTENT.md specifies signed USDC deposit, lazy scoped-session certificates and relayed owner withdrawals, with direct calls as fallback; deployed-token and wallet compatibility must be tested.
 
@@ -161,8 +161,8 @@ The first complete candidate choices for these items now live in [ECONOMIC-SPECI
 | Economic execution | Prove production conservative pending bounds and calibrate spread/impact/expiry without subsidy loops. |
 | Resolution | Local partial liquidation, loss waterfall and batched pro-rata resolution pass; add multi-account fuzzing, live-oracle tests and recovery-after-payout cases. |
 | Independent exits | Verify primary/fallback feed availability, request/execute behavior and prolonged no-price handling. |
-| Recovery | Deterministic epoch and idempotent-hedge drills pass; implement real signer logs and prove process death, reorg, RPC disagreement and credential fencing. |
+| Recovery | Signer/API WALs, signed-before-broadcast sender recovery, API restart reservation reload, canonical index rebuild and idempotent hedge recovery run locally; prove process death at every broadcast boundary, automatic fee replacement, Base reorg/RPC disagreement, leader promotion and real venue credential fencing. |
 | Governance | UUPS authority and emergency restrictions exist and upgrade validation passes; deploy the timelock/multisigs and verify every selector and delay. |
-| UX and deployment | Benchmark session compatibility, providers, cost, tail latency and recovery objectives. |
+| UX and deployment | Local amount/Buy/Sell ticket, injected-wallet intent signing, exact API/approver quorum and sponsored local-chain settlement run; integrate Ponder and production oracle/RPC inputs, then benchmark providers, cost, tail latency and recovery objectives. |
 
-Current executable evidence is catalogued in [VALIDATION-REPORT.md](VALIDATION-REPORT.md). Next: implement full clearing/oracle logic and real local services; run Base Sepolia fault injection and realistic latency/cost measurements; obtain independent economic/security review and contract audits; stage bounded deployment only after passing gates. Required remaining tests include production pending bounds, correlated loops, compromised API/one signer, stale oracles, insolvency, reorgs, failover, gas grief and upgrades with open positions.
+Current executable evidence is catalogued in [VALIDATION-REPORT.md](VALIDATION-REPORT.md). Next: make API/approver payloads byte-for-byte compatible with the clearing contract, add the restart-safe intent/sender journal, connect the chain-derived read model, and run Base Sepolia fault injection and realistic latency/cost measurements. Independent economic/security review and contract audits precede any bounded deployment. Required remaining tests include production pending bounds, correlated loops, compromised API/one signer, stale oracles, insolvency, reorgs, failover, gas grief and upgrades with open positions.

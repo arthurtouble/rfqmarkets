@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "strict": true, "skipLibCheck": true, "noEmit": true,
+    "jsx": "react-jsx", "types": ["node", "vite/client"]
+  },
+  "include": ["packages/**/*.ts", "services/**/*.ts", "apps/**/*.ts", "apps/**/*.tsx"]
+}
+
