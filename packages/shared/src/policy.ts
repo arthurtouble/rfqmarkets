@@ -50,15 +50,15 @@ export function requiredPendingImpact(
   market: Market,
   delta: bigint,
 ): bigint {
-  if (pending.length > 12) throw new Error("prototype exhaustive pending bound exceeded");
+  let btcLow=settled.BTC,btcHigh=settled.BTC,ethLow=settled.ETH,ethHigh=settled.ETH;
+  for(const item of pending){
+    if(item.market==="BTC"){if(item.delta<0n)btcLow+=item.delta;else btcHigh+=item.delta;}
+    else {if(item.delta<0n)ethLow+=item.delta;else ethHigh+=item.delta;}
+  }
   let greatest: bigint | undefined;
-  for (let mask = 0; mask < 2 ** pending.length; mask++) {
-    const state = { ...settled };
-    for (let index = 0; index < pending.length; index++) {
-      if ((mask & (1 << index)) !== 0) state[pending[index].market] += pending[index].delta;
-    }
-    const cost = impactCost(state, market, delta);
-    if (greatest === undefined || cost > greatest) greatest = cost;
+  for(const btc of [btcLow,btcHigh])for(const eth of [ethLow,ethHigh]){
+    const cost=impactCost({BTC:btc,ETH:eth},market,delta);
+    if(greatest===undefined||cost>greatest)greatest=cost;
   }
   return greatest ?? impactCost(settled, market, delta);
 }

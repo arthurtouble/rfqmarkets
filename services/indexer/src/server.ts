@@ -25,7 +25,7 @@ export function buildIndexer(options:IndexerOptions){
   let syncing:Promise<void>|undefined;let timer:ReturnType<typeof setInterval>|undefined;let lastError:string|undefined;
   const reset=()=>db.exec("DELETE FROM blocks; DELETE FROM activity; DELETE FROM accounts");
   async function updateAccount(account:string,blockTag:number,txHash?:string){const [collateral,btc,eth]=await Promise.all([contract.collateralOf(account,{blockTag}),contract.positionOf(account,0,{blockTag}),contract.positionOf(account,1,{blockTag})]);db.prepare("INSERT INTO accounts VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(account) DO UPDATE SET collateral=excluded.collateral,btc_size=excluded.btc_size,btc_entry=excluded.btc_entry,eth_size=excluded.eth_size,eth_entry=excluded.eth_entry,indexed_block=excluded.indexed_block,indexed_tx=excluded.indexed_tx").run(account,collateral.toString(),btc.size.toString(),btc.entryPrice.toString(),eth.size.toString(),eth.entryPrice.toString(),blockTag,txHash??null);}
-  async function doSync(){
+  async function syncPass(){
     const head=await provider.getBlockNumber();let row=db.prepare("SELECT number,hash FROM blocks ORDER BY number DESC LIMIT 1").get() as {number:number;hash:string}|undefined;
     if(row){const canonical=await provider.getBlock(row.number);if(!canonical||canonical.hash!==row.hash){reset();row=undefined;}}
     const from=Math.max(options.startBlock??0,(row?.number??((options.startBlock??0)-1))+1);if(from>head)return;
@@ -35,6 +35,17 @@ export function buildIndexer(options:IndexerOptions){
       db.prepare("INSERT OR REPLACE INTO activity VALUES(?,?,?,?,?,?,?,?,?)").run(log.transactionHash,log.index,log.blockNumber,log.blockHash,block.timestamp,parsed.name,account,market,payload);if(account)affected.set(account,{tx:log.transactionHash,block:log.blockNumber});
     }
     for(const [account,event] of affected)await updateAccount(account,event.block,event.tx);
+  }
+  async function doSync(){
+    for(let attempt=0;attempt<3;attempt++){
+      await syncPass();
+      const row=db.prepare("SELECT number,hash FROM blocks ORDER BY number DESC LIMIT 1").get() as {number:number;hash:string}|undefined;
+      if(!row)return;
+      const canonical=await provider.getBlock(row.number);
+      if(canonical?.hash===row.hash)return;
+      reset();
+    }
+    throw new Error("chain changed during three consecutive index passes");
   }
   async function sync(){if(syncing)return syncing;syncing=doSync().then(()=>{lastError=undefined}).catch(error=>{lastError=String(error)}).finally(()=>{syncing=undefined});return syncing;}
   const limitFrom=(value:string|undefined,fallback=25)=>{const parsed=Number(value??fallback);return Number.isSafeInteger(parsed)?Math.min(100,Math.max(1,parsed)):fallback;};
