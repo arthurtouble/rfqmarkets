@@ -1,6 +1,6 @@
 # Local system readiness and simplification review
 
-Status date: 2026-09-08. The system is locally integrated for its principal happy path. It is suitable for product iteration, economic simulation and fault testing. It is not ready for real funds or a public testnet claim of production security.
+Status date: 2026-09-09. The system is locally integrated for its principal happy path. It is suitable for product iteration, economic simulation and fault testing. It is not ready for real funds or a public testnet claim of production security.
 
 ## What is real locally
 
@@ -27,7 +27,7 @@ The current five logical deployable roles are the minimum defensible set:
 
 There is no need for a coordinator, separate quoter, public relayer, second customer database or separate analytics backend. The API already performs coordination, quoting and sponsored submission. SQLite journals record only pending operational commitments and hedge orders. The chain remains the sole customer ledger.
 
-Code modules can be separated without creating more servers. The frontend was split into trade, public markets, shared types and formatting. The next maintainability pass should split the API and indexer files by route/domain and move the repeated clearing ABI and wire types into `packages/shared`. This preserves one process per role while reducing audit surface and drift.
+Code modules can be separated without creating more servers. The frontend is split into trade, public markets, shared types and formatting, and the API, approvers and indexer now consume one shared clearing ABI definition. The next maintainability pass should split the API and indexer files by route/domain. This preserves one process per role while reducing audit surface and drift.
 
 ## What is still simulated or gated
 
@@ -41,7 +41,7 @@ Code modules can be separated without creating more servers. The frontend was sp
 | Hedging | Deterministic local venue adapter | Hyperliquid testnet agent wallet/subaccount, real order/fill reconciliation, rate limits and fenced failover. |
 | Governance | Contract roles | Deployed multisigs, 72-hour timelock, selector review and recovery drill. |
 | Availability | Expected-epoch council transition and live fencing drill | Production 2-of-3 council/Safe, warm-standby reconciliation, independent RPCs and process/network fault injection. |
-| Contract shape | 23,889-byte IR build plus linked stateless risk library | Further production module split, linked-library verification and repeated storage/upgrade validation. |
+| Contract shape | 23,939-byte IR build plus linked stateless risk library | Further production module split, linked-library verification and repeated storage/upgrade validation. |
 | Assurance | Internal deterministic tests | Stateful fuzzing, economic stress calibration and independent contract/infrastructure audits. |
 
 ## Readiness verdict
@@ -52,7 +52,7 @@ The local product is end-to-end enough to validate the interaction model: a user
 
 ## Next implementation sequence
 
-1. Continue the module split beyond the linked risk library. Move repeated clearing ABI and remaining wire types into `packages/shared`; split API/indexer internals without adding deployable services.
+1. Continue the module split beyond the linked risk library; split API/indexer internals without adding deployable services.
 2. Add stateful Solidity fuzzing and extend the local reorg drill with process-kill/RPC-disagreement tests around settlement, sponsor recovery and leader promotion.
 3. Obtain Chainlink Data Streams development credentials and wire real reports through the existing adapter on Base Sepolia. Measure report acquisition and approval latency.
 4. Replace mock collateral and deposit routing on Base Sepolia, then validate injected, mobile and smart-contract wallets.

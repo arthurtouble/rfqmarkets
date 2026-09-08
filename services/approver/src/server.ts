@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { DatabaseSync } from "node:sqlite";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256 } from "ethers";
 import { z } from "zod";
+import { clearingApproverAbi } from "../../../packages/shared/src/abi.js";
 import { DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, recoverIntentSigner, type MakerApproval, type SigningDomain, type TradeIntent } from "../../../packages/shared/src/eip712.js";
 import { BASE, impactCost, type Exposure } from "../../../packages/shared/src/policy.js";
 
@@ -21,12 +22,7 @@ export interface ApproverOptions { privateKey:string; transportToken:string; dat
 export function buildApprover(options:ApproverOptions) {
   const app=Fastify({logger:false,bodyLimit:16_384}); const wallet=new Wallet(options.privateKey); const database=new DatabaseSync(options.databasePath);
   const provider=options.rpcUrl?new JsonRpcProvider(options.rpcUrl):undefined;
-  const clearing=provider&&options.expectedVerifyingContract?new Contract(options.expectedVerifyingContract,[
-    "function leaderEpoch() view returns(uint64)","function signerSetVersion() view returns(uint64)","function policyVersion() view returns(uint64)",
-    "function paused() view returns(bool)","function resolutionRequired() view returns(bool)","function isApprover(address) view returns(bool)",
-    "function sessions(address) view returns(address account,uint64 validUntil,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 usedNotional,uint128 maxFee)",
-    "function markets(uint256) view returns(int256 aggregateBase,int256 fundingIndex,uint64 fundingTime,uint64 lastPriceTime,uint256 lastBid,uint256 lastAsk,bool enabled)",
-  ],provider):undefined;
+  const clearing=provider&&options.expectedVerifyingContract?new Contract(options.expectedVerifyingContract,clearingApproverAbi,provider):undefined;
   database.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS approvals (digest TEXT PRIMARY KEY, epoch INTEGER NOT NULL, expiry_ms INTEGER NOT NULL, signature TEXT NOT NULL, created_ms INTEGER NOT NULL)");
   app.get("/health",async()=>({ok:true,signer:wallet.address}));
   app.post("/approve",async(request,reply)=>{

@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import { DatabaseSync } from "node:sqlite";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256, parseUnits, recoverAddress, toUtf8Bytes } from "ethers";
 import { z } from "zod";
+import { clearingApiAbi } from "../../../packages/shared/src/abi.js";
 import { approvalToWire, cancelToWire, cancelTypes, closeToWire, closeTypes, depositToWire, depositTypes, DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, intentToWire, intentTypes, recoverCancelSigner, recoverCloseSigner, recoverDepositSigner, recoverIntentSigner, recoverSessionGrantSigner, recoverWithdrawalSigner, sessionGrantToWire, sessionGrantTypes, withdrawalToWire, withdrawalTypes, type CancelIntent, type CloseIntent, type DepositIntent, type MakerApproval, type SessionGrant, type SigningDomain, type TradeIntent, type WithdrawalIntent } from "../../../packages/shared/src/eip712.js";
 import { BASE, constructQuote, quoteRequestSchema, type Exposure, type PriceSnapshot, type Quote } from "../../../packages/shared/src/policy.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
@@ -60,19 +61,7 @@ export function buildApi(options: ApiOptions = {}) {
   if(provider&&options.chain?.devFund)provider.pollingInterval=50;
   const sponsor=provider&&options.chain?new Wallet(options.chain.sponsorPrivateKey,provider):undefined;
   const sender=provider&&sponsor?new DurableSender(provider,sponsor,journal):undefined;
-  const clearing=options.chain&&provider?new Contract(options.chain.clearingAddress,[
-    "function executeTrade((address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,uint64 leaderEpoch,uint64 policyVersion,bool reduceOnly),(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion),bytes,bytes,bytes,bytes) payable",
-    "function collateralOf(address) view returns (int256)","function positionOf(address,uint8) view returns (int256 size,uint256 entryPrice,int256 lastFundingIndex)",
-    "function markets(uint256) view returns (int256 aggregateBase,int256 fundingIndex,uint64 fundingTime,uint64 lastPriceTime,uint256 lastBid,uint256 lastAsk,bool enabled)",
-    "function depositWithAuthorization(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)",
-    "function withdrawWithSignature(address,address,uint256,uint256,uint64,bytes)",
-    "function cancelNonceWithSignature(address,uint256,uint64,bytes)",
-    "function closePositionWithSignature(address,uint8,uint256,uint64,bytes,bytes) payable",
-    "function grantSessionWithSignature((address account,address session,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline),bytes)",
-    "function sessions(address) view returns(address account,uint64 validUntil,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 usedNotional,uint128 maxFee)",
-    "function leaderEpoch() view returns(uint64)","function signerSetVersion() view returns(uint64)","function policyVersion() view returns(uint64)",
-    "function paused() view returns(bool)","function resolutionRequired() view returns(bool)",
-  ],provider):undefined;
+  const clearing=options.chain&&provider?new Contract(options.chain.clearingAddress,clearingApiAbi,provider):undefined;
   const token=options.chain&&provider?new Contract(options.chain.tokenAddress,["function mint(address,uint256)"],provider):undefined;
   const domain:SigningDomain = {
     name:DOMAIN_NAME, version:DOMAIN_VERSION, chainId:options.chainId ?? 31_337n,
@@ -163,14 +152,25 @@ export function buildApi(options: ApiOptions = {}) {
       prune(); prices[parsed.data.market].observedAtMs=Date.now();
       let versions:ProtocolVersions;
       if(clearing&&provider){
-        const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));
-        const [block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=await Promise.all([
-          provider.getBlock(blockNumber),
-          clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),
+        // A local automining chain stops advancing while idle. Synchronize it before
+        // pinning the block so the next transaction cannot jump past the deadline.
+        if(options.chain?.devFund)await advanceLocalChainTime();
+        const readSnapshot=async()=>{const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));const values=await Promise.all([
+          provider.getBlock(blockNumber),clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),
           clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
           clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),
-        ]);
+        ]);return {blockNumber,values};};
+        let {blockNumber,values}=await readSnapshot();let [block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;
         if(!block||paused||resolutionRequired)throw new Error("market is paused");
+        // The production system uses an independent keeper. Locally, catch up an
+        // exposed nontraded market only when its mark would otherwise block risk checks.
+        const otherMarket=parsed.data.market==="BTC"?"ETH":"BTC",otherIndex=otherMarket==="BTC"?0:1,otherState=otherIndex===0?btc:eth;
+        if(options.chain?.devFund&&sender&&BigInt(otherState.aggregateBase)!==0n&&block.timestamp-Number(otherState.lastPriceTime)>8){
+          const snapshot=prices[otherMarket],report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[otherIndex,snapshot.bid,snapshot.ask,BigInt(block.timestamp),BigInt(block.timestamp+60)]]);
+          await sender.submit(`local-oracle:${otherMarket}:${blockNumber}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("refreshOracle",[report])});
+          ({blockNumber,values}=await readSnapshot());[block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;
+          if(!block||paused||resolutionRequired)throw new Error("market is paused");
+        }
         settled.BTC=BigInt(btc.aggregateBase)*(prices.BTC.bid+prices.BTC.ask)/2n/BASE;
         settled.ETH=BigInt(eth.aggregateBase)*(prices.ETH.bid+prices.ETH.ask)/2n/BASE;
         versions={leaderEpoch:BigInt(leaderEpoch),signerSetVersion:BigInt(signerSetVersion),policyVersion:BigInt(policyVersion),blockNumber,blockTimestamp:block.timestamp};

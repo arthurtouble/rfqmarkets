@@ -2,25 +2,13 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { DatabaseSync } from "node:sqlite";
 import { Contract, Interface, JsonRpcProvider, getAddress } from "ethers";
-
-const abi=[
-  "event Deposited(address indexed account,uint256 amount)","event Withdrawn(address indexed account,uint256 amount)",
-  "event TradeExecuted(bytes32 indexed intentHash,address indexed account,uint8 market,int256 baseDelta,uint256 price,uint256 fee)",
-  "event NonceCancelled(address indexed account,uint256 indexed nonce)","event PositionClosed(address indexed account,uint8 indexed market,int256 baseDelta,uint256 price)","event MakerWithdrawn(address indexed recipient,uint256 amount)",
-  "event SessionGranted(address indexed account,address indexed session,uint64 validUntil,uint128 maxCumulativeNotional)","event SessionRevoked(address indexed account,address indexed session)",
-  "event Liquidated(address indexed account,uint8 market,uint256 closedBase,uint256 penalty,uint256 keeperReward)",
-  "event DeficitAbsorbed(address indexed account,uint256 insuranceUsed,uint256 makerUsed,uint256 unresolved)",
-  "event EpochAdvanced(uint64 epoch)","event ResolutionStarted(uint64 triggerTime)","event ResolutionPriceReady(uint8 indexed market,uint256 price)","event ResolutionFinalized(uint256 claims,uint256 assets)",
-  "function collateralOf(address) view returns(int256)","function positionOf(address,uint8) view returns(int256 size,uint256 entryPrice,int256 lastFundingIndex)",
-  "function markets(uint256) view returns(int256 aggregateBase,int256 fundingIndex,uint64 fundingTime,uint64 lastPriceTime,uint256 lastBid,uint256 lastAsk,bool enabled)",
-  "function leaderEpoch() view returns(uint64)","function signerSetVersion() view returns(uint64)","function policyVersion() view returns(uint64)","function paused() view returns(bool)","function resolutionRequired() view returns(bool)",
-];
+import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
 
 export interface IndexerOptions{rpcUrl:string;clearingAddress:string;databasePath:string;startBlock?:number;confirmations?:number;pollMs?:number;corsOrigin?:string}
 
 export function buildIndexer(options:IndexerOptions){
   const app=Fastify({logger:false});app.register(cors,{origin:options.corsOrigin??["http://127.0.0.1:4173","http://127.0.0.1:4174"]});
-  const provider=new JsonRpcProvider(options.rpcUrl);const contract=new Contract(options.clearingAddress,abi,provider);const iface=new Interface(abi);const db=new DatabaseSync(options.databasePath);
+  const provider=new JsonRpcProvider(options.rpcUrl);const contract=new Contract(options.clearingAddress,clearingIndexerAbi,provider);const iface=new Interface(clearingIndexerAbi);const db=new DatabaseSync(options.databasePath);
   db.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS blocks(number INTEGER PRIMARY KEY,hash TEXT NOT NULL,parent_hash TEXT NOT NULL,timestamp INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS activity(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,block_number INTEGER NOT NULL,block_hash TEXT NOT NULL,timestamp INTEGER NOT NULL,kind TEXT NOT NULL,account TEXT,market INTEGER,payload TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index)); CREATE INDEX IF NOT EXISTS activity_account_block ON activity(account,block_number DESC,log_index DESC); CREATE TABLE IF NOT EXISTS accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,btc_size TEXT NOT NULL,btc_entry TEXT NOT NULL,eth_size TEXT NOT NULL,eth_entry TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT)");
   let syncing:Promise<void>|undefined;let timer:ReturnType<typeof setInterval>|undefined;let lastError:string|undefined;
   const reset=()=>db.exec("DELETE FROM blocks; DELETE FROM activity; DELETE FROM accounts");
