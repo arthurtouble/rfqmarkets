@@ -45,6 +45,7 @@ export function buildApi(options: ApiOptions = {}) {
   for(const row of journal?.prepare("SELECT quote_id, market, delta, expires_ms FROM commitments WHERE status IN ('reserved','approved','submitted') AND expires_ms > ?").all(Date.now())??[]){const item=row as {quote_id:string;market:"BTC"|"ETH";delta:string;expires_ms:number};pending.push({quoteId:item.quote_id,market:item.market,delta:BigInt(item.delta),expiresAtMs:item.expires_ms});}
   const quotes = new Map<string,Quote>();
   const quoteVersions = new Map<string,ProtocolVersions>();
+  const quoteBindings = new Map<string,{account:string;nonce:string}>();
   const deposits=new Map<string,DepositRoute>();
   for(const row of journal?.prepare("SELECT route_id, account, from_chain, from_token, source_amount, expected_usdc, minimum_usdc, deadline, nonce, status, destination_tx FROM deposit_routes WHERE status = 'deposited' OR (status IN ('quoted','authorized') AND deadline > ?)").all(Math.floor(Date.now()/1_000))??[]){
     const item=row as {route_id:string;account:string;from_chain:string;from_token:"USDC"|"USDT"|"ETH";source_amount:string;expected_usdc:string;minimum_usdc:string;deadline:number;nonce:string;status:"quoted"|"authorized"|"deposited";destination_tx:string|null};
@@ -80,7 +81,7 @@ export function buildApi(options: ApiOptions = {}) {
 
   function prune(now=Date.now()) {
     for (let index=pending.length-1; index>=0; index--) if (pending[index].expiresAtMs<=now) pending.splice(index,1);
-    for (const [id,quote] of quotes) if (quote.expiresAtMs+60_000<=now) { quotes.delete(id); quoteVersions.delete(id); }
+    for (const [id,quote] of quotes) if (quote.expiresAtMs+60_000<=now) { quotes.delete(id); quoteVersions.delete(id); quoteBindings.delete(id); }
   }
   function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string):TradeIntent {
     return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(versions.blockTimestamp+30),leaderEpoch:versions.leaderEpoch,policyVersion:versions.policyVersion,reduceOnly:false };
@@ -186,6 +187,9 @@ export function buildApi(options: ApiOptions = {}) {
     if(!quote||!versions||quote.expiresAtMs<=Date.now())return reply.code(409).send({error:"quote expired"});
     try {
       const intent=makeIntent(quote,versions,parsed.data.account,parsed.data.nonce);
+      const binding=quoteBindings.get(quote.quoteId);
+      if(binding&&(binding.account!==intent.account||binding.nonce!==parsed.data.nonce))return reply.code(409).send({error:"quote already prepared"});
+      quoteBindings.set(quote.quoteId,{account:intent.account,nonce:parsed.data.nonce});
       return {domain:{...domain,chainId:domain.chainId.toString()},types:intentTypes,intent:intentToWire(intent),intentHash:hashIntent(domain,intent)};
     } catch{return reply.code(400).send({error:"invalid account or nonce"});}
   });
@@ -195,6 +199,9 @@ export function buildApi(options: ApiOptions = {}) {
     const quote=quotes.get(parsed.data.quoteId);
     const versions=quoteVersions.get(parsed.data.quoteId);
     if(!quote||!versions||quote.expiresAtMs<=Date.now())return reply.code(409).send({error:"quote expired"});
+    const binding=quoteBindings.get(quote.quoteId);
+    let requestedAccount:string;try{requestedAccount=getAddress(parsed.data.account);}catch{return reply.code(400).send({error:"invalid account"});}
+    if(!binding||binding.account!==requestedAccount||binding.nonce!==parsed.data.nonce)return reply.code(409).send({error:"quote preparation mismatch"});
     let intent:TradeIntent;
     try { intent=makeIntent(quote,versions,parsed.data.account,parsed.data.nonce);const signer=recoverIntentSigner(domain,intent,parsed.data.userSignature);if(signer!==intent.account){if(!clearing)throw new Error();const session=await clearing.sessions(signer);if(getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<intent.maxFee)throw new Error();} }
     catch{return reply.code(401).send({error:"invalid user signature"});}

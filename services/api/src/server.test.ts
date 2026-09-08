@@ -90,6 +90,20 @@ test("an invalid wallet signature cannot reserve portfolio capacity",async()=>{
   assert.equal(second.expectedPrice,first.expectedPrice);
 });
 
+test("a prepared quote cannot be reused by another wallet or nonce",async()=>{
+  const quote=(await api.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"333"}})).json();
+  const nonce="123456";
+  const first=await api.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}});
+  assert.equal(first.statusCode,200,first.body);
+  const retry=await api.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}});
+  assert.equal(retry.statusCode,200,retry.body);
+  const attacker=Wallet.createRandom();
+  const otherWallet=await api.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:attacker.address,nonce}});
+  assert.equal(otherWallet.statusCode,409);
+  const otherNonce=await api.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce:"123457"}});
+  assert.equal(otherNonce.statusCode,409);
+});
+
 test("approvers reject an API that requests signatures for an unpinned chain domain",async()=>{
   const approvers=apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`}));
   const wrongDomain=buildApi({approvers,fetchImpl:routedFetch,chainId:1n,verifyingContract});

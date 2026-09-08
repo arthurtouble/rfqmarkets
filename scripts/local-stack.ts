@@ -26,5 +26,8 @@ const hedger=buildHedger({indexerUrl:"http://127.0.0.1:4300",databasePath:resolv
 await hedger.listen({host:"127.0.0.1",port:4400});servers.push(hedger);
 console.log("Local RFQ services ready: API :4100; private approvers :4201-4203; indexer :4300; hedge worker :4400");
 console.log("Run `npm run dev:web` for the trade UI and `npm run dev:admin` for private hedge operations");
-const shutdown = async () => { await Promise.all(servers.map(server=>server.close())); process.exit(0); };
+const shutdown = async () => {
+  const forced=setTimeout(()=>process.exit(1),5_000);forced.unref();
+  await Promise.allSettled(servers.map(server=>server.close()));clearTimeout(forced);process.exit(0);
+};
 process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown);
