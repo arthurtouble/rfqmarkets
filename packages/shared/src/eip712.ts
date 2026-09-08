@@ -42,6 +42,13 @@ export const cancelTypes:Record<string,Array<{name:string;type:string}>> = {
 export const closeTypes:Record<string,Array<{name:string;type:string}>> = {
   CloseIntent: [{name:"account",type:"address"},{name:"market",type:"uint8"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"}],
 };
+export const sessionGrantTypes:Record<string,Array<{name:string;type:string}>> = {
+  SessionGrant: [
+    {name:"account",type:"address"},{name:"session",type:"address"},{name:"marketMask",type:"uint8"},
+    {name:"maxTradeNotional",type:"uint128"},{name:"maxCumulativeNotional",type:"uint128"},{name:"maxFee",type:"uint128"},
+    {name:"validUntil",type:"uint64"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},
+  ],
+};
 
 export interface SigningDomain { name: string; version: string; chainId: bigint; verifyingContract: string }
 export interface TradeIntent {
@@ -56,6 +63,7 @@ export interface DepositIntent {account:string;routeId:string;sourceChainId:bigi
 export interface WithdrawalIntent {account:string;recipient:string;amount:bigint;nonce:bigint;deadline:bigint}
 export interface CancelIntent {account:string;nonce:bigint;deadline:bigint}
 export interface CloseIntent {account:string;market:number;nonce:bigint;deadline:bigint}
+export interface SessionGrant {account:string;session:string;marketMask:number;maxTradeNotional:bigint;maxCumulativeNotional:bigint;maxFee:bigint;validUntil:bigint;nonce:bigint;deadline:bigint}
 
 export const hashIntent = (domain: SigningDomain, intent: TradeIntent) => TypedDataEncoder.hash(domain, intentTypes, intent);
 export const hashApproval = (domain: SigningDomain, approval: MakerApproval) => TypedDataEncoder.hash(domain, approvalTypes, approval);
@@ -64,6 +72,7 @@ export const recoverDepositSigner = (domain:SigningDomain,intent:DepositIntent,s
 export const recoverWithdrawalSigner = (domain:SigningDomain,intent:WithdrawalIntent,signature:string)=>getAddress(verifyTypedData(domain,withdrawalTypes,intent,signature));
 export const recoverCancelSigner = (domain:SigningDomain,intent:CancelIntent,signature:string)=>getAddress(verifyTypedData(domain,cancelTypes,intent,signature));
 export const recoverCloseSigner = (domain:SigningDomain,intent:CloseIntent,signature:string)=>getAddress(verifyTypedData(domain,closeTypes,intent,signature));
+export const recoverSessionGrantSigner = (domain:SigningDomain,grant:SessionGrant,signature:string)=>getAddress(verifyTypedData(domain,sessionGrantTypes,grant,signature));
 
 export const intentToWire = (intent: TradeIntent) => ({
   ...intent, baseDelta:intent.baseDelta.toString(), limitPrice:intent.limitPrice.toString(), maxFee:intent.maxFee.toString(),
@@ -78,3 +87,4 @@ export const depositToWire=(intent:DepositIntent)=>({...intent,sourceChainId:int
 export const withdrawalToWire=(intent:WithdrawalIntent)=>({...intent,amount:intent.amount.toString(),nonce:intent.nonce.toString(),deadline:intent.deadline.toString()});
 export const cancelToWire=(intent:CancelIntent)=>({...intent,nonce:intent.nonce.toString(),deadline:intent.deadline.toString()});
 export const closeToWire=(intent:CloseIntent)=>({...intent,nonce:intent.nonce.toString(),deadline:intent.deadline.toString()});
+export const sessionGrantToWire=(grant:SessionGrant)=>({...grant,maxTradeNotional:grant.maxTradeNotional.toString(),maxCumulativeNotional:grant.maxCumulativeNotional.toString(),maxFee:grant.maxFee.toString(),validUntil:grant.validUntil.toString(),nonce:grant.nonce.toString(),deadline:grant.deadline.toString()});

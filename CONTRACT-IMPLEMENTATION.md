@@ -24,7 +24,9 @@ flowchart LR
     S --> E[Commit events and state]
 ```
 
-The transaction sender has no authority in this flow. The API gas wallet, another sponsor or the user can submit the identical signed payload. The user signature binds account, market, base delta, limit price, fee ceiling, nonce, deadline, reduce-only flag, leader epoch and policy version. The maker approval additionally binds exact execution price, impact charge, oracle report hash and signer-set version. Users may cancel any unused nonce directly or through an exact EIP-712 cancellation signed for a sponsor.
+The transaction sender has no authority in this flow. The API gas wallet, another sponsor or the user can submit the identical signed payload. The user signature binds account, market, base delta, limit price, fee ceiling, nonce, deadline, reduce-only flag, leader epoch and policy version. The maker approval additionally binds exact execution price, impact charge, oracle report hash and signer-set version. Each displayed quote captures those versions from one pinned chain block; a later governance change fences that quote and the next quote uses the new versions. Users may cancel any unused nonce directly or through an exact EIP-712 cancellation signed for a sponsor.
+
+An account may authorize a scoped trading session with one owner EIP-712 signature. The contract limits its markets, single-trade notional, cumulative notional, per-trade fee and expiry, capped at 30 days. A session key cannot withdraw, cancel, close through the emergency path, create another session or change authority. Revocation is currently a direct owner transaction; the local UI defaults to an eight-hour, $2,500-per-trade, $10,000-cumulative session.
 
 The contract recomputes impact from settled aggregate BTC/ETH inventory and requires the execution price to deliver at least that signed impact relative to the directional oracle bid/ask. This closes the gap where an approval could state a safe impact charge without placing it into the actual price.
 
@@ -54,6 +56,6 @@ Governance can withdraw maker capital only when the remaining backing stays abov
 
 ## Current engineering limits
 
-The compiler now uses the Solidity IR pipeline. Runtime bytecode is 22,487 bytes after adding the signed owner-action and controlled maker-withdrawal paths, compared with 23,963 bytes before the compiler change. This creates useful headroom but remains above the desired production review size. Resolution and risk calculation should still move behind carefully tested module/library boundaries before the session-key intent version is added.
+The compiler uses the Solidity IR pipeline. Runtime bytecode is 23,889 bytes after adding scoped sessions and moving portfolio impact/stress calculations into the stateless linked `RFQRiskMath` library. This is below the repository's 24,000-byte gate and the EVM limit, but only 111 bytes below the project gate. The library address is fixed in each implementation's bytecode and must be verified with the implementation. Further clearing features require a deliberate module split rather than more contract growth.
 
-The current implementation still needs scoped session certificates, an oracle path independent of the primary API for prolonged outages, a production timelock deployment and live Chainlink/Base validation. Its tests do not replace independent economic review, invariant fuzzing, formal accounting checks or external audits.
+The current implementation still needs an oracle path independent of the primary API for prolonged outages, a production timelock deployment and live Chainlink/Base validation. The browser prototype keeps the limited session secret in tab-scoped storage; production requires a strict content-security policy, no unreviewed third-party scripts and a provider/session design chosen after wallet testing. Its tests do not replace independent economic review, invariant fuzzing, formal accounting checks or external audits.

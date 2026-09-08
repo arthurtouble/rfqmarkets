@@ -6,6 +6,7 @@ const root = process.cwd();
 const files = [
   "contracts/RFQAuthorization.sol",
   "contracts/RFQClearing.sol",
+  "contracts/libraries/RFQRiskMath.sol",
   "contracts/interfaces/IPriceOracle.sol",
   "contracts/mocks/MockUSDC.sol",
   "contracts/mocks/MockPriceOracle.sol",
@@ -65,6 +66,7 @@ for (const [source, contracts] of Object.entries(output.contracts)) {
       abi: artifact.abi,
       bytecode: `0x${artifact.evm.bytecode.object}`,
       deployedBytecode: `0x${artifact.evm.deployedBytecode.object}`,
+      linkReferences: artifact.evm.bytecode.linkReferences,
     }, null, 2));
   }
 }

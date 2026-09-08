@@ -4,7 +4,7 @@ Status date: 2026-09-08. The system is locally integrated for its principal happ
 
 ## What is real locally
 
-- A UUPS clearing proxy holds mock USDC and enforces wallet signatures, two distinct current approvers, price limits, replay protection, margin, maker backing, exposure limits, funding, liquidation and insolvency accounting. It also supports signed sponsored withdrawals, nonce cancellation, paused-market conservative closes and capital-floor-limited maker withdrawals.
+- A UUPS clearing proxy holds mock USDC and enforces wallet or scoped-session signatures, two distinct current approvers, price limits, replay protection, margin, maker backing, exposure limits, funding, liquidation and insolvency accounting. It also supports signed sponsored withdrawals, nonce cancellation, paused-market conservative closes and capital-floor-limited maker withdrawals.
 - One API process quotes from a shared portfolio state, verifies user signatures, requests all three approvers concurrently, accepts two matching approvals and sponsors the settlement transaction.
 - The sponsor signs and journals raw transactions before broadcasting. Restarts reconcile inclusion and avoid allocating the same nonce concurrently.
 - Each approver has a distinct key and durable log. Each independently checks the chain, exact intent, signer set, policy version, oracle observation and inventory-impact floor before signing.
@@ -36,12 +36,12 @@ Code modules can be separated without creating more servers. The frontend was sp
 | Settlement chain | Hardhat OP-compatible node | Base Sepolia soak, then Base mainnet configuration and reorg/RPC drills. |
 | Collateral | Mock USDC and local EIP-3009 | Native Base USDC behavior and wallet compatibility tests. |
 | Oracle | Mock Chainlink verifier and deterministic prices | Paid Data Streams account, subscribed feed IDs, independent credential paths and Base verifier integration. |
-| Wallet UX | Raw injected EIP-1193 | Provider-neutral wallet kit, mobile and smart-wallet tests, scoped sessions if retained. |
+| Wallet UX | Injected EIP-1193 plus limited local session mode | Provider-neutral wallet kit, mobile/smart-wallet tests and hardened session-secret storage. |
 | Cross-chain deposit | Signed local route simulator | LI.FI or Socket quote/execution adapter, allowance safety, destination verification, refunds and failure recovery. |
 | Hedging | Deterministic local venue adapter | Hyperliquid testnet agent wallet/subaccount, real order/fill reconciliation, rate limits and fenced failover. |
 | Governance | Contract roles | Deployed multisigs, 72-hour timelock, selector review and recovery drill. |
 | Availability | Manual local leader | Signed epoch promotion, warm-standby reconciliation, independent RPCs and process/network fault injection. |
-| Contract shape | 22,487-byte IR-compiled prototype | Split reviewable libraries/modules before adding session features; repeat storage and upgrade validation. |
+| Contract shape | 23,889-byte IR build plus linked stateless risk library | Further production module split, linked-library verification and repeated storage/upgrade validation. |
 | Assurance | Internal deterministic tests | Stateful fuzzing, economic stress calibration and independent contract/infrastructure audits. |
 
 ## Readiness verdict
@@ -52,7 +52,7 @@ The local product is end-to-end enough to validate the interaction model: a user
 
 ## Next implementation sequence
 
-1. Split resolution/risk code into reviewable modules and add versioned scoped session authorization. Move the repeated clearing ABI and remaining wire types into `packages/shared`; split API/indexer internals without adding deployable services.
+1. Continue the module split beyond the linked risk library. Move repeated clearing ABI and remaining wire types into `packages/shared`; split API/indexer internals without adding deployable services.
 2. Add stateful Solidity fuzzing and kill/reorg/RPC disagreement tests around settlement, sponsor recovery and leader promotion.
 3. Obtain Chainlink Data Streams development credentials and wire real reports through the existing adapter on Base Sepolia. Measure report acquisition and approval latency.
 4. Replace mock collateral and deposit routing on Base Sepolia, then validate injected, mobile and smart-contract wallets.

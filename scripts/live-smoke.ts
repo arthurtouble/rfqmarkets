@@ -24,10 +24,14 @@ const cancelNonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString
 const cancellation=await post("/v1/nonce/cancel/prepare",{account:user.address,nonce:cancelNonce});
 const cancellationSignature=await user.signTypedData(cancellation.domain,cancellation.types,cancellation.intent);
 const cancelled=await post("/v1/nonce/cancel/execute",{intent:cancellation.intent,userSignature:cancellationSignature});assert.match(cancelled.transaction?.hash??"",/^0x[0-9a-fA-F]{64}$/);
+const session=Wallet.createRandom(),sessionNonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString();
+const grant=await post("/v1/session/prepare",{account:user.address,session:session.address,marketMask:3,maxTradeAmount:"2500",maxCumulativeAmount:"10000",maxFee:"5",durationSeconds:28_800,nonce:sessionNonce});
+const grantSignature=await user.signTypedData(grant.domain,grant.types,grant.grant);
+const activated=await post("/v1/session/execute",{grant:grant.grant,userSignature:grantSignature});assert.equal(activated.status,"active");
 const quote=await post("/v1/quote",{market:"BTC",side:"buy",amount:"1000"});
 const nonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString();
 const prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:user.address,nonce});
-const userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent);
+const userSignature=await session.signTypedData(prepared.domain,prepared.types,prepared.intent);
 const approved=await post("/v1/approve",{quoteId:quote.quoteId,account:user.address,nonce,userSignature});
 assert.equal(new Set(approved.approvals.map((item:{signer:string})=>item.signer.toLowerCase())).size,2);
 assert.match(approved.transaction?.hash??"",/^0x[0-9a-fA-F]{64}$/);
@@ -43,4 +47,4 @@ for(let attempt=0;attempt<20;attempt++){const response=await fetch(`${indexer}/v
 assert.equal(positions?.finality,"finalized");assert(positions.items.some(item=>item.account.toLowerCase()===user.address.toLowerCase()));
 const publicTradesResponse=await fetch(`${indexer}/v1/activity?kind=TradeExecuted&finalized=true&limit=100`);assert(publicTradesResponse.ok);const publicTrades=await publicTradesResponse.json();assert(publicTrades.items.every((item:{kind:string;finality:string})=>item.kind==="TradeExecuted"&&item.finality==="finalized"));
 const hedgeResponse=await fetch(`${hedger}/v1/tick`,{method:"POST"});assert(hedgeResponse.ok);
-console.log(`Live RFQ smoke passed: routed deposit, signed withdrawal and nonce cancellation; 2-of-3 sponsored fill ${approved.transaction.hash} at block ${approved.transaction.blockNumber}; public indexer and hedge reconciliation complete`);
+console.log(`Live RFQ smoke passed: deposit, withdrawal, cancellation and scoped session; 2-of-3 popup-free fill ${approved.transaction.hash} at block ${approved.transaction.blockNumber}; public indexer and hedge reconciliation complete`);

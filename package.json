@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "compile:contracts": "node scripts/compile-contracts.mjs",
-    "validate:upgrades": "npm run compile:contracts && openzeppelin-upgrades-core validate artifacts/build-info --contract RFQClearing",
+    "validate:upgrades": "npm run compile:contracts && openzeppelin-upgrades-core validate artifacts/build-info --contract RFQClearing --unsafeAllowLinkedLibraries",
     "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs",
     "test:python": "cd simulator && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -v",
     "test:services": "node --import tsx --test services/**/*.test.ts",

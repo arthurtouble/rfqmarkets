@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import { DatabaseSync } from "node:sqlite";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256, parseUnits, recoverAddress, toUtf8Bytes } from "ethers";
 import { z } from "zod";
-import { approvalToWire, cancelToWire, cancelTypes, closeToWire, closeTypes, depositToWire, depositTypes, DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, intentToWire, intentTypes, recoverCancelSigner, recoverCloseSigner, recoverDepositSigner, recoverIntentSigner, recoverWithdrawalSigner, withdrawalToWire, withdrawalTypes, type CancelIntent, type CloseIntent, type DepositIntent, type MakerApproval, type SigningDomain, type TradeIntent, type WithdrawalIntent } from "../../../packages/shared/src/eip712.js";
+import { approvalToWire, cancelToWire, cancelTypes, closeToWire, closeTypes, depositToWire, depositTypes, DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, intentToWire, intentTypes, recoverCancelSigner, recoverCloseSigner, recoverDepositSigner, recoverIntentSigner, recoverSessionGrantSigner, recoverWithdrawalSigner, sessionGrantToWire, sessionGrantTypes, withdrawalToWire, withdrawalTypes, type CancelIntent, type CloseIntent, type DepositIntent, type MakerApproval, type SessionGrant, type SigningDomain, type TradeIntent, type WithdrawalIntent } from "../../../packages/shared/src/eip712.js";
 import { BASE, constructQuote, quoteRequestSchema, type Exposure, type PriceSnapshot, type Quote } from "../../../packages/shared/src/policy.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import { DurableSender } from "./sender.js";
@@ -30,7 +30,10 @@ const withdrawalExecuteSchema=signedActionSchema.extend({intent:z.object({accoun
 const cancelExecuteSchema=signedActionSchema.extend({intent:z.object({account:z.string(),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
 const closePrepareSchema=actionBaseSchema.extend({market:z.enum(["BTC","ETH"])});
 const closeExecuteSchema=signedActionSchema.extend({intent:z.object({account:z.string(),market:z.number().int().min(0).max(1),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
+const sessionPrepareSchema=actionBaseSchema.extend({session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxCumulativeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxFee:z.string().regex(/^\d+(\.\d{1,6})?$/),durationSeconds:z.number().int().min(300).max(2_592_000)});
+const sessionExecuteSchema=signedActionSchema.extend({grant:z.object({account:z.string(),session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeNotional:z.string().regex(/^\d+$/),maxCumulativeNotional:z.string().regex(/^\d+$/),maxFee:z.string().regex(/^\d+$/),validUntil:z.string().regex(/^\d+$/),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
 type DepositRoute={intent:DepositIntent;fromToken:"USDC"|"USDT"|"ETH";amount:string;expectedUsdc:bigint;status:"quoted"|"authorized"|"deposited";destinationTxHash?:string;transaction?:{hash:string;blockNumber:number;collateral:string}};
+type ProtocolVersions={leaderEpoch:bigint;signerSetVersion:bigint;policyVersion:bigint;blockNumber:number};
 
 export function buildApi(options: ApiOptions = {}) {
   const app = Fastify({ logger:false, bodyLimit:16_384 });
@@ -41,6 +44,7 @@ export function buildApi(options: ApiOptions = {}) {
   journal?.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS commitments (quote_id TEXT PRIMARY KEY, market TEXT NOT NULL, delta TEXT NOT NULL, expires_ms INTEGER NOT NULL, status TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, approval_json TEXT, tx_hash TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS deposit_routes (route_id TEXT PRIMARY KEY, account TEXT NOT NULL, from_chain TEXT NOT NULL, from_token TEXT NOT NULL, source_amount TEXT NOT NULL, expected_usdc TEXT NOT NULL, minimum_usdc TEXT NOT NULL, deadline INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, destination_tx TEXT, updated_ms INTEGER NOT NULL)");
   for(const row of journal?.prepare("SELECT quote_id, market, delta, expires_ms FROM commitments WHERE status IN ('reserved','approved','submitted') AND expires_ms > ?").all(Date.now())??[]){const item=row as {quote_id:string;market:"BTC"|"ETH";delta:string;expires_ms:number};pending.push({quoteId:item.quote_id,market:item.market,delta:BigInt(item.delta),expiresAtMs:item.expires_ms});}
   const quotes = new Map<string,Quote>();
+  const quoteVersions = new Map<string,ProtocolVersions>();
   const deposits=new Map<string,DepositRoute>();
   for(const row of journal?.prepare("SELECT route_id, account, from_chain, from_token, source_amount, expected_usdc, minimum_usdc, deadline, nonce, status, destination_tx FROM deposit_routes WHERE status = 'deposited' OR (status IN ('quoted','authorized') AND deadline > ?)").all(Math.floor(Date.now()/1_000))??[]){
     const item=row as {route_id:string;account:string;from_chain:string;from_token:"USDC"|"USDT"|"ETH";source_amount:string;expected_usdc:string;minimum_usdc:string;deadline:number;nonce:string;status:"quoted"|"authorized"|"deposited";destination_tx:string|null};
@@ -62,6 +66,10 @@ export function buildApi(options: ApiOptions = {}) {
     "function withdrawWithSignature(address,address,uint256,uint256,uint64,bytes)",
     "function cancelNonceWithSignature(address,uint256,uint64,bytes)",
     "function closePositionWithSignature(address,uint8,uint256,uint64,bytes,bytes) payable",
+    "function grantSessionWithSignature((address account,address session,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline),bytes)",
+    "function sessions(address) view returns(address account,uint64 validUntil,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 usedNotional,uint128 maxFee)",
+    "function leaderEpoch() view returns(uint64)","function signerSetVersion() view returns(uint64)","function policyVersion() view returns(uint64)",
+    "function paused() view returns(bool)","function resolutionRequired() view returns(bool)",
   ],provider):undefined;
   const token=options.chain&&provider?new Contract(options.chain.tokenAddress,["function mint(address,uint256)"],provider):undefined;
   const domain:SigningDomain = {
@@ -71,10 +79,20 @@ export function buildApi(options: ApiOptions = {}) {
 
   function prune(now=Date.now()) {
     for (let index=pending.length-1; index>=0; index--) if (pending[index].expiresAtMs<=now) pending.splice(index,1);
-    for (const [id,quote] of quotes) if (quote.expiresAtMs+60_000<=now) quotes.delete(id);
+    for (const [id,quote] of quotes) if (quote.expiresAtMs+60_000<=now) { quotes.delete(id); quoteVersions.delete(id); }
   }
-  function makeIntent(quote:Quote,account:string,nonce:string):TradeIntent {
-    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(Math.floor(quote.expiresAtMs/1_000)),leaderEpoch:1n,policyVersion:1n,reduceOnly:false };
+  function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string):TradeIntent {
+    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(Math.floor(quote.expiresAtMs/1_000)),leaderEpoch:versions.leaderEpoch,policyVersion:versions.policyVersion,reduceOnly:false };
+  }
+  async function readProtocolVersions():Promise<ProtocolVersions>{
+    if(!clearing||!provider)return {leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n,blockNumber:0};
+    const blockNumber=await provider.getBlockNumber();
+    const [leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=await Promise.all([
+      clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
+      clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),
+    ]);
+    if(paused||resolutionRequired)throw new Error("market is paused");
+    return {leaderEpoch:BigInt(leaderEpoch),signerSetVersion:BigInt(signerSetVersion),policyVersion:BigInt(policyVersion),blockNumber};
   }
   async function advanceLocalChainTime(){
     if(!provider)throw new Error("local chain unavailable");
@@ -133,27 +151,38 @@ export function buildApi(options: ApiOptions = {}) {
   app.post("/v1/nonce/cancel/execute",async(request,reply)=>{const parsed=cancelExecuteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid signed cancellation"});try{const intent:CancelIntent={account:getAddress(parsed.data.intent.account),nonce:BigInt(parsed.data.intent.nonce),deadline:BigInt(parsed.data.intent.deadline)};if(Number(intent.deadline)*1_000<=Date.now()||recoverCancelSigner(domain,intent,parsed.data.userSignature)!==intent.account)return reply.code(401).send({error:"invalid cancellation signature"});if(!clearing||!sender||!options.chain)return reply.code(503).send({error:"chain unavailable"});const receipt=await sender.submit(`cancel:${intent.account}:${intent.nonce}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("cancelNonceWithSignature",[intent.account,intent.nonce,intent.deadline,parsed.data.userSignature])});return {status:"included",transaction:{hash:receipt.hash,blockNumber:receipt.blockNumber}};}catch(error){return reply.code(409).send({error:error instanceof Error?`cancellation failed: ${error.message}`:"cancellation failed"});}});
   app.post("/v1/close/prepare",async(request,reply)=>{const parsed=closePrepareSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid close request"});try{const intent:CloseIntent={account:getAddress(parsed.data.account),market:parsed.data.market==="BTC"?0:1,nonce:BigInt(parsed.data.nonce),deadline:BigInt(Math.floor(Date.now()/1_000)+120)};return {domain:{...domain,chainId:domain.chainId.toString()},types:closeTypes,intent:closeToWire(intent)};}catch{return reply.code(400).send({error:"invalid close request"});}});
   app.post("/v1/close/execute",async(request,reply)=>{const parsed=closeExecuteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid signed close"});try{const intent:CloseIntent={account:getAddress(parsed.data.intent.account),market:parsed.data.intent.market,nonce:BigInt(parsed.data.intent.nonce),deadline:BigInt(parsed.data.intent.deadline)};if(Number(intent.deadline)*1_000<=Date.now()||recoverCloseSigner(domain,intent,parsed.data.userSignature)!==intent.account)return reply.code(401).send({error:"invalid close signature"});if(!clearing||!sender||!provider||!options.chain)return reply.code(503).send({error:"chain unavailable"});const market=intent.market===0?"BTC":"ETH",timestamp=options.chain.devFund?await advanceLocalChainTime():Number(BigInt((await provider.send("eth_getBlockByNumber",["latest",false]) as {timestamp:string}).timestamp));const snapshot=prices[market];const report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[intent.market,snapshot.bid,snapshot.ask,BigInt(timestamp),BigInt(timestamp+60)]]);const receipt=await sender.submit(`close:${intent.account}:${intent.market}:${intent.nonce}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("closePositionWithSignature",[intent.account,intent.market,intent.nonce,intent.deadline,report,parsed.data.userSignature])});const position=await clearing.positionOf(intent.account,intent.market);return {status:"included",transaction:{hash:receipt.hash,blockNumber:receipt.blockNumber},position:{size:position.size.toString(),entryPrice:position.entryPrice.toString()}};}catch(error){return reply.code(409).send({error:error instanceof Error?`close failed: ${error.message}`:"close failed"});}});
+  app.post("/v1/session/prepare",async(request,reply)=>{const parsed=sessionPrepareSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid session request"});try{const account=getAddress(parsed.data.account),session=getAddress(parsed.data.session),now=Math.floor(Date.now()/1_000);const grant:SessionGrant={account,session,marketMask:parsed.data.marketMask,maxTradeNotional:parseUnits(parsed.data.maxTradeAmount,6),maxCumulativeNotional:parseUnits(parsed.data.maxCumulativeAmount,6),maxFee:parseUnits(parsed.data.maxFee,6),validUntil:BigInt(now+parsed.data.durationSeconds),nonce:BigInt(parsed.data.nonce),deadline:BigInt(now+120)};if(grant.maxTradeNotional<=0n||grant.maxTradeNotional>grant.maxCumulativeNotional)throw new Error();return {domain:{...domain,chainId:domain.chainId.toString()},types:sessionGrantTypes,grant:sessionGrantToWire(grant)};}catch{return reply.code(400).send({error:"invalid session request"});}});
+  app.post("/v1/session/execute",async(request,reply)=>{const parsed=sessionExecuteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid signed session"});try{const grant:SessionGrant={...parsed.data.grant,account:getAddress(parsed.data.grant.account),session:getAddress(parsed.data.grant.session),maxTradeNotional:BigInt(parsed.data.grant.maxTradeNotional),maxCumulativeNotional:BigInt(parsed.data.grant.maxCumulativeNotional),maxFee:BigInt(parsed.data.grant.maxFee),validUntil:BigInt(parsed.data.grant.validUntil),nonce:BigInt(parsed.data.grant.nonce),deadline:BigInt(parsed.data.grant.deadline)};if(Number(grant.deadline)*1_000<=Date.now()||recoverSessionGrantSigner(domain,grant,parsed.data.userSignature)!==grant.account)return reply.code(401).send({error:"invalid session signature"});if(!clearing||!sender||!options.chain)return reply.code(503).send({error:"chain unavailable"});const receipt=await sender.submit(`session:${grant.account}:${grant.session}:${grant.nonce}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("grantSessionWithSignature",[grant,parsed.data.userSignature])});return {status:"active",session:grant.session,validUntil:grant.validUntil.toString(),transaction:{hash:receipt.hash,blockNumber:receipt.blockNumber}};}catch(error){return reply.code(409).send({error:error instanceof Error?`session failed: ${error.message}`:"session failed"});}});
   app.post("/v1/quote",async(request,reply)=>{
     const parsed=quoteRequestSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"invalid quote request"});
     try {
       prune(); prices[parsed.data.market].observedAtMs=Date.now();
-      if(clearing){
-        const [btc,eth]=await Promise.all([clearing.markets(0),clearing.markets(1)]);
+      let versions:ProtocolVersions;
+      if(clearing&&provider){
+        const blockNumber=await provider.getBlockNumber();
+        const [btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=await Promise.all([
+          clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),
+          clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
+          clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),
+        ]);
+        if(paused||resolutionRequired)throw new Error("market is paused");
         settled.BTC=BigInt(btc.aggregateBase)*(prices.BTC.bid+prices.BTC.ask)/2n/BASE;
         settled.ETH=BigInt(eth.aggregateBase)*(prices.ETH.bid+prices.ETH.ask)/2n/BASE;
-      }
+        versions={leaderEpoch:BigInt(leaderEpoch),signerSetVersion:BigInt(signerSetVersion),policyVersion:BigInt(policyVersion),blockNumber};
+      } else versions=await readProtocolVersions();
       const quote=constructQuote(parsed.data,{...prices[parsed.data.market]},settled,pending,Date.now());
-      quotes.set(quote.quoteId,quote); return quoteToWire(quote);
+      quotes.set(quote.quoteId,quote);quoteVersions.set(quote.quoteId,versions); return quoteToWire(quote);
     } catch(error){return reply.code(409).send({error:error instanceof Error?error.message:"quote rejected"});}
   });
   app.post("/v1/prepare",async(request,reply)=>{
     const parsed=intentRequestSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"invalid intent request"});
     const quote=quotes.get(parsed.data.quoteId);
-    if(!quote||quote.expiresAtMs<=Date.now())return reply.code(409).send({error:"quote expired"});
+    const versions=quoteVersions.get(parsed.data.quoteId);
+    if(!quote||!versions||quote.expiresAtMs<=Date.now())return reply.code(409).send({error:"quote expired"});
     try {
-      const intent=makeIntent(quote,parsed.data.account,parsed.data.nonce);
+      const intent=makeIntent(quote,versions,parsed.data.account,parsed.data.nonce);
       return {domain:{...domain,chainId:domain.chainId.toString()},types:intentTypes,intent:intentToWire(intent),intentHash:hashIntent(domain,intent)};
     } catch{return reply.code(400).send({error:"invalid account or nonce"});}
   });
@@ -161,9 +190,10 @@ export function buildApi(options: ApiOptions = {}) {
     const parsed=approvalRequestSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"invalid signed intent"});
     const quote=quotes.get(parsed.data.quoteId);
-    if(!quote||quote.expiresAtMs<=Date.now())return reply.code(409).send({error:"quote expired"});
+    const versions=quoteVersions.get(parsed.data.quoteId);
+    if(!quote||!versions||quote.expiresAtMs<=Date.now())return reply.code(409).send({error:"quote expired"});
     let intent:TradeIntent;
-    try { intent=makeIntent(quote,parsed.data.account,parsed.data.nonce); if(recoverIntentSigner(domain,intent,parsed.data.userSignature)!==intent.account)throw new Error(); }
+    try { intent=makeIntent(quote,versions,parsed.data.account,parsed.data.nonce);const signer=recoverIntentSigner(domain,intent,parsed.data.userSignature);if(signer!==intent.account){if(!clearing)throw new Error();const session=await clearing.sessions(signer);if(getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<intent.maxFee)throw new Error();} }
     catch{return reply.code(401).send({error:"invalid user signature"});}
     prune();
     if(!pending.some(item=>item.quoteId===quote.quoteId))pending.push({quoteId:quote.quoteId,market:quote.market,delta:quote.delta,expiresAtMs:Number(intent.deadline)*1_000});
@@ -174,7 +204,7 @@ export function buildApi(options: ApiOptions = {}) {
       report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[intent.market,quote.snapshot.bid,quote.snapshot.ask,BigInt(timestamp),BigInt(timestamp+60)]]);
     }
     const oracleReportHash=report==="0x"?keccak256(toUtf8Bytes(JSON.stringify({market:quote.market,bid:quote.snapshot.bid.toString(),ask:quote.snapshot.ask.toString(),observedAtMs:quote.snapshot.observedAtMs}))):keccak256(report);
-    const approval:MakerApproval={intentHash,executionPrice:quote.expectedPrice,impactCharge:quote.impactCharge,fee:quote.fee,oracleReportHash,deadline:intent.deadline,leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n};
+    const approval:MakerApproval={intentHash,executionPrice:quote.expectedPrice,impactCharge:quote.impactCharge,fee:quote.fee,oracleReportHash,deadline:intent.deadline,leaderEpoch:versions.leaderEpoch,signerSetVersion:versions.signerSetVersion,policyVersion:versions.policyVersion};
     const digest=hashApproval(domain,approval);
     journal?.prepare("INSERT INTO commitments VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, NULL, ?) ON CONFLICT(quote_id) DO UPDATE SET status='reserved', intent_json=excluded.intent_json, user_signature=excluded.user_signature, approval_json=excluded.approval_json, updated_ms=excluded.updated_ms").run(quote.quoteId,quote.market,quote.delta.toString(),Number(intent.deadline)*1_000,JSON.stringify(intentToWire(intent)),parsed.data.userSignature,JSON.stringify(approvalToWire(approval)),Date.now());
     const approverPayload={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),quote:quoteToWire(quote),report,oracleAgeMs:Date.now()-quote.snapshot.observedAtMs};

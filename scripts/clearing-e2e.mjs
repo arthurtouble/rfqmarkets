@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { network } from "hardhat";
+import { linkArtifact } from "./link-artifact.mjs";
 
 const { ethers } = await network.create({ network: "hardhatOp", chainType: "op" });
 const [governance, emergency, approverA, approverB, approverC, maker, user, keeper, relayer] = await ethers.getSigners();
 const artifact = (name) => JSON.parse(fs.readFileSync(`artifacts/${name}.json`, "utf8"));
+const libraryAddresses = {};
 const deploy = async (name, args = [], signer = governance) => {
-  const item = artifact(name);
+  const item = linkArtifact(artifact(name), libraryAddresses);
   const instance = await new ethers.ContractFactory(item.abi, item.bytecode, signer).deploy(...args);
   await instance.waitForDeployment();
   return instance;
@@ -19,6 +21,8 @@ const reject = async (promise, label) => {
 
 const token = await deploy("MockUSDC");
 const oracle = await deploy("MockPriceOracle");
+const riskMath = await deploy("RFQRiskMath");
+libraryAddresses.RFQRiskMath = await riskMath.getAddress();
 
 // Chainlink v3 adapter verifies the configured feed and normalizes 8 decimals to USDC's 6.
 const streamsVerifier = await deploy("MockStreamsVerifier");
@@ -95,11 +99,16 @@ const cancelTypes = { CancelIntent: [
 const closeTypes = { CloseIntent: [
   {name:"account",type:"address"},{name:"market",type:"uint8"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},
 ] };
-async function order({ nonce, delta, executionPrice, limitPrice, impactCharge, report, reduceOnly = false }) {
+const sessionGrantTypes = { SessionGrant: [
+  {name:"account",type:"address"},{name:"session",type:"address"},{name:"marketMask",type:"uint8"},
+  {name:"maxTradeNotional",type:"uint128"},{name:"maxCumulativeNotional",type:"uint128"},{name:"maxFee",type:"uint128"},
+  {name:"validUntil",type:"uint64"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},
+] };
+async function order({ nonce, delta, executionPrice, limitPrice, impactCharge, report, reduceOnly = false, market = 0, account = user.address, signer = user }) {
   const block = await ethers.provider.getBlock("latest");
   const deadline = BigInt(block.timestamp + 60);
-  const intent = { account:user.address, market:0, baseDelta:delta, limitPrice, maxFee:10_000_000n, nonce, deadline, leaderEpoch:1n, policyVersion:1n, reduceOnly };
-  const userSignature = await user.signTypedData(domain, intentTypes, intent);
+  const intent = { account, market, baseDelta:delta, limitPrice, maxFee:10_000_000n, nonce, deadline, leaderEpoch:1n, policyVersion:1n, reduceOnly };
+  const userSignature = await signer.signTypedData(domain, intentTypes, intent);
   const intentHash = ethers.TypedDataEncoder.hash(domain, intentTypes, intent);
   const approval = { intentHash, executionPrice, impactCharge, fee:2_000_000n, oracleReportHash:ethers.keccak256(report), deadline, leaderEpoch:1n, signerSetVersion:1n, policyVersion:1n };
   return { intent, approval, userSignature, sigA:await approverA.signTypedData(domain,approvalTypes,approval), sigB:await approverB.signTypedData(domain,approvalTypes,approval) };
@@ -138,6 +147,23 @@ const opening = await order({ nonce:1n, delta:249_900_000_000_000_000n, executio
 await (await clearing.connect(relayer).executeTrade(opening.intent, opening.approval, initialOracle.report, opening.userSignature, opening.sigA, opening.sigB)).wait();
 assert.equal((await clearing.positionOf(user.address, 0)).size, 249_900_000_000_000_000n);
 assert.equal(await clearing.collateralOf(user.address), 6_898_000_000n);
+
+// A scoped key trades without another owner popup but cannot escape its on-chain limits.
+const session=ethers.Wallet.createRandom();const sessionBlock=await ethers.provider.getBlock("latest");
+const grant={account:relayer.address,session:session.address,marketMask:2,maxTradeNotional:1_100_000_000n,maxCumulativeNotional:1_100_000_000n,maxFee:3_000_000n,validUntil:BigInt(sessionBlock.timestamp+3600),nonce:94n,deadline:BigInt(sessionBlock.timestamp+60)};
+const grantSignature=await relayer.signTypedData(domain,sessionGrantTypes,grant);
+await (await clearing.connect(keeper).grantSessionWithSignature(grant,grantSignature)).wait();
+const ethReport=await observation(1,3_999_000_000n,4_001_000_000n);
+const sessionOrder=await order({nonce:95n,delta:250_000_000_000_000_000n,executionPrice:4_006_000_000n,limitPrice:4_010_000_000n,impactCharge:1_000_000n,report:ethReport.report,market:1,account:relayer.address,signer:session});
+await (await clearing.connect(keeper).executeTrade(sessionOrder.intent,sessionOrder.approval,ethReport.report,sessionOrder.userSignature,sessionOrder.sigA,sessionOrder.sigB)).wait();
+assert.equal((await clearing.sessions(session.address)).usedNotional,1_001_500_000n);
+const overCumulative=await order({nonce:96n,delta:250_000_000_000_000_000n,executionPrice:4_010_000_000n,limitPrice:4_020_000_000n,impactCharge:1_500_000n,report:ethReport.report,market:1,account:relayer.address,signer:session});
+await reject(clearing.connect(keeper).executeTrade(overCumulative.intent,overCumulative.approval,ethReport.report,overCumulative.userSignature,overCumulative.sigA,overCumulative.sigB),"session cumulative notional must be enforced");
+const sessionWithdrawal={account:relayer.address,recipient:session.address,amount:1n,nonce:97n,deadline:BigInt(sessionBlock.timestamp+60)};
+const sessionWithdrawalSignature=await session.signTypedData(domain,withdrawalTypes,sessionWithdrawal);
+await reject(clearing.connect(keeper).withdrawWithSignature(relayer.address,session.address,1n,97n,sessionWithdrawal.deadline,sessionWithdrawalSignature),"session must not authorize withdrawals");
+await (await clearing.connect(relayer).revokeSession(session.address)).wait();
+assert.equal((await clearing.sessions(session.address)).account,ethers.ZeroAddress);
 
 // Positive unrealized PnL cannot be withdrawn as opening collateral.
 const up = await observation(0, 119_990_000_000n, 120_010_000_000n);

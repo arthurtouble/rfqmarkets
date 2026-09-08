@@ -9,6 +9,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import "./interfaces/IPriceOracle.sol";
+import "./libraries/RFQRiskMath.sol";
 
 interface IERC3009 {
     function receiveWithAuthorization(
@@ -29,11 +30,9 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     uint256 internal constant MAX_WIDTH_BPS = 100;
     uint256 internal constant MAX_TRADE_NOTIONAL = 25_000e6;
     uint256 internal constant MAX_MARKET_NOTIONAL = 250_000e6;
-    uint256 internal constant K_BTC = 10_000;
-    uint256 internal constant K_ETH = 12_000;
-    uint256 internal constant K_CROSS = 6_573;
     uint256 internal constant LIQUIDATION_PENALTY_BPS = 50;
     uint256 internal constant KEEPER_REWARD_BPS = 10;
+    uint256 internal constant MAX_SESSION_DURATION = 30 days;
 
     bytes32 internal constant INTENT_TYPEHASH = keccak256(
         "TradeIntent(address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,uint64 leaderEpoch,uint64 policyVersion,bool reduceOnly)"
@@ -49,6 +48,9 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     );
     bytes32 internal constant CLOSE_TYPEHASH = keccak256(
         "CloseIntent(address account,uint8 market,uint256 nonce,uint64 deadline)"
+    );
+    bytes32 internal constant SESSION_GRANT_TYPEHASH = keccak256(
+        "SessionGrant(address account,address session,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline)"
     );
 
     struct Position { int256 size; uint256 entryPrice; int256 lastFundingIndex; }
@@ -70,6 +72,14 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         bytes32 intentHash; uint256 executionPrice; int256 impactCharge; uint256 fee;
         bytes32 oracleReportHash; uint64 deadline; uint64 leaderEpoch;
         uint64 signerSetVersion; uint64 policyVersion;
+    }
+    struct Session {
+        address account; uint64 validUntil; uint8 marketMask; uint128 maxTradeNotional;
+        uint128 maxCumulativeNotional; uint128 usedNotional; uint128 maxFee;
+    }
+    struct SessionGrant {
+        address account; address session; uint8 marketMask; uint128 maxTradeNotional;
+        uint128 maxCumulativeNotional; uint128 maxFee; uint64 validUntil; uint256 nonce; uint64 deadline;
     }
 
     IERC20 public usdc;
@@ -106,12 +116,15 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     bool public resolutionFinalized;
     mapping(address => uint256) public resolutionClaim;
     mapping(address => uint256) public resolutionPaid;
+    mapping(address => Session) public sessions;
 
     event Deposited(address indexed account, uint256 amount);
     event Withdrawn(address indexed account, uint256 amount);
     event NonceCancelled(address indexed account, uint256 indexed nonce);
     event PositionClosed(address indexed account, uint8 indexed market, int256 baseDelta, uint256 price);
     event MakerWithdrawn(address indexed recipient, uint256 amount);
+    event SessionGranted(address indexed account, address indexed session, uint64 validUntil, uint128 maxCumulativeNotional);
+    event SessionRevoked(address indexed account, address indexed session);
     event TradeExecuted(bytes32 indexed intentHash, address indexed account, uint8 market, int256 baseDelta, uint256 price, uint256 fee);
     event Liquidated(address indexed account, uint8 market, uint256 closedBase, uint256 penalty, uint256 keeperReward);
     event DeficitAbsorbed(address indexed account, uint256 insuranceUsed, uint256 makerUsed, uint256 unresolved);
@@ -243,15 +256,16 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         _recordObservation(observation);
         _updateFunding(intent.market, (observation.bid + observation.ask) / 2);
         _settleFunding(intent.account, intent.market);
-        bytes32 intentHash = _validateIntent(intent, approval, userSignature);
+        (bytes32 intentHash, address sessionSigner) = _validateIntent(intent, approval, userSignature);
         _validateApproval(approval, makerSignatureOne, makerSignatureTwo);
         if (approval.oracleReportHash != keccak256(report)) revert OracleInvalid();
-        _validateEconomics(intent, approval, observation);
-        _applyAuthorizedTrade(intent, approval, intentHash);
+        uint256 notional = _validateEconomics(intent, approval, observation, sessionSigner);
+        _applyAuthorizedTrade(intent, approval, intentHash, sessionSigner, notional);
     }
 
-    function _applyAuthorizedTrade(TradeIntent calldata intent, MakerApproval calldata approval, bytes32 intentHash) private {
+    function _applyAuthorizedTrade(TradeIntent calldata intent, MakerApproval calldata approval, bytes32 intentHash, address sessionSigner, uint256 notional) private {
         nonceUsed[intent.account][intent.nonce] = true;
+        if (sessionSigner != address(0)) sessions[sessionSigner].usedNotional += uint128(notional);
         _applyPosition(intent.account, intent.market, intent.baseDelta, approval.executionPrice);
         _chargeFee(intent.account, approval.fee);
         _enforceAggregateRisk();
@@ -259,10 +273,14 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         emit TradeExecuted(intentHash, intent.account, intent.market, intent.baseDelta, approval.executionPrice, approval.fee);
     }
 
-    function _validateEconomics(TradeIntent calldata intent, MakerApproval calldata approval, IPriceOracle.Observation memory observation) private view {
+    function _validateEconomics(TradeIntent calldata intent, MakerApproval calldata approval, IPriceOracle.Observation memory observation, address sessionSigner) private view returns (uint256 notional) {
         uint256 absoluteBase = _abs(intent.baseDelta);
-        uint256 notional = absoluteBase * approval.executionPrice / BASE;
+        notional = absoluteBase * approval.executionPrice / BASE;
         if (notional > MAX_TRADE_NOTIONAL) revert InvalidTrade();
+        if (sessionSigner != address(0)) {
+            Session storage session = sessions[sessionSigner];
+            if (notional > session.maxTradeNotional || uint256(session.usedNotional) + notional > session.maxCumulativeNotional) revert Unauthorized();
+        }
         if (intent.reduceOnly && !_reduces(_accounts[intent.account].positions[intent.market].size, intent.baseDelta)) revert InvalidTrade();
         int256 required = _impactCost(intent.market, intent.baseDelta, (observation.bid + observation.ask) / 2);
         if (approval.impactCharge < required) revert InvalidTrade();
@@ -324,10 +342,10 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         return value;
     }
     function initialMargin(address account) public view returns (uint256 total) {
-        for (uint8 i; i < 2; ++i) { uint256 n = _positionNotional(account, i); total += n * _marginRate(n, true) / 10_000; }
+        for (uint8 i; i < 2; ++i) { uint256 n = _positionNotional(account, i); uint256 rate = RFQRiskMath.marginRate(n, true); if (rate == type(uint256).max) revert Margin(); total += n * rate / 10_000; }
     }
     function maintenanceMargin(address account) public view returns (uint256 total) {
-        for (uint8 i; i < 2; ++i) { uint256 n = _positionNotional(account, i); total += n * _marginRate(n, false) / 10_000; }
+        for (uint8 i; i < 2; ++i) { uint256 n = _positionNotional(account, i); uint256 rate = RFQRiskMath.marginRate(n, false); if (rate == type(uint256).max) revert Margin(); total += n * rate / 10_000; }
     }
 
     function pause() external onlyEmergencyOrGovernance { paused = true; ++leaderEpoch; emit EpochAdvanced(leaderEpoch); }
@@ -345,10 +363,26 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         if (remaining < baseRiskCapitalTarget) revert Margin();
         int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE);
         int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE);
-        if (_stressLoss(btc, eth) > remaining / 4) revert Margin();
+        if (RFQRiskMath.stressLoss(btc, eth) > remaining / 4) revert Margin();
         makerBacking = remaining;
         usdc.safeTransfer(recipient, amount);
         emit MakerWithdrawn(recipient, amount);
+    }
+
+    function grantSessionWithSignature(SessionGrant calldata grant, bytes calldata signature) external {
+        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
+            SESSION_GRANT_TYPEHASH, grant.account, grant.session, grant.marketMask, grant.maxTradeNotional,
+            grant.maxCumulativeNotional, grant.maxFee, grant.validUntil, grant.nonce, grant.deadline
+        )));
+        _consumeUserAuthorization(grant.account, grant.nonce, grant.deadline, digest, signature);
+        _setSession(grant.account, grant.session, grant.marketMask, grant.maxTradeNotional, grant.maxCumulativeNotional, grant.maxFee, grant.validUntil);
+    }
+
+    function revokeSession(address session) external {
+        Session storage current = sessions[session];
+        if (current.account != msg.sender) revert Unauthorized();
+        delete sessions[session];
+        emit SessionRevoked(msg.sender, session);
     }
 
     function declareResolution() external onlyGovernance {
@@ -483,13 +517,17 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     function _requireFreshPositions(address account) private view {
         for (uint8 i; i < 2; ++i) if (_accounts[account].positions[i].size != 0 && block.timestamp - markets[i].lastPriceTime > MAX_ORACLE_AGE) revert Stale();
     }
-    function _validateIntent(TradeIntent calldata intent, MakerApproval calldata approval, bytes calldata signature) private view returns (bytes32 digest) {
+    function _validateIntent(TradeIntent calldata intent, MakerApproval calldata approval, bytes calldata signature) private view returns (bytes32 digest, address sessionSigner) {
         if (block.timestamp > intent.deadline || block.timestamp > approval.deadline || intent.leaderEpoch != leaderEpoch || approval.leaderEpoch != leaderEpoch || intent.policyVersion != policyVersion || approval.policyVersion != policyVersion || approval.signerSetVersion != signerSetVersion) revert Stale();
         if (nonceUsed[intent.account][intent.nonce] || intent.account == address(0) || approval.fee > intent.maxFee) revert Replay();
         if ((intent.baseDelta > 0 && approval.executionPrice > intent.limitPrice) || (intent.baseDelta < 0 && approval.executionPrice < intent.limitPrice)) revert InvalidTrade();
         bytes32 structHash = keccak256(abi.encode(INTENT_TYPEHASH, intent.account, intent.market, intent.baseDelta, intent.limitPrice, intent.maxFee, intent.nonce, intent.deadline, intent.leaderEpoch, intent.policyVersion, intent.reduceOnly));
         digest = _hashTypedDataV4(structHash);
-        if (approval.intentHash != digest || !SignatureChecker.isValidSignatureNowCalldata(intent.account, digest, signature)) revert InvalidSignature();
+        if (approval.intentHash != digest) revert InvalidSignature();
+        if (SignatureChecker.isValidSignatureNowCalldata(intent.account, digest, signature)) return (digest, address(0));
+        sessionSigner = ECDSA.recoverCalldata(digest, signature);
+        Session storage session = sessions[sessionSigner];
+        if (session.account != intent.account || block.timestamp > session.validUntil || intent.deadline > session.validUntil || session.marketMask & uint8(1 << intent.market) == 0 || approval.fee > session.maxFee) revert Unauthorized();
     }
     function _validateApproval(MakerApproval calldata approval, bytes calldata one, bytes calldata two) private view {
         bytes32 structHash = keccak256(abi.encode(APPROVAL_TYPEHASH, approval.intentHash, approval.executionPrice, approval.impactCharge, approval.fee, approval.oracleReportHash, approval.deadline, approval.leaderEpoch, approval.signerSetVersion, approval.policyVersion));
@@ -499,6 +537,14 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     function _setApprovers(address[3] calldata next) private {
         for (uint256 i; i < 3; ++i) isApprover[approvers[i]] = false;
         for (uint256 i; i < 3; ++i) { if (next[i] == address(0) || isApprover[next[i]]) revert InvalidSignature(); approvers[i] = next[i]; isApprover[next[i]] = true; }
+    }
+    function _setSession(
+        address account, address session, uint8 marketMask, uint128 maxTradeNotional,
+        uint128 maxCumulativeNotional, uint128 maxFee, uint64 validUntil
+    ) private {
+        if (account == address(0) || session == address(0) || session == account || marketMask == 0 || marketMask > 3 || maxTradeNotional == 0 || maxTradeNotional > maxCumulativeNotional || maxFee == 0 || validUntil <= block.timestamp || validUntil > block.timestamp + MAX_SESSION_DURATION) revert InvalidTrade();
+        sessions[session] = Session(account, validUntil, marketMask, maxTradeNotional, maxCumulativeNotional, 0, maxFee);
+        emit SessionGranted(account, session, validUntil, maxCumulativeNotional);
     }
     function _updateFunding(uint8 marketId, uint256 mark) private {
         Market storage market = markets[marketId]; uint256 elapsed = block.timestamp - market.fundingTime; if (elapsed == 0) return;
@@ -554,27 +600,17 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     function _positionNotional(address account, uint8 marketId) private view returns (uint256) {
         Position storage p = _accounts[account].positions[marketId]; return _abs(p.size) * markets[marketId].lastAsk / BASE;
     }
-    function _marginRate(uint256 notional, bool initial) private pure returns (uint256) {
-        if (notional <= 25_000e6) return initial ? 2_000 : 1_200; if (notional <= 50_000e6) return initial ? 2_500 : 1_500; if (notional <= 100_000e6) return initial ? 3_300 : 2_000; revert Margin();
-    }
     function _enforceAggregateRisk() private view {
         int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE); int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE);
-        if (_abs(btc) > MAX_MARKET_NOTIONAL || _abs(eth) > MAX_MARKET_NOTIONAL || _stressLoss(btc, eth) > makerBacking / 4) revert Margin();
+        if (_abs(btc) > MAX_MARKET_NOTIONAL || _abs(eth) > MAX_MARKET_NOTIONAL || RFQRiskMath.stressLoss(btc, eth) > makerBacking / 4) revert Margin();
     }
     function _impactCost(uint8 market, int256 baseDelta, uint256 mark) private view returns (int256) {
         int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE); int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE); int256 delta = baseDelta * int256(mark) / int256(BASE);
-        int256 beforeValue = _potential(btc, eth); if (market == 0) btc += delta; else eth += delta; return _potential(btc, eth) - beforeValue;
+        return RFQRiskMath.impactCost(btc, eth, market, delta);
     }
-    function _potential(int256 btc, int256 eth) private pure returns (int256) { return _floorDiv(int256(K_BTC) * btc * btc + 2 * int256(K_CROSS) * btc * eth + int256(K_ETH) * eth * eth, int256(2 * RATE * 1e6)); }
-    function _stressLoss(int256 btc, int256 eth) private pure returns (uint256) {
-        int256 best; best = _max(best, _scenario(btc,eth,20,25)); best = _max(best,_scenario(btc,eth,-20,-25)); best = _max(best,_scenario(btc,eth,15,-20)); best = _max(best,_scenario(btc,eth,-15,20)); best = _max(best,_scenario(btc,eth,40,50)); best = _max(best,_scenario(btc,eth,-40,-50)); return uint256(best);
-    }
-    function _scenario(int256 btc,int256 eth,int256 br,int256 er) private pure returns (int256) { return _floorDiv(btc*br,100)+_floorDiv(eth*er,100); }
     function _mid(uint8 market) private view returns (uint256) { Market storage m=markets[market]; if (m.aggregateBase != 0 && (m.lastPriceTime == 0 || block.timestamp-m.lastPriceTime>MAX_ORACLE_AGE)) revert Stale(); return (m.lastBid+m.lastAsk)/2; }
     function _reduces(int256 old, int256 delta) private pure returns (bool) { int256 next=old+delta; return old != 0 && _abs(next)<_abs(old) && (next==0 || (next>0)==(old>0)); }
     function _abs(int256 value) private pure returns (uint256) { return uint256(value < 0 ? -value : value); }
-    function _max(int256 a,int256 b) private pure returns(int256){return a>b?a:b;}
-    function _floorDiv(int256 n,int256 d) private pure returns(int256 q){q=n/d;if(n<0&&n%d!=0)--q;}
     function _median3(uint256 a,uint256 b,uint256 c) private pure returns(uint256){if(a>b)(a,b)=(b,a);if(b>c)(b,c)=(c,b);if(a>b)(a,b)=(b,a);return b;}
     function _resolutionEquity(address account) private view returns (int256 value) {
         Account storage a = _accounts[account]; value = a.collateral;

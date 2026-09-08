@@ -66,6 +66,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 .status i { display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: #71dfb2; }
 .depositToggle, .trade-wallet { width: 100%; margin-top: 18px; padding: 10px; border: 1px solid #30394e; border-radius: 11px; color: #aeb8cc; background: transparent; cursor: pointer; }
 .trade-wallet { margin-top: 10px; }
+.quickToggle.active { border-color: #315e50; color: #77e0b5; background: #10251f; }
 .depositPanel { margin-top: 12px; padding: 15px; border: 1px solid #283247; border-radius: 15px; background: #0b0e15; }
 .depositGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .depositPanel .depositGrid label { display: grid; gap: 6px; margin: 0 0 9px; color: #909bb1; font-size: 13px; }

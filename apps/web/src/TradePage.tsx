@@ -3,6 +3,7 @@ import { API, INDEXER, base, dollars } from "./config.js";
 import type { AccountState, Market, Quote, Side, WalletProvider } from "./types.js";
 
 const chains = { 1: "Ethereum", 42161: "Arbitrum", 10: "Optimism", 8453: "Base" } as const;
+type QuickSession={account:string;privateKey:string;validUntil:number};
 
 export function TradePage() {
   const [market, setMarket] = useState<Market>("BTC");
@@ -21,6 +22,7 @@ export function TradePage() {
   const [withdrawAmount, setWithdrawAmount] = useState("100");
   const [withdrawStatus, setWithdrawStatus] = useState("Withdrawal gas is sponsored");
   const [paused, setPaused] = useState(false);
+  const [quickSession,setQuickSession]=useState<QuickSession|null>(null);
 
   async function requestQuote(signal?: AbortSignal) {
     const response = await fetch(`${API}/v1/quote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ market, side, amount }), signal });
@@ -66,7 +68,9 @@ export function TradePage() {
       if ((error as { code?: number }).code !== 4902 || !config.rpcUrl) throw error;
       await ethereum.request({ method: "wallet_addEthereumChain", params: [{ chainId: config.chainId, chainName: config.chainName, rpcUrls: [config.rpcUrl], nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 } }] });
     }
-    setAccount(accounts[0]); void refreshAccount(accounts[0]);
+    setAccount(accounts[0]);
+    try{const stored=sessionStorage.getItem(`rfq-session:${accounts[0].toLowerCase()}`);const parsed=stored?JSON.parse(stored) as QuickSession:null;setQuickSession(parsed&&parsed.validUntil>Date.now()?parsed:null);}catch{setQuickSession(null);}
+    void refreshAccount(accounts[0]);
     return { provider: ethereum, account: accounts[0] };
   }
   async function signTyped(connected: { provider: WalletProvider; account: string }, prepared: { domain: Record<string, unknown>; types: Record<string, unknown>; intent: unknown }, primaryType: string) {
@@ -82,7 +86,9 @@ export function TradePage() {
       const connected = await wallet();
       const nonce = randomNonce();
       const prepared = await post("/v1/prepare", { quoteId: current.quoteId, account: connected.account, nonce });
-      const userSignature = await signTyped(connected, prepared, "TradeIntent");
+      let userSignature:string;
+      if(quickSession&&quickSession.account.toLowerCase()===connected.account.toLowerCase()&&quickSession.validUntil>Date.now()&&Number(amount)<=2_500){setStatus("Signing with quick session…");const {SigningKey,TypedDataEncoder}=await import("ethers");const digest=TypedDataEncoder.hash(prepared.domain,prepared.types,prepared.intent);userSignature=new SigningKey(quickSession.privateKey).sign(digest).serialized;}
+      else userSignature = await signTyped(connected, prepared, "TradeIntent");
       setStatus("Requesting two approvals…");
       const result = await post("/v1/approve", { quoteId: current.quoteId, account: connected.account, nonce, userSignature });
       setStatus(result.transaction ? `Executed in block ${result.transaction.blockNumber} · ${result.transaction.hash.slice(0, 10)}…` : "Approved by 2 of 3");
@@ -118,6 +124,14 @@ export function TradePage() {
       const result=await post("/v1/close/execute",{intent:prepared.intent,userSignature});setStatus(`Closed ${closeMarket} in block ${result.transaction.blockNumber}`);await refreshAccount(connected.account);
     }catch(error){setStatus(error instanceof Error?error.message:"Close unavailable");}
   }
+  async function enableQuickTrading(){
+    setStatus("Waiting for session approval…");
+    try{
+      const connected=await wallet();const {computeAddress}=await import("ethers");const privateKey=`0x${[...crypto.getRandomValues(new Uint8Array(32))].map(value=>value.toString(16).padStart(2,"0")).join("")}`,sessionAddress=computeAddress(privateKey);const prepared=await post("/v1/session/prepare",{account:connected.account,session:sessionAddress,marketMask:3,maxTradeAmount:"2500",maxCumulativeAmount:"10000",maxFee:"5",durationSeconds:28_800,nonce:randomNonce()});
+      const userSignature=await signTyped(connected,{...prepared,intent:prepared.grant},"SessionGrant");setStatus("Activating sponsored session…");
+      const result=await post("/v1/session/execute",{grant:prepared.grant,userSignature});const session={account:connected.account,privateKey,validUntil:Number(result.validUntil)*1_000};sessionStorage.setItem(`rfq-session:${connected.account.toLowerCase()}`,JSON.stringify(session));setQuickSession(session);setStatus("Quick trading active for 8 hours");
+    }catch(error){setStatus(error instanceof Error?error.message:"Session unavailable");}
+  }
 
   return <section className="trade-card">
     {accountState && <><div className="balance"><span>Collateral</span><strong>{dollars(accountState.collateral)}</strong><small>BTC {base(accountState.positions.BTC.size)} · ETH {base(accountState.positions.ETH.size)}</small><button className="balance-action" onClick={()=>setShowWithdraw(value=>!value)}>{showWithdraw?"Close":"Withdraw"}</button></div>{showWithdraw&&<section className="depositPanel accountPanel"><label>Withdraw to connected wallet</label><div className="amount compact"><input aria-label="Withdrawal amount" inputMode="decimal" value={withdrawAmount} onChange={event=>setWithdrawAmount(event.target.value)}/><b>USDC</b></div><button className="route" onClick={withdraw}>Sign & withdraw</button><p className="status">{withdrawStatus}</p></section>}{paused&&(BigInt(accountState.positions.BTC.size)!==0n||BigInt(accountState.positions.ETH.size)!==0n)&&<section className="emergencyPanel"><strong>Trading paused</strong><span>Close at the verified directional oracle price.</span><div>{BigInt(accountState.positions.BTC.size)!==0n&&<button onClick={()=>emergencyClose("BTC")}>Close BTC</button>}{BigInt(accountState.positions.ETH.size)!==0n&&<button onClick={()=>emergencyClose("ETH")}>Close ETH</button>}</div></section>}</>}
@@ -129,5 +143,6 @@ export function TradePage() {
     <button className="depositToggle" onClick={() => setShowDeposit(value => !value)}>{showDeposit ? "Hide deposit" : "Deposit from any chain"}</button>
     {showDeposit && <section className="depositPanel"><div className="depositGrid"><label>From<select value={sourceChain} onChange={event => setSourceChain(Number(event.target.value) as keyof typeof chains)}>{Object.entries(chains).map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Asset<select value={sourceToken} onChange={event => setSourceToken(event.target.value as "ETH" | "USDC" | "USDT")}><option>ETH</option><option>USDC</option><option>USDT</option></select></label></div><label>Deposit amount</label><div className="amount compact"><input aria-label="Deposit amount" inputMode="decimal" value={depositAmount} onChange={event => setDepositAmount(event.target.value)} /><b>{sourceToken}</b></div><button className="route" onClick={deposit}>Route & deposit</button><p className="status">{depositStatus}</p></section>}
     <button className="wallet trade-wallet" onClick={() => wallet().catch(error => setStatus(error instanceof Error ? error.message : "Wallet unavailable"))}>{account ? `${account.slice(0, 6)}…${account.slice(-4)}` : "Connect wallet"}</button>
+    {account&&<button className={`depositToggle quickToggle ${quickSession?"active":""}`} onClick={enableQuickTrading}>{quickSession?"Quick trading active · 8h limit":"Enable quick trading"}</button>}
   </section>;
 }

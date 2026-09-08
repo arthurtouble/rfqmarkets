@@ -24,6 +24,7 @@ export function buildApprover(options:ApproverOptions) {
   const clearing=provider&&options.expectedVerifyingContract?new Contract(options.expectedVerifyingContract,[
     "function leaderEpoch() view returns(uint64)","function signerSetVersion() view returns(uint64)","function policyVersion() view returns(uint64)",
     "function paused() view returns(bool)","function resolutionRequired() view returns(bool)","function isApprover(address) view returns(bool)",
+    "function sessions(address) view returns(address account,uint64 validUntil,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 usedNotional,uint128 maxFee)",
     "function markets(uint256) view returns(int256 aggregateBase,int256 fundingIndex,uint64 fundingTime,uint64 lastPriceTime,uint256 lastBid,uint256 lastAsk,bool enabled)",
   ],provider):undefined;
   database.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS approvals (digest TEXT PRIMARY KEY, epoch INTEGER NOT NULL, expiry_ms INTEGER NOT NULL, signature TEXT NOT NULL, created_ms INTEGER NOT NULL)");
@@ -37,15 +38,15 @@ export function buildApprover(options:ApproverOptions) {
       intent={...input.intent,account:getAddress(input.intent.account),baseDelta:BigInt(input.intent.baseDelta),limitPrice:BigInt(input.intent.limitPrice),maxFee:BigInt(input.intent.maxFee),nonce:BigInt(input.intent.nonce),deadline:BigInt(input.intent.deadline),leaderEpoch:BigInt(input.intent.leaderEpoch),policyVersion:BigInt(input.intent.policyVersion)};
       approval={...input.approval,executionPrice:BigInt(input.approval.executionPrice),impactCharge:BigInt(input.approval.impactCharge),fee:BigInt(input.approval.fee),deadline:BigInt(input.approval.deadline),leaderEpoch:BigInt(input.approval.leaderEpoch),signerSetVersion:BigInt(input.approval.signerSetVersion),policyVersion:BigInt(input.approval.policyVersion)};
     } catch{return reply.code(400).send({error:"invalid typed data"});}
-    const expectedEpoch=BigInt(options.expectedEpoch??1), expectedPolicy=BigInt(options.expectedPolicyVersion??1), expectedSet=BigInt(options.expectedSignerSetVersion??1);
     if(domain.name!==DOMAIN_NAME||domain.version!==DOMAIN_VERSION||(options.expectedChainId!==undefined&&domain.chainId!==options.expectedChainId)||(options.expectedVerifyingContract&&domain.verifyingContract!==getAddress(options.expectedVerifyingContract)))return reply.code(409).send({error:"domain mismatch"});
     const now=Date.now(),expiryMs=Number(intent.deadline)*1_000;
     if(expiryMs<=now||expiryMs>now+31_000)return reply.code(409).send({error:"invalid expiry"});
-    if(intent.leaderEpoch!==expectedEpoch||intent.policyVersion!==expectedPolicy||approval.leaderEpoch!==expectedEpoch||approval.policyVersion!==expectedPolicy||approval.signerSetVersion!==expectedSet)return reply.code(409).send({error:"version mismatch"});
+    if((options.expectedEpoch!==undefined&&(intent.leaderEpoch!==BigInt(options.expectedEpoch)||approval.leaderEpoch!==BigInt(options.expectedEpoch)))||(options.expectedPolicyVersion!==undefined&&(intent.policyVersion!==BigInt(options.expectedPolicyVersion)||approval.policyVersion!==BigInt(options.expectedPolicyVersion)))||(options.expectedSignerSetVersion!==undefined&&approval.signerSetVersion!==BigInt(options.expectedSignerSetVersion)))return reply.code(409).send({error:"version mismatch"});
     const market=input.quote.market==="BTC"?0:1;
     if(intent.market!==market||intent.baseDelta.toString()!==input.quote.baseDelta||intent.limitPrice.toString()!==input.quote.worstPrice||intent.maxFee.toString()!==input.quote.fee||approval.executionPrice.toString()!==input.quote.expectedPrice||approval.impactCharge.toString()!==input.quote.impactCharge||approval.fee.toString()!==input.quote.fee||approval.deadline!==intent.deadline)return reply.code(409).send({error:"inconsistent envelope"});
     const intentHash=hashIntent(domain,intent);
-    try { if(approval.intentHash!==intentHash||recoverIntentSigner(domain,intent,input.userSignature)!==intent.account)return reply.code(401).send({error:"invalid user signature"}); }
+    let intentSigner:string;
+    try { intentSigner=recoverIntentSigner(domain,intent,input.userSignature);if(approval.intentHash!==intentHash||(intentSigner!==intent.account&&!clearing))return reply.code(401).send({error:"invalid user signature"}); }
     catch{return reply.code(401).send({error:"invalid user signature"});}
     const notional=BigInt(input.quote.amount),maximumFee=(notional*2n+9_999n)/10_000n,observedAge=now-input.quote.observedAtMs;
     if(observedAge<0||observedAge>8_000||notional>25_000n*1_000_000n||approval.fee>maximumFee)return reply.code(409).send({error:"policy rejected"});
@@ -60,12 +61,13 @@ export function buildApprover(options:ApproverOptions) {
     if(clearing&&provider){
       try{
         const blockNumber=await provider.getBlockNumber();
-        const [block,epoch,setVersion,policy,paused,resolution,member,btc,eth]=await Promise.all([
+        const [block,epoch,setVersion,policy,paused,resolution,member,btc,eth,session]=await Promise.all([
           provider.getBlock(blockNumber),clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
           clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),clearing.isApprover(wallet.address,{blockTag:blockNumber}),
-          clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),
+          clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),intentSigner===intent.account?Promise.resolve(undefined):clearing.sessions(intentSigner,{blockTag:blockNumber}),
         ]);
         if(!block||BigInt(epoch)!==intent.leaderEpoch||BigInt(setVersion)!==approval.signerSetVersion||BigInt(policy)!==intent.policyVersion||paused||resolution||!member)return reply.code(409).send({error:"independent chain policy rejected"});
+        if(session&&(getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<approval.fee||BigInt(session.usedNotional)+notional>BigInt(session.maxCumulativeNotional)||notional>BigInt(session.maxTradeNotional)))return reply.code(409).send({error:"session policy rejected"});
         const selected=market===0?btc:eth;if(!selected.enabled)return reply.code(409).send({error:"market disabled"});
         const reportObservation=input.report==="0x"?undefined:AbiCoder.defaultAbiCoder().decode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],input.report)[0];
         if(reportObservation&&(reportObservation.observedAt>BigInt(block.timestamp)||BigInt(block.timestamp)>reportObservation.validUntil||BigInt(block.timestamp)-reportObservation.observedAt>8n))return reply.code(409).send({error:"chain-time oracle rejected"});

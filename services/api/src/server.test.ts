@@ -148,4 +148,10 @@ test("owner exit and cancellation actions are exactly signed before sponsorship"
   const close=(await api.inject({method:"POST",url:"/v1/close/prepare",payload:{account:user.address,market:"BTC",nonce:(BigInt(nonce)+2n).toString()}})).json();
   const closeSignature=await user.signTypedData(close.domain,close.types,close.intent);
   assert.equal((await api.inject({method:"POST",url:"/v1/close/execute",payload:{intent:close.intent,userSignature:closeSignature}})).statusCode,503);
+
+  const session=Wallet.createRandom();
+  const grantResponse=await api.inject({method:"POST",url:"/v1/session/prepare",payload:{account:user.address,session:session.address,marketMask:3,maxTradeAmount:"2500",maxCumulativeAmount:"10000",maxFee:"5",durationSeconds:28_800,nonce:(BigInt(nonce)+3n).toString()}});
+  assert.equal(grantResponse.statusCode,200,grantResponse.body);const grant=grantResponse.json();
+  const grantSignature=await user.signTypedData(grant.domain,grant.types,grant.grant);
+  assert.equal((await api.inject({method:"POST",url:"/v1/session/execute",payload:{grant:grant.grant,userSignature:grantSignature}})).statusCode,503);
 });
