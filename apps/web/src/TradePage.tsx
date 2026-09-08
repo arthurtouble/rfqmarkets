@@ -132,6 +132,26 @@ export function TradePage() {
       const result=await post("/v1/session/execute",{grant:prepared.grant,userSignature});const session={account:connected.account,privateKey,validUntil:Number(result.validUntil)*1_000};sessionStorage.setItem(`rfq-session:${connected.account.toLowerCase()}`,JSON.stringify(session));setQuickSession(session);setStatus("Quick trading active for 8 hours");
     }catch(error){setStatus(error instanceof Error?error.message:"Session unavailable");}
   }
+  async function disableQuickTrading(){
+    if(!quickSession)return;
+    setStatus("Waiting for session revocation…");
+    try{
+      const connected=await wallet();
+      const {computeAddress}=await import("ethers");const config=await fetch(`${API}/v1/config`).then(response=>response.json());
+      const sessionAddress=computeAddress(quickSession.privateKey),data=`0x1fa5d6a4${sessionAddress.slice(2).padStart(64,"0")}`;
+      const hash=await connected.provider.request({method:"eth_sendTransaction",params:[{from:connected.account,to:config.clearingAddress,data}]}) as string;
+      setStatus(`Revocation submitted · ${hash.slice(0,10)}…`);
+      for(let attempt=0;attempt<40;attempt++){
+        const receipt=await connected.provider.request({method:"eth_getTransactionReceipt",params:[hash]}) as {status?:string}|null;
+        if(receipt?.status==="0x0")throw new Error("Session revocation reverted");
+        if(receipt?.status==="0x1"){
+          sessionStorage.removeItem(`rfq-session:${connected.account.toLowerCase()}`);setQuickSession(null);setStatus("Quick trading revoked on-chain");return;
+        }
+        await new Promise(resolve=>setTimeout(resolve,250));
+      }
+      setStatus(`Revocation pending · ${hash.slice(0,10)}…`);
+    }catch(error){setStatus(error instanceof Error?error.message:"Session revocation unavailable");}
+  }
 
   return <section className="trade-card">
     {accountState && <><div className="balance"><span>Collateral</span><strong>{dollars(accountState.collateral)}</strong><small>BTC {base(accountState.positions.BTC.size)} · ETH {base(accountState.positions.ETH.size)}</small><button className="balance-action" onClick={()=>setShowWithdraw(value=>!value)}>{showWithdraw?"Close":"Withdraw"}</button></div>{showWithdraw&&<section className="depositPanel accountPanel"><label>Withdraw to connected wallet</label><div className="amount compact"><input aria-label="Withdrawal amount" inputMode="decimal" value={withdrawAmount} onChange={event=>setWithdrawAmount(event.target.value)}/><b>USDC</b></div><button className="route" onClick={withdraw}>Sign & withdraw</button><p className="status">{withdrawStatus}</p></section>}{paused&&(BigInt(accountState.positions.BTC.size)!==0n||BigInt(accountState.positions.ETH.size)!==0n)&&<section className="emergencyPanel"><strong>Trading paused</strong><span>Close at the verified directional oracle price.</span><div>{BigInt(accountState.positions.BTC.size)!==0n&&<button onClick={()=>emergencyClose("BTC")}>Close BTC</button>}{BigInt(accountState.positions.ETH.size)!==0n&&<button onClick={()=>emergencyClose("ETH")}>Close ETH</button>}</div></section>}</>}
@@ -143,6 +163,6 @@ export function TradePage() {
     <button className="depositToggle" onClick={() => setShowDeposit(value => !value)}>{showDeposit ? "Hide deposit" : "Deposit from any chain"}</button>
     {showDeposit && <section className="depositPanel"><div className="depositGrid"><label>From<select value={sourceChain} onChange={event => setSourceChain(Number(event.target.value) as keyof typeof chains)}>{Object.entries(chains).map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Asset<select value={sourceToken} onChange={event => setSourceToken(event.target.value as "ETH" | "USDC" | "USDT")}><option>ETH</option><option>USDC</option><option>USDT</option></select></label></div><label>Deposit amount</label><div className="amount compact"><input aria-label="Deposit amount" inputMode="decimal" value={depositAmount} onChange={event => setDepositAmount(event.target.value)} /><b>{sourceToken}</b></div><button className="route" onClick={deposit}>Route & deposit</button><p className="status">{depositStatus}</p></section>}
     <button className="wallet trade-wallet" onClick={() => wallet().catch(error => setStatus(error instanceof Error ? error.message : "Wallet unavailable"))}>{account ? `${account.slice(0, 6)}…${account.slice(-4)}` : "Connect wallet"}</button>
-    {account&&<button className={`depositToggle quickToggle ${quickSession?"active":""}`} onClick={enableQuickTrading}>{quickSession?"Quick trading active · 8h limit":"Enable quick trading"}</button>}
+    {account&&<button className={`depositToggle quickToggle ${quickSession?"active":""}`} onClick={quickSession?disableQuickTrading:enableQuickTrading}>{quickSession?"Revoke quick trading":"Enable quick trading"}</button>}
   </section>;
 }
