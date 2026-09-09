@@ -40,7 +40,7 @@ Local endpoints:
 
 ## Chainlink Data Streams
 
-Data Streams is the intended primary execution oracle. It is pull-based, but authenticated reports are not freely accessible. Chainlink currently requires a self-service account, paid feed subscriptions, feed IDs and HMAC credentials. The public Discovery endpoint can list public streams without authentication; fetching reports requires the API key, timestamp and HMAC-SHA256 signature.
+Data Streams is the intended primary execution oracle. It is pull-based, but authenticated reports are not freely accessible. Chainlink currently requires a self-service account, paid feed subscriptions, feed IDs and HMAC credentials. The public Discovery endpoint can list public streams without authentication. The exact-pinned official TypeScript SDK now handles authenticated REST acquisition, retries and v3 decoding behind the API's `OracleSource` boundary.
 
 Keep the Data Streams secret out of the frontend. The API fetches the report needed for settlement and passes the unmodified signed blob into the clearing call. The deployed Chainlink adapter verifies the report through the configured VerifierProxy and pins feed IDs and decimals. Approvers independently validate the blob, entitlement-independent report fields, freshness, spread and selection policy; for infrastructure isolation they should use separately scoped credentials and separate active-active connections where the subscription permits it.
 

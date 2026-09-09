@@ -35,7 +35,7 @@ Code modules can be separated without creating more servers. The frontend is spl
 | --- | --- | --- |
 | Settlement chain | Hardhat OP-compatible node | Base Sepolia soak, then Base mainnet configuration and reorg/RPC drills. |
 | Collateral | Mock USDC and local EIP-3009 | Native Base USDC behavior and wallet compatibility tests. |
-| Oracle | Mock Chainlink verifier and deterministic prices | Paid Data Streams account, subscribed feed IDs, independent credential paths and Base verifier integration. |
+| Oracle | Mock verifier locally; official SDK acquisition and v3 decoding boundary implemented | Paid Data Streams account, subscribed feed IDs, independent credential paths and Base verifier integration. |
 | Wallet UX | Injected EIP-1193 plus limited local session mode | Provider-neutral wallet kit, mobile/smart-wallet tests and hardened session-secret storage. |
 | Cross-chain deposit | Signed local route simulator | LI.FI or Socket quote/execution adapter, allowance safety, destination verification, refunds and failure recovery. |
 | Hedging | Deterministic local venue adapter | Hyperliquid testnet agent wallet/subaccount, real order/fill reconciliation, rate limits and fenced failover. |

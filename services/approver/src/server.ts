@@ -5,6 +5,7 @@ import { z } from "zod";
 import { clearingApproverAbi } from "../../../packages/shared/src/abi.js";
 import { DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, recoverIntentSigner, type MakerApproval, type SigningDomain, type TradeIntent } from "../../../packages/shared/src/eip712.js";
 import { BASE, impactCost, type Exposure } from "../../../packages/shared/src/policy.js";
+import { decodeStreamsV3Envelope } from "../../../packages/shared/src/streams.js";
 
 const unsigned=z.string().regex(/^\d+$/); const signed=z.string().regex(/^-?\d+$/); const hex32=z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const requestSchema=z.object({
@@ -17,7 +18,7 @@ const requestSchema=z.object({
   oracleAgeMs:z.number().nonnegative(),
 });
 
-export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; maxFutureSeconds?:number }
+export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; maxFutureSeconds?:number; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]} }
 
 export function buildApprover(options:ApproverOptions) {
   const app=Fastify({logger:false,bodyLimit:16_384}); const wallet=new Wallet(options.privateKey); const database=new DatabaseSync(options.databasePath);
@@ -47,10 +48,13 @@ export function buildApprover(options:ApproverOptions) {
     catch{return reply.code(401).send({error:"invalid user signature"});}
     const notional=BigInt(input.quote.amount),maximumFee=(notional*2n+9_999n)/10_000n,observedAge=now-input.quote.observedAtMs;
     if(observedAge<0||observedAge>8_000||notional>25_000n*1_000_000n||approval.fee>maximumFee)return reply.code(409).send({error:"policy rejected"});
+    let reportObservation:{market:bigint;bid:bigint;ask:bigint;observedAt:bigint;validUntil:bigint}|undefined;
     if(input.report!=="0x"){
       try {
         if(keccak256(input.report)!==approval.oracleReportHash)return reply.code(409).send({error:"oracle hash mismatch"});
-        const [observation]=AbiCoder.defaultAbiCoder().decode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],input.report);
+        if(options.dataStreams){const observation=decodeStreamsV3Envelope(input.report,options.dataStreams.feedIds[market],options.dataStreams.feedDecimals[market]);reportObservation={market:BigInt(market),bid:observation.bid,ask:observation.ask,observedAt:BigInt(observation.observedAt),validUntil:BigInt(observation.validUntil)};}
+        else [reportObservation]=AbiCoder.defaultAbiCoder().decode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],input.report);
+        const observation=reportObservation;if(!observation)throw new Error("missing oracle observation");
         const nowSeconds=BigInt(Math.floor(now/1_000));
         if(observation.market!==BigInt(market)||observation.bid!==BigInt(input.quote.bid)||observation.ask!==BigInt(input.quote.ask)||observation.bid<=0n||observation.ask<observation.bid||observation.observedAt>nowSeconds+BigInt(options.maxFutureSeconds??5)||nowSeconds>observation.validUntil||(observation.observedAt<=nowSeconds&&nowSeconds-observation.observedAt>8n))return reply.code(409).send({error:"oracle report rejected"});
       } catch{return reply.code(409).send({error:"oracle report rejected"});}
@@ -68,7 +72,6 @@ export function buildApprover(options:ApproverOptions) {
         if(!block||BigInt(epoch)!==intent.leaderEpoch||BigInt(setVersion)!==approval.signerSetVersion||BigInt(policy)!==intent.policyVersion||paused||resolution||!member)return reply.code(409).send({error:"independent chain policy rejected"});
         if(session&&(getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<approval.fee||BigInt(session.usedNotional)+notional>BigInt(session.maxCumulativeNotional)||notional>BigInt(session.maxTradeNotional)))return reply.code(409).send({error:"session policy rejected"});
         const selected=market===0?btc:eth;if(!selected.enabled)return reply.code(409).send({error:"market disabled"});
-        const reportObservation=input.report==="0x"?undefined:AbiCoder.defaultAbiCoder().decode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],input.report)[0];
         if(reportObservation&&(reportObservation.observedAt>BigInt(block.timestamp)||BigInt(block.timestamp)>reportObservation.validUntil||BigInt(block.timestamp)-reportObservation.observedAt>8n))return reply.code(409).send({error:"chain-time oracle rejected"});
         const mark=(BigInt(input.quote.bid)+BigInt(input.quote.ask))/2n;
         const marketNotional=(state:typeof btc,fallback:bigint)=>BigInt(state.aggregateBase)*(BigInt(state.lastBid)+BigInt(state.lastAsk)===0n?fallback:(BigInt(state.lastBid)+BigInt(state.lastAsk))/2n)/BASE;
