@@ -10,7 +10,7 @@ import { decodeStreamsV3Envelope } from "../../../packages/shared/src/streams.js
 const unsigned=z.string().regex(/^\d+$/); const signed=z.string().regex(/^-?\d+$/); const hex32=z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const requestSchema=z.object({
   domain:z.object({name:z.string(),version:z.string(),chainId:unsigned,verifyingContract:z.string()}),
-  intent:z.object({account:z.string(),market:z.number().int().min(0).max(1),baseDelta:signed,limitPrice:unsigned,maxFee:unsigned,nonce:unsigned,deadline:unsigned,leaderEpoch:unsigned,policyVersion:unsigned,reduceOnly:z.boolean()}),
+  intent:z.object({account:z.string(),market:z.number().int().min(0).max(1),baseDelta:signed,limitPrice:unsigned,maxFee:unsigned,nonce:unsigned,deadline:unsigned,reduceOnly:z.boolean()}),
   userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/),
   approval:z.object({intentHash:hex32,executionPrice:unsigned,impactCharge:signed,fee:unsigned,oracleReportHash:hex32,deadline:unsigned,leaderEpoch:unsigned,signerSetVersion:unsigned,policyVersion:unsigned}),
   quote:z.object({quoteId:z.string().uuid(),market:z.enum(["BTC","ETH"]),side:z.enum(["buy","sell"]),amount:unsigned,baseDelta:signed,expectedPrice:unsigned,worstPrice:unsigned,fee:unsigned,impactCharge:signed,expiresAtMs:z.number().int(),observedAtMs:z.number().int(),bid:unsigned,ask:unsigned}),
@@ -33,15 +33,16 @@ export function buildApprover(options:ApproverOptions) {
     let domain:SigningDomain,intent:TradeIntent,approval:MakerApproval;
     try {
       domain={...input.domain,chainId:BigInt(input.domain.chainId),verifyingContract:getAddress(input.domain.verifyingContract)};
-      intent={...input.intent,account:getAddress(input.intent.account),baseDelta:BigInt(input.intent.baseDelta),limitPrice:BigInt(input.intent.limitPrice),maxFee:BigInt(input.intent.maxFee),nonce:BigInt(input.intent.nonce),deadline:BigInt(input.intent.deadline),leaderEpoch:BigInt(input.intent.leaderEpoch),policyVersion:BigInt(input.intent.policyVersion)};
+      intent={...input.intent,account:getAddress(input.intent.account),baseDelta:BigInt(input.intent.baseDelta),limitPrice:BigInt(input.intent.limitPrice),maxFee:BigInt(input.intent.maxFee),nonce:BigInt(input.intent.nonce),deadline:BigInt(input.intent.deadline)};
       approval={...input.approval,executionPrice:BigInt(input.approval.executionPrice),impactCharge:BigInt(input.approval.impactCharge),fee:BigInt(input.approval.fee),deadline:BigInt(input.approval.deadline),leaderEpoch:BigInt(input.approval.leaderEpoch),signerSetVersion:BigInt(input.approval.signerSetVersion),policyVersion:BigInt(input.approval.policyVersion)};
     } catch{return reply.code(400).send({error:"invalid typed data"});}
     if(domain.name!==DOMAIN_NAME||domain.version!==DOMAIN_VERSION||(options.expectedChainId!==undefined&&domain.chainId!==options.expectedChainId)||(options.expectedVerifyingContract&&domain.verifyingContract!==getAddress(options.expectedVerifyingContract)))return reply.code(409).send({error:"domain mismatch"});
-    const now=Date.now(),expiryMs=Number(intent.deadline)*1_000;
-    if(expiryMs<=now||expiryMs>now+(31+(options.maxFutureSeconds??5))*1_000)return reply.code(409).send({error:"invalid expiry"});
-    if((options.expectedEpoch!==undefined&&(intent.leaderEpoch!==BigInt(options.expectedEpoch)||approval.leaderEpoch!==BigInt(options.expectedEpoch)))||(options.expectedPolicyVersion!==undefined&&(intent.policyVersion!==BigInt(options.expectedPolicyVersion)||approval.policyVersion!==BigInt(options.expectedPolicyVersion)))||(options.expectedSignerSetVersion!==undefined&&approval.signerSetVersion!==BigInt(options.expectedSignerSetVersion)))return reply.code(409).send({error:"version mismatch"});
+    const now=Date.now(),expiryMs=Number(approval.deadline)*1_000;
+    if(Number(intent.deadline)*1_000<=now||expiryMs<=now||expiryMs>now+(31+(options.maxFutureSeconds??5))*1_000)return reply.code(409).send({error:"invalid expiry"});
+    if((options.expectedEpoch!==undefined&&approval.leaderEpoch!==BigInt(options.expectedEpoch))||(options.expectedPolicyVersion!==undefined&&approval.policyVersion!==BigInt(options.expectedPolicyVersion))||(options.expectedSignerSetVersion!==undefined&&approval.signerSetVersion!==BigInt(options.expectedSignerSetVersion)))return reply.code(409).send({error:"version mismatch"});
     const market=input.quote.market==="BTC"?0:1;
-    if(intent.market!==market||intent.baseDelta.toString()!==input.quote.baseDelta||intent.limitPrice.toString()!==input.quote.worstPrice||intent.maxFee.toString()!==input.quote.fee||approval.executionPrice.toString()!==input.quote.expectedPrice||approval.impactCharge.toString()!==input.quote.impactCharge||approval.fee.toString()!==input.quote.fee||approval.deadline!==intent.deadline)return reply.code(409).send({error:"inconsistent envelope"});
+    const priceOutsideLimit=(intent.baseDelta>0n&&approval.executionPrice>intent.limitPrice)||(intent.baseDelta<0n&&approval.executionPrice<intent.limitPrice);
+    if(intent.market!==market||intent.baseDelta.toString()!==input.quote.baseDelta||intent.maxFee<approval.fee||priceOutsideLimit||approval.executionPrice.toString()!==input.quote.expectedPrice||approval.impactCharge.toString()!==input.quote.impactCharge||approval.fee.toString()!==input.quote.fee||approval.deadline>intent.deadline)return reply.code(409).send({error:"inconsistent envelope"});
     const intentHash=hashIntent(domain,intent);
     let intentSigner:string|undefined;
     try { intentSigner=recoverIntentSigner(domain,intent,input.userSignature); }
@@ -73,7 +74,7 @@ export function buildApprover(options:ApproverOptions) {
           intentSigner===intent.account||intentSigner===undefined?Promise.resolve(undefined):clearing.sessions(intentSigner,{blockTag:blockNumber}),
         ]);
         if(secondaryProvider&&(!secondaryBlock||secondaryBlock.hash!==block?.hash))return reply.code(409).send({error:"rpc divergence"});
-        if(!block||BigInt(epoch)!==intent.leaderEpoch||BigInt(setVersion)!==approval.signerSetVersion||BigInt(policy)!==intent.policyVersion||paused||resolution||!member)return reply.code(409).send({error:"independent chain policy rejected"});
+        if(!block||BigInt(epoch)!==approval.leaderEpoch||BigInt(setVersion)!==approval.signerSetVersion||BigInt(policy)!==approval.policyVersion||paused||resolution||!member)return reply.code(409).send({error:"independent chain policy rejected"});
         if(!accountSignature&&(!session||getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<approval.fee||BigInt(session.usedNotional)+notional>BigInt(session.maxCumulativeNotional)||notional>BigInt(session.maxTradeNotional)))return reply.code(409).send({error:"user authorization rejected"});
         const selected=market===0?btc:eth;if(!selected.enabled)return reply.code(409).send({error:"market disabled"});
         if(reportObservation&&(reportObservation.observedAt>BigInt(block.timestamp)||BigInt(block.timestamp)>reportObservation.validUntil||BigInt(block.timestamp)-reportObservation.observedAt>8n))return reply.code(409).send({error:"chain-time oracle rejected"});

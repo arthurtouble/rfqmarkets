@@ -26,7 +26,7 @@ const report=async market=>{const block=await ethers.provider.getBlock("latest")
 for(let market=0;market<2;market++)await (await clearing.refreshOracle(await report(market))).wait();
 const chain=await ethers.provider.getNetwork(),domain={name:"RFQ Markets",version:"1",chainId:chain.chainId,verifyingContract:await clearing.getAddress()};
 const intentTypes={TradeIntent:[
-  {name:"account",type:"address"},{name:"market",type:"uint8"},{name:"baseDelta",type:"int256"},{name:"limitPrice",type:"uint256"},{name:"maxFee",type:"uint256"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},{name:"leaderEpoch",type:"uint64"},{name:"policyVersion",type:"uint64"},{name:"reduceOnly",type:"bool"},
+  {name:"account",type:"address"},{name:"market",type:"uint8"},{name:"baseDelta",type:"int256"},{name:"limitPrice",type:"uint256"},{name:"maxFee",type:"uint256"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},{name:"reduceOnly",type:"bool"},
 ]};
 const approvalTypes={MakerApproval:[
   {name:"intentHash",type:"bytes32"},{name:"executionPrice",type:"uint256"},{name:"impactCharge",type:"int256"},{name:"fee",type:"uint256"},{name:"oracleReportHash",type:"bytes32"},{name:"deadline",type:"uint64"},{name:"leaderEpoch",type:"uint64"},{name:"signerSetVersion",type:"uint64"},{name:"policyVersion",type:"uint64"},
@@ -55,7 +55,7 @@ for(let step=0;step<120;step++){
   const rawImpact=await risk.impactCost(btcUsd,ethUsd,market,deltaUsd),impact=rawImpact>0n?rawImpact:0n;
   const premium=ceilDiv(impact*10n**18n,abs(delta)),executionPrice=delta>0n?price.ask+premium:price.bid-premium;
   const notional=abs(delta)*executionPrice/10n**18n,fee=ceilDiv(notional*2n,10_000n),block=await ethers.provider.getBlock("latest"),nonce=BigInt(step+1),deadline=BigInt(block.timestamp+60);
-  const intent={account:trader.address,market,baseDelta:delta,limitPrice:delta>0n?executionPrice+executionPrice/1_000n:executionPrice-executionPrice/1_000n,maxFee:fee,nonce,deadline,leaderEpoch:1n,policyVersion:1n,reduceOnly:false};
+  const intent={account:trader.address,market,baseDelta:delta,limitPrice:delta>0n?executionPrice+executionPrice/1_000n:executionPrice-executionPrice/1_000n,maxFee:fee,nonce,deadline,reduceOnly:false};
   const userSignature=await trader.signTypedData(domain,intentTypes,intent),intentHash=ethers.TypedDataEncoder.hash(domain,intentTypes,intent);
   const approval={intentHash,executionPrice,impactCharge:impact,fee,oracleReportHash:ethers.keccak256(tradeReport),deadline,leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n};
   const sigA=await approverA.signTypedData(domain,approvalTypes,approval),sigB=await approverB.signTypedData(domain,approvalTypes,approval);

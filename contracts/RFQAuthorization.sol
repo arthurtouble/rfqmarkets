@@ -48,7 +48,7 @@ contract RFQAuthorization {
     uint256 public constant MAX_ABS_MARKET_EXPOSURE = 250_000e6;
 
     bytes32 public constant INTENT_TYPEHASH = keccak256(
-        "TradeIntent(address account,uint8 market,int256 notionalDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,uint64 leaderEpoch,uint64 policyVersion)"
+        "TradeIntent(address account,uint8 market,int256 notionalDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline)"
     );
     bytes32 public constant APPROVAL_TYPEHASH = keccak256(
         "MakerApproval(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion)"
@@ -64,8 +64,6 @@ contract RFQAuthorization {
         uint256 maxFee;
         uint256 nonce;
         uint64 deadline;
-        uint64 leaderEpoch;
-        uint64 policyVersion;
     }
 
     struct MakerApproval {
@@ -127,7 +125,7 @@ contract RFQAuthorization {
     function hashIntent(TradeIntent calldata intent) public view returns (bytes32) {
         bytes32 structHash = keccak256(abi.encode(
             INTENT_TYPEHASH, intent.account, intent.market, intent.notionalDelta, intent.limitPrice,
-            intent.maxFee, intent.nonce, intent.deadline, intent.leaderEpoch, intent.policyVersion
+            intent.maxFee, intent.nonce, intent.deadline
         ));
         return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
     }
@@ -181,8 +179,7 @@ contract RFQAuthorization {
         ) revert InvalidTrade();
         if (
             block.timestamp > intent.deadline || block.timestamp > approval.deadline
-            || intent.leaderEpoch != leaderEpoch || approval.leaderEpoch != leaderEpoch
-            || intent.policyVersion != policyVersion || approval.policyVersion != policyVersion
+            || approval.leaderEpoch != leaderEpoch || approval.policyVersion != policyVersion
             || approval.signerSetVersion != signerSetVersion
         ) revert StaleAuthorization();
 

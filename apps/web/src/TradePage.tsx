@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { API, INDEXER, base, dollars } from "./config.js";
-import type { AccountState, Market, MarketSnapshot, Quote, Side, TradeActivity, WalletProvider } from "./types.js";
+import type { AccountState, Market, MarketSnapshot, Quote, RestingOrder, Side, TradeActivity, WalletProvider } from "./types.js";
 
 const chains = { 1: "Ethereum", 42161: "Arbitrum", 10: "Optimism", 8453: "Base" } as const;
 type QuickSession={account:string;privateKey:string;validUntil:number};
@@ -18,6 +18,9 @@ export function TradePage() {
   const [accountState, setAccountState] = useState<AccountState | null>(null);
   const [marketSnapshot,setMarketSnapshot]=useState<MarketSnapshot|null>(null);
   const [activity,setActivity]=useState<TradeActivity[]>([]);
+  const [orders,setOrders]=useState<RestingOrder[]>([]);
+  const [orderType,setOrderType]=useState<"market"|"limit">("market");
+  const [limitPrice,setLimitPrice]=useState("95000");
   const [showDeposit, setShowDeposit] = useState(false);
   const [sourceChain, setSourceChain] = useState<keyof typeof chains>(1);
   const [sourceToken, setSourceToken] = useState<"ETH" | "USDC" | "USDT">("ETH");
@@ -43,10 +46,12 @@ export function TradePage() {
   async function refreshAccount(address: string) {
     const protocolRequest=fetch(`${INDEXER}/v1/protocol`).then(response=>response.ok?response.json():null).catch(()=>null);
     const activityRequest=fetch(`${INDEXER}/v1/account/${address}/activity?limit=30`).then(response=>response.ok?response.json():null).catch(()=>null);
+    const ordersRequest=fetch(`${API}/v1/orders/${address}`).then(response=>response.ok?response.json():null).catch(()=>null);
     const response = await fetch(`${API}/v1/account/${address}`);
     if (response.ok) setAccountState(await response.json());
     const protocol=await protocolRequest;if(protocol)setPaused(Boolean(protocol.paused));
     const history=await activityRequest;if(history)setActivity(history.items);
+    const orderHistory=await ordersRequest;if(orderHistory)setOrders(orderHistory.items);
   }
   const randomNonce=()=>BigInt(`0x${[...crypto.getRandomValues(new Uint8Array(32))].map(value => value.toString(16).padStart(2, "0")).join("")}`).toString();
   useEffect(() => {
@@ -111,6 +116,13 @@ export function TradePage() {
       await refreshAccount(connected.account);
     } catch (error) { setStatus(error instanceof Error ? error.message : "Unavailable"); }
   }
+  async function placeLimit(){
+    setStatus("Waiting for limit-order signature…");
+    try{const connected=await wallet(),nonce=randomNonce(),prepared=await post("/v1/orders/prepare",{account:connected.account,market,side,amount,limitPrice,durationSeconds:86_400,nonce,reduceOnly:false}),userSignature=await signTyped(connected,prepared,"TradeIntent");await post("/v1/orders",{orderId:prepared.orderId,userSignature});setStatus(`${side==="buy"?"Buy":"Sell"} limit open at ${dollars(prepared.intent.limitPrice)}`);await refreshAccount(connected.account);}catch(error){setStatus(error instanceof Error?error.message:"Limit order unavailable");}
+  }
+  async function cancelOrder(order:RestingOrder){
+    setStatus("Waiting for cancellation signature…");try{const connected=await wallet(),prepared=await post(`/v1/orders/${order.orderId}/cancel/prepare`,{}),userSignature=await signTyped(connected,prepared,"CancelIntent"),result=await post(`/v1/orders/${order.orderId}/cancel`,{intent:prepared.intent,userSignature});setStatus(`Order cancelled in block ${result.transaction.blockNumber}`);await refreshAccount(connected.account);}catch(error){setStatus(error instanceof Error?error.message:"Cancellation unavailable");}
+  }
   async function deposit() {
     setDepositStatus("Waiting for wallet…");
     try {
@@ -173,11 +185,13 @@ export function TradePage() {
   return <section className="trading-workspace">
     <article className="trade-card order-ticket">
       <div className="markets">{(["BTC", "ETH"] as Market[]).map(value => <button key={value} className={market === value ? "active" : ""} onClick={() => setMarket(value)}>{value}-PERP</button>)}</div>
+      <div className="order-types"><button className={orderType==="market"?"active":""} onClick={()=>setOrderType("market")}>Market</button><button className={orderType==="limit"?"active":""} onClick={()=>{setOrderType("limit");if(live)setLimitPrice((Number(BigInt(live.mid))/1e6).toFixed(2));}}>Limit</button></div>
       <div className="market-tape"><div><small>Oracle mid</small><strong>{dollars(live?.mid)}</strong></div><div><small>Bid / Ask</small><strong>{dollars(live?.bid)} / {dollars(live?.ask)}</strong></div><div><small>Funding APR</small><strong className={live&&BigInt(live.fundingApr)>0n?"negative":"positive"}>{live?ratio((BigInt(live.fundingApr)*10_000n/1_000_000_000_000n).toString()):"—"}</strong></div></div>
       <label>Amount <span>USDC</span></label><div className="amount"><input aria-label="Trade amount" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} /><b>USDC</b></div>
+      {orderType==="limit"&&<><label>Limit price <span>Good for 24 hours</span></label><div className="amount limit-amount"><input aria-label="Limit price" inputMode="decimal" value={limitPrice} onChange={event=>setLimitPrice(event.target.value)}/><b>USDC</b></div></>}
       <div className="sides"><button className={side === "buy" ? "buy active" : "buy"} onClick={() => setSide("buy")}>Buy</button><button className={side === "sell" ? "sell active" : "sell"} onClick={() => setSide("sell")}>Sell</button></div>
       <dl><div><dt>Indicative execution</dt><dd>{dollars(quote?.expectedPrice)}</dd></div><div><dt>Oracle {side==="buy"?"ask":"bid"}</dt><dd>{dollars(side==="buy"?quote?.ask:quote?.bid)}</dd></div><div><dt>Maximum fee</dt><dd>{dollars(quote?.fee)}</dd></div><div><dt>Worst accepted price</dt><dd>{dollars(quote?.worstPrice)}</dd></div></dl>
-      <button className={`submit ${side}`} disabled={!quote} onClick={approve}>{side === "buy" ? "Buy" : "Sell"} {market}</button><p className="status"><i />{status}</p>
+      <button className={`submit ${side}`} disabled={!quote} onClick={orderType==="market"?approve:placeLimit}>{orderType==="market"?(side === "buy" ? "Buy" : "Sell"):`Place ${side}`} {market}</button><p className="status"><i />{status}</p>
       <button className="depositToggle" onClick={() => setShowDeposit(value => !value)}>{showDeposit ? "Hide deposit" : "Deposit from any chain"}</button>
       {showDeposit && <section className="depositPanel"><div className="depositGrid"><label>From<select value={sourceChain} onChange={event => setSourceChain(Number(event.target.value) as keyof typeof chains)}>{Object.entries(chains).map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Asset<select value={sourceToken} onChange={event => setSourceToken(event.target.value as "ETH" | "USDC" | "USDT")}><option>ETH</option><option>USDC</option><option>USDT</option></select></label></div><label>Deposit amount</label><div className="amount compact"><input aria-label="Deposit amount" inputMode="decimal" value={depositAmount} onChange={event => setDepositAmount(event.target.value)} /><b>{sourceToken}</b></div><button className="route" onClick={deposit}>Route & deposit</button><p className="status">{depositStatus}</p></section>}
       <button className="wallet trade-wallet" onClick={() => wallet().catch(error => setStatus(error instanceof Error ? error.message : "Wallet unavailable"))}>{account ? `${account.slice(0, 6)}…${account.slice(-4)}` : "Connect wallet"}</button>
@@ -190,8 +204,9 @@ export function TradePage() {
         <div className="panel-heading compact-heading"><div><h2>Positions</h2><p>Cross margin · conservative exit marks</p></div><button onClick={()=>setShowWithdraw(value=>!value)}>{showWithdraw?"Close":"Withdraw"}</button></div>
         {showWithdraw&&<section className="depositPanel accountPanel"><label>Withdraw to connected wallet</label><div className="amount compact"><input aria-label="Withdrawal amount" inputMode="decimal" value={withdrawAmount} onChange={event=>setWithdrawAmount(event.target.value)}/><b>USDC</b></div><button className="route" onClick={withdraw}>Sign & withdraw</button><p className="status">{withdrawStatus}</p></section>}
         {paused&&(BigInt(accountState.positions.BTC.size)!==0n||BigInt(accountState.positions.ETH.size)!==0n)&&<section className="emergencyPanel"><strong>Trading paused</strong><span>Close at the verified directional oracle price.</span><div>{BigInt(accountState.positions.BTC.size)!==0n&&<button onClick={()=>emergencyClose("BTC")}>Close BTC</button>}{BigInt(accountState.positions.ETH.size)!==0n&&<button onClick={()=>emergencyClose("ETH")}>Close ETH</button>}</div></section>}
-        <div className="position-list">{(["BTC","ETH"] as Market[]).map(name=>{const position=accountState.positions[name],open=BigInt(position.size)!==0n;return <article key={name}><div className="position-title"><strong>{name}-PERP</strong><span className={BigInt(position.size)>=0n?"positive":"negative"}>{open?`${BigInt(position.size)>0n?"Long":"Short"} ${base((BigInt(position.size)<0n?-BigInt(position.size):BigInt(position.size)).toString())}`:"No position"}</span></div><div className="position-metrics"><span>Entry <b>{open?dollars(position.entryPrice):"—"}</b></span><span>Mark <b>{dollars(position.markPrice)}</b></span><span>Notional <b>{dollars(position.notional)}</b></span><span>uPnL <b className={BigInt(position.unrealizedPnl)>=0n?"positive":"negative"}>{signedDollars(position.unrealizedPnl)}</b></span><span>Funding <b className={BigInt(position.accruedFunding)>=0n?"positive":"negative"}>{signedDollars(position.accruedFunding)}</b></span></div></article>})}</div>
+        <div className="position-list">{(["BTC","ETH"] as Market[]).map(name=>{const position=accountState.positions[name],open=BigInt(position.size)!==0n;return <article key={name}><div className="position-title"><strong>{name}-PERP</strong><span className={BigInt(position.size)>=0n?"positive":"negative"}>{open?`${BigInt(position.size)>0n?"Long":"Short"} ${base((BigInt(position.size)<0n?-BigInt(position.size):BigInt(position.size)).toString())}`:"No position"}</span></div><div className="position-metrics"><span>Entry <b>{open?dollars(position.entryPrice):"—"}</b></span><span>Mark <b>{dollars(position.markPrice)}</b></span><span>Notional <b>{dollars(position.notional)}</b></span><span>uPnL <b className={BigInt(position.unrealizedPnl)>=0n?"positive":"negative"}>{signedDollars(position.unrealizedPnl)}</b></span><span>Funding <b className={BigInt(position.accruedFunding)>=0n?"positive":"negative"}>{signedDollars(position.accruedFunding)}</b></span><span>Est. liquidation <b>{open?dollars(position.estimatedLiquidationPrice??undefined):"—"}</b></span></div></article>})}</div>
         <div className="panel-heading compact-heading"><div><h2>Account history</h2><p>On-chain deposits, trades and risk events</p></div><span>{activity.length} shown</span></div>
+        <div className="open-orders">{orders.filter(order=>order.status==="open"||order.status==="executing").map(order=><div key={order.orderId}><span><b>{order.side==="buy"?"Buy":"Sell"} {order.market}</b><small>{dollars(order.limitPrice)} · {dollars((BigInt(order.maxFee)).toString())} max fee</small></span><em>{order.status}</em><button onClick={()=>cancelOrder(order)}>Cancel</button></div>)}</div>
         <div className="account-history">{activity.length?activity.slice(0,12).map(item=><div key={`${item.tx_hash}:${item.log_index}`}><span>{item.kind.replace(/([A-Z])/g," $1").trim()}</span><b>{item.market===null||item.market===undefined?"":item.market===0?"BTC":"ETH"}</b><time>{new Date(item.timestamp*1_000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</time></div>):<p>No account activity yet.</p>}</div>
       </>}
     </aside>

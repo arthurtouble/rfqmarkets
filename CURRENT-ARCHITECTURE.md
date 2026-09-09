@@ -70,7 +70,7 @@ The oracle report bundle accompanies applicable settlement/keeper calls for on-c
 | API journal | SQLite baseline candidate for one writer; tested recovery | Pending intents, escaped approvals, reservations, sender nonces and replacements. No second customer balance ledger. |
 | Approvers A/B/C | Minimal isolated services; TypeScript/viem candidate | Each independently verifies the complete deterministic policy and signs identical exact terms with its own key. |
 | Clearing system | Solidity, stable upgradeable proxy; Foundry for tests | Authoritative collateral, positions, funding, settlement, margin, risk, replay and resolution rules. |
-| Oracle adapter | Chainlink Data Streams candidate | Contract verification and exact feed/schema/time/selection rules; independent reference feeds only supplement approval safety. |
+| Oracle adapter | Official Chainlink Data Streams SDK over WebSocket with REST fallback | Validates and caches exact full reports; contract verification and exact feed/schema/time/selection rules remain authoritative. Independent reference feeds only supplement approval safety. |
 | Live chain observers | Independent RPC subscriptions plus reconciled reads | Fresh state for API, approvers, hedging and keepers; checkpointed disposable caches. |
 | User read model | Ponder + local PGlite / production PostgreSQL | Sole durable chain-derived application read model for positions and history, exposed through bounded HTTP queries. Live risk is computed from block-tagged contract views plus the current oracle snapshot. |
 | Hedge executor | TypeScript/venue adapter candidate + SQLite operational journal | Actual external orders, fills and reconciled hedge exposure; separate trade authority. |

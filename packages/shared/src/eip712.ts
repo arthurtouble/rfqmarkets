@@ -8,8 +8,7 @@ export const intentTypes:Record<string,Array<{name:string;type:string}>> = {
     { name: "account", type: "address" }, { name: "market", type: "uint8" },
     { name: "baseDelta", type: "int256" }, { name: "limitPrice", type: "uint256" },
     { name: "maxFee", type: "uint256" }, { name: "nonce", type: "uint256" },
-    { name: "deadline", type: "uint64" }, { name: "leaderEpoch", type: "uint64" },
-    { name: "policyVersion", type: "uint64" }, { name: "reduceOnly", type: "bool" },
+    { name: "deadline", type: "uint64" }, { name: "reduceOnly", type: "bool" },
   ],
 };
 
@@ -53,7 +52,7 @@ export const sessionGrantTypes:Record<string,Array<{name:string;type:string}>> =
 export interface SigningDomain { name: string; version: string; chainId: bigint; verifyingContract: string }
 export interface TradeIntent {
   account:string; market:number; baseDelta:bigint; limitPrice:bigint; maxFee:bigint; nonce:bigint;
-  deadline:bigint; leaderEpoch:bigint; policyVersion:bigint; reduceOnly:boolean;
+  deadline:bigint; reduceOnly:boolean;
 }
 export interface MakerApproval {
   intentHash:string; executionPrice:bigint; impactCharge:bigint; fee:bigint; oracleReportHash:string;
@@ -76,7 +75,7 @@ export const recoverSessionGrantSigner = (domain:SigningDomain,grant:SessionGran
 
 export const intentToWire = (intent: TradeIntent) => ({
   ...intent, baseDelta:intent.baseDelta.toString(), limitPrice:intent.limitPrice.toString(), maxFee:intent.maxFee.toString(),
-  nonce:intent.nonce.toString(), deadline:intent.deadline.toString(), leaderEpoch:intent.leaderEpoch.toString(), policyVersion:intent.policyVersion.toString(),
+  nonce:intent.nonce.toString(), deadline:intent.deadline.toString(),
 });
 
 export const approvalToWire = (approval: MakerApproval) => ({

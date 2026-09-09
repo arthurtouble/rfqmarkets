@@ -1,6 +1,6 @@
 # Product read model and conditional orders
 
-Status: account and market read model implemented locally; conditional orders specified for the next contract schema revision.
+Status: account and market read model plus all-or-none conditional orders implemented locally.
 
 ## Prices shown to users
 
@@ -35,16 +35,16 @@ Cross margin has no meaningful user-selected leverage per position. The launch U
 
 Version one should use all-or-none orders. This matches an RFQ maker's atomic fill model and avoids cumulative-fill accounting in the first release. A buy becomes eligible only when a fresh, size-specific maker ask is at or below the signed limit. A sell becomes eligible only when the fresh maker bid is at or above it. The trigger uses executable quoted price, not oracle mid. A brief oracle touch that the maker would not execute must not trigger an order.
 
-The user signs a durable `ConditionalOrder` containing:
+The user signs a durable `TradeIntent` containing:
 
 - account, market, signed exact base quantity and limit price;
 - maximum total fee;
 - reduce-only flag;
 - order nonce and expiry;
 - optional trigger type for future TP/SL support;
-- chain ID and a dedicated order-router/verifier address through EIP-712.
+- chain ID and clearing-contract address through EIP-712.
 
-The signature must not bind an API leader epoch. Leader, approver-set and policy versions belong in the short-lived maker approval produced at execution. This lets a valid user order survive routine API failover while ensuring execution uses the current policy and signer set. Cancellation consumes the order nonce on-chain. An API-only cancellation is insufficient because an escaped signed execution bundle may still exist.
+The signature does not bind an API leader epoch. Leader, approver-set and policy versions belong in the short-lived maker approval produced at execution. This lets a valid user order survive routine API failover while ensuring execution uses the current policy and signer set. Cancellation consumes the order nonce on-chain. An API-only cancellation is insufficient because an escaped signed execution bundle may still exist.
 
 At trigger time the active order worker:
 
@@ -55,7 +55,7 @@ At trigger time the active order worker:
 5. submits after two matching approvals;
 6. marks the order filled only after chain inclusion and reconciles by nonce after any ambiguous response.
 
-The contract consumes the conditional order nonce atomically with settlement. The approvers independently reconstruct the same order digest and current quote policy. The order database is an operational journal of signed orders and attempts; on-chain nonces and settlement events remain authoritative.
+The contract consumes the intent nonce atomically with settlement. The approvers independently reconstruct the same intent digest and current quote policy. The order database is an operational journal of signed orders and attempts; on-chain nonces and settlement events remain authoritative.
 
 Partial fills should follow only after adding `filledBase` and `chargedFee` accounting keyed by the order digest. Each child fill must reduce remaining size, enforce the original aggregate fee ceiling and remain inside the limit. Splitting children cannot earn inventory credits or evade portfolio reservations. TP/SL can then reuse this cumulative order primitive, with reduce-only and automatic resizing bounded by the live position.
 

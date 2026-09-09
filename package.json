@@ -24,6 +24,7 @@
     "smoke:approver-outage": "node --import tsx scripts/approver-outage-smoke.ts",
     "smoke:sender-replacement": "node --import tsx scripts/sender-replacement-smoke.ts",
     "smoke:quote-load": "node --import tsx scripts/quote-load-smoke.ts",
+    "smoke:limit-order": "node --import tsx scripts/limit-order-smoke.ts",
     "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin"
   },
   "devDependencies": {

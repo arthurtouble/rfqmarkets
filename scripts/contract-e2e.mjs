@@ -25,8 +25,7 @@ const intentTypes = { TradeIntent: [
   { name: "account", type: "address" }, { name: "market", type: "uint8" },
   { name: "notionalDelta", type: "int256" }, { name: "limitPrice", type: "uint256" },
   { name: "maxFee", type: "uint256" }, { name: "nonce", type: "uint256" },
-  { name: "deadline", type: "uint64" }, { name: "leaderEpoch", type: "uint64" },
-  { name: "policyVersion", type: "uint64" },
+  { name: "deadline", type: "uint64" },
 ] };
 const approvalTypes = { MakerApproval: [
   { name: "intentHash", type: "bytes32" }, { name: "executionPrice", type: "uint256" },
@@ -41,7 +40,7 @@ async function signedOrder({ nonce, delta, impactCharge, epoch = 1n, market = 0,
   const deadline = BigInt(block.timestamp + 120);
   const intent = {
     account: user.address, market, notionalDelta: delta, limitPrice,
-    maxFee: 100_000_000n, nonce, deadline, leaderEpoch: epoch, policyVersion: 1n,
+    maxFee: 100_000_000n, nonce, deadline,
   };
   const userSignature = await user.signTypedData(domain, intentTypes, intent);
   const intentHash = ethers.TypedDataEncoder.hash(domain, intentTypes, intent);
@@ -116,11 +115,16 @@ await mustReject(
 );
 
 // Epoch change fences every approval issued by the old API leader.
-const oldEpoch = await signedOrder({ nonce: 4n, delta: -1_000_000_000n, impactCharge: 1_000_000_000n });
+const oldEpoch = await signedOrder({ nonce: 4n, delta: -1_000_000_000n, impactCharge: 1_000_000_000n, limitPrice:99_000_000_000n });
 await (await contract.connect(governance).advanceEpoch()).wait();
 await mustReject(
   contract.connect(relayer).authorizeAndApply(oldEpoch.intent, oldEpoch.approval, oldEpoch.userSignature, oldEpoch.sigA, oldEpoch.sigB),
   "old leader epoch must fail",
 );
+const renewedApproval = { ...oldEpoch.approval, leaderEpoch:2n };
+const renewedA = await approverA.signTypedData(domain, approvalTypes, renewedApproval);
+const renewedB = await approverB.signTypedData(domain, approvalTypes, renewedApproval);
+await (await contract.connect(relayer).authorizeAndApply(oldEpoch.intent, renewedApproval, oldEpoch.userSignature, renewedA, renewedB)).wait();
+assert.equal(await contract.leaderEpoch(),2n,"fresh operator approval should execute the unchanged user intent");
 
 console.log("Contract E2E passed: quorum, user limit, sponsorship, replay, state floor, epoch fencing, 400 arithmetic invariant calls");

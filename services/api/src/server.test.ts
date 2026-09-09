@@ -91,6 +91,24 @@ test("market snapshots expose bid, ask, mid and signed funding without a chain",
   await marketApi.close();
 });
 
+test("a durable all-or-none limit order binds size, price, fee, nonce and expiry",async()=>{
+  const orderApi=buildApi();await orderApi.ready();const nonce="998877";
+  const preparedResponse=await orderApi.inject({method:"POST",url:"/v1/orders/prepare",payload:{account:user.address,market:"BTC",side:"buy",amount:"1000",limitPrice:"90000",durationSeconds:3600,nonce,reduceOnly:false}});assert.equal(preparedResponse.statusCode,200,preparedResponse.body);
+  const prepared=preparedResponse.json();assert.equal(prepared.intent.leaderEpoch,undefined);assert.equal(prepared.intent.policyVersion,undefined);assert.equal(prepared.intent.limitPrice,"90000000000");assert.equal(prepared.intent.nonce,nonce);
+  const attacker=Wallet.createRandom(),badSignature=await attacker.signTypedData(prepared.domain,prepared.types,prepared.intent);
+  assert.equal((await orderApi.inject({method:"POST",url:"/v1/orders",payload:{orderId:prepared.orderId,userSignature:badSignature}})).statusCode,401);
+  const signature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),placed=await orderApi.inject({method:"POST",url:"/v1/orders",payload:{orderId:prepared.orderId,userSignature:signature}});assert.equal(placed.statusCode,200,placed.body);
+  const list=(await orderApi.inject({method:"GET",url:`/v1/orders/${user.address}`})).json();assert.equal(list.items.length,1);assert.equal(list.items[0].status,"open");assert.equal(list.items[0].limitPrice,"90000000000");
+  await orderApi.close();
+});
+
+test("an open limit order survives API restart without becoming a balance ledger",async()=>{
+  const journalPath=join(directory,"orders-restart.sqlite"),first=buildApi({journalPath});await first.ready();
+  const prepared=(await first.inject({method:"POST",url:"/v1/orders/prepare",payload:{account:user.address,market:"ETH",side:"sell",amount:"750",limitPrice:"5000",durationSeconds:3600,nonce:"123123",reduceOnly:false}})).json(),signature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent);
+  assert.equal((await first.inject({method:"POST",url:"/v1/orders",payload:{orderId:prepared.orderId,userSignature:signature}})).statusCode,200);await first.close();
+  const restarted=buildApi({journalPath});await restarted.ready();const list=(await restarted.inject({method:"GET",url:`/v1/orders/${user.address}`})).json();assert.equal(list.items.length,1);assert.equal(list.items[0].orderId,prepared.orderId);assert.equal(list.items[0].status,"open");await restarted.close();
+});
+
 test("an invalid wallet signature cannot reserve portfolio capacity",async()=>{
   const first=(await api.inject({method:"POST",url:"/v1/quote",payload:{market:"ETH",side:"buy",amount:"777"}})).json();
   const nonce="7";

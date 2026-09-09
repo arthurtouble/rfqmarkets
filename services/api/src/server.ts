@@ -5,7 +5,7 @@ import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256, par
 import { z } from "zod";
 import { clearingApiAbi } from "../../../packages/shared/src/abi.js";
 import { approvalToWire, cancelToWire, cancelTypes, closeToWire, closeTypes, depositToWire, depositTypes, DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, intentToWire, intentTypes, recoverCancelSigner, recoverCloseSigner, recoverDepositSigner, recoverIntentSigner, recoverSessionGrantSigner, recoverWithdrawalSigner, sessionGrantToWire, sessionGrantTypes, withdrawalToWire, withdrawalTypes, type CancelIntent, type CloseIntent, type DepositIntent, type MakerApproval, type SessionGrant, type SigningDomain, type TradeIntent, type WithdrawalIntent } from "../../../packages/shared/src/eip712.js";
-import { BASE, constructQuote, quoteRequestSchema, type Exposure, type PriceSnapshot, type Quote } from "../../../packages/shared/src/policy.js";
+import { BASE, constructQuote, formatUsdc, parseUsdc, quoteRequestSchema, type Exposure, type PriceSnapshot, type Quote } from "../../../packages/shared/src/policy.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import { DurableSender } from "./sender.js";
 import type { OracleSource } from "./oracle.js";
@@ -35,8 +35,11 @@ const closePrepareSchema=actionBaseSchema.extend({market:z.enum(["BTC","ETH"])})
 const closeExecuteSchema=signedActionSchema.extend({intent:z.object({account:z.string(),market:z.number().int().min(0).max(1),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
 const sessionPrepareSchema=actionBaseSchema.extend({session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxCumulativeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxFee:z.string().regex(/^\d+(\.\d{1,6})?$/),durationSeconds:z.number().int().min(300).max(2_592_000)});
 const sessionExecuteSchema=signedActionSchema.extend({grant:z.object({account:z.string(),session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeNotional:z.string().regex(/^\d+$/),maxCumulativeNotional:z.string().regex(/^\d+$/),maxFee:z.string().regex(/^\d+$/),validUntil:z.string().regex(/^\d+$/),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
+const orderPrepareSchema=z.object({account:z.string(),market:z.enum(["BTC","ETH"]),side:z.enum(["buy","sell"]),amount:z.string().regex(/^\d+(\.\d{1,6})?$/),limitPrice:z.string().regex(/^\d+(\.\d{1,6})?$/),durationSeconds:z.number().int().min(300).max(2_592_000),nonce:z.string().regex(/^\d+$/),reduceOnly:z.boolean().default(false)});
+const orderPlaceSchema=z.object({orderId:z.string().uuid(),userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/)});
 type DepositRoute={intent:DepositIntent;fromToken:"USDC"|"USDT"|"ETH";amount:string;expectedUsdc:bigint;status:"quoted"|"authorized"|"deposited";destinationTxHash?:string;transaction?:{hash:string;blockNumber:number;collateral:string}};
 type ProtocolVersions={leaderEpoch:bigint;signerSetVersion:bigint;policyVersion:bigint;blockNumber:number;blockTimestamp:number};
+type RestingOrder={orderId:string;intent:TradeIntent;market:"BTC"|"ETH";side:"buy"|"sell";amount:string;userSignature?:string;status:"prepared"|"open"|"executing"|"filled"|"cancelled"|"expired";createdAtMs:number;updatedAtMs:number;transactionHash?:string;lastError?:string};
 const YEAR=365n*24n*60n*60n,MAX_MARKET_NOTIONAL=250_000n*1_000_000n,RATE=1_000_000_000_000n;
 
 function abs(value:bigint){return value<0n?-value:value;}
@@ -48,17 +51,20 @@ export function buildApi(options: ApiOptions = {}) {
   const settled:Exposure = { BTC:0n, ETH:0n };
   const pending:Array<{quoteId:string;market:"BTC"|"ETH";delta:bigint;expiresAtMs:number}> = [];
   const journal=options.journalPath?new DatabaseSync(options.journalPath):undefined;
-  journal?.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS commitments (quote_id TEXT PRIMARY KEY, market TEXT NOT NULL, delta TEXT NOT NULL, expires_ms INTEGER NOT NULL, status TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, approval_json TEXT, tx_hash TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS deposit_routes (route_id TEXT PRIMARY KEY, account TEXT NOT NULL, from_chain TEXT NOT NULL, from_token TEXT NOT NULL, source_amount TEXT NOT NULL, expected_usdc TEXT NOT NULL, minimum_usdc TEXT NOT NULL, deadline INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, destination_tx TEXT, updated_ms INTEGER NOT NULL)");
+  journal?.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS commitments (quote_id TEXT PRIMARY KEY, market TEXT NOT NULL, delta TEXT NOT NULL, expires_ms INTEGER NOT NULL, status TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, approval_json TEXT, tx_hash TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS deposit_routes (route_id TEXT PRIMARY KEY, account TEXT NOT NULL, from_chain TEXT NOT NULL, from_token TEXT NOT NULL, source_amount TEXT NOT NULL, expected_usdc TEXT NOT NULL, minimum_usdc TEXT NOT NULL, deadline INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, destination_tx TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS resting_orders (order_id TEXT PRIMARY KEY, account TEXT NOT NULL, market TEXT NOT NULL, side TEXT NOT NULL, amount TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, status TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, tx_hash TEXT, last_error TEXT)");
   for(const row of journal?.prepare("SELECT quote_id, market, delta, expires_ms FROM commitments WHERE status IN ('reserved','approved','submitted') AND expires_ms > ?").all(Date.now())??[]){const item=row as {quote_id:string;market:"BTC"|"ETH";delta:string;expires_ms:number};pending.push({quoteId:item.quote_id,market:item.market,delta:BigInt(item.delta),expiresAtMs:item.expires_ms});}
   const quotes = new Map<string,Quote>();
   const quoteReports = new Map<string,{report:string;validUntil:number}>();
   const quoteVersions = new Map<string,ProtocolVersions>();
   const quoteBindings = new Map<string,{account:string;nonce:string}>();
+  const preparedIntents=new Map<string,TradeIntent>();
+  const restingOrders=new Map<string,RestingOrder>();
   const deposits=new Map<string,DepositRoute>();
   for(const row of journal?.prepare("SELECT route_id, account, from_chain, from_token, source_amount, expected_usdc, minimum_usdc, deadline, nonce, status, destination_tx FROM deposit_routes WHERE status = 'deposited' OR (status IN ('quoted','authorized') AND deadline > ?)").all(Math.floor(Date.now()/1_000))??[]){
     const item=row as {route_id:string;account:string;from_chain:string;from_token:"USDC"|"USDT"|"ETH";source_amount:string;expected_usdc:string;minimum_usdc:string;deadline:number;nonce:string;status:"quoted"|"authorized"|"deposited";destination_tx:string|null};
     deposits.set(item.route_id,{intent:{account:item.account,routeId:item.route_id,sourceChainId:BigInt(item.from_chain),sourceTokenHash:keccak256(toUtf8Bytes(item.from_token)),sourceAmount:BigInt(item.source_amount),minimumUsdc:BigInt(item.minimum_usdc),deadline:BigInt(item.deadline),nonce:BigInt(item.nonce)},fromToken:item.from_token,amount:item.source_amount,expectedUsdc:BigInt(item.expected_usdc),status:item.status,destinationTxHash:item.destination_tx??undefined});
   }
+  for(const row of journal?.prepare("SELECT * FROM resting_orders WHERE status IN ('open','executing')").all()??[]){const item=row as Record<string,string|number|null>,wire=JSON.parse(String(item.intent_json));const intent:TradeIntent={...wire,account:getAddress(wire.account),baseDelta:BigInt(wire.baseDelta),limitPrice:BigInt(wire.limitPrice),maxFee:BigInt(wire.maxFee),nonce:BigInt(wire.nonce),deadline:BigInt(wire.deadline)};restingOrders.set(String(item.order_id),{orderId:String(item.order_id),intent,market:item.market as "BTC"|"ETH",side:item.side as "buy"|"sell",amount:String(item.amount),userSignature:String(item.user_signature),status:"open",createdAtMs:Number(item.created_ms),updatedAtMs:Number(item.updated_ms),transactionHash:item.tx_hash?String(item.tx_hash):undefined,lastError:item.last_error?String(item.last_error):undefined});}
   const prices = options.prices ?? {
     BTC:{market:"BTC",bid:99_990n*1_000_000n,ask:100_010n*1_000_000n,observedAtMs:Date.now()},
     ETH:{market:"ETH",bid:3_999n*1_000_000n,ask:4_001n*1_000_000n,observedAtMs:Date.now()},
@@ -75,16 +81,18 @@ export function buildApi(options: ApiOptions = {}) {
     verifyingContract:getAddress(options.verifyingContract ?? "0x0000000000000000000000000000000000000001"),
   };
   let localAdvance:Promise<number>|undefined,lastLocalAdvanceAt=0,lastLocalTimestamp=0;
-  let quoteSnapshotCache:{at:number;promise:Promise<{blockNumber:number;values:any[]}>}|undefined;
+  let quoteSnapshotCache:{at:number;blockNumber:number;promise:Promise<{blockNumber:number;values:any[]}>}|undefined;
   let marketReadCache:{at:number;promise:Promise<any>}|undefined;
+  let orderTimer:ReturnType<typeof setInterval>|undefined,checkingOrders=false;
 
   function prune(now=Date.now()) {
     for (let index=pending.length-1; index>=0; index--) if (pending[index].expiresAtMs<=now) pending.splice(index,1);
     for (const [id,quote] of quotes) if (quote.expiresAtMs+60_000<=now) { quotes.delete(id); quoteReports.delete(id); quoteVersions.delete(id); quoteBindings.delete(id); }
   }
   function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string):TradeIntent {
+    const prepared=preparedIntents.get(quote.quoteId);if(prepared)return prepared;
     const reportExpiry=quoteReports.get(quote.quoteId)?.validUntil??versions.blockTimestamp+30,deadline=Math.min(versions.blockTimestamp+30,reportExpiry);
-    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(deadline),leaderEpoch:versions.leaderEpoch,policyVersion:versions.policyVersion,reduceOnly:false };
+    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(deadline),reduceOnly:false };
   }
   async function readProtocolVersions():Promise<ProtocolVersions>{
     if(!clearing||!provider)return {leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n,blockNumber:0,blockTimestamp:Math.floor(Date.now()/1_000)};
@@ -105,8 +113,8 @@ export function buildApi(options: ApiOptions = {}) {
     return localAdvance;
   }
   async function readQuoteSnapshot(){
-    if(!clearing||!provider)throw new Error("chain unavailable");const now=Date.now();if(quoteSnapshotCache&&now-quoteSnapshotCache.at<250)return quoteSnapshotCache.promise;
-    const promise=(async()=>{const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));const values=await Promise.all([provider.getBlock(blockNumber),clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber})]);return {blockNumber,values};})();quoteSnapshotCache={at:now,promise};try{return await promise;}catch(error){quoteSnapshotCache=undefined;throw error;}
+    if(!clearing||!provider)throw new Error("chain unavailable");const now=Date.now(),blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));if(quoteSnapshotCache&&quoteSnapshotCache.blockNumber===blockNumber&&now-quoteSnapshotCache.at<250)return quoteSnapshotCache.promise;
+    const promise=(async()=>{const values=await Promise.all([provider.getBlock(blockNumber),clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber})]);return {blockNumber,values};})();quoteSnapshotCache={at:now,blockNumber,promise};try{return await promise;}catch(error){quoteSnapshotCache=undefined;throw error;}
   }
 
   async function readMarkets(){
@@ -126,6 +134,25 @@ export function buildApi(options: ApiOptions = {}) {
       }
       return {blockNumber,serverTimeMs:now,markets:result};
     })();marketReadCache={at:now,promise};try{return await promise;}catch(error){marketReadCache=undefined;throw error;}
+  }
+
+  async function createQuote(request:{market:"BTC"|"ETH";side:"buy"|"sell";amount:string}){
+    prune();let oracleQuote:Awaited<ReturnType<OracleSource["latest"]>>|undefined;
+    if(options.oracleSource){oracleQuote=await options.oracleSource.latest(request.market);prices[request.market]=oracleQuote.snapshot;}
+    else prices[request.market].observedAtMs=Date.now();
+    let versions:ProtocolVersions;
+    if(clearing&&provider){
+      if(options.chain?.devFund)await advanceLocalChainTime();
+      let {blockNumber,values}=await readQuoteSnapshot();let [block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;
+      if(!block||paused||resolutionRequired)throw new Error("market is paused");
+      const otherMarket=request.market==="BTC"?"ETH":"BTC",otherIndex=otherMarket==="BTC"?0:1,otherState=otherIndex===0?btc:eth;
+      if(options.chain?.devFund&&sender&&BigInt(otherState.aggregateBase)!==0n&&block.timestamp-Number(otherState.lastPriceTime)>8){const snapshot=prices[otherMarket],report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[otherIndex,snapshot.bid,snapshot.ask,BigInt(block.timestamp),BigInt(block.timestamp+60)]]);await sender.submit(`local-oracle:${otherMarket}:${blockNumber}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("refreshOracle",[report])});quoteSnapshotCache=undefined;({blockNumber,values}=await readQuoteSnapshot());[block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;if(!block||paused||resolutionRequired)throw new Error("market is paused");}
+      settled.BTC=BigInt(btc.aggregateBase)*(prices.BTC.bid+prices.BTC.ask)/2n/BASE;settled.ETH=BigInt(eth.aggregateBase)*(prices.ETH.bid+prices.ETH.ask)/2n/BASE;
+      versions={leaderEpoch:BigInt(leaderEpoch),signerSetVersion:BigInt(signerSetVersion),policyVersion:BigInt(policyVersion),blockNumber,blockTimestamp:block.timestamp};
+    }else versions=await readProtocolVersions();
+    const quote=constructQuote(request,{...prices[request.market]},settled,pending,Date.now());
+    if(oracleQuote){quote.expiresAtMs=Math.min(quote.expiresAtMs,oracleQuote.validUntil*1_000-4_000);if(quote.expiresAtMs<=Date.now())throw new Error("oracle report lacks inclusion time");quoteReports.set(quote.quoteId,{report:oracleQuote.report,validUntil:oracleQuote.validUntil});}
+    quotes.set(quote.quoteId,quote);quoteVersions.set(quote.quoteId,versions);return {quote,versions};
   }
 
   app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,sender:sender?.status()}));
@@ -151,6 +178,8 @@ export function buildApi(options: ApiOptions = {}) {
         positions[name]={size:size.toString(),entryPrice:entryPrice.toString(),markPrice:mark.toString(),notional:notional.toString(),unrealizedPnl:pnl.toString(),accruedFunding:fundingPnl.toString(),lastFundingIndex:position.lastFundingIndex.toString()};
       }
       const equity=collateral+unrealizedPnl+accruedFunding,openingEquity=collateral+accruedFunding+(unrealizedPnl<0n?unrealizedPnl:0n),availableMargin=openingEquity-initialMargin,maintenanceBuffer=equity-maintenanceMargin;
+      const healthAt=(selected:number,candidateMid:bigint)=>{let value=collateral+accruedFunding,required=0n;for(const [index,name] of names.entries()){const position=positionsRaw[index],size=BigInt(position.size);if(size===0n)continue;const current=marketSnapshot.markets[name],currentMid=BigInt(current.mid),bid=index===selected?candidateMid*BigInt(current.bid)/currentMid:BigInt(current.bid),ask=index===selected?candidateMid*BigInt(current.ask)/currentMid:BigInt(current.ask),entry=BigInt(position.entryPrice),quantity=abs(size);value+=size>0n?quantity*(bid-entry)/BASE:quantity*(entry-ask)/BASE;const notional=quantity*ask/BASE;required+=notional*marginRate(notional,false)/10_000n;}return value-required;};
+      for(const [index,name] of names.entries()){const size=BigInt(positionsRaw[index].size);if(size===0n)continue;const currentMid=BigInt(marketSnapshot.markets[name].mid);let low=size>0n?1n:currentMid,high=size>0n?currentMid:currentMid*20n,liquidation:bigint|null=null;if(healthAt(index,currentMid)<=0n)liquidation=currentMid;else if(healthAt(index,size>0n?low:high)<=0n){for(let step=0;step<80;step++){const middle=(low+high)/2n;if(size>0n){if(healthAt(index,middle)<=0n)low=middle;else high=middle;}else{if(healthAt(index,middle)>0n)low=middle;else high=middle;}}liquidation=size>0n?high:high;}(positions[name] as Record<string,unknown>).estimatedLiquidationPrice=liquidation?.toString()??null;}
       return {account,blockNumber,collateral:collateral.toString(),equity:equity.toString(),openingEquity:openingEquity.toString(),unrealizedPnl:unrealizedPnl.toString(),accruedFunding:accruedFunding.toString(),grossNotional:grossNotional.toString(),initialMargin:initialMargin.toString(),maintenanceMargin:maintenanceMargin.toString(),availableMargin:availableMargin.toString(),maintenanceBuffer:maintenanceBuffer.toString(),marginRatioBps:equity>0n?(maintenanceMargin*10_000n/equity).toString():null,effectiveLeverageBps:equity>0n?(grossNotional*10_000n/equity).toString():null,liquidatable:equity<maintenanceMargin,positions,onchain:{maintenanceEquity:onchainMaintenanceEquity.toString(),openingEquity:onchainOpeningEquity.toString(),initialMargin:onchainInitialMargin.toString(),maintenanceMargin:onchainMaintenanceMargin.toString()}};
     }
     catch{return reply.code(400).send({error:"invalid account"});}
@@ -200,37 +229,15 @@ export function buildApi(options: ApiOptions = {}) {
   app.post("/v1/close/execute",async(request,reply)=>{const parsed=closeExecuteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid signed close"});try{const intent:CloseIntent={account:getAddress(parsed.data.intent.account),market:parsed.data.intent.market,nonce:BigInt(parsed.data.intent.nonce),deadline:BigInt(parsed.data.intent.deadline)};if(Number(intent.deadline)*1_000<=Date.now()||recoverCloseSigner(domain,intent,parsed.data.userSignature)!==intent.account)return reply.code(401).send({error:"invalid close signature"});if(!clearing||!sender||!provider||!options.chain)return reply.code(503).send({error:"chain unavailable"});const market=intent.market===0?"BTC":"ETH";let report:string;if(options.oracleSource){const observation=await options.oracleSource.latest(market);prices[market]=observation.snapshot;report=observation.report;}else{const timestamp=options.chain.devFund?await advanceLocalChainTime():Number(BigInt((await provider.send("eth_getBlockByNumber",["latest",false]) as {timestamp:string}).timestamp)),snapshot=prices[market];report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[intent.market,snapshot.bid,snapshot.ask,BigInt(timestamp),BigInt(timestamp+60)]]);}const receipt=await sender.submit(`close:${intent.account}:${intent.market}:${intent.nonce}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("closePositionWithSignature",[intent.account,intent.market,intent.nonce,intent.deadline,report,parsed.data.userSignature])});const position=await clearing.positionOf(intent.account,intent.market);return {status:"included",transaction:{hash:receipt.hash,blockNumber:receipt.blockNumber},position:{size:position.size.toString(),entryPrice:position.entryPrice.toString()}};}catch(error){return reply.code(409).send({error:error instanceof Error?`close failed: ${error.message}`:"close failed"});}});
   app.post("/v1/session/prepare",async(request,reply)=>{const parsed=sessionPrepareSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid session request"});try{const account=getAddress(parsed.data.account),session=getAddress(parsed.data.session),now=Math.floor(Date.now()/1_000);const grant:SessionGrant={account,session,marketMask:parsed.data.marketMask,maxTradeNotional:parseUnits(parsed.data.maxTradeAmount,6),maxCumulativeNotional:parseUnits(parsed.data.maxCumulativeAmount,6),maxFee:parseUnits(parsed.data.maxFee,6),validUntil:BigInt(now+parsed.data.durationSeconds),nonce:BigInt(parsed.data.nonce),deadline:BigInt(now+120)};if(grant.maxTradeNotional<=0n||grant.maxTradeNotional>grant.maxCumulativeNotional)throw new Error();return {domain:{...domain,chainId:domain.chainId.toString()},types:sessionGrantTypes,grant:sessionGrantToWire(grant)};}catch{return reply.code(400).send({error:"invalid session request"});}});
   app.post("/v1/session/execute",async(request,reply)=>{const parsed=sessionExecuteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid signed session"});try{const grant:SessionGrant={...parsed.data.grant,account:getAddress(parsed.data.grant.account),session:getAddress(parsed.data.grant.session),maxTradeNotional:BigInt(parsed.data.grant.maxTradeNotional),maxCumulativeNotional:BigInt(parsed.data.grant.maxCumulativeNotional),maxFee:BigInt(parsed.data.grant.maxFee),validUntil:BigInt(parsed.data.grant.validUntil),nonce:BigInt(parsed.data.grant.nonce),deadline:BigInt(parsed.data.grant.deadline)};if(Number(grant.deadline)*1_000<=Date.now()||recoverSessionGrantSigner(domain,grant,parsed.data.userSignature)!==grant.account)return reply.code(401).send({error:"invalid session signature"});if(!clearing||!sender||!options.chain)return reply.code(503).send({error:"chain unavailable"});const receipt=await sender.submit(`session:${grant.account}:${grant.session}:${grant.nonce}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("grantSessionWithSignature",[grant,parsed.data.userSignature])});return {status:"active",session:grant.session,validUntil:grant.validUntil.toString(),transaction:{hash:receipt.hash,blockNumber:receipt.blockNumber}};}catch(error){return reply.code(409).send({error:error instanceof Error?`session failed: ${error.message}`:"session failed"});}});
+  app.post("/v1/orders/prepare",async(request,reply)=>{const parsed=orderPrepareSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid limit order"});try{const account=getAddress(parsed.data.account),{quote,versions}=await createQuote({market:parsed.data.market,side:parsed.data.side,amount:parsed.data.amount}),limitPrice=parseUnits(parsed.data.limitPrice,6),maximumNotional=abs(quote.baseDelta)*limitPrice/BASE,maxFee=(maximumNotional*2n+9_999n)/10_000n,deadline=BigInt(versions.blockTimestamp+parsed.data.durationSeconds),intent:TradeIntent={account,market:parsed.data.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice,maxFee,nonce:BigInt(parsed.data.nonce),deadline,reduceOnly:parsed.data.reduceOnly},orderId=crypto.randomUUID(),now=Date.now();if(limitPrice<=0n)throw new Error("invalid limit price");const order:RestingOrder={orderId,intent,market:parsed.data.market,side:parsed.data.side,amount:parsed.data.amount,status:"prepared",createdAtMs:now,updatedAtMs:now};restingOrders.set(orderId,order);return {orderId,domain:{...domain,chainId:domain.chainId.toString()},types:intentTypes,intent:intentToWire(intent),summary:{market:order.market,side:order.side,amount:order.amount,baseDelta:intent.baseDelta.toString(),limitPrice:intent.limitPrice.toString(),maxFee:intent.maxFee.toString(),expiresAtMs:Number(intent.deadline)*1_000}};}catch(error){return reply.code(409).send({error:error instanceof Error?error.message:"limit order rejected"});}});
+  app.post("/v1/orders",async(request,reply)=>{const parsed=orderPlaceSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid signed order"});const order=restingOrders.get(parsed.data.orderId);if(!order||order.status!=="prepared")return reply.code(404).send({error:"prepared order not found"});try{let valid=false;try{valid=recoverIntentSigner(domain,order.intent,parsed.data.userSignature)===order.intent.account;}catch{}if(!valid&&provider&&await provider.getCode(order.intent.account)!=="0x"){const wallet=new Contract(order.intent.account,["function isValidSignature(bytes32,bytes) view returns(bytes4)"],provider);valid=await wallet.isValidSignature(hashIntent(domain,order.intent),parsed.data.userSignature).then((value:string)=>value.toLowerCase()==="0x1626ba7e").catch(()=>false);}if(!valid)return reply.code(401).send({error:"invalid order signature"});order.userSignature=parsed.data.userSignature;order.status="open";order.updatedAtMs=Date.now();journal?.prepare("INSERT INTO resting_orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(order.orderId,order.intent.account,order.market,order.side,order.amount,JSON.stringify(intentToWire(order.intent)),order.userSignature,order.status,order.createdAtMs,order.updatedAtMs,null,null);return {orderId:order.orderId,status:order.status,intent:intentToWire(order.intent)};}catch{return reply.code(401).send({error:"invalid order signature"});}});
+  app.get("/v1/orders/:address",async(request,reply)=>{let account:string;try{account=getAddress((request.params as {address:string}).address);}catch{return reply.code(400).send({error:"invalid account"});}return {items:[...restingOrders.values()].filter(order=>order.intent.account===account&&order.status!=="prepared").sort((a,b)=>b.createdAtMs-a.createdAtMs).map(order=>({orderId:order.orderId,market:order.market,side:order.side,amount:order.amount,baseDelta:order.intent.baseDelta.toString(),limitPrice:order.intent.limitPrice.toString(),maxFee:order.intent.maxFee.toString(),nonce:order.intent.nonce.toString(),expiresAtMs:Number(order.intent.deadline)*1_000,status:order.status,transactionHash:order.transactionHash,lastError:order.lastError}))};});
+  app.post("/v1/orders/:orderId/cancel/prepare",async(request,reply)=>{const order=restingOrders.get((request.params as {orderId:string}).orderId);if(!order||!order.userSignature)return reply.code(404).send({error:"order not found"});const intent:CancelIntent={account:order.intent.account,nonce:order.intent.nonce,deadline:BigInt(Math.floor(Date.now()/1_000)+120)};return {domain:{...domain,chainId:domain.chainId.toString()},types:cancelTypes,intent:cancelToWire(intent)};});
+  app.post("/v1/orders/:orderId/cancel",async(request,reply)=>{const order=restingOrders.get((request.params as {orderId:string}).orderId),parsed=cancelExecuteSchema.safeParse(request.body);if(!order||!parsed.success)return reply.code(400).send({error:"invalid order cancellation"});try{const intent:CancelIntent={account:getAddress(parsed.data.intent.account),nonce:BigInt(parsed.data.intent.nonce),deadline:BigInt(parsed.data.intent.deadline)};if(intent.account!==order.intent.account||intent.nonce!==order.intent.nonce||Number(intent.deadline)*1_000<=Date.now()||recoverCancelSigner(domain,intent,parsed.data.userSignature)!==intent.account)return reply.code(401).send({error:"invalid cancellation signature"});if(!clearing||!sender||!options.chain)return reply.code(503).send({error:"chain unavailable"});const receipt=await sender.submit(`cancel-order:${order.orderId}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("cancelNonceWithSignature",[intent.account,intent.nonce,intent.deadline,parsed.data.userSignature])});order.status="cancelled";order.updatedAtMs=Date.now();order.transactionHash=receipt.hash;journal?.prepare("UPDATE resting_orders SET status='cancelled',tx_hash=?,updated_ms=? WHERE order_id=?").run(receipt.hash,order.updatedAtMs,order.orderId);return {orderId:order.orderId,status:order.status,transaction:{hash:receipt.hash,blockNumber:receipt.blockNumber}};}catch(error){return reply.code(409).send({error:error instanceof Error?error.message:"cancellation failed"});}});
   app.post("/v1/quote",async(request,reply)=>{
     const parsed=quoteRequestSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"invalid quote request"});
-    try {
-      prune();let oracleQuote:Awaited<ReturnType<OracleSource["latest"]>>|undefined;
-      if(options.oracleSource){oracleQuote=await options.oracleSource.latest(parsed.data.market);prices[parsed.data.market]=oracleQuote.snapshot;}
-      else prices[parsed.data.market].observedAtMs=Date.now();
-      let versions:ProtocolVersions;
-      if(clearing&&provider){
-        // A local automining chain stops advancing while idle. Synchronize it before
-        // pinning the block so the next transaction cannot jump past the deadline.
-        if(options.chain?.devFund)await advanceLocalChainTime();
-        let {blockNumber,values}=await readQuoteSnapshot();let [block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;
-        if(!block||paused||resolutionRequired)throw new Error("market is paused");
-        // The production system uses an independent keeper. Locally, catch up an
-        // exposed nontraded market only when its mark would otherwise block risk checks.
-        const otherMarket=parsed.data.market==="BTC"?"ETH":"BTC",otherIndex=otherMarket==="BTC"?0:1,otherState=otherIndex===0?btc:eth;
-        if(options.chain?.devFund&&sender&&BigInt(otherState.aggregateBase)!==0n&&block.timestamp-Number(otherState.lastPriceTime)>8){
-          const snapshot=prices[otherMarket],report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[otherIndex,snapshot.bid,snapshot.ask,BigInt(block.timestamp),BigInt(block.timestamp+60)]]);
-          await sender.submit(`local-oracle:${otherMarket}:${blockNumber}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("refreshOracle",[report])});
-          quoteSnapshotCache=undefined;({blockNumber,values}=await readQuoteSnapshot());[block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;
-          if(!block||paused||resolutionRequired)throw new Error("market is paused");
-        }
-        settled.BTC=BigInt(btc.aggregateBase)*(prices.BTC.bid+prices.BTC.ask)/2n/BASE;
-        settled.ETH=BigInt(eth.aggregateBase)*(prices.ETH.bid+prices.ETH.ask)/2n/BASE;
-        versions={leaderEpoch:BigInt(leaderEpoch),signerSetVersion:BigInt(signerSetVersion),policyVersion:BigInt(policyVersion),blockNumber,blockTimestamp:block.timestamp};
-      } else versions=await readProtocolVersions();
-      const quote=constructQuote(parsed.data,{...prices[parsed.data.market]},settled,pending,Date.now());
-      if(oracleQuote){quote.expiresAtMs=Math.min(quote.expiresAtMs,oracleQuote.validUntil*1_000-4_000);if(quote.expiresAtMs<=Date.now())throw new Error("oracle report lacks inclusion time");quoteReports.set(quote.quoteId,{report:oracleQuote.report,validUntil:oracleQuote.validUntil});}
-      quotes.set(quote.quoteId,quote);quoteVersions.set(quote.quoteId,versions); return quoteToWire(quote);
-    } catch(error){return reply.code(options.oracleSource?503:409).send({error:error instanceof Error?error.message:"quote rejected"});}
+    try {return quoteToWire((await createQuote(parsed.data)).quote);} catch(error){return reply.code(options.oracleSource?503:409).send({error:error instanceof Error?error.message:"quote rejected"});}
   });
   app.post("/v1/prepare",async(request,reply)=>{
     const parsed=intentRequestSchema.safeParse(request.body);
@@ -258,8 +265,8 @@ export function buildApi(options: ApiOptions = {}) {
     let intent:TradeIntent;
     try { intent=makeIntent(quote,versions,parsed.data.account,parsed.data.nonce);let signer:string|undefined;try{signer=recoverIntentSigner(domain,intent,parsed.data.userSignature);}catch{}let accountAuthorized=signer===intent.account;if(!accountAuthorized&&provider&&await provider.getCode(intent.account)!=="0x"){const wallet=new Contract(intent.account,["function isValidSignature(bytes32,bytes) view returns(bytes4)"],provider);accountAuthorized=await wallet.isValidSignature(hashIntent(domain,intent),parsed.data.userSignature,{blockTag:versions.blockNumber}).then((value:string)=>value.toLowerCase()==="0x1626ba7e").catch(()=>false);}if(!accountAuthorized){if(!clearing||!signer)throw new Error();const session=await clearing.sessions(signer,{blockTag:versions.blockNumber});if(getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<intent.maxFee)throw new Error();} }
     catch{return reply.code(401).send({error:"invalid user signature"});}
-    prune();
-    if(!pending.some(item=>item.quoteId===quote.quoteId))pending.push({quoteId:quote.quoteId,market:quote.market,delta:quote.delta,expiresAtMs:Number(intent.deadline)*1_000});
+    prune();const reportExpiry=quoteReports.get(quote.quoteId)?.validUntil??versions.blockTimestamp+30,approvalDeadline=BigInt(Math.min(Number(intent.deadline),versions.blockTimestamp+30,reportExpiry));
+    if(!pending.some(item=>item.quoteId===quote.quoteId))pending.push({quoteId:quote.quoteId,market:quote.market,delta:quote.delta,expiresAtMs:Number(approvalDeadline)*1_000});
     const intentHash=hashIntent(domain,intent);
     let report=quoteReports.get(quote.quoteId)?.report??"0x";
     if(provider&&report==="0x"){
@@ -267,9 +274,9 @@ export function buildApi(options: ApiOptions = {}) {
       report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[intent.market,quote.snapshot.bid,quote.snapshot.ask,BigInt(timestamp),BigInt(timestamp+60)]]);
     }
     const oracleReportHash=report==="0x"?keccak256(toUtf8Bytes(JSON.stringify({market:quote.market,bid:quote.snapshot.bid.toString(),ask:quote.snapshot.ask.toString(),observedAtMs:quote.snapshot.observedAtMs}))):keccak256(report);
-    const approval:MakerApproval={intentHash,executionPrice:quote.expectedPrice,impactCharge:quote.impactCharge,fee:quote.fee,oracleReportHash,deadline:intent.deadline,leaderEpoch:versions.leaderEpoch,signerSetVersion:versions.signerSetVersion,policyVersion:versions.policyVersion};
+    const approval:MakerApproval={intentHash,executionPrice:quote.expectedPrice,impactCharge:quote.impactCharge,fee:quote.fee,oracleReportHash,deadline:approvalDeadline,leaderEpoch:versions.leaderEpoch,signerSetVersion:versions.signerSetVersion,policyVersion:versions.policyVersion};
     const digest=hashApproval(domain,approval);
-    journal?.prepare("INSERT INTO commitments VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, NULL, ?) ON CONFLICT(quote_id) DO UPDATE SET status='reserved', intent_json=excluded.intent_json, user_signature=excluded.user_signature, approval_json=excluded.approval_json, updated_ms=excluded.updated_ms").run(quote.quoteId,quote.market,quote.delta.toString(),Number(intent.deadline)*1_000,JSON.stringify(intentToWire(intent)),parsed.data.userSignature,JSON.stringify(approvalToWire(approval)),Date.now());
+    journal?.prepare("INSERT INTO commitments VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, NULL, ?) ON CONFLICT(quote_id) DO UPDATE SET status='reserved', intent_json=excluded.intent_json, user_signature=excluded.user_signature, approval_json=excluded.approval_json, updated_ms=excluded.updated_ms").run(quote.quoteId,quote.market,quote.delta.toString(),Number(approvalDeadline)*1_000,JSON.stringify(intentToWire(intent)),parsed.data.userSignature,JSON.stringify(approvalToWire(approval)),Date.now());
     const approverPayload={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),quote:quoteToWire(quote),report,oracleAgeMs:Date.now()-quote.snapshot.observedAtMs};
     const responses=await Promise.allSettled((options.approvers??[]).map(async approver=>{
       const response=await fetchImpl(`${approver.url}/approve`,{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${approver.token}`},body:JSON.stringify(approverPayload),signal:AbortSignal.timeout(1_000)});
@@ -291,7 +298,7 @@ export function buildApi(options: ApiOptions = {}) {
           await sender.submit(`autofund-mint:${quote.quoteId}`,{to:options.chain.tokenAddress,data:token.interface.encodeFunctionData("mint",[intent.account,amount])});
           await sender.submit(`autofund:${quote.quoteId}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("depositWithAuthorization",[intent.account,amount,timestamp-60,timestamp+600,depositNonce,27,"0x"+"00".repeat(32),"0x"+"00".repeat(32)])});
         }
-        const receipt=await sender.submit(`trade:${quote.quoteId}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("executeTrade",[intent,approval,report,parsed.data.userSignature,selected[0].signature,selected[1].signature])});journal?.prepare("UPDATE commitments SET status='submitted', tx_hash=?, updated_ms=? WHERE quote_id=?").run(receipt.hash,Date.now(),quote.quoteId);
+        const receipt=await sender.submit(`trade:${quote.quoteId}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("executeTrade",[intent,approval,report,parsed.data.userSignature,selected[0].signature,selected[1].signature])});quoteSnapshotCache=undefined;marketReadCache=undefined;journal?.prepare("UPDATE commitments SET status='submitted', tx_hash=?, updated_ms=? WHERE quote_id=?").run(receipt.hash,Date.now(),quote.quoteId);
         const collateral=await clearing.collateralOf(intent.account); const position=await clearing.positionOf(intent.account,intent.market);
         transaction={hash:receipt.hash,blockNumber:receipt.blockNumber,collateral:collateral.toString(),position:{size:position.size.toString(),entryPrice:position.entryPrice.toString(),lastFundingIndex:position.lastFundingIndex.toString()}};
         journal?.prepare("UPDATE commitments SET status='included', updated_ms=? WHERE quote_id=?").run(Date.now(),quote.quoteId);
@@ -300,7 +307,25 @@ export function buildApi(options: ApiOptions = {}) {
     }
     return {domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),approvals:selected,quote:quoteToWire(quote),transaction};
   });
-  app.addHook("onReady",async()=>{await sender?.reconcile();});
-  app.addHook("onClose",async()=>journal?.close());
+  async function checkRestingOrders(){
+    if(checkingOrders)return;checkingOrders=true;
+    try{for(const order of restingOrders.values()){
+      if(order.status!=="open"||!order.userSignature)continue;
+      if(Number(order.intent.deadline)*1_000<=Date.now()){order.status="expired";order.updatedAtMs=Date.now();journal?.prepare("UPDATE resting_orders SET status='expired',updated_ms=? WHERE order_id=?").run(order.updatedAtMs,order.orderId);continue;}
+      if(clearing&&await clearing.nonceUsed(order.intent.account,order.intent.nonce).catch(()=>false)){order.status=order.transactionHash?"filled":"cancelled";order.updatedAtMs=Date.now();journal?.prepare("UPDATE resting_orders SET status=?,updated_ms=? WHERE order_id=?").run(order.status,order.updatedAtMs,order.orderId);continue;}
+      try{
+        const snapshot=prices[order.market],mid=(snapshot.bid+snapshot.ask)/2n,notional=abs(order.intent.baseDelta)*mid/BASE;if(notional<=0n)continue;
+        const {quote}=await createQuote({market:order.market,side:order.side,amount:formatUsdc(notional)});quote.baseDelta=order.intent.baseDelta;quote.delta=order.side==="buy"?notional:-notional;quote.notional=notional;
+        const eligible=order.side==="buy"?quote.expectedPrice<=order.intent.limitPrice:quote.expectedPrice>=order.intent.limitPrice;if(!eligible)continue;
+        preparedIntents.set(quote.quoteId,order.intent);quoteBindings.set(quote.quoteId,{account:order.intent.account,nonce:order.intent.nonce.toString()});order.status="executing";order.updatedAtMs=Date.now();journal?.prepare("UPDATE resting_orders SET status='executing',updated_ms=? WHERE order_id=?").run(order.updatedAtMs,order.orderId);
+        const result=await app.inject({method:"POST",url:"/v1/approve",payload:{quoteId:quote.quoteId,account:order.intent.account,nonce:order.intent.nonce.toString(),userSignature:order.userSignature}}),body=result.json();preparedIntents.delete(quote.quoteId);
+        if(result.statusCode===200&&body.transaction){order.status="filled";order.transactionHash=body.transaction.hash;order.lastError=undefined;}else{order.status="open";order.lastError=body.error??`execution returned ${result.statusCode}`;}
+        order.updatedAtMs=Date.now();journal?.prepare("UPDATE resting_orders SET status=?,updated_ms=?,tx_hash=?,last_error=? WHERE order_id=?").run(order.status,order.updatedAtMs,order.transactionHash??null,order.lastError??null,order.orderId);
+      }catch(error){order.status="open";order.updatedAtMs=Date.now();order.lastError=error instanceof Error?error.message:"execution unavailable";journal?.prepare("UPDATE resting_orders SET status='open',updated_ms=?,last_error=? WHERE order_id=?").run(order.updatedAtMs,order.lastError,order.orderId);}
+      break;
+    }}finally{checkingOrders=false;}
+  }
+  app.addHook("onReady",async()=>{await sender?.reconcile();await options.oracleSource?.start?.();orderTimer=setInterval(()=>void checkRestingOrders(),250);orderTimer.unref();});
+  app.addHook("onClose",async()=>{if(orderTimer)clearInterval(orderTimer);await options.oracleSource?.close?.();journal?.close();});
   return app;
 }

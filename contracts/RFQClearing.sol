@@ -35,7 +35,7 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     uint256 internal constant MAX_SESSION_DURATION = 30 days;
 
     bytes32 internal constant INTENT_TYPEHASH = keccak256(
-        "TradeIntent(address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,uint64 leaderEpoch,uint64 policyVersion,bool reduceOnly)"
+        "TradeIntent(address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,bool reduceOnly)"
     );
     bytes32 internal constant APPROVAL_TYPEHASH = keccak256(
         "MakerApproval(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion)"
@@ -65,7 +65,7 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     }
     struct TradeIntent {
         address account; uint8 market; int256 baseDelta; uint256 limitPrice; uint256 maxFee;
-        uint256 nonce; uint64 deadline; uint64 leaderEpoch; uint64 policyVersion; bool reduceOnly;
+        uint256 nonce; uint64 deadline; bool reduceOnly;
     }
     struct MakerApproval {
         bytes32 intentHash; uint256 executionPrice; int256 impactCharge; uint256 fee;
@@ -506,10 +506,10 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         for (uint8 i; i < 2; ++i) if (_accounts[account].positions[i].size != 0 && block.timestamp - markets[i].lastPriceTime > MAX_ORACLE_AGE) revert Stale();
     }
     function _validateIntent(TradeIntent calldata intent, MakerApproval calldata approval, bytes calldata signature) private view returns (bytes32 digest, address sessionSigner) {
-        if (block.timestamp > intent.deadline || block.timestamp > approval.deadline || intent.leaderEpoch != leaderEpoch || approval.leaderEpoch != leaderEpoch || intent.policyVersion != policyVersion || approval.policyVersion != policyVersion || approval.signerSetVersion != signerSetVersion) revert Stale();
+        if (block.timestamp > intent.deadline || block.timestamp > approval.deadline || approval.leaderEpoch != leaderEpoch || approval.policyVersion != policyVersion || approval.signerSetVersion != signerSetVersion) revert Stale();
         if (nonceUsed[intent.account][intent.nonce] || intent.account == address(0) || approval.fee > intent.maxFee) revert Replay();
         if ((intent.baseDelta > 0 && approval.executionPrice > intent.limitPrice) || (intent.baseDelta < 0 && approval.executionPrice < intent.limitPrice)) revert InvalidTrade();
-        bytes32 structHash = keccak256(abi.encode(INTENT_TYPEHASH, intent.account, intent.market, intent.baseDelta, intent.limitPrice, intent.maxFee, intent.nonce, intent.deadline, intent.leaderEpoch, intent.policyVersion, intent.reduceOnly));
+        bytes32 structHash = keccak256(abi.encode(INTENT_TYPEHASH, intent.account, intent.market, intent.baseDelta, intent.limitPrice, intent.maxFee, intent.nonce, intent.deadline, intent.reduceOnly));
         digest = _hashTypedDataV4(structHash);
         if (approval.intentHash != digest) revert InvalidSignature();
         if (SignatureChecker.isValidSignatureNowCalldata(intent.account, digest, signature)) return (digest, address(0));

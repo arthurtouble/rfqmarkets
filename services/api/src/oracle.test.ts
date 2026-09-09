@@ -23,3 +23,9 @@ test("coalesces concurrent report acquisition per market",async()=>{
   const fullReport=report();let calls=0;const source=new ChainlinkDataStreamsSource({apiKey:"test",userSecret:"secret",endpoint:"https://data.example",wsEndpoint:"wss://data.example",feedIds:{BTC:feedId,ETH:`0x0003${"22".repeat(30)}`},feedDecimals:{BTC:8,ETH:8},client:{getLatestReport:async()=>{calls++;await new Promise(resolve=>setTimeout(resolve,5));return {feedID:feedId,fullReport,validFromTimestamp:1_799_999_999,observationsTimestamp:1_800_000_000};}}});
   await Promise.all(Array.from({length:20},()=>source.latest("BTC")));assert.equal(calls,1);
 });
+
+test("uses a fresh WebSocket report without another REST request",async()=>{
+  const now=Math.floor(Date.now()/1_000),fullReport=report(now);let restCalls=0,listener:((value:any)=>void)|undefined,closed=false;
+  const source=new ChainlinkDataStreamsSource({apiKey:"test",userSecret:"secret",endpoint:"https://data.example",wsEndpoint:"wss://data.example",feedIds:{BTC:feedId,ETH:`0x0003${"22".repeat(30)}`},feedDecimals:{BTC:8,ETH:8},client:{getLatestReport:async()=>{restCalls++;throw new Error("REST should not run");},createStream:()=>({on(_event,callback){listener=callback;return this;},connect:async()=>{listener?.({feedID:feedId,fullReport,validFromTimestamp:now-1,observationsTimestamp:now});},close:async()=>{closed=true;}})}});
+  await source.start();const value=await source.latest("BTC");assert.equal(restCalls,0);assert.equal(value.snapshot.bid,99_990n*1_000_000n);await source.close();assert.equal(closed,true);
+});

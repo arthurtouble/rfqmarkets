@@ -82,7 +82,7 @@ const domain = { name: "RFQ Markets", version: "1", chainId: networkInfo.chainId
 const intentTypes = { TradeIntent: [
   {name:"account",type:"address"},{name:"market",type:"uint8"},{name:"baseDelta",type:"int256"},
   {name:"limitPrice",type:"uint256"},{name:"maxFee",type:"uint256"},{name:"nonce",type:"uint256"},
-  {name:"deadline",type:"uint64"},{name:"leaderEpoch",type:"uint64"},{name:"policyVersion",type:"uint64"},{name:"reduceOnly",type:"bool"},
+  {name:"deadline",type:"uint64"},{name:"reduceOnly",type:"bool"},
 ] };
 const approvalTypes = { MakerApproval: [
   {name:"intentHash",type:"bytes32"},{name:"executionPrice",type:"uint256"},{name:"impactCharge",type:"int256"},
@@ -107,7 +107,7 @@ const sessionGrantTypes = { SessionGrant: [
 async function order({ nonce, delta, executionPrice, limitPrice, impactCharge, report, reduceOnly = false, market = 0, account = user.address, signer = user }) {
   const block = await ethers.provider.getBlock("latest");
   const deadline = BigInt(block.timestamp + 60);
-  const intent = { account, market, baseDelta:delta, limitPrice, maxFee:10_000_000n, nonce, deadline, leaderEpoch:1n, policyVersion:1n, reduceOnly };
+  const intent = { account, market, baseDelta:delta, limitPrice, maxFee:10_000_000n, nonce, deadline, reduceOnly };
   const userSignature = await signer.signTypedData(domain, intentTypes, intent);
   const intentHash = ethers.TypedDataEncoder.hash(domain, intentTypes, intent);
   const approval = { intentHash, executionPrice, impactCharge, fee:2_000_000n, oracleReportHash:ethers.keccak256(report), deadline, leaderEpoch:1n, signerSetVersion:1n, policyVersion:1n };
