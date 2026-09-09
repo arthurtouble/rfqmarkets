@@ -6,7 +6,7 @@ import { Contract, JsonRpcProvider, Wallet } from "ethers";
 const api=process.env.RFQ_API_URL??"http://127.0.0.1:4100";
 const deployment=JSON.parse(readFileSync(resolve(".local-state","deployment.json"),"utf8")) as {rpcUrl:string;clearingAddress:string};
 const provider=new JsonRpcProvider(process.env.RFQ_RPC_URL??deployment.rpcUrl);
-const council=await provider.getSigner(0);
+const council=await provider.getSigner(1);
 const clearing=new Contract(deployment.clearingAddress,["function leaderEpoch() view returns(uint64)","function advanceLeaderEpoch(uint64)"],council);
 const user=Wallet.createRandom();
 const post=async(path:string,body:unknown)=>{const response=await fetch(`${api}${path}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});return {response,payload:await response.json()};};

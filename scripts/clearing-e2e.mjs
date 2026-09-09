@@ -95,6 +95,8 @@ await (await token.connect(user).approve(await clearing.getAddress(), ethers.Max
 await (await token.connect(relayer).approve(await clearing.getAddress(), ethers.MaxUint256)).wait();
 await (await clearing.connect(maker).fundMaker(600_000_000_000n)).wait();
 await (await clearing.connect(maker).fundInsurance(150_000_000_000n)).wait();
+await reject(clearing.connect(maker).fundMaker(0),"zero maker funding must not create a no-op state transition");
+await reject(clearing.connect(maker).fundInsurance(0),"zero insurance funding must not create a no-op state transition");
 await (await clearing.connect(user).deposit(7_000_000_000n)).wait();
 await (await clearing.connect(relayer).deposit(1_000_000_000n)).wait();
 const depositBlock = await ethers.provider.getBlock("latest");
@@ -243,6 +245,9 @@ await reject(clearing.connect(user).withdraw(1_500_000_000n), "positive unrealiz
 
 // Adverse price makes the account liquidatable; liquidation reduces absolute exposure.
 const down = await observation(0, 78_990_000_000n, 79_010_000_000n);
+await (await clearing.connect(keeper).refreshOracle(down.report)).wait();
+const unchangedMarket = await observation(1, 3_990_000_000n, 4_010_000_000n);
+await reject(clearing.connect(keeper).liquidate(user.address,1,unchangedMarket.report),"liquidation must target a non-empty position");
 await (await clearing.connect(keeper).liquidate(user.address, 0, down.report)).wait();
 assert.equal((await clearing.positionOf(user.address, 0)).size, 187_425_000_000_000_000n);
 assert((await clearing.insuranceBalance()) > 150_000_000_000n);
@@ -295,5 +300,13 @@ const relayerBefore = await token.balanceOf(relayer.address);
 await (await upgraded.connect(relayer).claimResolution()).wait();
 assert.equal(await token.balanceOf(relayer.address) - relayerBefore, relayerClaim * pool / totalClaims);
 assert(pool < totalClaims, "fault injection must exercise a real pro-rata haircut");
+const recovery=totalClaims-pool;
+await (await token.mint(keeper.address,recovery+1n)).wait();
+await (await token.connect(keeper).approve(await upgraded.getAddress(),recovery+1n)).wait();
+await reject(upgraded.connect(keeper).addResolutionRecovery(recovery+1n),"recovery cannot strand assets above total claims");
+await (await upgraded.connect(keeper).addResolutionRecovery(recovery)).wait();
+const userBeforeRecovery=await token.balanceOf(user.address);
+await (await upgraded.connect(user).claimResolution()).wait();
+assert.equal(await token.balanceOf(user.address)-userBeforeRecovery,claim-claim*pool/totalClaims);
 
 console.log("Clearing E2E passed: proxy, custody, ERC-1271, scoped sessions, relayed exits, epoch failover, maker floor, trade, margin, liquidation, upgrade, resolution");

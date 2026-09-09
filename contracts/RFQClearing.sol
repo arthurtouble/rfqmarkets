@@ -145,7 +145,10 @@ contract RFQClearing is Initializable {
         address usdc_, address oracle_, address governance_, address emergencyCouncil_,
         address[3] calldata approvers_, uint256 baseRiskCapitalTarget_
     ) external initializer {
-        if (usdc_ == address(0) || oracle_ == address(0) || governance_ == address(0) || emergencyCouncil_ == address(0)) revert Unauthorized();
+        if (
+            usdc_ == address(0) || oracle_ == address(0) || governance_ == address(0)
+                || emergencyCouncil_ == address(0) || governance_ == emergencyCouncil_ || baseRiskCapitalTarget_ == 0
+        ) revert Unauthorized();
         _entered = 1;
         usdc = IERC20(usdc_); oracle = IPriceOracle(oracle_); governance = governance_;
         emergencyCouncil = emergencyCouncil_; baseRiskCapitalTarget = baseRiskCapitalTarget_;
@@ -192,13 +195,13 @@ contract RFQClearing is Initializable {
     }
 
     function fundMaker(uint256 amount) external nonReentrant {
-        if (resolutionRequired) revert InvalidTrade();
+        if (resolutionRequired || amount == 0) revert InvalidTrade();
         _pullExact(msg.sender, amount);
         makerBacking += amount;
     }
 
     function fundInsurance(uint256 amount) external nonReentrant {
-        if (resolutionRequired) revert InvalidTrade();
+        if (resolutionRequired || amount == 0) revert InvalidTrade();
         _pullExact(msg.sender, amount);
         insuranceBalance += amount;
     }
@@ -311,6 +314,7 @@ contract RFQClearing is Initializable {
         int256 equity = maintenanceEquity(account);
         if (equity >= int256(maintenanceMargin(account))) revert Margin();
         Position storage position = _accounts[account].positions[market];
+        if (position.size == 0) revert InvalidTrade();
         mark = position.size > 0 ? observation.bid : observation.ask;
         closed = RFQRiskMath.liquidationClose(position.size, mark, equity);
         int256 delta = position.size > 0 ? -int256(closed) : int256(closed);
@@ -419,8 +423,8 @@ contract RFQClearing is Initializable {
             resolutionClaim[account] = claim;
             totalResolutionClaims += claim;
             _accounts[account].collateral = 0;
-            _accounts[account].positions[0].size = 0;
-            _accounts[account].positions[1].size = 0;
+            delete _accounts[account].positions[0];
+            delete _accounts[account].positions[1];
         }
         resolutionCursor = end;
         if (end == _accountList.length) {
@@ -447,6 +451,8 @@ contract RFQClearing is Initializable {
 
     function addResolutionRecovery(uint256 amount) external nonReentrant {
         if (!resolutionFinalized || amount == 0) revert InvalidTrade();
+        uint256 credited = resolutionAssets < totalResolutionClaims ? resolutionAssets : totalResolutionClaims;
+        if (amount > totalResolutionClaims - credited) revert InvalidTrade();
         _pullExact(msg.sender, amount);
         resolutionAssets += amount;
     }

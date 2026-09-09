@@ -1,6 +1,6 @@
 # RFQ Markets — consolidated architecture and status
 
-2026-09-08. Canonical overview. Supersedes conflicting topology/status statements in earlier documents. Detailed requirements remain in SIMPLIFIED-DESIGN.md, ADVERSARIAL-FLOW.md and ARCHITECTURE-REVIEW.md. Contracts, models and the first local application slice are implemented and tested; nothing has been deployed or independently audited.
+2026-09-09. Canonical overview. Supersedes conflicting topology/status statements in earlier documents. Detailed requirements remain in SIMPLIFIED-DESIGN.md, ADVERSARIAL-FLOW.md and ARCHITECTURE-REVIEW.md. The full local stack is implemented and tested; no public network deployment or independent audit has occurred. The latest unbiased assessment is [SYSTEM-AUDIT-2026-09-09.md](SYSTEM-AUDIT-2026-09-09.md).
 
 ## Readiness
 
@@ -24,7 +24,7 @@ flowchart TB
     O[Chainlink reports and independent reference data]
     RPC[Independent Base RPC paths and live observers]
     CH[Base clearing proxy: funds, positions and enforcement]
-    P[Ponder with its own PostgreSQL]
+    P[Rebuildable chain-event indexer]
     H[Hedge executor and operational journal]
     V[Hyperliquid first; other venues later]
     K[Independent liquidation and exit keepers]
@@ -75,7 +75,7 @@ The oracle report bundle accompanies applicable settlement/keeper calls for on-c
 | Clearing system | Solidity, stable upgradeable proxy; Foundry for tests | Authoritative collateral, positions, funding, settlement, margin, risk, replay and resolution rules. |
 | Oracle adapter | Official Chainlink Data Streams SDK over WebSocket with REST fallback | Validates and caches exact full reports; contract verification and exact feed/schema/time/selection rules remain authoritative. Independent reference feeds only supplement approval safety. |
 | Live chain observers | Independent RPC subscriptions plus reconciled reads | Fresh state for API, approvers, hedging and keepers; checkpointed disposable caches. |
-| User read model | Ponder + local PGlite / production PostgreSQL | Sole durable chain-derived application read model for positions and history, exposed through bounded HTTP queries. Live risk is computed from block-tagged contract views plus the current oracle snapshot. |
+| User read model | Current local SQLite event projection; production database chosen after load measurement | Rebuildable chain-derived application read model for positions and history. Live risk is computed from block-tagged contract views plus the current oracle snapshot. It never authorizes settlement. |
 | Hedge executor | TypeScript/venue adapter candidate + SQLite operational journal | Actual external orders, fills and reconciled hedge exposure; separate trade authority. |
 | Keepers | Independent lightweight services | Permissionless contract-defined liquidation and fallback execution; direct chain inputs. |
 | Gas reserve | Capped funding mechanism plus operations trigger | Automatically supplies allowlisted gas senders under independently enforced limits. |
@@ -107,7 +107,7 @@ The normal user-facing and generated-intent behavior is specified in [UX-AND-INT
 5. Treat outstanding quotes as optional executable commitments. Never assume opposing pending orders both fill or grant a favorable offset discount based on an order that can disappear. Capacity remains reserved while an escaped quote could execute.
 6. Request all three approvers in parallel, collect two matching signatures, simulate and submit immediately. Each approver reads independent inputs and enforces the full policy.
 7. Contracts enforce the simple current-state impact acceptance boundary and market/side/portfolio constraints even if the API hid outstanding orders. Two-of-three approvals do not supply global off-chain ordering. ECONOMIC-SPECIFICATION.md defines the version 0.1 potential, risk-reduction credit caps and test parameters.
-8. Display provisional execution promptly; reconcile inclusion/reorgs and Ponder without double counting. Refresh approval internally only under unchanged user authority; an exact accepted fill is never silently worsened.
+8. Display provisional execution promptly; reconcile inclusion and reorgs through the chain-derived indexer without double counting. Refresh approval internally only under unchanged user authority; an exact accepted fill is never silently worsened.
 9. Hedge reconciled exposure at the selected confirmation stage within explicit risk limits; record and reconcile external outcomes.
 
 Correlated markets share one admission budget and factor/stress accounting, with independent gross limits. Net delta alone does not cover basis jumps or separate-account defaults. Current contract caps cannot rely on unverified external hedge state. Conservative constraints may decline a valid user request when shared capacity or price limits are exhausted; no unconditional-fill promise.
@@ -128,7 +128,7 @@ Hedge failover separately requires venue credential revocation or otherwise veri
 
 ## Data, gas and availability
 
-Base is authoritative; Ponder is the one customer read model. Local development can use Ponder's embedded PGlite, while production uses private PostgreSQL near the service with bounded public HTTP queries. [Ponder database documentation](https://ponder.sh/docs/database). API intent/sender and hedge journals record different operational facts, not duplicated authoritative balances. Lost chain-derived data is rebuildable; unknown external or signed commitments require reconciliation before resuming risk. The current Ponder release is not yet installed in the executable workspace because its audited transitive dependency set contains unresolved high-severity findings; see [INDEXER-DESIGN.md](INDEXER-DESIGN.md).
+Base is authoritative; one rebuildable event projection is the customer read model. The executable local indexer uses SQLite and canonical block-hash reconciliation. Production may use PostgreSQL or a maintained indexing framework after dependency and load review. API intent/sender and hedge journals record different operational facts, not duplicated authoritative balances. Lost chain-derived data is rebuildable; unknown external or signed commitments require reconciliation before resuming risk. See [INDEXER-DESIGN.md](INDEXER-DESIGN.md).
 
 Trading is sponsored by API gas wallets; ordinary automatic top-ups come from a separate allowlisted reserve under individual/global caps, maximum balances, refill rates and a finite allowance. API cannot raise those limits. Independent refill triggering has recovery gas. Treasury replenishment is periodic. UX-AND-INTENT.md specifies signed USDC deposit, lazy scoped-session certificates and relayed owner withdrawals, with direct calls as fallback; deployed-token and wallet compatibility must be tested.
 
@@ -150,7 +150,7 @@ Countries below retain the earlier shortlist, not verified privacy guarantees or
 | Public edge | Managed global service candidate | Primary frontend/ingress; independent fallback avoids sole-edge dependency. |
 | Optional owned Base node | Dedicated separately sized host | Additional data independence; production RPC diversity still needed. |
 
-This concrete recovery layout is ten VPS instances plus managed edge, with an owned node optional as an eleventh. It consolidates application roles, not security boundaries. Development can run locally. Stateless stream gateways scale horizontally from the start; only the execution writer and its warm standby are single-active. Dedicated indexer read replicas remain demand-driven. A provider outage can still pause trading during data/hedge recovery despite an available signer quorum.
+The table describes security and recovery domains, not a mandatory ten-server purchase. Start with the smallest placement that preserves separate approver keys, API/hedge isolation and a warm execution recovery path; add stateless gateways and read replicas from measured traffic. Only the execution writer and its warm standby are single-active. A provider outage can still pause trading during data/hedge recovery despite an available signer quorum.
 
 Origins are hidden from ordinary public ingress, not from providers or every network observer. Limit wallet/IP linkage, logs and retention; isolate admin access and signer deployment credentials; keep backups encrypted with separate recovery controls. Hosting country does not make public chain balances private or remove stablecoin/chain/venue dependencies.
 

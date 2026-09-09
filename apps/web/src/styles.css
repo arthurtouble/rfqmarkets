@@ -45,6 +45,8 @@ main.wide .app-frame { width: min(100%, 1180px); }
 .market-tape div { display: grid; gap: 3px; padding: 10px; background: #10141d; }
 .market-tape small, .portfolio-panel small { color: #7f8aa3; font-size: 11px; }
 .market-tape strong { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.feed-dot { display: inline-block; width: 6px; height: 6px; margin-left: 4px; border-radius: 50%; background: #71dfb2; vertical-align: 1px; }
+.feed-dot.stale { background: #f3cf7a; box-shadow: 0 0 0 3px #f3cf7a22; }
 .portfolio-panel { min-height: 640px; overflow: hidden; border: 1px solid #293247; border-radius: 24px; background: rgba(15,18,26,.94); box-shadow: 0 24px 80px #0008; }
 .quote-inspector { min-height: 640px; padding: 28px; border: 1px solid #293247; border-radius: 24px; background: rgba(15,18,26,.94); box-shadow: 0 24px 80px #0008; }
 .quote-inspector h2 { margin: 14px 0 7px; font-size: 28px; }.quote-inspector > p { max-width: 520px; margin: 0; color: #8994aa; line-height: 1.55; }

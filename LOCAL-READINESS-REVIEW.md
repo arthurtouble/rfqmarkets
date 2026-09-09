@@ -42,7 +42,7 @@ Code modules can be separated without creating more servers. The frontend is spl
 | Hedging | Deterministic local venue adapter | Hyperliquid testnet agent wallet/subaccount, real order/fill reconciliation, rate limits and fenced failover. |
 | Governance | Contract roles | Deployed multisigs, 72-hour timelock, selector review and recovery drill. |
 | Availability | Expected-epoch council transition and live fencing drill | Production 2-of-3 council/Safe, warm-standby reconciliation, independent RPCs and process/network fault injection. |
-| Contract shape | 20,715-byte IR build behind a transparent proxy, with a 21,000-byte project gate and linked stateless risk/trade math | Verify the implementation, library and ProxyAdmin; repeat storage/upgrade validation for every release. |
+| Contract shape | 20,850-byte IR build behind a transparent proxy, with a 21,000-byte project gate and linked stateless risk/trade math | Verify the implementation, library and ProxyAdmin; repeat storage/upgrade validation for every release. |
 | Assurance | Internal deterministic tests, including 120 stateful cross-market trades | Broader invariant fuzzing, economic stress calibration and independent contract/infrastructure audits. |
 
 ## Readiness verdict
@@ -53,7 +53,7 @@ The local product is end-to-end enough to validate the interaction model: a user
 
 ## Next implementation sequence
 
-1. Split API/indexer internals without adding deployable services, and keep further clearing growth out of the near-limit implementation.
+1. Replace linear public indexer projections with indexed/precomputed views, split API/indexer internals without adding deployable services, and keep further clearing growth out of the implementation.
 2. Run the real-socket gateway storm at the host ceiling and extend fault drills with RPC disagreement and process kills during settlement.
 3. Obtain Chainlink Data Streams or Pyth Hermes development credentials and wire real reports through the selected adapter on Base Sepolia. Measure report acquisition and approval latency.
 4. Replace mock collateral and deposit routing on Base Sepolia, then validate injected, mobile and smart-contract wallets.

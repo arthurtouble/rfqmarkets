@@ -1,6 +1,6 @@
 # RFQ Markets
 
-Architecture, executable economic models and a local clearing-system prototype. Nothing has been deployed.
+Architecture, executable economic models and a complete local clearing-system prototype. Nothing has been deployed to a public network.
 
 Start with [the consolidated current architecture and status](CURRENT-ARCHITECTURE.md), covering every component, integrated attack defenses, proposed hosting and validation gates. The topology and version 0.1 economic/recovery specification are ready for modeling and prototyping; they are not yet validated for production capital.
 
@@ -15,6 +15,8 @@ The [contract implementation guide](CONTRACT-IMPLEMENTATION.md) explains the cle
 The [local application guide](LOCAL-DEVELOPMENT.md) covers the Fastify API leader, three durable-log approvers, signed-before-broadcast sender, chain indexer, hedge worker and React ticket.
 
 The [local readiness review](LOCAL-READINESS-REVIEW.md) states what is complete, what remains simulated, which boundaries should stay separate and the shortest safe path to a Base testnet pilot.
+
+The [whole-system audit](SYSTEM-AUDIT-2026-09-09.md) records the current independent assessment, hardening completed, remaining scale blockers and the boundary against unnecessary services.
 
 The [market lifecycle playbook](MARKET-LIFECYCLE-PLAYBOOK.md) defines the on-chain source of truth, safe limit changes, emergency tightening, and the coordinated procedures for enabling, retiring, and adding markets.
 

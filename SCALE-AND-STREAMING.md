@@ -41,7 +41,7 @@ The local stack now implements this boundary as a separate, secret-free gateway 
 - Keep frames bounded. The pending envelope has at most two directional totals per market; individual pending quote IDs never enter it.
 - Bound slow-client buffers and reconnect with jitter. Never retain an unbounded sequence of obsolete prices.
 - Rate-limit firm creation by wallet/session and edge token, while contract-wide capacity and price checks remain the Sybil-resistant protection. Browsing consumes no firm capacity.
-- Put a hard global cap and expiry index on unconsumed firm quotes. The current in-memory maps require a bounded-cache implementation before public launch.
+- Put a hard global cap and expiry index on unconsumed firm quotes. The local implementation now uses a bounded expiry heap and prunes in fixed-size batches.
 - Resting limit orders use per-market price heaps and a separate expiry heap. A market tick examines only orders whose raw limit crosses the current bid or ask, then runs the exact inventory-aware firm quote check. Dormant orders therefore do not create linear work per tick; cancellation and replacement use lazy deletion. The active-order ceiling remains 100,000 locally and must be calibrated against measured execution throughput.
 - Measure connected streams, bytes per frame, fanout delay, dropped consumers, reconnects, firm requests per second, active commitments, admission latency, approval latency and inclusion latency separately.
 
@@ -49,7 +49,7 @@ The local stack now implements this boundary as a separate, secret-free gateway 
 
 Public chain-derived updates are event driven. The indexer publishes an invalidation after its canonical projection changes; browsers fetch a coherent bounded snapshot on that event. Account clients ignore updates that do not name their address and recompute mark-to-market, funding, equity and margin locally from the shared market frame. This avoids an RPC read for every account on every price tick.
 
-At production volume, identical public risk/activity responses belong behind a short-lived edge cache or in the indexer event frame. Position queries require keyset pagination and indexed open-position projections; scanning every account per request is a launch blocker. Personalized history is indexed by address and bounded. The indexer is rebuildable and never participates in authorization.
+At production volume, identical public risk/activity responses belong behind a short-lived edge cache or in the indexer event frame. Position queries still require keyset pagination, an indexed open-position projection and precomputed aggregate risk; the current full-account public scans are a launch blocker. Personalized history is indexed by address and bounded. The indexer is rebuildable and never participates in authorization.
 
 ## Bottlenecks and correctness boundaries
 
