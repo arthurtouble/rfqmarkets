@@ -125,6 +125,7 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     event SessionGranted(address indexed account, address indexed session, uint64 validUntil, uint128 maxCumulativeNotional);
     event SessionRevoked(address indexed account, address indexed session);
     event TradeExecuted(bytes32 indexed intentHash, address indexed account, uint8 market, int256 baseDelta, uint256 price, uint256 fee);
+    event FundingSettled(address indexed account, uint8 indexed market, int256 payment);
     event Liquidated(address indexed account, uint8 market, uint256 closedBase, uint256 penalty, uint256 keeperReward);
     event DeficitAbsorbed(address indexed account, uint256 insuranceUsed, uint256 makerUsed, uint256 unresolved);
     event EpochAdvanced(uint64 epoch);
@@ -546,7 +547,7 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     function _settleAllFunding(address account) private { for (uint8 i; i < 2; ++i) _settleFunding(account, i); }
     function _settleFunding(address account, uint8 marketId) private {
         Position storage p = _accounts[account].positions[marketId]; int256 change = markets[marketId].fundingIndex - p.lastFundingIndex;
-        if (change != 0 && p.size != 0) { int256 payment = p.size * change / int256(BASE); _changeCollateral(account, -payment); _changeMaker(payment); }
+        if (change != 0 && p.size != 0) { int256 payment = p.size * change / int256(BASE); _changeCollateral(account, -payment); _changeMaker(payment); emit FundingSettled(account, marketId, payment); }
         p.lastFundingIndex = markets[marketId].fundingIndex;
     }
     function _applyPosition(address account, uint8 marketId, int256 delta, uint256 price) private {

@@ -36,6 +36,7 @@ export const clearingIndexerAbi = [
   "event Deposited(address indexed account,uint256 amount)",
   "event Withdrawn(address indexed account,uint256 amount)",
   "event TradeExecuted(bytes32 indexed intentHash,address indexed account,uint8 market,int256 baseDelta,uint256 price,uint256 fee)",
+  "event FundingSettled(address indexed account,uint8 indexed market,int256 payment)",
   "event NonceCancelled(address indexed account,uint256 indexed nonce)",
   "event PositionClosed(address indexed account,uint8 indexed market,int256 baseDelta,uint256 price)",
   "event MakerWithdrawn(address indexed recipient,uint256 amount)",

@@ -27,7 +27,7 @@ The public hostname should terminate at Cloudflare. A Cloudflare Tunnel gives th
 - maintenance-margin usage and liquidatable status;
 - position size, entry, directional mark, notional, unrealized PnL and accrued funding for each market.
 
-Funding shown before settlement is an estimate from the same formula the contract applies on the next qualifying oracle update. The response also carries the contract's stored view values so integration tests can detect divergence. Ponder remains the durable chain-derived source for activity and historical state; it is not a second live risk engine.
+Funding shown before settlement is an estimate from the same formula the contract applies on the next qualifying oracle update. Whenever an account action crystallizes a non-zero payment, the contract emits `FundingSettled(account, market, payment)` and the indexer records it in account activity. The response also carries the contract's stored view values so integration tests can detect divergence. Ponder remains the durable chain-derived source for activity and historical state; it is not a second live risk engine.
 
 Cross margin has no meaningful user-selected leverage per position. The launch UI therefore shows effective account leverage and margin usage. Position tier limits imply maximum opening leverage of 5x up to $25,000, 4x up to $50,000 and approximately 3.03x up to $100,000. Adding a leverage selector would only change how much collateral the UI suggests, not the clearing rule.
 
