@@ -38,7 +38,7 @@ export function buildApprover(options:ApproverOptions) {
     } catch{return reply.code(400).send({error:"invalid typed data"});}
     if(domain.name!==DOMAIN_NAME||domain.version!==DOMAIN_VERSION||(options.expectedChainId!==undefined&&domain.chainId!==options.expectedChainId)||(options.expectedVerifyingContract&&domain.verifyingContract!==getAddress(options.expectedVerifyingContract)))return reply.code(409).send({error:"domain mismatch"});
     const now=Date.now(),expiryMs=Number(approval.deadline)*1_000;
-    if(Number(intent.deadline)*1_000<=now||expiryMs<=now||expiryMs>now+(31+(options.maxFutureSeconds??5))*1_000)return reply.code(409).send({error:"invalid expiry"});
+    if(!clearing&&(Number(intent.deadline)*1_000<=now||expiryMs<=now||expiryMs>now+(31+(options.maxFutureSeconds??5))*1_000))return reply.code(409).send({error:"invalid expiry"});
     if((options.expectedEpoch!==undefined&&approval.leaderEpoch!==BigInt(options.expectedEpoch))||(options.expectedPolicyVersion!==undefined&&approval.policyVersion!==BigInt(options.expectedPolicyVersion))||(options.expectedSignerSetVersion!==undefined&&approval.signerSetVersion!==BigInt(options.expectedSignerSetVersion)))return reply.code(409).send({error:"version mismatch"});
     const market=input.quote.market==="BTC"?0:1;
     const priceOutsideLimit=(intent.baseDelta>0n&&approval.executionPrice>intent.limitPrice)||(intent.baseDelta<0n&&approval.executionPrice<intent.limitPrice);
@@ -58,7 +58,8 @@ export function buildApprover(options:ApproverOptions) {
         else [reportObservation]=AbiCoder.defaultAbiCoder().decode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],input.report);
         const observation=reportObservation;if(!observation)throw new Error("missing oracle observation");
         const nowSeconds=BigInt(Math.floor(now/1_000));
-        if(observation.market!==BigInt(market)||observation.bid!==BigInt(input.quote.bid)||observation.ask!==BigInt(input.quote.ask)||observation.bid<=0n||observation.ask<observation.bid||observation.observedAt>nowSeconds+BigInt(options.maxFutureSeconds??5)||nowSeconds>observation.validUntil||(observation.observedAt<=nowSeconds&&nowSeconds-observation.observedAt>8n))return reply.code(409).send({error:"oracle report rejected"});
+        const wallTimeInvalid=!clearing&&(observation.observedAt>nowSeconds+BigInt(options.maxFutureSeconds??5)||nowSeconds>observation.validUntil||(observation.observedAt<=nowSeconds&&nowSeconds-observation.observedAt>8n));
+        if(observation.market!==BigInt(market)||observation.bid!==BigInt(input.quote.bid)||observation.ask!==BigInt(input.quote.ask)||observation.bid<=0n||observation.ask<observation.bid||wallTimeInvalid)return reply.code(409).send({error:"oracle report rejected"});
       } catch{return reply.code(409).send({error:"oracle report rejected"});}
     }
     if(clearing&&provider){
@@ -75,6 +76,7 @@ export function buildApprover(options:ApproverOptions) {
         ]);
         if(secondaryProvider&&(!secondaryBlock||secondaryBlock.hash!==block?.hash))return reply.code(409).send({error:"rpc divergence"});
         if(!block||BigInt(epoch)!==approval.leaderEpoch||BigInt(setVersion)!==approval.signerSetVersion||BigInt(policy)!==approval.policyVersion||paused||resolution||!member)return reply.code(409).send({error:"independent chain policy rejected"});
+        if(intent.deadline<=BigInt(block.timestamp)||approval.deadline<=BigInt(block.timestamp)||approval.deadline>BigInt(block.timestamp+31+(options.maxFutureSeconds??5)))return reply.code(409).send({error:"chain-time expiry rejected"});
         if(!accountSignature&&(!session||getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<approval.fee||BigInt(session.usedNotional)+notional>BigInt(session.maxCumulativeNotional)||notional>BigInt(session.maxTradeNotional)))return reply.code(409).send({error:"user authorization rejected"});
         const selected=market===0?btc:eth;if(!selected.enabled)return reply.code(409).send({error:"market disabled"});
         if(reportObservation&&(reportObservation.observedAt>BigInt(block.timestamp)||BigInt(block.timestamp)>reportObservation.validUntil||BigInt(block.timestamp)-reportObservation.observedAt>8n))return reply.code(409).send({error:"chain-time oracle rejected"});

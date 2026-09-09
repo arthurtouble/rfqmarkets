@@ -1,6 +1,6 @@
 # Local application prototype
 
-The local slice contains a long-running Hardhat OP-compatible chain, a deployed UUPS clearing proxy, mock USDC and oracle, one Fastify API leader, three isolated approver processes, a chain-derived indexer, an idempotent hedge worker and a small React/Vite trade and deposit ticket. Signed deposits and orders are gas-sponsored and settle on the local chain.
+The local slice contains a long-running Hardhat OP-compatible chain, a deployed UUPS clearing proxy, mock USDC and oracle, Coinbase public market data, one Fastify API leader, three isolated approver processes, a chain-derived indexer, an idempotent hedge worker and a React trade interface. Signed deposits and orders are gas-sponsored and settle on the local chain.
 
 Compile and start the chain in the first terminal:
 
@@ -35,16 +35,21 @@ npm run dev:admin
 
 Open the trading interface at `http://127.0.0.1:4173` and the private hedge dashboard at `http://127.0.0.1:4174`. JSON-RPC listens on `127.0.0.1:8545`, the API on `127.0.0.1:4100`, approvers on loopback ports 4201–4203, the indexer on `127.0.0.1:4300`, and the hedge worker on `127.0.0.1:4400`. Deployment addresses, local-only keys and journals live under the gitignored `.local-state/` directory. Restarting services reconciles signed sender transactions, canonical indexed blocks and idempotent hedge orders. Restarting the Hardhat chain requires a fresh `npm run deploy:local` before services restart.
 
+Each deployment creates a throwaway browser test wallet, funds it with local ETH and deposits 25,000 mock USDC into clearing. The API exposes that key only when chain ID is 31337, the RPC hostname is loopback and development funding is enabled. The UI loads it automatically, signs the same EIP-712 messages as an injected wallet, and immediately displays account equity, margin, positions, orders and history. These keys are disposable and must never be reused outside the local chain.
+
+The local market-data adapter subscribes to Coinbase Advanced Trade's unauthenticated BTC-USD and ETH-USD ticker channel and consumes its best bid and ask. It maintains a heartbeat subscription, reconnects after failure and falls back to Coinbase Exchange's public ticker REST endpoint when the WebSocket observation is absent or older than 1.5 seconds. The API fails closed if neither transport produces a fresh observation. The adapter encodes those prices into the mock oracle's contract report. This exercises the full report/approval/settlement path but does not claim Coinbase data is a production oracle; testnet and production use authenticated Chainlink Data Streams envelopes.
+
 With the services running, exercise the real HTTP signature path using an ephemeral local EOA. The smoke test signs and settles a simulated Ethereum-to-Base deposit before trading against that collateral:
 
 ```bash
 npm run smoke:local
+npm run smoke:live-market
 npm run smoke:quote-load
 ```
 
 ## Current request path
 
-1. `POST /v1/quote` validates market, side and amount, then builds a thirty-second bounded quote from mock BTC/ETH prices. The browser refreshes the displayed estimate every second. Since a stopped local automining chain has no oracle keeper, the development path advances its clock and refreshes an exposed nontraded market only when that stale mark would block portfolio checks; production delegates this to independent keepers.
+1. `POST /v1/quote` validates market, side and amount, then builds a thirty-second bounded quote from the latest Coinbase bid or ask. The browser receives public market snapshots four times per second and refreshes its size-specific indicative quote twice per second. Since a stopped local automining chain has no oracle keeper, the development path advances its clock and refreshes an exposed nontraded market only when that stale mark would block portfolio checks; production delegates this to independent keepers.
 2. The quote engine calculates base spread, explicit fee and cumulative BTC/ETH inventory impact with integer arithmetic. It reduces all pending commitments, regardless of wallet, into conservative BTC/ETH exposure bounds and checks the four boundary portfolios in linear time.
 3. `POST /v1/prepare` generates the contract's complete EIP-712 `TradeIntent`: account, market, signed base size, automatic price/fee limits, random frontend nonce, deadline, leader epoch, policy version and reduce-only flag. Each quote pins the epoch, signer-set version and policy version from one chain block and becomes bound to the first account and nonce that prepares it. An exact retry remains idempotent; another wallet or nonce cannot reuse the same favorable quote.
 4. `POST /v1/approve` requires that exact prepared account and nonce, then verifies that the typed signature belongs to the stated EOA, an ERC-1271 account at the pinned block, or a valid limited session before reserving any shared portfolio capacity. An unsigned or incorrectly signed request cannot move subsequent prices.
@@ -57,7 +62,7 @@ npm run smoke:quote-load
 11. Before each quote, the API refreshes settled aggregate exposure from the clearing contract. Signed commitments and deposit routes are written to the API SQLite WAL. Still-executable reservations and completed deposit identities reload after an API restart.
 12. Withdrawals, nonce cancellations, session grants and paused-market closes use separate exact EIP-712 messages. The API verifies the owner signature before spending sponsor gas; the contract independently verifies it and consumes the shared nonce. A session is limited on-chain by market, single and cumulative notional, fee and expiry and has no withdrawal authority. Each fresh local deployment receives an isolated runtime journal directory so stale sender or hedge state cannot cross deployments.
 
-The browser's Trade page shows market, amount, Buy/Sell, estimated price, maximum fee and generated price protection. With an injected EIP-1193 wallet, clicking Buy/Sell connects when necessary, signs the generated intent, obtains two approvals and displays the included transaction. A one-time owner signature may enable the default eight-hour quick-trading session; eligible subsequent trades use its tab-scoped key without wallet popups. The same control sends a direct owner revocation and deletes the local key only after a successful receipt, so revocation remains available without the API. The deposit panel signs and settles the local route. Once connected, the collateral card exposes an exact signed, sponsored withdrawal. A conservative full-position close appears only while the protocol is paused. The Markets page shows public finalized aggregate exposure, open wallet positions and recent trades. The embedded Codex browser has no injected wallet and reports that clearly.
+The Trade page shows Coinbase BBO and feed age, size-specific maker execution, base spread, inventory charge, fee and price protection. A local test wallet loads automatically; an injected EIP-1193 wallet remains the non-development path. Clicking Buy/Sell signs the generated intent, obtains two approvals and displays the included transaction. A one-time owner signature may enable the default eight-hour quick-trading session; eligible subsequent trades use its tab-scoped key without wallet popups. The same control sends a direct owner revocation and deletes the local key only after a successful receipt, so revocation remains available without the API. The deposit panel signs and settles the local route. The account panel always displays equity and margin metrics and provides Positions, Open orders, Trade history and Account history tabs. A conservative full-position close appears only while the protocol is paused. The Markets page shows public finalized aggregate exposure, open wallet positions and recent trades.
 
 ## Security boundary still missing
 

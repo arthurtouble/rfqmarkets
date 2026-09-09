@@ -84,6 +84,10 @@ test("real oracle source drives quotes and fails closed when unavailable",async(
   const failed=buildApi({oracleSource:{latest:async()=>{throw new Error("feed unavailable")}}});await failed.ready();const unavailable=await failed.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}});assert.equal(unavailable.statusCode,503);await failed.close();
 });
 
+test("development funding cannot expose a wallet on a non-local chain",()=>{
+  assert.throws(()=>buildApi({chainId:8453n,chain:{rpcUrl:"https://mainnet.base.org",sponsorPrivateKey:Wallet.createRandom().privateKey,clearingAddress:"0x0000000000000000000000000000000000000001",tokenAddress:"0x0000000000000000000000000000000000000002",devFund:true,devWallet:{account:Wallet.createRandom().address,privateKey:Wallet.createRandom().privateKey}}}),/development funding requires local chain/);
+});
+
 test("market snapshots expose bid, ask, mid and signed funding without a chain",async()=>{
   const marketApi=buildApi();await marketApi.ready();
   const response=await marketApi.inject({method:"GET",url:"/v1/markets"});assert.equal(response.statusCode,200,response.body);

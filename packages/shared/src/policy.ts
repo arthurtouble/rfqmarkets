@@ -72,6 +72,7 @@ export interface PriceSnapshot {
   bid: bigint;
   ask: bigint;
   observedAtMs: number;
+  source?: string;
 }
 
 export interface Quote {

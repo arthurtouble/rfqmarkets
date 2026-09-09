@@ -4,6 +4,7 @@ import type { AccountState, Market, MarketSnapshot, Quote, RestingOrder, Side, T
 
 const chains = { 1: "Ethereum", 42161: "Arbitrum", 10: "Optimism", 8453: "Base" } as const;
 type QuickSession={account:string;privateKey:string;validUntil:number};
+type ConnectedWallet={account:string;provider?:WalletProvider;privateKey?:string};
 const signedDollars=(value?:string)=>value===undefined?"—":`${BigInt(value)>0n?"+":""}${dollars(value)}`;
 const ratio=(bps?:string|null)=>bps===null||bps===undefined?"—":`${(Number(bps)/100).toFixed(2)}%`;
 const leverage=(bps?:string|null)=>bps===null||bps===undefined?"—":`${(Number(bps)/10_000).toFixed(2)}×`;
@@ -32,6 +33,8 @@ export function TradePage() {
   const [withdrawStatus, setWithdrawStatus] = useState("Withdrawal gas is sponsored");
   const [paused, setPaused] = useState(false);
   const [quickSession,setQuickSession]=useState<QuickSession|null>(null);
+  const [localPrivateKey,setLocalPrivateKey]=useState<string|null>(null);
+  const [accountTab,setAccountTab]=useState<"positions"|"orders"|"trades"|"activity">("positions");
 
   async function requestQuote(signal?: AbortSignal) {
     const response = await fetch(`${API}/v1/quote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ market, side, amount }), signal });
@@ -65,7 +68,7 @@ export function TradePage() {
         if (!controller.signal.aborted) { setQuote(null); setStatus(error instanceof Error ? error.message : "Unavailable"); }
       }
     };
-    const timer = setTimeout(refresh, 120); const interval = setInterval(refresh, 1_000);
+    const timer = setTimeout(refresh, 120); const interval = setInterval(refresh, 500);
     return () => { clearTimeout(timer); clearInterval(interval); controller.abort(); };
   }, [market, side, amount]);
   useEffect(()=>{
@@ -75,11 +78,13 @@ export function TradePage() {
       const stream=new EventSource(`${API}/v1/markets/stream`);stream.addEventListener("markets",event=>{try{setMarketSnapshot(JSON.parse((event as MessageEvent).data));}catch{}});
       return()=>{stopped=true;stream.close();};
     }
-    const timer=setInterval(refresh,1_000);return()=>{stopped=true;clearInterval(timer);};
+    const timer=setInterval(refresh,500);return()=>{stopped=true;clearInterval(timer);};
   },[]);
+  useEffect(()=>{let stopped=false;fetch(`${API}/v1/dev/wallet`).then(response=>response.ok?response.json():null).then(value=>{if(stopped||!value?.account||!value?.privateKey)return;setLocalPrivateKey(value.privateKey);setAccount(value.account);void refreshAccount(value.account);}).catch(()=>{});return()=>{stopped=true;};},[]);
   useEffect(()=>{if(!account)return;const timer=setInterval(()=>void refreshAccount(account),2_000);return()=>clearInterval(timer);},[account]);
 
-  async function wallet(): Promise<{ provider: WalletProvider; account: string }> {
+  async function wallet(): Promise<ConnectedWallet> {
+    if(account&&localPrivateKey)return {account,privateKey:localPrivateKey};
     const ethereum = (window as unknown as { ethereum?: WalletProvider }).ethereum;
     if (!ethereum) throw new Error("No browser wallet detected");
     const accounts = await ethereum.request({ method: "eth_requestAccounts" }) as string[];
@@ -95,9 +100,11 @@ export function TradePage() {
     void refreshAccount(accounts[0]);
     return { provider: ethereum, account: accounts[0] };
   }
-  async function signTyped(connected: { provider: WalletProvider; account: string }, prepared: { domain: Record<string, unknown>; types: Record<string, unknown>; intent: unknown }, primaryType: string) {
+  async function signTyped(connected: ConnectedWallet, prepared: { domain: Record<string, unknown>; types: Record<string, unknown>; intent: unknown }, primaryType: string) {
+    if(connected.privateKey){const {Wallet}=await import("ethers");return new Wallet(connected.privateKey).signTypedData(prepared.domain,prepared.types as any,prepared.intent as Record<string,unknown>);}
+    const provider=connected.provider;if(!provider)throw new Error("Wallet provider unavailable");
     const typedData = { domain: { ...prepared.domain, chainId: Number(prepared.domain.chainId) }, types: { EIP712Domain: [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" }], ...prepared.types }, primaryType, message: prepared.intent };
-    return connected.provider.request({ method: "eth_signTypedData_v4", params: [connected.account, JSON.stringify(typedData)] }) as Promise<string>;
+    return provider.request({ method: "eth_signTypedData_v4", params: [connected.account, JSON.stringify(typedData)] }) as Promise<string>;
   }
   async function approve() {
     if (!quote) return;
@@ -168,10 +175,12 @@ export function TradePage() {
       const connected=await wallet();
       const {computeAddress}=await import("ethers");const config=await fetch(`${API}/v1/config`).then(response=>response.json());
       const sessionAddress=computeAddress(quickSession.privateKey),data=`0x1fa5d6a4${sessionAddress.slice(2).padStart(64,"0")}`;
-      const hash=await connected.provider.request({method:"eth_sendTransaction",params:[{from:connected.account,to:config.clearingAddress,data}]}) as string;
+      let hash:string;
+      if(connected.privateKey){const {JsonRpcProvider,Wallet}=await import("ethers");const transaction=await new Wallet(connected.privateKey,new JsonRpcProvider(config.rpcUrl)).sendTransaction({to:config.clearingAddress,data});hash=transaction.hash;await transaction.wait();sessionStorage.removeItem(`rfq-session:${connected.account.toLowerCase()}`);setQuickSession(null);setStatus("Quick trading revoked on-chain");return;}
+      else {const provider=connected.provider;if(!provider)throw new Error("Wallet provider unavailable");hash=await provider.request({method:"eth_sendTransaction",params:[{from:connected.account,to:config.clearingAddress,data}]}) as string;}
       setStatus(`Revocation submitted · ${hash.slice(0,10)}…`);
       for(let attempt=0;attempt<40;attempt++){
-        const receipt=await connected.provider.request({method:"eth_getTransactionReceipt",params:[hash]}) as {status?:string}|null;
+        const receipt=await connected.provider!.request({method:"eth_getTransactionReceipt",params:[hash]}) as {status?:string}|null;
         if(receipt?.status==="0x0")throw new Error("Session revocation reverted");
         if(receipt?.status==="0x1"){
           sessionStorage.removeItem(`rfq-session:${connected.account.toLowerCase()}`);setQuickSession(null);setStatus("Quick trading revoked on-chain");return;
@@ -183,6 +192,9 @@ export function TradePage() {
   }
 
   const live=marketSnapshot?.markets[market];
+  const emptyPosition=(name:Market)=>({size:"0",entryPrice:"0",markPrice:marketSnapshot?.markets[name].mid??"0",notional:"0",unrealizedPnl:"0",accruedFunding:"0",lastFundingIndex:"0",estimatedLiquidationPrice:null});
+  const shownAccount:AccountState=accountState??{account:account??"",blockNumber:marketSnapshot?.blockNumber??0,collateral:"0",equity:"0",openingEquity:"0",unrealizedPnl:"0",accruedFunding:"0",grossNotional:"0",initialMargin:"0",maintenanceMargin:"0",availableMargin:"0",maintenanceBuffer:"0",marginRatioBps:null,effectiveLeverageBps:null,liquidatable:false,positions:{BTC:emptyPosition("BTC"),ETH:emptyPosition("ETH")}};
+  const quoteAge=quote?Math.max(0,Date.now()-quote.observedAtMs):null;
   return <section className="trading-workspace">
     <article className="trade-card order-ticket">
       <div className="markets">{(["BTC", "ETH"] as Market[]).map(value => <button key={value} className={market === value ? "active" : ""} onClick={() => setMarket(value)}>{value}-PERP</button>)}</div>
@@ -195,24 +207,32 @@ export function TradePage() {
       <button className={`submit ${side}`} disabled={!quote} onClick={orderType==="market"?approve:placeLimit}>{orderType==="market"?(side === "buy" ? "Buy" : "Sell"):`Place ${side}`} {market}</button><p className="status"><i />{status}</p>
       <button className="depositToggle" onClick={() => setShowDeposit(value => !value)}>{showDeposit ? "Hide deposit" : "Deposit from any chain"}</button>
       {showDeposit && <section className="depositPanel"><div className="depositGrid"><label>From<select value={sourceChain} onChange={event => setSourceChain(Number(event.target.value) as keyof typeof chains)}>{Object.entries(chains).map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Asset<select value={sourceToken} onChange={event => setSourceToken(event.target.value as "ETH" | "USDC" | "USDT")}><option>ETH</option><option>USDC</option><option>USDT</option></select></label></div><label>Deposit amount</label><div className="amount compact"><input aria-label="Deposit amount" inputMode="decimal" value={depositAmount} onChange={event => setDepositAmount(event.target.value)} /><b>{sourceToken}</b></div><button className="route" onClick={deposit}>Route & deposit</button><p className="status">{depositStatus}</p></section>}
-      <button className="wallet trade-wallet" onClick={() => wallet().catch(error => setStatus(error instanceof Error ? error.message : "Wallet unavailable"))}>{account ? `${account.slice(0, 6)}…${account.slice(-4)}` : "Connect wallet"}</button>
+      <button className="wallet trade-wallet" onClick={() => wallet().catch(error => setStatus(error instanceof Error ? error.message : "Wallet unavailable"))}>{account ? `${localPrivateKey?"Local test wallet · ":""}${account.slice(0, 6)}…${account.slice(-4)}` : "Connect wallet"}</button>
       {account&&<button className={`depositToggle quickToggle ${quickSession?"active":""}`} onClick={quickSession?disableQuickTrading:enableQuickTrading}>{quickSession?"Revoke quick trading":"Enable quick trading"}</button>}
     </article>
+    <aside className="quote-inspector">
+      <div className="eyebrow"><i className={live&&Date.now()-live.observedAtMs<3_000?"online":""}/> Live local market data</div><h2>Quote engine</h2><p>The maker anchors to Coinbase BBO, then prices this exact size against total settled and reserved exposure.</p>
+      <div className="quote-waterfall"><span>Market source <b>{live?.source??"Waiting"}</b></span><span>Reference {side==="buy"?"ask":"bid"}<b>{dollars(side==="buy"?quote?.ask:quote?.bid)}</b></span><span>Base spread <b>2.00 bps</b></span><span>Inventory charge <b>{dollars(quote?.impactCharge)}</b></span><span>Trading fee <b>{dollars(quote?.fee)} · 2.00 bps</b></span><span className="quote-final">Executable quote <b>{dollars(quote?.expectedPrice)}</b></span></div>
+      <div className="feed-health"><span><i className={quoteAge!==null&&quoteAge<3_000?"online":""}/> {quoteAge===null?"Waiting for price":`${quoteAge} ms old`}</span><span>{live?`${base(live.aggregateBase)} ${market} net exposure`:"No market snapshot"}</span></div>
+    </aside>
     <aside className="portfolio-panel">
-      {!accountState?<div className="portfolio-empty"><div className="eyebrow">Cross-margin account</div><h2>Connect a wallet to see portfolio risk</h2><p>Equity, positions, funding and liquidation health are calculated from current oracle prices and on-chain balances.</p></div>:<>
-        <div className={`account-health ${accountState.liquidatable?"danger":""}`}><div><small>Account equity</small><strong>{dollars(accountState.equity)}</strong><span>{signedDollars(accountState.unrealizedPnl)} unrealized · {signedDollars(accountState.accruedFunding)} funding</span></div><div className="health-score"><small>Margin usage</small><strong>{ratio(accountState.marginRatioBps)}</strong><span>{leverage(accountState.effectiveLeverageBps)} effective leverage</span></div></div>
-        <div className="risk-grid"><div><small>Collateral</small><strong>{dollars(accountState.collateral)}</strong></div><div><small>Available margin</small><strong className={BigInt(accountState.availableMargin)<0n?"negative":""}>{dollars(accountState.availableMargin)}</strong></div><div><small>Initial margin</small><strong>{dollars(accountState.initialMargin)}</strong></div><div><small>Maintenance margin</small><strong>{dollars(accountState.maintenanceMargin)}</strong></div><div><small>Liquidation buffer</small><strong className={BigInt(accountState.maintenanceBuffer)<0n?"negative":"positive"}>{dollars(accountState.maintenanceBuffer)}</strong></div><div><small>Gross exposure</small><strong>{dollars(accountState.grossNotional)}</strong></div></div>
+        <div className={`account-health ${shownAccount.liquidatable?"danger":""}`}><div><small>Account equity</small><strong>{dollars(shownAccount.equity)}</strong><span>{signedDollars(shownAccount.unrealizedPnl)} unrealized · {signedDollars(shownAccount.accruedFunding)} funding</span></div><div className="health-score"><small>Margin usage</small><strong>{ratio(shownAccount.marginRatioBps)}</strong><span>{leverage(shownAccount.effectiveLeverageBps)} effective leverage</span></div></div>
+        <div className="risk-grid"><div><small>Collateral</small><strong>{dollars(shownAccount.collateral)}</strong></div><div><small>Available margin</small><strong className={BigInt(shownAccount.availableMargin)<0n?"negative":""}>{dollars(shownAccount.availableMargin)}</strong></div><div><small>Initial margin</small><strong>{dollars(shownAccount.initialMargin)}</strong></div><div><small>Maintenance margin</small><strong>{dollars(shownAccount.maintenanceMargin)}</strong></div><div><small>Liquidation buffer</small><strong className={BigInt(shownAccount.maintenanceBuffer)<0n?"negative":"positive"}>{dollars(shownAccount.maintenanceBuffer)}</strong></div><div><small>Gross exposure</small><strong>{dollars(shownAccount.grossNotional)}</strong></div></div>
+        <nav className="account-tabs" aria-label="Account data"><button className={accountTab==="positions"?"active":""} onClick={()=>setAccountTab("positions")}>Positions</button><button className={accountTab==="orders"?"active":""} onClick={()=>setAccountTab("orders")}>Open orders</button><button className={accountTab==="trades"?"active":""} onClick={()=>setAccountTab("trades")}>Trade history</button><button className={accountTab==="activity"?"active":""} onClick={()=>setAccountTab("activity")}>Account history</button></nav>
+        {accountTab==="positions"&&<>
         <div className="panel-heading compact-heading"><div><h2>Positions</h2><p>Cross margin · conservative exit marks</p></div><button onClick={()=>setShowWithdraw(value=>!value)}>{showWithdraw?"Close":"Withdraw"}</button></div>
         {showWithdraw&&<section className="depositPanel accountPanel"><label>Withdraw to connected wallet</label><div className="amount compact"><input aria-label="Withdrawal amount" inputMode="decimal" value={withdrawAmount} onChange={event=>setWithdrawAmount(event.target.value)}/><b>USDC</b></div><button className="route" onClick={withdraw}>Sign & withdraw</button><p className="status">{withdrawStatus}</p></section>}
-        {paused&&(BigInt(accountState.positions.BTC.size)!==0n||BigInt(accountState.positions.ETH.size)!==0n)&&<section className="emergencyPanel"><strong>Trading paused</strong><span>Close at the verified directional oracle price.</span><div>{BigInt(accountState.positions.BTC.size)!==0n&&<button onClick={()=>emergencyClose("BTC")}>Close BTC</button>}{BigInt(accountState.positions.ETH.size)!==0n&&<button onClick={()=>emergencyClose("ETH")}>Close ETH</button>}</div></section>}
-        <div className="position-list">{(["BTC","ETH"] as Market[]).map(name=>{const position=accountState.positions[name],open=BigInt(position.size)!==0n;return <article key={name}><div className="position-title"><strong>{name}-PERP</strong><span className={BigInt(position.size)>=0n?"positive":"negative"}>{open?`${BigInt(position.size)>0n?"Long":"Short"} ${base((BigInt(position.size)<0n?-BigInt(position.size):BigInt(position.size)).toString())}`:"No position"}</span></div><div className="position-metrics"><span>Entry <b>{open?dollars(position.entryPrice):"—"}</b></span><span>Mark <b>{dollars(position.markPrice)}</b></span><span>Notional <b>{dollars(position.notional)}</b></span><span>uPnL <b className={BigInt(position.unrealizedPnl)>=0n?"positive":"negative"}>{signedDollars(position.unrealizedPnl)}</b></span><span>Funding <b className={BigInt(position.accruedFunding)>=0n?"positive":"negative"}>{signedDollars(position.accruedFunding)}</b></span><span>Est. liquidation <b>{open?dollars(position.estimatedLiquidationPrice??undefined):"—"}</b></span></div></article>})}</div>
+        {paused&&(BigInt(shownAccount.positions.BTC.size)!==0n||BigInt(shownAccount.positions.ETH.size)!==0n)&&<section className="emergencyPanel"><strong>Trading paused</strong><span>Close at the verified directional oracle price.</span><div>{BigInt(shownAccount.positions.BTC.size)!==0n&&<button onClick={()=>emergencyClose("BTC")}>Close BTC</button>}{BigInt(shownAccount.positions.ETH.size)!==0n&&<button onClick={()=>emergencyClose("ETH")}>Close ETH</button>}</div></section>}
+        <div className="position-list">{(["BTC","ETH"] as Market[]).map(name=>{const position=shownAccount.positions[name],open=BigInt(position.size)!==0n;return <article key={name}><div className="position-title"><strong>{name}-PERP</strong><span className={BigInt(position.size)>=0n?"positive":"negative"}>{open?`${BigInt(position.size)>0n?"Long":"Short"} ${base((BigInt(position.size)<0n?-BigInt(position.size):BigInt(position.size)).toString())}`:"No position"}</span></div><div className="position-metrics"><span>Entry <b>{open?dollars(position.entryPrice):"—"}</b></span><span>Mark <b>{dollars(position.markPrice)}</b></span><span>Notional <b>{dollars(position.notional)}</b></span><span>uPnL <b className={BigInt(position.unrealizedPnl)>=0n?"positive":"negative"}>{signedDollars(position.unrealizedPnl)}</b></span><span>Funding <b className={BigInt(position.accruedFunding)>=0n?"positive":"negative"}>{signedDollars(position.accruedFunding)}</b></span><span>Est. liquidation <b>{open?dollars(position.estimatedLiquidationPrice??undefined):"—"}</b></span></div></article>})}</div></>}
+        {accountTab==="orders"&&<>
         <div className="panel-heading compact-heading"><div><h2>Orders</h2><p>Signed conditional orders and execution status</p></div><span>{orders.length} shown</span></div>
-        <div className="open-orders">{orders.slice(0,12).map(order=><div key={order.orderId}><span><b>{order.side==="buy"?"Buy":"Sell"} {order.market} · {inputDollars(order.amount)}</b><small>{dollars(order.limitPrice)} limit · {dollars(order.maxFee)} max fee</small></span><em>{order.status}</em>{(order.status==="open"||order.status==="executing")?<button onClick={()=>cancelOrder(order)}>Cancel</button>:<i />}</div>)}</div>
+        <div className="open-orders">{orders.length?orders.slice(0,12).map(order=><div key={order.orderId}><span><b>{order.side==="buy"?"Buy":"Sell"} {order.market} · {inputDollars(order.amount)}</b><small>{dollars(order.limitPrice)} limit · {dollars(order.maxFee)} max fee</small></span><em>{order.status}</em>{(order.status==="open"||order.status==="executing")?<button onClick={()=>cancelOrder(order)}>Cancel</button>:<i />}</div>):<p className="empty-row">No orders for this account.</p>}</div></>}
+        {accountTab==="trades"&&<>
         <div className="panel-heading compact-heading"><div><h2>Trade history</h2><p>Final execution price, size and fee</p></div><span>{activity.filter(item=>item.kind==="TradeExecuted").length} trades</span></div>
-        <div className="account-trades">{activity.filter(item=>item.kind==="TradeExecuted").slice(0,10).map(item=><div key={`${item.tx_hash}:${item.log_index}`}><b>{BigInt(item.payload.baseDelta)>0n?"Buy":"Sell"} {item.market===0?"BTC":"ETH"}</b><span>{base((BigInt(item.payload.baseDelta)<0n?-BigInt(item.payload.baseDelta):BigInt(item.payload.baseDelta)).toString())} @ {dollars(item.payload.price)}</span><small>{dollars(item.payload.fee)} fee</small></div>)}</div>
+        <div className="account-trades">{activity.some(item=>item.kind==="TradeExecuted")?activity.filter(item=>item.kind==="TradeExecuted").slice(0,10).map(item=><div key={`${item.tx_hash}:${item.log_index}`}><b>{BigInt(item.payload.baseDelta)>0n?"Buy":"Sell"} {item.market===0?"BTC":"ETH"}</b><span>{base((BigInt(item.payload.baseDelta)<0n?-BigInt(item.payload.baseDelta):BigInt(item.payload.baseDelta)).toString())} @ {dollars(item.payload.price)}</span><small>{dollars(item.payload.fee)} fee</small></div>):<p className="empty-row">No trades for this account.</p>}</div></>}
+        {accountTab==="activity"&&<>
         <div className="panel-heading compact-heading"><div><h2>Account activity</h2><p>Deposits, funding, trades and risk events</p></div><span>{activity.length} shown</span></div>
-        <div className="account-history">{activity.length?activity.slice(0,12).map(item=><div key={`${item.tx_hash}:${item.log_index}`}><span>{item.kind.replace(/([A-Z])/g," $1").trim()}</span><b>{item.market===null||item.market===undefined?"":item.market===0?"BTC":"ETH"}</b><time>{new Date(item.timestamp*1_000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</time></div>):<p>No account activity yet.</p>}</div>
-      </>}
+        <div className="account-history">{activity.length?activity.slice(0,12).map(item=><div key={`${item.tx_hash}:${item.log_index}`}><span>{item.kind.replace(/([A-Z])/g," $1").trim()}</span><b>{item.market===null||item.market===undefined?"":item.market===0?"BTC":"ETH"}</b><time>{new Date(item.timestamp*1_000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</time></div>):<p>No account activity yet.</p>}</div></>}
     </aside>
   </section>;
 }

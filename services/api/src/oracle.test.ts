@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AbiCoder } from "ethers";
-import { ChainlinkDataStreamsSource } from "./oracle.js";
+import { ChainlinkDataStreamsSource, CoinbaseMarketDataSource } from "./oracle.js";
 
 const feedId=`0x0003${"11".repeat(30)}`;
 function report(observedAt=1_800_000_000){
@@ -28,4 +28,20 @@ test("uses a fresh WebSocket report without another REST request",async()=>{
   const now=Math.floor(Date.now()/1_000),fullReport=report(now);let restCalls=0,listener:((value:any)=>void)|undefined,closed=false;
   const source=new ChainlinkDataStreamsSource({apiKey:"test",userSecret:"secret",endpoint:"https://data.example",wsEndpoint:"wss://data.example",feedIds:{BTC:feedId,ETH:`0x0003${"22".repeat(30)}`},feedDecimals:{BTC:8,ETH:8},client:{getLatestReport:async()=>{restCalls++;throw new Error("REST should not run");},createStream:()=>({on(_event,callback){listener=callback;return this;},connect:async()=>{listener?.({feedID:feedId,fullReport,validFromTimestamp:now-1,observationsTimestamp:now});},close:async()=>{closed=true;}})}});
   await source.start();const value=await source.latest("BTC");assert.equal(restCalls,0);assert.equal(value.snapshot.bid,99_990n*1_000_000n);await source.close();assert.equal(closed,true);
+});
+
+test("uses Coinbase WebSocket BBO and produces a local on-chain report",async()=>{
+  const listeners:Record<string,Array<(event:any)=>void>>={},sent:string[]=[];let restCalls=0;
+  const socket={readyState:1,send:(data:string)=>sent.push(data),close:()=>{},addEventListener:(type:string,listener:(event:any)=>void)=>{(listeners[type]??=[]).push(listener);}};
+  const source=new CoinbaseMarketDataSource({socketFactory:()=>socket,fetchImpl:async()=>{restCalls++;throw new Error("REST should not run");}});
+  await source.start();listeners.open[0]({});assert.equal(sent.length,2);
+  listeners.message[0]({data:JSON.stringify({channel:"ticker",events:[{tickers:[{product_id:"BTC-USD",best_bid:"60123.12",best_ask:"60123.45"}]}]})});
+  const quote=await source.latest("BTC");assert.equal(restCalls,0);assert.equal(quote.snapshot.bid,60_123_120_000n);assert.equal(quote.snapshot.ask,60_123_450_000n);assert.equal(quote.snapshot.source,"coinbase");
+  const decoded=AbiCoder.defaultAbiCoder().decode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],quote.report)[0];assert.equal(decoded.market,0n);assert.equal(decoded.bid,quote.snapshot.bid);assert(decoded.validUntil>decoded.observedAt);
+  await source.close();
+});
+
+test("falls back to Coinbase REST when the WebSocket snapshot is absent",async()=>{
+  let calls=0;const source=new CoinbaseMarketDataSource({socketFactory:()=>({readyState:0,send:()=>{},close:()=>{},addEventListener:()=>{}}),fetchImpl:async url=>{calls++;assert.match(String(url),/ETH-USD\/ticker$/);return new Response(JSON.stringify({bid:"3999.10",ask:"4000.20"}),{status:200});}});
+  const quote=await source.latest("ETH");assert.equal(calls,1);assert.equal(quote.snapshot.bid,3_999_100_000n);assert.equal(quote.snapshot.ask,4_000_200_000n);
 });

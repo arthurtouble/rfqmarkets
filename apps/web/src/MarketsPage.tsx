@@ -34,7 +34,7 @@ export function MarketsPage() {
         setSnapshot({ risk, positions, activity, health, live }); setUpdatedAt(new Date()); setError(null);
       } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Indexer unavailable"); }
     };
-    void refresh(); const timer = setInterval(refresh, 2_000);
+    void refresh(); const timer = setInterval(refresh, 500);
     return () => { controller.abort(); clearInterval(timer); };
   }, []);
 

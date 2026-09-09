@@ -40,12 +40,19 @@ main.wide .app-frame { width: min(100%, 1180px); }
 }
 .trade-card { padding: 22px; }
 .trading-workspace { display: grid; grid-template-columns: minmax(360px, 440px) minmax(0, 1fr); gap: 14px; align-items: start; }
-.order-ticket { position: sticky; top: 20px; }
+.order-ticket { min-height: 640px; }
 .market-tape { display: grid; grid-template-columns: 1fr 1.25fr 1fr; gap: 1px; margin: 12px 0 2px; overflow: hidden; border: 1px solid #293247; border-radius: 12px; background: #293247; }
 .market-tape div { display: grid; gap: 3px; padding: 10px; background: #10141d; }
 .market-tape small, .portfolio-panel small { color: #7f8aa3; font-size: 11px; }
 .market-tape strong { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.portfolio-panel { min-height: 640px; overflow: hidden; border: 1px solid #293247; border-radius: 24px; background: rgba(15,18,26,.94); box-shadow: 0 24px 80px #0008; }
+.portfolio-panel { grid-column: 1 / -1; min-height: 360px; overflow: hidden; border: 1px solid #293247; border-radius: 24px; background: rgba(15,18,26,.94); box-shadow: 0 24px 80px #0008; }
+.quote-inspector { min-height: 640px; padding: 28px; border: 1px solid #293247; border-radius: 24px; background: rgba(15,18,26,.94); box-shadow: 0 24px 80px #0008; }
+.quote-inspector h2 { margin: 14px 0 7px; font-size: 28px; }.quote-inspector > p { max-width: 520px; margin: 0; color: #8994aa; line-height: 1.55; }
+.quote-waterfall { display: grid; margin-top: 28px; border-block: 1px solid #293247; }
+.quote-waterfall span { display: flex; justify-content: space-between; gap: 20px; padding: 14px 3px; border-bottom: 1px solid #202737; color: #8994aa; font-size: 13px; }
+.quote-waterfall span:last-child { border: 0; }.quote-waterfall b { color: #eef2ff; font-variant-numeric: tabular-nums; text-align: right; }
+.quote-waterfall .quote-final { margin-top: 8px; padding: 18px 14px; border: 1px solid #315e50; border-radius: 12px; color: #b6c2d7; background: #10251f; }.quote-waterfall .quote-final b { color: #77e0b5; font-size: 20px; }
+.feed-health { display: flex; justify-content: space-between; gap: 12px; margin-top: 20px; color: #7f8aa3; font-size: 11px; }.feed-health i { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #6c4350; }.feed-health i.online { background: #71dfb2; box-shadow: 0 0 9px #71dfb288; }
 .portfolio-empty { display: grid; place-content: center; min-height: 560px; padding: 52px; text-align: center; }
 .portfolio-empty h2 { margin: 12px 0 8px; font-size: 24px; }
 .portfolio-empty p { max-width: 480px; margin: 0; color: #7f8aa3; line-height: 1.55; }
@@ -58,6 +65,8 @@ main.wide .app-frame { width: min(100%, 1180px); }
 .risk-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; background: #252d3e; border-bottom: 1px solid #252d3e; }
 .risk-grid div { display: grid; gap: 4px; padding: 14px 16px; background: #10141d; }
 .risk-grid strong { font-size: 15px; font-variant-numeric: tabular-nums; }
+.account-tabs { display: flex; gap: 4px; padding: 10px 14px 0; border-bottom: 1px solid #293247; overflow-x: auto; }
+.account-tabs button { padding: 10px 12px; border: 0; border-bottom: 2px solid transparent; color: #7f8aa3; background: transparent; cursor: pointer; white-space: nowrap; font-size: 12px; }.account-tabs button.active { border-color: #77e0b5; color: #eef2ff; }
 .compact-heading { margin: 0; padding: 14px 16px; }
 .compact-heading button { padding: 7px 10px; border: 1px solid #354057; border-radius: 8px; color: #aeb8cc; background: transparent; cursor: pointer; }
 .position-list { display: grid; gap: 1px; background: #252d3e; border-block: 1px solid #252d3e; }
@@ -78,6 +87,7 @@ main.wide .app-frame { width: min(100%, 1180px); }
 .account-history > div { display: grid; grid-template-columns: 1fr 50px 64px; gap: 12px; padding: 10px 16px; border-top: 1px solid #202737; font-size: 12px; }
 .account-history b,.account-history time { color: #8994aa; text-align: right; }
 .account-history p { padding: 8px 16px 18px; color: #758096; }
+.empty-row { margin: 0; padding: 26px 16px; color: #758096; text-align: center; }
 .balance { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #283145; border-radius: 12px; background: #111620; }
 .balance span, .balance small { color: #7f8aa3; font-size: 12px; }
 .balance small { grid-column: 1; }
@@ -179,7 +189,8 @@ tbody tr:hover { background: #141a25; }
   .public-dashboard { padding: 20px 14px; }
   .brand small { display: none; }
   .trading-workspace { grid-template-columns: 1fr; }
-  .order-ticket { position: static; }
+  .order-ticket, .quote-inspector { min-height: 0; }
+  .quote-inspector { border-width: 1px 0 0; border-radius: 0; }
   .portfolio-panel { min-height: 0; border-width: 1px 0 0; border-radius: 0; }
   .market-tape { grid-template-columns: 1fr 1fr; }
   .market-tape div:last-child { grid-column: 1 / -1; }
