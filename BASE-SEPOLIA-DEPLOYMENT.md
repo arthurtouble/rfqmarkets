@@ -28,7 +28,7 @@ After reviewing the preflight output, deploy with:
 npm run deploy:base-sepolia
 ```
 
-The deployment compiles fresh artifacts, deploys the stateless risk library and linked clearing implementation, predicts the proxy address, deploys the Chainlink adapter permanently restricted to that address, and initializes an ERC-1967 proxy with the configured authorities. It then reads the proxy back and refuses success unless oracle, governance, emergency council and initial versions match exactly. The non-secret manifest is written under the gitignored `.local-state/base-sepolia-deployment.json`.
+The deployment compiles fresh artifacts, deploys the stateless risk library and linked clearing implementation, predicts the proxy address, deploys the Chainlink adapter permanently restricted to that address, and initializes an OpenZeppelin transparent proxy. The proxy creates a dedicated ProxyAdmin owned directly by the governance timelock. Deployment reads the proxy and ERC-1967 admin slot back, refuses success unless oracle, governance, emergency council and initial versions match exactly, and records the ProxyAdmin address in the manifest. The non-secret manifest is written under the gitignored `.local-state/base-sepolia-deployment.json`.
 
 Use a dedicated deployer and submit no unrelated transaction from it during this sequence. Adapter construction relies on the deployer's next four nonces to avoid a mutable bootstrap oracle. A nonce race causes the predicted-address assertion to fail and requires discarding the deployment.
 

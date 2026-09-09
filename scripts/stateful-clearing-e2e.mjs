@@ -14,7 +14,7 @@ const init=new ethers.Interface(artifact("RFQClearing").abi).encodeFunctionData(
   await token.getAddress(),await oracle.getAddress(),governance.address,emergency.address,
   [approverA.address,approverB.address,approverC.address],600_000_000_000n,
 ]);
-const proxy=await deploy("TestProxy",[await implementation.getAddress(),init]);
+const proxy=await deploy("TestProxy",[await implementation.getAddress(),governance.address,init]);
 const clearing=new ethers.Contract(await proxy.getAddress(),artifact("RFQClearing").abi,governance);
 await (await token.mint(maker.address,750_000_000_000n)).wait();await (await token.connect(maker).approve(await clearing.getAddress(),ethers.MaxUint256)).wait();
 await (await clearing.connect(maker).fundMaker(600_000_000_000n)).wait();await (await clearing.connect(maker).fundInsurance(150_000_000_000n)).wait();

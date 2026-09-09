@@ -48,7 +48,9 @@ Resolution cannot iterate an unbounded account set in one transaction. New depos
 
 ## Upgrades and authority
 
-The implementation follows OpenZeppelin's initializer and UUPS pattern. The implementation constructor disables initialization; the proxy initializes once. Only `governance` may authorize an upgrade, unpause, rotate approvers or replace the oracle. Production sets this address to the self-administered timelock, rather than an individual wallet. The emergency council may pause or disable a market and cannot unpause, upgrade or add authority.
+The implementation runs behind OpenZeppelin's transparent proxy. Its dedicated `ProxyAdmin` is owned by the governance timelock, keeping upgrade dispatch outside the custody implementation and avoiding selector ambiguity. The implementation constructor disables initialization and the proxy initializes once. Governance may also unpause, rotate approvers or replace the oracle through ordinary clearing calls. The emergency council may pause or disable a market and cannot unpause, upgrade or add authority.
+
+The contract computes the exact EIP-712 domain separator it needs from fixed name/version hashes, `block.chainid` and the proxy address. This removes general-purpose upgradeable metadata machinery while preserving standard wallet signatures, chain separation and verifying-contract separation. EOA, ERC-1271, limited-session, replay and sponsored-action tests exercise this boundary.
 
 Approver rotation replaces all three addresses atomically and increments both signer-set version and leader epoch. The emergency council or governance can advance only the exact current leader epoch; this fences old approvals and serializes competing API failovers without granting upgrade or fund-transfer authority. Existing nonces and financial state survive either operation and the tested V2 upgrade.
 
@@ -58,6 +60,6 @@ Governance can withdraw maker capital only when the remaining backing stays abov
 
 ## Current engineering limits
 
-The compiler uses the Solidity IR pipeline. Runtime bytecode is 24,063 bytes. Portfolio impact, stress, liquidation, position transition, PnL and funding calculations live in the stateless linked `RFQRiskMath` library and have direct edge tests. This is below the repository's 24,500-byte gate and the 24,576-byte EVM limit, leaving 513 bytes. The library address is fixed in each implementation's bytecode and must be verified with the implementation. Further clearing features require a deliberate module split rather than more contract growth.
+The compiler uses the Solidity IR pipeline. Runtime bytecode is 20,715 bytes, 15.7% below the 24,576-byte EVM limit. The repository enforces a tighter 21,000-byte gate to prevent feature creep. Portfolio impact, trade assessment, stress, liquidation, position transition, PnL and funding calculations live in the stateless linked `RFQRiskMath` library and have direct edge tests. Repeated exact-token receipt checks share one implementation. The library and `ProxyAdmin` addresses are recorded and must be verified with the implementation and proxy. Further clearing features require a deliberate module split rather than consuming this reserve.
 
 The current implementation still needs a production timelock deployment and live Chainlink or Pyth/Base validation. The browser prototype keeps the limited session secret in tab-scoped storage; production requires a strict content-security policy, no unreviewed third-party scripts and a provider/session design chosen after wallet testing. Its tests do not replace independent economic review, invariant fuzzing, formal accounting checks or external audits.

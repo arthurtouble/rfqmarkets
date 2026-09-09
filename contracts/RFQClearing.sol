@@ -6,8 +6,6 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import "./interfaces/IPriceOracle.sol";
 import "./libraries/RFQRiskMath.sol";
 
@@ -20,7 +18,7 @@ interface IERC3009 {
 
 /// @notice First executable clearing prototype. It is deliberately capped at BTC/ETH.
 /// @custom:oz-upgrades
-contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
+contract RFQClearing is Initializable {
     using SafeERC20 for IERC20;
 
     uint256 internal constant BASE = 1e18;
@@ -31,6 +29,9 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     uint256 internal constant LIQUIDATION_PENALTY_BPS = 50;
     uint256 internal constant KEEPER_REWARD_BPS = 10;
     uint256 internal constant MAX_SESSION_DURATION = 30 days;
+    bytes32 internal constant DOMAIN_TYPEHASH = keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 internal constant NAME_HASH = keccak256("RFQ Markets");
+    bytes32 internal constant VERSION_HASH = keccak256("1");
 
     bytes32 internal constant INTENT_TYPEHASH = keccak256(
         "TradeIntent(address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,bool reduceOnly)"
@@ -145,7 +146,6 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         address[3] calldata approvers_, uint256 baseRiskCapitalTarget_
     ) external initializer {
         if (usdc_ == address(0) || oracle_ == address(0) || governance_ == address(0) || emergencyCouncil_ == address(0)) revert Unauthorized();
-        __EIP712_init("RFQ Markets", "1");
         _entered = 1;
         usdc = IERC20(usdc_); oracle = IPriceOracle(oracle_); governance = governance_;
         emergencyCouncil = emergencyCouncil_; baseRiskCapitalTarget = baseRiskCapitalTarget_;
@@ -161,14 +161,17 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     modifier onlyEmergencyOrGovernance() { if (msg.sender != governance && msg.sender != emergencyCouncil) revert Unauthorized(); _; }
     modifier nonReentrant() { if (_entered != 1) revert Unauthorized(); _entered = 2; _; _entered = 1; }
 
+    function _hashTypedDataV4(bytes32 structHash) private view returns (bytes32) {
+        bytes32 separator = keccak256(abi.encode(DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this)));
+        return keccak256(abi.encodePacked("\x19\x01", separator, structHash));
+    }
+
     function collateralOf(address account) external view returns (int256) { return _accounts[account].collateral; }
     function positionOf(address account, uint8 market) external view returns (Position memory) { return _accounts[account].positions[market]; }
 
     function deposit(uint256 amount) external nonReentrant {
         if (amount == 0 || resolutionRequired) revert InvalidTrade();
-        uint256 beforeBalance = usdc.balanceOf(address(this));
-        usdc.safeTransferFrom(msg.sender, address(this), amount);
-        if (usdc.balanceOf(address(this)) - beforeBalance != amount) revert InvalidTrade();
+        _pullExact(msg.sender, amount);
         _creditDeposit(msg.sender, amount);
         emit Deposited(msg.sender, amount);
     }
@@ -190,17 +193,13 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
 
     function fundMaker(uint256 amount) external nonReentrant {
         if (resolutionRequired) revert InvalidTrade();
-        uint256 beforeBalance = usdc.balanceOf(address(this));
-        usdc.safeTransferFrom(msg.sender, address(this), amount);
-        if (usdc.balanceOf(address(this)) - beforeBalance != amount) revert InvalidTrade();
+        _pullExact(msg.sender, amount);
         makerBacking += amount;
     }
 
     function fundInsurance(uint256 amount) external nonReentrant {
         if (resolutionRequired) revert InvalidTrade();
-        uint256 beforeBalance = usdc.balanceOf(address(this));
-        usdc.safeTransferFrom(msg.sender, address(this), amount);
-        if (usdc.balanceOf(address(this)) - beforeBalance != amount) revert InvalidTrade();
+        _pullExact(msg.sender, amount);
         insuranceBalance += amount;
     }
 
@@ -277,19 +276,20 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     }
 
     function _validateEconomics(TradeIntent calldata intent, MakerApproval calldata approval, IPriceOracle.Observation memory observation, address sessionSigner) private view returns (uint256 notional) {
-        uint256 absoluteBase = _abs(intent.baseDelta);
-        notional = absoluteBase * approval.executionPrice / BASE;
+        int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE);
+        int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE);
+        int256 required; int256 deliveredImpact; bool reduces;
+        (notional, required, deliveredImpact, reduces) = RFQRiskMath.tradeAssessment(
+            btc, eth, _accounts[intent.account].positions[intent.market].size, intent.market,
+            intent.baseDelta, approval.executionPrice, observation.bid, observation.ask
+        );
         if (notional > _tradeLimit(intent.market)) revert InvalidTrade();
         if (sessionSigner != address(0)) {
             Session storage session = sessions[sessionSigner];
             if (notional > session.maxTradeNotional || uint256(session.usedNotional) + notional > session.maxCumulativeNotional) revert Unauthorized();
         }
-        if (intent.reduceOnly && !_reduces(_accounts[intent.account].positions[intent.market].size, intent.baseDelta)) revert InvalidTrade();
-        int256 required = _impactCost(intent.market, intent.baseDelta, (observation.bid + observation.ask) / 2);
+        if (intent.reduceOnly && !reduces) revert InvalidTrade();
         if (approval.impactCharge < required) revert InvalidTrade();
-        int256 deliveredImpact = intent.baseDelta > 0
-            ? int256(absoluteBase * approval.executionPrice / BASE) - int256(absoluteBase * observation.ask / BASE)
-            : int256(absoluteBase * observation.bid / BASE) - int256(absoluteBase * approval.executionPrice / BASE);
         if (deliveredImpact < approval.impactCharge) revert InvalidTrade();
     }
 
@@ -447,14 +447,9 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
 
     function addResolutionRecovery(uint256 amount) external nonReentrant {
         if (!resolutionFinalized || amount == 0) revert InvalidTrade();
-        uint256 beforeBalance = usdc.balanceOf(address(this));
-        usdc.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 received = usdc.balanceOf(address(this)) - beforeBalance;
-        if (received != amount) revert InvalidTrade();
-        resolutionAssets += received;
+        _pullExact(msg.sender, amount);
+        resolutionAssets += amount;
     }
-
-    function _authorizeUpgrade(address) internal override onlyGovernance {}
 
     function _consumeUserAuthorization(
         address account, uint256 nonce, uint64 deadline, bytes32 digest, bytes calldata signature
@@ -566,6 +561,11 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         insuranceBalance += insuranceShare; makerBacking += fee - insuranceShare;
     }
     function _changeCollateral(address account, int256 delta) private { _accounts[account].collateral += delta; totalCustomerCollateral += delta; }
+    function _pullExact(address from, uint256 amount) private {
+        uint256 beforeBalance = usdc.balanceOf(address(this));
+        usdc.safeTransferFrom(from, address(this), amount);
+        if (usdc.balanceOf(address(this)) - beforeBalance != amount) revert InvalidTrade();
+    }
     function _creditDeposit(address account, uint256 amount) private {
         if (!accountRegistered[account]) { if (amount < 10e6) revert InvalidTrade(); accountRegistered[account] = true; _accountList.push(account); }
         _changeCollateral(account, int256(amount));
@@ -591,14 +591,9 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE); int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE);
         if (_abs(btc) > _marketLimit(0) || _abs(eth) > _marketLimit(1) || RFQRiskMath.stressLoss(btc, eth) > makerBacking / 4) revert Margin();
     }
-    function _impactCost(uint8 market, int256 baseDelta, uint256 mark) private view returns (int256) {
-        int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE); int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE); int256 delta = baseDelta * int256(mark) / int256(BASE);
-        return RFQRiskMath.impactCost(btc, eth, market, delta);
-    }
     function _mid(uint8 market) private view returns (uint256) { Market storage m=markets[market]; if (m.aggregateBase != 0 && (m.lastPriceTime == 0 || block.timestamp-m.lastPriceTime>MAX_ORACLE_AGE)) revert Stale(); return (m.lastBid+m.lastAsk)/2; }
     function _tradeLimit(uint8 market) private view returns (uint256) { return uint128(marketLimitWord[market]); }
     function _marketLimit(uint8 market) private view returns (uint256) { return marketLimitWord[market] >> 128; }
-    function _reduces(int256 old, int256 delta) private pure returns (bool) { int256 next=old+delta; return old != 0 && _abs(next)<_abs(old) && (next==0 || (next>0)==(old>0)); }
     function _abs(int256 value) private pure returns (uint256) { return uint256(value < 0 ? -value : value); }
     function _median3(uint256 a,uint256 b,uint256 c) private pure returns(uint256){if(a>b)(a,b)=(b,a);if(b>c)(b,c)=(c,b);if(a>b)(a,b)=(b,a);return b;}
     function _resolutionEquity(address account) private view returns (int256 value) {

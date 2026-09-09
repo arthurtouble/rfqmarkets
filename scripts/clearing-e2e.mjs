@@ -32,6 +32,8 @@ assert.deepEqual([...transition], [500_000_000_000_000_000n, 100_000_000n, 5_000
 transition = await riskMath.positionTransition(1_000_000_000_000_000_000n, 100_000_000n, -2_000_000_000_000_000_000n, 90_000_000n);
 assert.deepEqual([...transition], [-1_000_000_000_000_000_000n, 90_000_000n, -10_000_000n]);
 assert.equal(await riskMath.positionPnl(-2_000_000_000_000_000_000n, 100_000_000n, 90_000_000n), 20_000_000n);
+const assessment = await riskMath.tradeAssessment(0n, 0n, 2_000_000_000_000_000_000n, 0, -1_000_000_000_000_000_000n, 99_000_000n, 99_000_000n, 100_000_000n);
+assert.equal(assessment.notional,99_000_000n);assert.equal(assessment.deliveredImpact,0n);assert.equal(assessment.reduces,true);
 const unchangedFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 100_000_000n, 123n, 1_000n, 1_000n, 1_000_000_000n);
 assert.deepEqual([...unchangedFunding], [123n, 1_000n]);
 const weekFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 100_000_000n, 0n, 1_000n, 1_000n + 7n * 86_400n, 1_000_000_000n);
@@ -76,8 +78,13 @@ const init = clearingInterface.encodeFunctionData("initialize", [
   await token.getAddress(), await oracle.getAddress(), governance.address, emergency.address,
   [approverA.address, approverB.address, approverC.address], 600_000_000_000n,
 ]);
-const proxy = await deploy("TestProxy", [await implementation.getAddress(), init]);
+const proxy = await deploy("TestProxy", [await implementation.getAddress(), governance.address, init]);
 const clearing = new ethers.Contract(await proxy.getAddress(), artifact("RFQClearing").abi, governance);
+const ADMIN_SLOT="0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103";
+const adminWord=await ethers.provider.getStorage(await proxy.getAddress(),ADMIN_SLOT);
+const proxyAdminAddress=ethers.getAddress(`0x${adminWord.slice(-40)}`);
+const proxyAdmin=new ethers.Contract(proxyAdminAddress,artifact("ProxyAdmin").abi,governance);
+assert.equal(await proxyAdmin.owner(),governance.address);
 
 await (await token.mint(maker.address, 750_000_000_000n)).wait();
 await (await token.mint(user.address, 20_000_000_000n)).wait();
@@ -247,7 +254,8 @@ assert.equal(await token.balanceOf(await clearing.getAddress()), internal);
 
 // Upgrade through the configured governance address while the position remains open.
 const v2Implementation = await deploy("RFQClearingV2");
-await (await clearing.connect(governance).upgradeToAndCall(await v2Implementation.getAddress(), "0x")).wait();
+await reject(proxyAdmin.connect(user).upgradeAndCall(await proxy.getAddress(),await v2Implementation.getAddress(),"0x"),"only governance may use ProxyAdmin");
+await (await proxyAdmin.connect(governance).upgradeAndCall(await proxy.getAddress(),await v2Implementation.getAddress(), "0x")).wait();
 const upgraded = new ethers.Contract(await clearing.getAddress(), artifact("RFQClearingV2").abi, governance);
 assert.equal(await upgraded.implementationVersion(), 2n);
 assert.equal((await upgraded.positionOf(user.address, 0)).size, 187_425_000_000_000_000n);

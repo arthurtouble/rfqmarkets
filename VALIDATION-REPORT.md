@@ -64,7 +64,7 @@ Direct development versions are exact-pinned in `package.json` and resolved in `
 
 Ponder 0.17.10 was evaluated for the read model and then removed from the executable dependency set. Its 2026-09-08 production audit produced seven findings (five high, two moderate) through pinned Hono, Drizzle, Kysely and Vite dependencies. The executable local indexer therefore uses the platform SQLite API with no added runtime dependency. Adopting Ponder remains gated until upstream releases a clean compatible tree or tested overrides pass behavior and audit checks.
 
-`RFQClearing` is 24,063 bytes with the Solidity IR optimizer and optimizer runs set to 1, below both the repository's 24,500-byte gate and the EVM's 24,576-byte runtime limit. Portfolio impact, stress, liquidation, position transition, PnL and funding calculations are in a separately deployed stateless `RFQRiskMath` library linked into the implementation. The current artifact is suitable for local validation, not a final deployment shape.
+`RFQClearing` is 20,715 bytes with the Solidity IR optimizer and optimizer runs set to 1, 15.7% below the EVM's 24,576-byte runtime limit. The repository rejects builds above 21,000 bytes. Upgrade dispatch is isolated in OpenZeppelin's transparent proxy and governance-owned ProxyAdmin. Portfolio impact, trade assessment, stress, liquidation, position transition, PnL and funding calculations are in a separately deployed stateless `RFQRiskMath` library linked into the implementation. The current artifact is suitable for local validation, not a final deployment shape.
 
 ## What is still unproven
 

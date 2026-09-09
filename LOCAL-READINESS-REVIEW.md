@@ -4,7 +4,7 @@ Status date: 2026-09-09. The system is locally integrated for its principal happ
 
 ## What is real locally
 
-- A UUPS clearing proxy holds mock USDC and enforces EOA, ERC-1271 contract-wallet or scoped-session signatures, two distinct current approvers, price limits, replay protection, margin, maker backing, exposure limits, funding, liquidation and insolvency accounting. It also supports signed sponsored withdrawals, nonce cancellation, paused-market conservative closes and capital-floor-limited maker withdrawals.
+- An OpenZeppelin transparent clearing proxy holds mock USDC and enforces EOA, ERC-1271 contract-wallet or scoped-session signatures, two distinct current approvers, price limits, replay protection, margin, maker backing, exposure limits, funding, liquidation and insolvency accounting. A dedicated `ProxyAdmin` owned by governance handles upgrades outside the implementation. Clearing also supports signed sponsored withdrawals, nonce cancellation, paused-market conservative closes and capital-floor-limited maker withdrawals.
 - One API process quotes from a shared portfolio state, verifies user signatures, requests all three approvers concurrently, accepts two matching approvals and sponsors the settlement transaction.
 - A separate secret-free SSE gateway maintains one upstream connection, fans complete frames out to browsers, replays the latest snapshot on reconnect and evicts slow readers. The core fanout test covers 100,000 clients without multiplying API quote work.
 - The sponsor signs and journals raw transactions before broadcasting. Restarts reconcile inclusion and avoid allocating the same nonce concurrently.
@@ -42,7 +42,7 @@ Code modules can be separated without creating more servers. The frontend is spl
 | Hedging | Deterministic local venue adapter | Hyperliquid testnet agent wallet/subaccount, real order/fill reconciliation, rate limits and fenced failover. |
 | Governance | Contract roles | Deployed multisigs, 72-hour timelock, selector review and recovery drill. |
 | Availability | Expected-epoch council transition and live fencing drill | Production 2-of-3 council/Safe, warm-standby reconciliation, independent RPCs and process/network fault injection. |
-| Contract shape | 24,063-byte IR build plus linked stateless risk library for impact, margin helpers, positions, PnL and funding | Further production module split, linked-library verification and repeated storage/upgrade validation. |
+| Contract shape | 20,715-byte IR build behind a transparent proxy, with a 21,000-byte project gate and linked stateless risk/trade math | Verify the implementation, library and ProxyAdmin; repeat storage/upgrade validation for every release. |
 | Assurance | Internal deterministic tests, including 120 stateful cross-market trades | Broader invariant fuzzing, economic stress calibration and independent contract/infrastructure audits. |
 
 ## Readiness verdict

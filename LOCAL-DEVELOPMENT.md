@@ -1,6 +1,6 @@
 # Local application prototype
 
-The local slice contains a long-running Hardhat OP-compatible chain, a deployed UUPS clearing proxy, mock USDC and oracle, Coinbase public market data, one Fastify API leader, three isolated approver processes, a chain-derived indexer, an idempotent hedge worker and a React trade interface. Signed deposits and orders are gas-sponsored and settle on the local chain.
+The local slice contains a long-running Hardhat OP-compatible chain, a deployed transparent clearing proxy and governance-owned ProxyAdmin, mock USDC and oracle, Coinbase public market data, one Fastify API leader, three isolated approver processes, a chain-derived indexer, an idempotent hedge worker and a React trade interface. Signed deposits and orders are gas-sponsored and settle on the local chain.
 
 Compile and start the chain in the first terminal:
 

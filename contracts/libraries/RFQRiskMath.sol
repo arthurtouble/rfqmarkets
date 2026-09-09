@@ -18,6 +18,21 @@ library RFQRiskMath {
         return potential(btc, eth) - beforeValue;
     }
 
+    function tradeAssessment(
+        int256 btc, int256 eth, int256 oldSize, uint8 market, int256 baseDelta,
+        uint256 executionPrice, uint256 bid, uint256 ask
+    ) public pure returns (uint256 notional, int256 requiredImpact, int256 deliveredImpact, bool reduces) {
+        uint256 absoluteBase = abs(baseDelta);
+        notional = absoluteBase * executionPrice / 1e18;
+        uint256 mark = (bid + ask) / 2;
+        requiredImpact = impactCost(btc, eth, market, baseDelta * int256(mark) / 1e18);
+        deliveredImpact = baseDelta > 0
+            ? int256(absoluteBase * executionPrice / 1e18) - int256(absoluteBase * ask / 1e18)
+            : int256(absoluteBase * bid / 1e18) - int256(absoluteBase * executionPrice / 1e18);
+        int256 next = oldSize + baseDelta;
+        reduces = oldSize != 0 && abs(next) < abs(oldSize) && (next == 0 || (next > 0) == (oldSize > 0));
+    }
+
     function stressLoss(int256 btc, int256 eth) public pure returns (uint256) {
         int256 best;
         best = max(best, scenario(btc, eth, 20, 25));
