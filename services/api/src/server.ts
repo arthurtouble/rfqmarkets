@@ -37,6 +37,10 @@ const sessionPrepareSchema=actionBaseSchema.extend({session:z.string(),marketMas
 const sessionExecuteSchema=signedActionSchema.extend({grant:z.object({account:z.string(),session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeNotional:z.string().regex(/^\d+$/),maxCumulativeNotional:z.string().regex(/^\d+$/),maxFee:z.string().regex(/^\d+$/),validUntil:z.string().regex(/^\d+$/),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
 type DepositRoute={intent:DepositIntent;fromToken:"USDC"|"USDT"|"ETH";amount:string;expectedUsdc:bigint;status:"quoted"|"authorized"|"deposited";destinationTxHash?:string;transaction?:{hash:string;blockNumber:number;collateral:string}};
 type ProtocolVersions={leaderEpoch:bigint;signerSetVersion:bigint;policyVersion:bigint;blockNumber:number;blockTimestamp:number};
+const YEAR=365n*24n*60n*60n,MAX_MARKET_NOTIONAL=250_000n*1_000_000n,RATE=1_000_000_000_000n;
+
+function abs(value:bigint){return value<0n?-value:value;}
+function marginRate(notional:bigint,initial:boolean){if(notional<=25_000n*1_000_000n)return initial?2_000n:1_200n;if(notional<=50_000n*1_000_000n)return initial?2_500n:1_500n;if(notional<=100_000n*1_000_000n)return initial?3_300n:2_000n;return 10_000n;}
 
 export function buildApi(options: ApiOptions = {}) {
   const app = Fastify({ logger:false, bodyLimit:16_384 });
@@ -72,6 +76,7 @@ export function buildApi(options: ApiOptions = {}) {
   };
   let localAdvance:Promise<number>|undefined,lastLocalAdvanceAt=0,lastLocalTimestamp=0;
   let quoteSnapshotCache:{at:number;promise:Promise<{blockNumber:number;values:any[]}>}|undefined;
+  let marketReadCache:{at:number;promise:Promise<any>}|undefined;
 
   function prune(now=Date.now()) {
     for (let index=pending.length-1; index>=0; index--) if (pending[index].expiresAtMs<=now) pending.splice(index,1);
@@ -104,11 +109,50 @@ export function buildApi(options: ApiOptions = {}) {
     const promise=(async()=>{const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));const values=await Promise.all([provider.getBlock(blockNumber),clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber})]);return {blockNumber,values};})();quoteSnapshotCache={at:now,promise};try{return await promise;}catch(error){quoteSnapshotCache=undefined;throw error;}
   }
 
+  async function readMarkets(){
+    const now=Date.now();if(marketReadCache&&now-marketReadCache.at<500)return marketReadCache.promise;
+    const promise=(async()=>{
+      if(options.oracleSource){const observations=await Promise.all([options.oracleSource.latest("BTC"),options.oracleSource.latest("ETH")]);for(const observation of observations)prices[observation.snapshot.market]=observation.snapshot;}
+      const blockNumber=provider?Number(BigInt(await provider.send("eth_blockNumber",[]))):0;
+      const block=provider?await provider.getBlock(blockNumber):null;
+      const chainMarkets=clearing?await Promise.all([clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber})]):[null,null];
+      const result:Record<string,unknown>={};
+      for(const [index,name] of (["BTC","ETH"] as const).entries()){
+        const snapshot=prices[name],chain=chainMarkets[index],mid=(snapshot.bid+snapshot.ask)/2n,aggregateBase=chain?BigInt(chain.aggregateBase):0n;
+        const skewNotional=aggregateBase*mid/BASE;let fundingApr=skewNotional*RATE/MAX_MARKET_NOTIONAL;if(fundingApr>RATE)fundingApr=RATE;if(fundingApr<-RATE)fundingApr=-RATE;
+        const storedIndex=chain?BigInt(chain.fundingIndex):0n,fundingTime=chain?Number(chain.fundingTime):Math.floor(now/1_000),elapsed=BigInt(Math.min(7*24*60*60,Math.max(0,(block?.timestamp??Math.floor(now/1_000))-fundingTime)));
+        const projectedFundingIndex=storedIndex+mid*fundingApr*elapsed/(RATE*YEAR);
+        result[name]={market:name,bid:snapshot.bid.toString(),ask:snapshot.ask.toString(),mid:mid.toString(),observedAtMs:snapshot.observedAtMs,aggregateBase:aggregateBase.toString(),fundingApr:fundingApr.toString(),fundingIndex:storedIndex.toString(),projectedFundingIndex:projectedFundingIndex.toString(),fundingTime,lastPriceTime:chain?Number(chain.lastPriceTime):0,enabled:chain?Boolean(chain.enabled):true};
+      }
+      return {blockNumber,serverTimeMs:now,markets:result};
+    })();marketReadCache={at:now,promise};try{return await promise;}catch(error){marketReadCache=undefined;throw error;}
+  }
+
   app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,sender:sender?.status()}));
   app.get("/v1/config",async()=>({chainId:`0x${domain.chainId.toString(16)}`,chainName:options.chain?.devFund?"RFQ Local":"Base",rpcUrl:options.chain?.rpcUrl,clearingAddress:domain.verifyingContract,tokenAddress:options.chain?.tokenAddress}));
+  app.get("/v1/markets",async(_request,reply)=>{try{return await readMarkets();}catch(error){return reply.code(503).send({error:error instanceof Error?error.message:"market data unavailable"});}});
+  app.get("/v1/markets/stream",async(request,reply)=>{
+    reply.hijack();reply.raw.writeHead(200,{"content-type":"text/event-stream","cache-control":"no-cache, no-transform","connection":"keep-alive","access-control-allow-origin":options.corsOrigin??"http://127.0.0.1:4173"});
+    let closed=false,busy=false;const send=async()=>{if(closed||busy)return;busy=true;try{reply.raw.write(`event: markets\ndata: ${JSON.stringify(await readMarkets())}\n\n`);}catch(error){reply.raw.write(`event: error\ndata: ${JSON.stringify({error:error instanceof Error?error.message:"market data unavailable"})}\n\n`);}finally{busy=false;}};
+    const timer=setInterval(()=>void send(),1_000);timer.unref();request.raw.on("close",()=>{closed=true;clearInterval(timer);});await send();
+  });
   app.get("/v1/account/:address",async(request,reply)=>{
     if(!clearing)return reply.code(503).send({error:"chain unavailable"});
-    try {const account=getAddress((request.params as {address:string}).address);const [collateral,btc,eth]=await Promise.all([clearing.collateralOf(account),clearing.positionOf(account,0),clearing.positionOf(account,1)]);return {account,collateral:collateral.toString(),positions:{BTC:{size:btc.size.toString(),entryPrice:btc.entryPrice.toString()},ETH:{size:eth.size.toString(),entryPrice:eth.entryPrice.toString()}}};}
+    try {
+      const account=getAddress((request.params as {address:string}).address),marketSnapshot=await readMarkets(),blockNumber=marketSnapshot.blockNumber;
+      const [collateralRaw,btc,eth,onchainMaintenanceEquity,onchainOpeningEquity,onchainInitialMargin,onchainMaintenanceMargin]=await Promise.all([clearing.collateralOf(account,{blockTag:blockNumber}),clearing.positionOf(account,0,{blockTag:blockNumber}),clearing.positionOf(account,1,{blockTag:blockNumber}),clearing.maintenanceEquity(account,{blockTag:blockNumber}),clearing.openingEquity(account,{blockTag:blockNumber}),clearing.initialMargin(account,{blockTag:blockNumber}),clearing.maintenanceMargin(account,{blockTag:blockNumber})]);
+      const collateral=BigInt(collateralRaw),positionsRaw=[btc,eth],names=["BTC","ETH"] as const;let unrealizedPnl=0n,accruedFunding=0n,grossNotional=0n,initialMargin=0n,maintenanceMargin=0n;
+      const positions:Record<string,unknown>={};
+      for(const [index,name] of names.entries()){
+        const position=positionsRaw[index],size=BigInt(position.size),entryPrice=BigInt(position.entryPrice),market=marketSnapshot.markets[name],mark=size>=0n?BigInt(market.bid):BigInt(market.ask),notional=abs(size)*BigInt(market.ask)/BASE;
+        const pnl=size>0n?abs(size)*(mark-entryPrice)/BASE:size<0n?abs(size)*(entryPrice-mark)/BASE:0n;
+        const fundingPnl=-size*(BigInt(market.projectedFundingIndex)-BigInt(position.lastFundingIndex))/BASE;
+        unrealizedPnl+=pnl;accruedFunding+=fundingPnl;grossNotional+=notional;initialMargin+=notional*marginRate(notional,true)/10_000n;maintenanceMargin+=notional*marginRate(notional,false)/10_000n;
+        positions[name]={size:size.toString(),entryPrice:entryPrice.toString(),markPrice:mark.toString(),notional:notional.toString(),unrealizedPnl:pnl.toString(),accruedFunding:fundingPnl.toString(),lastFundingIndex:position.lastFundingIndex.toString()};
+      }
+      const equity=collateral+unrealizedPnl+accruedFunding,openingEquity=collateral+accruedFunding+(unrealizedPnl<0n?unrealizedPnl:0n),availableMargin=openingEquity-initialMargin,maintenanceBuffer=equity-maintenanceMargin;
+      return {account,blockNumber,collateral:collateral.toString(),equity:equity.toString(),openingEquity:openingEquity.toString(),unrealizedPnl:unrealizedPnl.toString(),accruedFunding:accruedFunding.toString(),grossNotional:grossNotional.toString(),initialMargin:initialMargin.toString(),maintenanceMargin:maintenanceMargin.toString(),availableMargin:availableMargin.toString(),maintenanceBuffer:maintenanceBuffer.toString(),marginRatioBps:equity>0n?(maintenanceMargin*10_000n/equity).toString():null,effectiveLeverageBps:equity>0n?(grossNotional*10_000n/equity).toString():null,liquidatable:equity<maintenanceMargin,positions,onchain:{maintenanceEquity:onchainMaintenanceEquity.toString(),openingEquity:onchainOpeningEquity.toString(),initialMargin:onchainInitialMargin.toString(),maintenanceMargin:onchainMaintenanceMargin.toString()}};
+    }
     catch{return reply.code(400).send({error:"invalid account"});}
   });
   app.post("/v1/deposit/quote",async(request,reply)=>{

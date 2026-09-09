@@ -84,6 +84,13 @@ test("real oracle source drives quotes and fails closed when unavailable",async(
   const failed=buildApi({oracleSource:{latest:async()=>{throw new Error("feed unavailable")}}});await failed.ready();const unavailable=await failed.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}});assert.equal(unavailable.statusCode,503);await failed.close();
 });
 
+test("market snapshots expose bid, ask, mid and signed funding without a chain",async()=>{
+  const marketApi=buildApi();await marketApi.ready();
+  const response=await marketApi.inject({method:"GET",url:"/v1/markets"});assert.equal(response.statusCode,200,response.body);
+  const snapshot=response.json();assert.equal(snapshot.markets.BTC.mid,"100000000000");assert.equal(snapshot.markets.BTC.bid,"99990000000");assert.equal(snapshot.markets.BTC.ask,"100010000000");assert.equal(snapshot.markets.BTC.fundingApr,"0");assert.equal(snapshot.markets.ETH.enabled,true);
+  await marketApi.close();
+});
+
 test("an invalid wallet signature cannot reserve portfolio capacity",async()=>{
   const first=(await api.inject({method:"POST",url:"/v1/quote",payload:{market:"ETH",side:"buy",amount:"777"}})).json();
   const nonce="7";

@@ -39,6 +39,38 @@ main.wide .app-frame { width: min(100%, 1180px); }
   box-shadow: 0 24px 80px #0008;
 }
 .trade-card { padding: 22px; }
+.trading-workspace { display: grid; grid-template-columns: minmax(360px, 440px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.order-ticket { position: sticky; top: 20px; }
+.market-tape { display: grid; grid-template-columns: 1fr 1.25fr 1fr; gap: 1px; margin: 12px 0 2px; overflow: hidden; border: 1px solid #293247; border-radius: 12px; background: #293247; }
+.market-tape div { display: grid; gap: 3px; padding: 10px; background: #10141d; }
+.market-tape small, .portfolio-panel small { color: #7f8aa3; font-size: 11px; }
+.market-tape strong { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.portfolio-panel { min-height: 640px; overflow: hidden; border: 1px solid #293247; border-radius: 24px; background: rgba(15,18,26,.94); box-shadow: 0 24px 80px #0008; }
+.portfolio-empty { display: grid; place-content: center; min-height: 560px; padding: 52px; text-align: center; }
+.portfolio-empty h2 { margin: 12px 0 8px; font-size: 24px; }
+.portfolio-empty p { max-width: 480px; margin: 0; color: #7f8aa3; line-height: 1.55; }
+.account-health { display: grid; grid-template-columns: 1fr auto; gap: 24px; padding: 22px; border-bottom: 1px solid #293247; background: linear-gradient(135deg,#12251f,#10141d 60%); }
+.account-health.danger { background: linear-gradient(135deg,#351920,#10141d 60%); }
+.account-health > div { display: grid; gap: 4px; }
+.account-health strong { font-size: 26px; font-variant-numeric: tabular-nums; }
+.account-health span { color: #8994aa; font-size: 12px; }
+.health-score { text-align: right; }
+.risk-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; background: #252d3e; border-bottom: 1px solid #252d3e; }
+.risk-grid div { display: grid; gap: 4px; padding: 14px 16px; background: #10141d; }
+.risk-grid strong { font-size: 15px; font-variant-numeric: tabular-nums; }
+.compact-heading { margin: 0; padding: 14px 16px; }
+.compact-heading button { padding: 7px 10px; border: 1px solid #354057; border-radius: 8px; color: #aeb8cc; background: transparent; cursor: pointer; }
+.position-list { display: grid; gap: 1px; background: #252d3e; border-block: 1px solid #252d3e; }
+.position-list article { padding: 15px 16px; background: #10141d; }
+.position-title { display: flex; justify-content: space-between; margin-bottom: 11px; }
+.position-metrics { display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; }
+.position-metrics span { display: grid; gap: 3px; color: #7f8aa3; font-size: 11px; }
+.position-metrics b { color: #dbe2f2; font-size: 12px; font-variant-numeric: tabular-nums; }
+.position-metrics b.positive { color: #71dfb2; }.position-metrics b.negative { color: #ff8998; }
+.account-history { max-height: 240px; overflow: auto; }
+.account-history > div { display: grid; grid-template-columns: 1fr 50px 64px; gap: 12px; padding: 10px 16px; border-top: 1px solid #202737; font-size: 12px; }
+.account-history b,.account-history time { color: #8994aa; text-align: right; }
+.account-history p { padding: 8px 16px 18px; color: #758096; }
 .balance { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #283145; border-radius: 12px; background: #111620; }
 .balance span, .balance small { color: #7f8aa3; font-size: 12px; }
 .balance small { grid-column: 1; }
@@ -133,4 +165,11 @@ tbody tr:hover { background: #141a25; }
   .exposure-grid { grid-template-columns: 1fr; }
   .public-dashboard { padding: 20px 14px; }
   .brand small { display: none; }
+  .trading-workspace { grid-template-columns: 1fr; }
+  .order-ticket { position: static; }
+  .portfolio-panel { min-height: 0; border-width: 1px 0 0; border-radius: 0; }
+  .market-tape { grid-template-columns: 1fr 1fr; }
+  .market-tape div:last-child { grid-column: 1 / -1; }
+  .risk-grid { grid-template-columns: 1fr 1fr; }
+  .position-metrics { grid-template-columns: 1fr 1fr; }
 }
