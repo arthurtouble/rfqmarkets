@@ -20,11 +20,13 @@ export class CoinbaseMarketDataSource implements OracleSource {
   private stopped=false;
   private inFlight:Partial<Record<OracleMarket,Promise<OracleQuote>>>={};
   private listeners=new Set<OracleListener>();
+  private recentMove:Partial<Record<OracleMarket,{mid:bigint;bps:number}>>={};
   constructor(private options:CoinbaseSourceOptions={}){}
   private store(market:OracleMarket,bidText:string,askText:string,receivedAtMs=Date.now()){
     const bid=parseUnits(bidText,6),ask=parseUnits(askText,6);
     if(bid<=0n||ask<bid)throw new Error("invalid Coinbase market data");
-    this.cached[market]={snapshot:{market,bid,ask,observedAtMs:receivedAtMs,source:"coinbase"},receivedAtMs};
+    const mid=(bid+ask)/2n,prior=this.recentMove[market],move=prior&&prior.mid>0n?Number((mid>prior.mid?mid-prior.mid:prior.mid-mid)*10_000n/prior.mid):0,volatilityBps=Math.max(move,(prior?.bps??0)*.92);this.recentMove[market]={mid,bps:volatilityBps};
+    this.cached[market]={snapshot:{market,bid,ask,observedAtMs:receivedAtMs,source:"coinbase",volatilityBps},receivedAtMs};
     for(const listener of this.listeners)listener(market);
   }
   private quote(market:OracleMarket):OracleQuote {
@@ -63,12 +65,13 @@ export class ChainlinkDataStreamsSource implements OracleSource{
   private cached:Partial<Record<OracleMarket,OracleQuote>>={};
   private stream?:ReportStream;
   private listeners=new Set<OracleListener>();
+  private recentMove:Partial<Record<OracleMarket,{mid:bigint;bps:number}>>={};
   constructor(private options:ChainlinkSourceOptions){
     if(!options.endpoint.startsWith("https://")||!options.wsEndpoint.startsWith("wss://"))throw new Error("Data Streams endpoints must use TLS");
     if(!options.apiKey||!options.userSecret)throw new Error("Data Streams credentials are required");
     this.client=options.client??createClient({apiKey:options.apiKey,userSecret:options.userSecret,endpoint:options.endpoint,wsEndpoint:options.wsEndpoint,timeout:options.timeoutMs??2_000,retryAttempts:1}) as DataStreamsClient;
   }
-  private normalize(market:OracleMarket,report:Report){const feedId=this.options.feedIds[market],decoded=decodeStreamsV3Envelope(report.fullReport,feedId,this.options.feedDecimals[market]);if(report.feedID.toLowerCase()!==feedId.toLowerCase()||report.observationsTimestamp!==decoded.observedAt)throw new Error("Data Streams metadata mismatch");return {snapshot:{market,bid:decoded.bid,ask:decoded.ask,observedAtMs:decoded.observedAt*1_000,source:"chainlink-data-streams"},report:report.fullReport,validUntil:decoded.validUntil};}
+  private normalize(market:OracleMarket,report:Report){const feedId=this.options.feedIds[market],decoded=decodeStreamsV3Envelope(report.fullReport,feedId,this.options.feedDecimals[market]);if(report.feedID.toLowerCase()!==feedId.toLowerCase()||report.observationsTimestamp!==decoded.observedAt)throw new Error("Data Streams metadata mismatch");const mid=(decoded.bid+decoded.ask)/2n,prior=this.recentMove[market],move=prior&&prior.mid>0n?Number((mid>prior.mid?mid-prior.mid:prior.mid-mid)*10_000n/prior.mid):0,volatilityBps=Math.max(move,(prior?.bps??0)*.92);this.recentMove[market]={mid,bps:volatilityBps};return {snapshot:{market,bid:decoded.bid,ask:decoded.ask,observedAtMs:decoded.observedAt*1_000,source:"chainlink-data-streams",volatilityBps},report:report.fullReport,validUntil:decoded.validUntil};}
   async start(){if(this.stream||!this.client.createStream)return;this.stream=this.client.createStream(Object.values(this.options.feedIds));const byFeed=new Map(Object.entries(this.options.feedIds).map(([market,feed])=>[feed.toLowerCase(),market as OracleMarket]));this.stream.on("report",report=>{const market=byFeed.get(report.feedID.toLowerCase());if(!market)return;try{this.cached[market]=this.normalize(market,report);for(const listener of this.listeners)listener(market);}catch{}});await this.stream.connect();}
   subscribe(listener:OracleListener){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
   async close(){const stream=this.stream;this.stream=undefined;if(stream)await stream.close();}

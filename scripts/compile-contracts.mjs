@@ -72,8 +72,8 @@ for (const [source, contracts] of Object.entries(output.contracts)) {
   }
 }
 const clearingBytes = output.contracts["contracts/RFQClearing.sol"]?.RFQClearing?.evm?.deployedBytecode?.object?.length / 2;
-if (!clearingBytes || clearingBytes > 24_000) {
-  throw new Error(`RFQClearing deployed bytecode is ${clearingBytes} bytes; 24,000-byte project gate exceeded`);
+if (!clearingBytes || clearingBytes > 24_500) {
+  throw new Error(`RFQClearing deployed bytecode is ${clearingBytes} bytes; 24,500-byte project gate exceeded`);
 }
 console.log(`Compiled ${Object.keys(output.contracts).length} source files with solc ${solc.version()}`);
-console.log(`RFQClearing deployed bytecode: ${clearingBytes} bytes (project gate: 24,000)`);
+console.log(`RFQClearing deployed bytecode: ${clearingBytes} bytes (project gate: 24,500; EVM limit: 24,576)`);

@@ -44,8 +44,8 @@ contract RFQAuthorization {
     uint256 public constant K_BTC = 10_000;
     uint256 public constant K_ETH = 12_000;
     uint256 public constant K_CROSS = 6_573;
-    uint256 public constant MAX_ABS_TRADE = 25_000e6;
-    uint256 public constant MAX_ABS_MARKET_EXPOSURE = 250_000e6;
+    uint256 public constant MAX_ABS_TRADE = 1_000_000e6;
+    uint256 public constant MAX_ABS_MARKET_EXPOSURE = 5_000_000e6;
 
     bytes32 public constant INTENT_TYPEHASH = keccak256(
         "TradeIntent(address account,uint8 market,int256 notionalDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline)"

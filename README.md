@@ -16,6 +16,8 @@ The [local application guide](LOCAL-DEVELOPMENT.md) covers the Fastify API leade
 
 The [local readiness review](LOCAL-READINESS-REVIEW.md) states what is complete, what remains simulated, which boundaries should stay separate and the shortest safe path to a Base testnet pilot.
 
+The [market lifecycle playbook](MARKET-LIFECYCLE-PLAYBOOK.md) defines the on-chain source of truth, safe limit changes, emergency tightening, and the coordinated procedures for enabling, retiring, and adding markets.
+
 The [Base Sepolia deployment gate](BASE-SEPOLIA-DEPLOYMENT.md) defines the validated environment, deterministic oracle/proxy deployment, post-deployment assertions and external credentials still required before a testnet transaction.
 
 The [indexer design](INDEXER-DESIGN.md) defines the chain-derived account/history schema, query surface, reorg behavior and current Ponder dependency gate.

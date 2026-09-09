@@ -37,6 +37,8 @@ test("uses Coinbase WebSocket BBO and produces a local on-chain report",async()=
   await source.start();listeners.open[0]({});assert.equal(sent.length,2);
   listeners.message[0]({data:JSON.stringify({channel:"ticker",events:[{tickers:[{product_id:"BTC-USD",best_bid:"60123.12",best_ask:"60123.45"}]}]})});
   const quote=await source.latest("BTC");assert.equal(restCalls,0);assert.equal(quote.snapshot.bid,60_123_120_000n);assert.equal(quote.snapshot.ask,60_123_450_000n);assert.equal(quote.snapshot.source,"coinbase");
+  listeners.message[0]({data:JSON.stringify({channel:"ticker",events:[{tickers:[{product_id:"BTC-USD",best_bid:"60723.12",best_ask:"60723.45"}]}]})});
+  const moved=await source.latest("BTC");assert((moved.snapshot.volatilityBps??0)>90);
   const decoded=AbiCoder.defaultAbiCoder().decode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],quote.report)[0];assert.equal(decoded.market,0n);assert.equal(decoded.bid,quote.snapshot.bid);assert(decoded.validUntil>decoded.observedAt);
   await source.close();
 });

@@ -45,9 +45,13 @@ main.wide .app-frame { width: min(100%, 1180px); }
 .market-tape div { display: grid; gap: 3px; padding: 10px; background: #10141d; }
 .market-tape small, .portfolio-panel small { color: #7f8aa3; font-size: 11px; }
 .market-tape strong { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.portfolio-panel { grid-column: 1 / -1; min-height: 360px; overflow: hidden; border: 1px solid #293247; border-radius: 24px; background: rgba(15,18,26,.94); box-shadow: 0 24px 80px #0008; }
+.portfolio-panel { min-height: 640px; overflow: hidden; border: 1px solid #293247; border-radius: 24px; background: rgba(15,18,26,.94); box-shadow: 0 24px 80px #0008; }
 .quote-inspector { min-height: 640px; padding: 28px; border: 1px solid #293247; border-radius: 24px; background: rgba(15,18,26,.94); box-shadow: 0 24px 80px #0008; }
 .quote-inspector h2 { margin: 14px 0 7px; font-size: 28px; }.quote-inspector > p { max-width: 520px; margin: 0; color: #8994aa; line-height: 1.55; }
+.price-details { margin: 12px 0 4px; border-top: 1px solid #293247; color: #8994aa; font-size: 12px; }
+.price-details summary { padding: 12px 0 6px; cursor: pointer; color: #a9b3c8; }
+.price-details > div { display: grid; gap: 8px; padding: 4px 0 8px; }
+.price-details span { display: flex; justify-content: space-between; gap: 12px; }.price-details b { color: #eef2ff; font-variant-numeric: tabular-nums; }
 .quote-waterfall { display: grid; margin-top: 28px; border-block: 1px solid #293247; }
 .quote-waterfall span { display: flex; justify-content: space-between; gap: 20px; padding: 14px 3px; border-bottom: 1px solid #202737; color: #8994aa; font-size: 13px; }
 .quote-waterfall span:last-child { border: 0; }.quote-waterfall b { color: #eef2ff; font-variant-numeric: tabular-nums; text-align: right; }

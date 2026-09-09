@@ -92,7 +92,7 @@ test("market snapshots expose bid, ask, mid and signed funding without a chain",
   const marketApi=buildApi();await marketApi.ready();
   const response=await marketApi.inject({method:"GET",url:"/v1/markets"});assert.equal(response.statusCode,200,response.body);
   const snapshot=response.json();assert.equal(snapshot.markets.BTC.mid,"100000000000");assert.equal(snapshot.markets.BTC.bid,"99990000000");assert.equal(snapshot.markets.BTC.ask,"100010000000");assert.equal(snapshot.markets.BTC.fundingApr,"0");assert.equal(snapshot.markets.ETH.enabled,true);
-  assert.deepEqual(snapshot.pricing.settled,{BTC:"0",ETH:"0"});assert.deepEqual(snapshot.pricing.pending,[]);assert.equal(snapshot.pricing.maxNotional,"25000000000");
+  assert.deepEqual(snapshot.pricing.settled,{BTC:"0",ETH:"0"});assert.deepEqual(snapshot.pricing.pending,[]);assert.equal(snapshot.markets.BTC.maxTradeNotional,"1000000000000");assert.equal(snapshot.markets.BTC.maxMarketNotional,"5000000000000");
   await marketApi.close();
 });
 

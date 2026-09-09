@@ -125,6 +125,19 @@ await reject(clearing.connect(emergency).advanceLeaderEpoch(1),"competing promot
 await reject(clearing.connect(relayer).executeTrade(oldEpochOrder.intent,oldEpochOrder.approval,oldEpochReport,oldEpochOrder.userSignature,oldEpochOrder.sigA,oldEpochOrder.sigB),"old leader approvals must be fenced");
 assert.equal(await ethers.provider.send("evm_revert",[epochSnapshot]),true);
 
+// Market policy changes invalidate outstanding approvals. Emergency authority can only tighten or disable.
+const policySnapshot=await ethers.provider.send("evm_snapshot",[]);
+const initialLimitWord=await clearing.marketLimitWord(0),mask=(1n<<128n)-1n;
+assert.equal(initialLimitWord&mask,1_000_000_000_000n);assert.equal(initialLimitWord>>128n,5_000_000_000_000n);
+await (await clearing.connect(emergency).setMarketPolicy(0,false,25_000_000_000n,250_000_000_000n)).wait();
+assert.equal((await clearing.markets(0)).enabled,false);assert.equal(await clearing.policyVersion(),2n);
+await reject(clearing.connect(emergency).setMarketPolicy(0,true,25_000_000_000n,250_000_000_000n),"emergency council cannot enable a market");
+await reject(clearing.connect(emergency).setMarketPolicy(0,false,25_000_000_001n,250_000_000_000n),"emergency council cannot loosen a limit");
+await (await clearing.connect(governance).setMarketPolicy(0,true,1_000_000_000_000n,5_000_000_000_000n)).wait();
+assert.equal((await clearing.markets(0)).enabled,true);assert.equal(await clearing.policyVersion(),3n);
+await reject(clearing.connect(governance).setMarketPolicy(0,true,1_000_000_000_001n,5_000_000_000_000n),"absolute trade ceiling must hold");
+assert.equal(await ethers.provider.send("evm_revert",[policySnapshot]),true);
+
 // Owner actions can be sponsored without granting the sender withdrawal authority.
 const actionBlock = await ethers.provider.getBlock("latest");
 const actionDeadline = BigInt(actionBlock.timestamp + 120);

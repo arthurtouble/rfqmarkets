@@ -3,6 +3,7 @@ export const clearingStateAbi = [
   "function nonceUsed(address,uint256) view returns(bool)",
   "function positionOf(address,uint8) view returns(int256 size,uint256 entryPrice,int256 lastFundingIndex)",
   "function markets(uint256) view returns(int256 aggregateBase,int256 fundingIndex,uint64 fundingTime,uint64 lastPriceTime,uint256 lastBid,uint256 lastAsk,bool enabled)",
+  "function marketLimitWord(uint8) view returns(uint256)",
   "function maintenanceEquity(address) view returns(int256)",
   "function openingEquity(address) view returns(int256)",
   "function initialMargin(address) view returns(uint256)",

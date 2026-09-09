@@ -28,8 +28,8 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     uint256 internal constant YEAR = 365 days;
     uint256 internal constant MAX_ORACLE_AGE = 15;
     uint256 internal constant MAX_WIDTH_BPS = 100;
-    uint256 internal constant MAX_TRADE_NOTIONAL = 25_000e6;
-    uint256 internal constant MAX_MARKET_NOTIONAL = 250_000e6;
+    uint256 internal constant ABSOLUTE_MAX_TRADE_NOTIONAL = 1_000_000e6;
+    uint256 internal constant ABSOLUTE_MAX_MARKET_NOTIONAL = 5_000_000e6;
     uint256 internal constant LIQUIDATION_PENALTY_BPS = 50;
     uint256 internal constant KEEPER_REWARD_BPS = 10;
     uint256 internal constant MAX_SESSION_DURATION = 30 days;
@@ -116,6 +116,8 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     mapping(address => uint256) public resolutionClaim;
     mapping(address => uint256) public resolutionPaid;
     mapping(address => Session) public sessions;
+    // First append-only extension; future implementations must add storage after this field.
+    mapping(uint8 => uint256) public marketLimitWord;
 
     event Deposited(address indexed account, uint256 amount);
     event Withdrawn(address indexed account, uint256 amount);
@@ -132,6 +134,7 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     event ResolutionStarted(uint64 triggerTime);
     event ResolutionPriceReady(uint8 indexed market, uint256 price);
     event ResolutionFinalized(uint256 claims, uint256 assets);
+    event MarketPolicyUpdated(uint8 indexed market, bool enabled, uint128 maxTradeNotional, uint128 maxMarketNotional, uint64 policyVersion);
 
     error Unauthorized(); error InvalidTrade(); error InvalidSignature(); error Stale();
     error Replay(); error Margin(); error OracleInvalid(); error Insolvent();
@@ -150,6 +153,8 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         emergencyCouncil = emergencyCouncil_; baseRiskCapitalTarget = baseRiskCapitalTarget_;
         leaderEpoch = 1; signerSetVersion = 1; policyVersion = 1;
         markets[0].enabled = true; markets[1].enabled = true;
+        uint256 initialLimits = ABSOLUTE_MAX_TRADE_NOTIONAL | (ABSOLUTE_MAX_MARKET_NOTIONAL << 128);
+        marketLimitWord[0] = initialLimits; marketLimitWord[1] = initialLimits;
         markets[0].fundingTime = uint64(block.timestamp); markets[1].fundingTime = uint64(block.timestamp);
         _setApprovers(approvers_);
     }
@@ -276,7 +281,7 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     function _validateEconomics(TradeIntent calldata intent, MakerApproval calldata approval, IPriceOracle.Observation memory observation, address sessionSigner) private view returns (uint256 notional) {
         uint256 absoluteBase = _abs(intent.baseDelta);
         notional = absoluteBase * approval.executionPrice / BASE;
-        if (notional > MAX_TRADE_NOTIONAL) revert InvalidTrade();
+        if (notional > _tradeLimit(intent.market)) revert InvalidTrade();
         if (sessionSigner != address(0)) {
             Session storage session = sessions[sessionSigner];
             if (notional > session.maxTradeNotional || uint256(session.usedNotional) + notional > session.maxCumulativeNotional) revert Unauthorized();
@@ -341,8 +346,12 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     }
     function rotateApprovers(address[3] calldata next) external onlyGovernance { _setApprovers(next); ++signerSetVersion; ++leaderEpoch; emit EpochAdvanced(leaderEpoch); }
     function setOracle(address next) external onlyGovernance { if (next == address(0)) revert Unauthorized(); oracle = IPriceOracle(next); ++policyVersion; }
-    function setMarketEnabled(uint8 market, bool enabled) external onlyEmergencyOrGovernance {
-        if (market > 1 || (enabled && msg.sender != governance)) revert Unauthorized(); markets[market].enabled = enabled;
+    function setMarketPolicy(uint8 market, bool enabled, uint128 maxTradeNotional, uint128 maxMarketNotional) external onlyEmergencyOrGovernance {
+        if (market > 1 || maxTradeNotional == 0 || maxTradeNotional > maxMarketNotional || maxTradeNotional > ABSOLUTE_MAX_TRADE_NOTIONAL || maxMarketNotional > ABSOLUTE_MAX_MARKET_NOTIONAL) revert InvalidTrade();
+        if (msg.sender != governance && (enabled || maxTradeNotional > _tradeLimit(market) || maxMarketNotional > _marketLimit(market))) revert Unauthorized();
+        markets[market].enabled = enabled;
+        marketLimitWord[market] = uint256(maxTradeNotional) | (uint256(maxMarketNotional) << 128); ++policyVersion;
+        emit MarketPolicyUpdated(market, enabled, maxTradeNotional, maxMarketNotional, policyVersion);
     }
 
     /// @notice Releases only maker capital above both the configured floor and live stress requirement.
@@ -539,7 +548,7 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         Market storage market = markets[marketId]; uint256 elapsed = block.timestamp - market.fundingTime; if (elapsed == 0) return;
         if (elapsed > 7 days) elapsed = 7 days;
         int256 skewNotional = market.aggregateBase * int256(mark) / int256(BASE);
-        int256 apr = skewNotional * int256(RATE) / int256(MAX_MARKET_NOTIONAL);
+        int256 apr = skewNotional * int256(RATE) / int256(_marketLimit(marketId));
         if (apr > int256(RATE)) apr = int256(RATE); if (apr < -int256(RATE)) apr = -int256(RATE);
         market.fundingIndex += int256(mark) * apr * int256(elapsed) / int256(RATE * YEAR);
         market.fundingTime += uint64(elapsed);
@@ -591,13 +600,15 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     }
     function _enforceAggregateRisk() private view {
         int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE); int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE);
-        if (_abs(btc) > MAX_MARKET_NOTIONAL || _abs(eth) > MAX_MARKET_NOTIONAL || RFQRiskMath.stressLoss(btc, eth) > makerBacking / 4) revert Margin();
+        if (_abs(btc) > _marketLimit(0) || _abs(eth) > _marketLimit(1) || RFQRiskMath.stressLoss(btc, eth) > makerBacking / 4) revert Margin();
     }
     function _impactCost(uint8 market, int256 baseDelta, uint256 mark) private view returns (int256) {
         int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE); int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE); int256 delta = baseDelta * int256(mark) / int256(BASE);
         return RFQRiskMath.impactCost(btc, eth, market, delta);
     }
     function _mid(uint8 market) private view returns (uint256) { Market storage m=markets[market]; if (m.aggregateBase != 0 && (m.lastPriceTime == 0 || block.timestamp-m.lastPriceTime>MAX_ORACLE_AGE)) revert Stale(); return (m.lastBid+m.lastAsk)/2; }
+    function _tradeLimit(uint8 market) private view returns (uint256) { return uint128(marketLimitWord[market]); }
+    function _marketLimit(uint8 market) private view returns (uint256) { return marketLimitWord[market] >> 128; }
     function _reduces(int256 old, int256 delta) private pure returns (bool) { int256 next=old+delta; return old != 0 && _abs(next)<_abs(old) && (next==0 || (next>0)==(old>0)); }
     function _abs(int256 value) private pure returns (uint256) { return uint256(value < 0 ? -value : value); }
     function _median3(uint256 a,uint256 b,uint256 c) private pure returns(uint256){if(a>b)(a,b)=(b,a);if(b>c)(b,c)=(c,b);if(a>b)(a,b)=(b,a);return b;}

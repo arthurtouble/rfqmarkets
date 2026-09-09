@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { impactCost, requiredPendingImpact, type Exposure, type Market } from "../../../packages/shared/src/policy.js";
+import { constructQuote, impactCost, requiredPendingImpact, USDC, type Exposure, type Market } from "../../../packages/shared/src/policy.js";
 
 function exhaustive(settled:Exposure,pending:Array<{market:Market;delta:bigint}>,market:Market,delta:bigint){
   let greatest:bigint|undefined;
@@ -26,4 +26,21 @@ test("four-corner pending envelope is conservative against every execution subse
 test("pending impact remains bounded work with many wallet reservations",()=>{
   const pending=Array.from({length:10_000},(_,index)=>({market:(index%2===0?"BTC":"ETH") as Market,delta:BigInt(index%5-2)*1_000_000n}));
   assert.equal(typeof requiredPendingImpact({BTC:0n,ETH:0n},pending,"BTC",1_000_000n),"bigint");
+});
+
+test("market parameters permit scale quotes while preserving the configured ceiling",()=>{
+  const snapshot={market:"BTC" as const,bid:99_990n*USDC,ask:100_010n*USDC,observedAtMs:1_000};
+  const parameters={maxNotional:1_000_000n*USDC,baseSpreadBps:2n,feeBps:2n,toleranceBps:8n};
+  const quote=constructQuote({market:"BTC",side:"buy",amount:"1000000"},snapshot,{BTC:0n,ETH:0n},[],1_000,"00000000-0000-4000-8000-000000000001",parameters);
+  assert.equal(quote.notional,1_000_000n*USDC);
+  assert.throws(()=>constructQuote({market:"BTC",side:"buy",amount:"1000000.000001"},snapshot,{BTC:0n,ETH:0n},[],1_000,crypto.randomUUID(),parameters),/market limit/);
+});
+
+test("splitting an order across wallets cannot reduce quadratic inventory impact",()=>{
+  const start:Exposure={BTC:400_000n*USDC,ETH:-100_000n*USDC},part=50_000n*USDC;
+  const bulk=impactCost(start,"BTC",part*10n);let sequential=0n,current={...start};
+  for(let index=0;index<10;index++){sequential+=impactCost(current,"BTC",part);current.BTC+=part;}
+  assert.equal(sequential,bulk);
+  const pending=Array.from({length:10},()=>({market:"BTC" as const,delta:part}));
+  assert(requiredPendingImpact(start,pending,"BTC",part)>=impactCost({...start,BTC:start.BTC+part*10n},"BTC",part));
 });

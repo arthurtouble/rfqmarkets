@@ -29,10 +29,13 @@ library RFQRiskMath {
         return uint256(best);
     }
 
-    function marginRate(uint256 notional, bool initial) internal pure returns (uint256) {
+    function marginRate(uint256 notional, bool initial) public pure returns (uint256) {
         if (notional <= 25_000e6) return initial ? 2_000 : 1_200;
-        if (notional <= 50_000e6) return initial ? 2_500 : 1_500;
-        if (notional <= 100_000e6) return initial ? 3_300 : 2_000;
+        if (notional <= 100_000e6) return initial ? 2_500 : 1_500;
+        if (notional <= 250_000e6) return initial ? 3_300 : 2_000;
+        if (notional <= 1_000_000e6) return initial ? 5_000 : 3_000;
+        if (notional <= 2_500_000e6) return initial ? 6_700 : 4_000;
+        if (notional <= 5_000_000e6) return initial ? 10_000 : 6_000;
         return type(uint256).max;
     }
 

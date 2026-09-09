@@ -48,8 +48,10 @@ export function buildApprover(options:ApproverOptions) {
     try { intentSigner=recoverIntentSigner(domain,intent,input.userSignature); }
     catch{}
     if(approval.intentHash!==intentHash||(!clearing&&intentSigner!==intent.account))return reply.code(401).send({error:"invalid user signature"});
-    const notional=BigInt(input.quote.amount),maximumFee=(notional*2n+9_999n)/10_000n,observedAge=now-input.quote.observedAtMs;
-    if(observedAge<0||observedAge>8_000||notional>25_000n*1_000_000n||approval.fee>maximumFee)return reply.code(409).send({error:"policy rejected"});
+    const notional=BigInt(input.quote.amount),requiredFee=(notional*2n+9_999n)/10_000n,observedAge=now-input.quote.observedAtMs,mid=(BigInt(input.quote.bid)+BigInt(input.quote.ask))/2n;
+    const signedBaseMagnitude=intent.baseDelta<0n?-intent.baseDelta:intent.baseDelta,baseMagnitude=notional*BASE/mid,baseRounding=signedBaseMagnitude>baseMagnitude?signedBaseMagnitude-baseMagnitude:baseMagnitude-signedBaseMagnitude,executionNotional=signedBaseMagnitude*approval.executionPrice/BASE,positiveImpact=approval.impactCharge>0n?approval.impactCharge:0n,minimumCharge=(notional*2n+9_999n)/10_000n+positiveImpact,anchor=intent.baseDelta>0n?BigInt(input.quote.ask):BigInt(input.quote.bid),minimumPremium=(anchor*minimumCharge+notional-1n)/notional;
+    const underpriced=intent.baseDelta>0n?approval.executionPrice<anchor+minimumPremium:approval.executionPrice>anchor-minimumPremium;
+    if(observedAge<0||observedAge>8_000||baseRounding*mid/BASE>1n||notional>1_000_000n*1_000_000n||approval.fee<requiredFee||underpriced)return reply.code(409).send({error:"policy rejected"});
     let reportObservation:{market:bigint;bid:bigint;ask:bigint;observedAt:bigint;validUntil:bigint}|undefined;
     if(input.report!=="0x"){
       try {
@@ -66,16 +68,17 @@ export function buildApprover(options:ApproverOptions) {
       try{
         const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));
         const contractWallet=new Contract(intent.account,["function isValidSignature(bytes32,bytes) view returns(bytes4)"],provider);
-        const [block,secondaryBlock,epoch,setVersion,policy,paused,resolution,member,btc,eth,accountSignature,session]=await Promise.all([
+        const [block,secondaryBlock,epoch,setVersion,policy,paused,resolution,member,btc,eth,marketLimitWord,accountSignature,session]=await Promise.all([
           provider.getBlock(blockNumber),secondaryProvider?.getBlock(blockNumber),
           clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
           clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),clearing.isApprover(wallet.address,{blockTag:blockNumber}),
-          clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),
+          clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),clearing.marketLimitWord(market,{blockTag:blockNumber}),
           intentSigner===intent.account?Promise.resolve(true):contractWallet.isValidSignature(intentHash,input.userSignature,{blockTag:blockNumber}).then((value:string)=>value.toLowerCase()==="0x1626ba7e").catch(()=>false),
           intentSigner===intent.account||intentSigner===undefined?Promise.resolve(undefined):clearing.sessions(intentSigner,{blockTag:blockNumber}),
         ]);
         if(secondaryProvider&&(!secondaryBlock||secondaryBlock.hash!==block?.hash))return reply.code(409).send({error:"rpc divergence"});
         if(!block||BigInt(epoch)!==approval.leaderEpoch||BigInt(setVersion)!==approval.signerSetVersion||BigInt(policy)!==approval.policyVersion||paused||resolution||!member)return reply.code(409).send({error:"independent chain policy rejected"});
+        if(executionNotional>(BigInt(marketLimitWord)&((1n<<128n)-1n)))return reply.code(409).send({error:"market trade limit exceeded"});
         if(intent.deadline<=BigInt(block.timestamp)||approval.deadline<=BigInt(block.timestamp)||approval.deadline>BigInt(block.timestamp+31+(options.maxFutureSeconds??5)))return reply.code(409).send({error:"chain-time expiry rejected"});
         if(!accountSignature&&(!session||getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<approval.fee||BigInt(session.usedNotional)+notional>BigInt(session.maxCumulativeNotional)||notional>BigInt(session.maxTradeNotional)))return reply.code(409).send({error:"user authorization rejected"});
         const selected=market===0?btc:eth;if(!selected.enabled)return reply.code(409).send({error:"market disabled"});

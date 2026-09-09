@@ -25,7 +25,7 @@ If the intended $1M is maker backing alone, preserve these safety ratios and fun
 
 Normal admission requires worst modeled portfolio loss no greater than 25% of Base maker backing (initially 150,000 USDC). Severe stress plus already recognized deficit must remain below 75% of Base maker backing (450,000 USDC). Insurance is excluded from both admission thresholds. It is a last-resort realized-loss layer.
 
-Initial hard caps, all wallet-independent and inclusive of executable reservations:
+Initial operating caps, all wallet-independent and inclusive of executable reservations:
 
 - 25,000 USDC maximum single RFQ;
 - 100,000 USDC maximum notional per subaccount;
@@ -33,6 +33,8 @@ Initial hard caps, all wallet-independent and inclusive of executable reservatio
 - 750,000 USDC total gross open interest across both markets;
 - normal and severe portfolio stress constraints above;
 - no credit from unfilled or unreconciled external hedge orders.
+
+The deployed v1 software ceilings are higher so scale can be exercised without an upgrade: 1,000,000 USDC per trade and 5,000,000 USDC aggregate net customer notional per market. On-chain per-market policy starts at those ceilings in the scale laboratory. A production launch must set the lower operating caps above before accepting users. The independent stress-capital constraint still binds even if the numerical market ceiling is higher.
 
 The 25,000 USDC single-RFQ cap is also bounded by what the hedge router can execute within 20 bps using at most 1% of observed aggregate venue depth. Use the smaller limit. From 60% of any net/stress cap, increase the accumulating-side impact coefficient and reduce its maximum size linearly. From 90%, quote that side with at most 25% of normal size and doubled minimum impact. At 100%, allow only exposure-reducing flow. This avoids a predictable hard pricing cliff.
 
@@ -105,8 +107,11 @@ Initial per-market tiers:
 | Subaccount market notional | Initial margin | Maintenance margin |
 | ---: | ---: | ---: |
 | 0–25,000 | 20% | 12% |
-| 25,000–50,000 | 25% | 15% |
-| 50,000–100,000 | 33% | 20% |
+| 25,000–100,000 | 25% | 15% |
+| 100,000–250,000 | 33% | 20% |
+| 250,000–1,000,000 | 50% | 30% |
+| 1,000,000–2,500,000 | 67% | 40% |
+| 2,500,000–5,000,000 | 100% | 60% |
 
 Requirements add across positions; there is no user correlation offset in v1. Orders increasing absolute exposure require post-fill equity at or above initial margin. Reduce-only orders must reduce absolute base size and cannot flip direction. A withdrawal requires the zero-positive-uPnL equity calculation to remain above initial margin plus pending user-authorized obligations. Maker withdrawals separately preserve customer withdrawal liquidity, all recognized liabilities, Base maker backing target and both stress limits.
 
