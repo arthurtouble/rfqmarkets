@@ -28,7 +28,7 @@ export interface ApiOptions {
   hedgeRiskSource?:HedgeRiskSource;
 }
 
-const intentRequestSchema = z.object({ quoteId:z.string().uuid(), account:z.string(), nonce:z.string().regex(/^\d+$/) });
+const intentRequestSchema = z.object({ quoteId:z.string().uuid(), account:z.string(), nonce:z.string().regex(/^\d+$/), reduceOnly:z.boolean().default(false) });
 const approvalRequestSchema = intentRequestSchema.extend({ userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/) });
 const depositQuoteSchema=z.object({account:z.string(),fromChainId:z.number().int().positive(),fromToken:z.enum(["USDC","USDT","ETH"]),amount:z.string().regex(/^\d+(\.\d{1,18})?$/)});
 const depositExecuteSchema=z.object({routeId:z.string().regex(/^0x[0-9a-fA-F]{64}$/),userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/)});
@@ -112,14 +112,14 @@ export function buildApi(options: ApiOptions = {}) {
 
   function prune(now=Date.now()) {
     for (let index=pending.length-1; index>=0; index--) if (pending[index].expiresAtMs<=now) pending.splice(index,1);
-    for (const [id,quote] of quotes) if (quote.expiresAtMs+60_000<=now) { quotes.delete(id); quoteReports.delete(id); quoteVersions.delete(id); quoteBindings.delete(id); }
+    for (const [id,quote] of quotes) if (quote.expiresAtMs+60_000<=now) { quotes.delete(id); quoteReports.delete(id); quoteVersions.delete(id); quoteBindings.delete(id); preparedIntents.delete(id); }
     for(const [id,order] of restingOrders)if(order.status==="prepared"&&order.createdAtMs+300_000<=now)restingOrders.delete(id);
   }
   const activeOrderCount=()=>{let count=0;for(const order of restingOrders.values())if(order.status==="prepared"||order.status==="open"||order.status==="executing")count++;return count;};
-  function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string):TradeIntent {
+  function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string,reduceOnly=false):TradeIntent {
     const prepared=preparedIntents.get(quote.quoteId);if(prepared)return prepared;
     const reportExpiry=quoteReports.get(quote.quoteId)?.validUntil??versions.blockTimestamp+30,deadline=Math.min(versions.blockTimestamp+30,reportExpiry);
-    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(deadline),reduceOnly:false };
+    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(deadline),reduceOnly };
   }
   async function readProtocolVersions():Promise<ProtocolVersions>{
     if(!clearing||!provider)return {leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n,blockNumber:0,blockTimestamp:Math.floor(Date.now()/1_000)};
@@ -294,10 +294,12 @@ export function buildApi(options: ApiOptions = {}) {
     const versions=quoteVersions.get(parsed.data.quoteId);
     if(!quote||!versions||quote.expiresAtMs<=Date.now())return reply.code(409).send({error:"quote expired"});
     try {
-      const intent=makeIntent(quote,versions,parsed.data.account,parsed.data.nonce);
+      const requestedAccount=getAddress(parsed.data.account);
       const binding=quoteBindings.get(quote.quoteId);
-      if(binding&&(binding.account!==intent.account||binding.nonce!==parsed.data.nonce))return reply.code(409).send({error:"quote already prepared"});
+      if(binding&&(binding.account!==requestedAccount||binding.nonce!==parsed.data.nonce))return reply.code(409).send({error:"quote already prepared"});
+      const intent=makeIntent(quote,versions,parsed.data.account,parsed.data.nonce,parsed.data.reduceOnly);
       quoteBindings.set(quote.quoteId,{account:intent.account,nonce:parsed.data.nonce});
+      preparedIntents.set(quote.quoteId,intent);
       return {domain:{...domain,chainId:domain.chainId.toString()},types:intentTypes,intent:intentToWire(intent),intentHash:hashIntent(domain,intent)};
     } catch{return reply.code(400).send({error:"invalid account or nonce"});}
   });

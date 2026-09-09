@@ -1,5 +1,6 @@
 export const API = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:4100";
 export const INDEXER = import.meta.env.VITE_INDEXER_URL ?? "http://127.0.0.1:4300";
+export const MARKET_STREAM = import.meta.env.VITE_MARKET_STREAM_URL ?? "http://127.0.0.1:4500";
 
 export const dollars = (micro?: string) => micro
   ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Number(BigInt(micro)) / 1e6)

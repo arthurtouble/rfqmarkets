@@ -154,6 +154,12 @@ test("a prepared quote cannot be reused by another wallet or nonce",async()=>{
   assert.equal(otherNonce.statusCode,409);
 });
 
+test("market intents bind reduce-only and cannot be re-prepared with weaker semantics",async()=>{
+  const target=buildApi();await target.ready();const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"ETH",side:"sell",amount:"200"}})).json(),nonce="771122";
+  const first=await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce,reduceOnly:true}});assert.equal(first.statusCode,200,first.body);assert.equal(first.json().intent.reduceOnly,true);
+  const second=await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce,reduceOnly:false}});assert.equal(second.statusCode,200,second.body);assert.equal(second.json().intent.reduceOnly,true,"the first prepared intent must remain authoritative");await target.close();
+});
+
 test("approvers reject an API that requests signatures for an unpinned chain domain",async()=>{
   const approvers=apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`}));
   const wrongDomain=buildApi({approvers,fetchImpl:routedFetch,chainId:1n,verifyingContract});

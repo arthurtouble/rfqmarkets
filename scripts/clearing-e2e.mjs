@@ -24,6 +24,20 @@ const oracle = await deploy("MockPriceOracle");
 const riskMath = await deploy("RFQRiskMath");
 libraryAddresses.RFQRiskMath = await riskMath.getAddress();
 
+// The linked math module is independently testable across increase, reduction, flip and funding edges.
+let transition = await riskMath.positionTransition(1_000_000_000_000_000_000n, 100_000_000n, 500_000_000_000_000_000n, 110_000_000n);
+assert.deepEqual([...transition], [1_500_000_000_000_000_000n, 103_333_333n, 0n]);
+transition = await riskMath.positionTransition(1_000_000_000_000_000_000n, 100_000_000n, -500_000_000_000_000_000n, 110_000_000n);
+assert.deepEqual([...transition], [500_000_000_000_000_000n, 100_000_000n, 5_000_000n]);
+transition = await riskMath.positionTransition(1_000_000_000_000_000_000n, 100_000_000n, -2_000_000_000_000_000_000n, 90_000_000n);
+assert.deepEqual([...transition], [-1_000_000_000_000_000_000n, 90_000_000n, -10_000_000n]);
+assert.equal(await riskMath.positionPnl(-2_000_000_000_000_000_000n, 100_000_000n, 90_000_000n), 20_000_000n);
+const unchangedFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 100_000_000n, 123n, 1_000n, 1_000n, 1_000_000_000n);
+assert.deepEqual([...unchangedFunding], [123n, 1_000n]);
+const weekFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 100_000_000n, 0n, 1_000n, 1_000n + 7n * 86_400n, 1_000_000_000n);
+const cappedFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 100_000_000n, 0n, 1_000n, 1_000n + 8n * 86_400n, 1_000_000_000n);
+assert.deepEqual([...cappedFunding], [...weekFunding]);
+
 // Chainlink v3 adapter verifies the configured feed and normalizes 8 decimals to USDC's 6.
 const streamsVerifier = await deploy("MockStreamsVerifier");
 const btcFeed = ethers.keccak256(ethers.toUtf8Bytes("BTC/USD"));
@@ -42,6 +56,19 @@ const normalized = await streamsAdapter.connect(governance).verify.staticCall("0
 assert.equal(normalized.market, 0n);
 assert.equal(normalized.bid, 99_990_000_000n);
 await reject(streamsAdapter.connect(user).verify("0x1234"), "only clearing may consume verified stream reports");
+
+// Pyth Core is a credential-independent contract option once an authenticated update is acquired.
+const pyth = await deploy("MockPythCore");
+await (await pyth.setFee(7n)).wait();
+await (await pyth.setPrice(btcFeed, [10_000_000_000_000n, 1_000_000_000n, -8, nowBlock.timestamp])).wait();
+const pythAdapter = await deploy("PythCoreAdapter", [await pyth.getAddress(), governance.address, [btcFeed, ethFeed]]);
+const pythReport = ethers.AbiCoder.defaultAbiCoder().encode(["uint8", "bytes[]"], [0, ["0x1234"]]);
+assert.equal(await pythAdapter.updateFee(pythReport), 7n);
+const pythObservation = await pythAdapter.connect(governance).verify.staticCall(pythReport, {value:7n});
+assert.equal(pythObservation.bid, 99_990_000_000n);
+assert.equal(pythObservation.ask, 100_010_000_000n);
+await reject(pythAdapter.connect(governance).verify(pythReport, {value:6n}), "Pyth fee must be exact so ETH cannot be trapped");
+await reject(pythAdapter.connect(user).verify(pythReport, {value:7n}), "only clearing may consume Pyth reports");
 
 const implementation = await deploy("RFQClearing");
 const clearingInterface = new ethers.Interface(artifact("RFQClearing").abi);

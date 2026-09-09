@@ -17,6 +17,7 @@
     "dev:chain": "hardhat --verbosity 0 node --network hardhatOp --hostname 127.0.0.1 --port 8545",
     "deploy:local": "node --import tsx scripts/deploy-local.ts",
     "preflight:base-sepolia": "node --import tsx scripts/preflight-base-sepolia.ts",
+    "probe:base-sepolia": "node --import tsx scripts/probe-base-sepolia.ts",
     "deploy:base-sepolia": "npm run compile:contracts && npm run preflight:base-sepolia && node --import tsx scripts/deploy-base-sepolia.ts",
     "smoke:local": "node --import tsx scripts/live-smoke.ts",
     "smoke:reorg": "node --import tsx scripts/reorg-smoke.ts",
@@ -27,6 +28,7 @@
     "smoke:adversarial-load": "node --import tsx scripts/adversarial-load.ts",
     "smoke:limit-order": "node --import tsx scripts/limit-order-smoke.ts",
     "smoke:live-market": "node --import tsx scripts/live-market-data-smoke.ts",
+    "smoke:sse-gateway": "node --import tsx scripts/sse-gateway-load.ts",
     "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin"
   },
   "devDependencies": {

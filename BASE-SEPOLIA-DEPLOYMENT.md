@@ -2,6 +2,8 @@
 
 The repository can prepare and deploy the clearing system to Base Sepolia, but it deliberately cannot invent or download authority, oracle or collateral configuration. Copy `base-sepolia.env.example` into an untracked secret environment and replace every placeholder from independently verified sources.
 
+`npm run probe:base-sepolia` is credential-free. It verifies chain ID 84532 through the standard and Flashblocks preconfirmation RPCs, reads pending state, checks bytecode at official Base Sepolia USDC and the upgraded Pyth Core address, and confirms six collateral decimals. It does not deploy or sign anything.
+
 Required external inputs:
 
 - a dedicated, temporary deployer funded only with enough Base Sepolia ETH for this deployment;

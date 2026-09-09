@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { API, INDEXER, base, dollars } from "./config.js";
+import { API, INDEXER, MARKET_STREAM, base, dollars } from "./config.js";
 import type { AccountState, Market, MarketSnapshot, Quote, RestingOrder, Side, TradeActivity, WalletProvider } from "./types.js";
 import { constructQuote, marginRate } from "../../../packages/shared/src/pricing.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
@@ -30,6 +30,7 @@ export function TradePage() {
   const [activity,setActivity]=useState<TradeActivity[]>([]);
   const [orders,setOrders]=useState<RestingOrder[]>([]);
   const [orderType,setOrderType]=useState<"market"|"limit">("market");
+  const [reduceOnly,setReduceOnly]=useState(false);
   const [limitPrice,setLimitPrice]=useState("95000");
   const [showDeposit, setShowDeposit] = useState(false);
   const [sourceChain, setSourceChain] = useState<keyof typeof chains>(1);
@@ -70,7 +71,7 @@ export function TradePage() {
     if(!marketSnapshot){setQuote(null);return;}try{const live=marketSnapshot.markets[market];if(!(side==="buy"?live.canBuy:live.canSell))throw new Error(`Only exposure-reducing ${side==="buy"?"buys":"sells"} are available`);const pricing=marketSnapshot.pricing,value=constructQuote({market,side,amount},{market,bid:BigInt(live.bid),ask:BigInt(live.ask),observedAtMs:live.observedAtMs,source:live.source,volatilityBps:live.volatilityBps},{BTC:BigInt(pricing.settled.BTC),ETH:BigInt(pricing.settled.ETH)},pricing.pending.map(item=>({market:item.market,delta:BigInt(item.delta)})),Date.now(),crypto.randomUUID(),{maxNotional:BigInt(live.operatingMaxTradeNotional),baseSpreadBps:BigInt(live.baseSpreadBps),feeBps:BigInt(pricing.feeBps),toleranceBps:BigInt(pricing.toleranceBps)});setQuote({...quoteToWire(value),quoteId:undefined,indicative:true});setStatus(current=>["Waiting for wallet…","Requesting two approvals…","No browser wallet detected"].includes(current)||current.startsWith("Executed")?current:live.riskMode==="guarded"?"Reduced size limits":"Live estimate");}catch(error){setQuote(null);setStatus(error instanceof Error?error.message:"Quote unavailable");}
   }, [marketSnapshot,market,side,amount]);
   useEffect(()=>{
-    const stream=new EventSource(`${API}/v1/markets/stream`);stream.addEventListener("markets",event=>{try{setMarketSnapshot(JSON.parse((event as MessageEvent).data));}catch{}});return()=>stream.close();
+    const stream=new EventSource(`${MARKET_STREAM}/v1/markets/stream`);stream.addEventListener("markets",event=>{try{setMarketSnapshot(JSON.parse((event as MessageEvent).data));}catch{}});return()=>stream.close();
   },[]);
   useEffect(()=>{let stopped=false;fetch(`${API}/v1/dev/wallet`).then(response=>response.ok?response.json():null).then(value=>{if(stopped||!value?.account||!value?.privateKey)return;setLocalPrivateKey(value.privateKey);setAccount(value.account);void refreshAccount(value.account);}).catch(()=>{});return()=>{stopped=true;};},[]);
   useEffect(()=>{if(!account)return;const stream=new EventSource(`${INDEXER}/v1/updates/stream`);stream.addEventListener("indexed",event=>{try{const update=JSON.parse((event as MessageEvent).data) as {initial?:boolean;reset?:boolean;accounts?:string[]};if(update.initial||update.reset||update.accounts?.some(value=>value.toLowerCase()===account.toLowerCase()))void refreshAccount(account);}catch{}});return()=>stream.close();},[account]);
@@ -105,7 +106,7 @@ export function TradePage() {
       const connected = await wallet();
       const current=await requestQuote();setQuote(current);
       const nonce = randomNonce();
-      const prepared = await post("/v1/prepare", { quoteId: current.quoteId, account: connected.account, nonce });
+      const prepared = await post("/v1/prepare", { quoteId: current.quoteId, account: connected.account, nonce, reduceOnly });
       let userSignature:string;
       if(quickSession&&quickSession.account.toLowerCase()===connected.account.toLowerCase()&&quickSession.validUntil>Date.now()&&Number(amount)<=2_500){setStatus("Signing with quick session…");const {SigningKey,TypedDataEncoder}=await import("ethers");const digest=TypedDataEncoder.hash(prepared.domain,prepared.types,prepared.intent);userSignature=new SigningKey(quickSession.privateKey).sign(digest).serialized;}
       else userSignature = await signTyped(connected, prepared, "TradeIntent");
@@ -117,7 +118,7 @@ export function TradePage() {
   }
   async function placeLimit(){
     setStatus("Waiting for limit-order signature…");
-    try{const connected=await wallet(),nonce=randomNonce(),prepared=await post("/v1/orders/prepare",{account:connected.account,market,side,amount,limitPrice,durationSeconds:86_400,nonce,reduceOnly:false}),userSignature=await signTyped(connected,prepared,"TradeIntent");await post("/v1/orders",{orderId:prepared.orderId,userSignature});setStatus(`${side==="buy"?"Buy":"Sell"} limit open at ${dollars(prepared.intent.limitPrice)}`);await refreshAccount(connected.account);}catch(error){setStatus(error instanceof Error?error.message:"Limit order unavailable");}
+    try{const connected=await wallet(),nonce=randomNonce(),prepared=await post("/v1/orders/prepare",{account:connected.account,market,side,amount,limitPrice,durationSeconds:86_400,nonce,reduceOnly}),userSignature=await signTyped(connected,prepared,"TradeIntent");await post("/v1/orders",{orderId:prepared.orderId,userSignature});setStatus(`${side==="buy"?"Buy":"Sell"} limit open at ${dollars(prepared.intent.limitPrice)}`);await refreshAccount(connected.account);}catch(error){setStatus(error instanceof Error?error.message:"Limit order unavailable");}
   }
   async function cancelOrder(order:RestingOrder){
     setStatus("Waiting for cancellation signature…");try{const connected=await wallet(),prepared=await post(`/v1/orders/${order.orderId}/cancel/prepare`,{}),userSignature=await signTyped(connected,prepared,"CancelIntent"),result=await post(`/v1/orders/${order.orderId}/cancel`,{intent:prepared.intent,userSignature});setStatus(`Order cancelled in block ${result.transaction.blockNumber}`);await refreshAccount(connected.account);}catch(error){setStatus(error instanceof Error?error.message:"Cancellation unavailable");}
@@ -196,6 +197,7 @@ export function TradePage() {
       <label>Amount <span>USDC</span></label><div className="amount"><input aria-label="Trade amount" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} /><b>USDC</b></div>
       {orderType==="limit"&&<><label>Limit price <span>Good for 24 hours</span></label><div className="amount limit-amount"><input aria-label="Limit price" inputMode="decimal" value={limitPrice} onChange={event=>setLimitPrice(event.target.value)}/><b>USDC</b></div></>}
       <div className="sides"><button className={side === "buy" ? "buy active" : "buy"} onClick={() => setSide("buy")}>Buy</button><button className={side === "sell" ? "sell active" : "sell"} onClick={() => setSide("sell")}>Sell</button></div>
+      <label className="order-option"><input type="checkbox" checked={reduceOnly} onChange={event=>setReduceOnly(event.target.checked)}/><span><b>Reduce only</b><small>Never increase or flip your position</small></span></label>
       <dl>{orderType==="market"?<><div><dt>Estimated price</dt><dd>{dollars(quote?.expectedPrice)}</dd></div><div><dt>Maximum fee</dt><dd>{dollars(quote?.fee)}</dd></div><div><dt>{side==="buy"?"Maximum":"Minimum"} accepted price</dt><dd>{dollars(quote?.worstPrice)}</dd></div></>:<><div><dt>Current maker {side==="buy"?"ask":"bid"}</dt><dd>{dollars(quote?.expectedPrice)}</dd></div><div><dt>Trigger</dt><dd className={limitMarketable?"positive":""}>{limitMarketable?"Marketable now":limitDistanceBps===null?"—":`${limitDistanceBps.toFixed(1)} bps away`}</dd></div><div><dt>Execution rule</dt><dd>{side==="buy"?"Ask ≤ limit":"Bid ≥ limit"}</dd></div><div><dt>Maximum fee</dt><dd>{dollars(quote?.fee)}</dd></div></>}</dl>
       <details className="price-details"><summary>Price details</summary><div><span>Oracle {side==="buy"?"ask":"bid"}<b>{dollars(side==="buy"?quote?.ask:quote?.bid)}</b></span><span>Inventory adjustment<b>{dollars(quote?.impactCharge)}</b></span><span>Price age<b>{quoteAge===null?"—":`${quoteAge} ms`}</b></span><span>Current maximum<b>{dollars(live?.operatingMaxTradeNotional)}</b></span></div></details>
       <button className={`submit ${side}`} disabled={!quote} onClick={orderType==="market"?approve:placeLimit}>{orderType==="market"?(side === "buy" ? "Buy" : "Sell"):`Place ${side}`} {market}</button><p className="status"><i />{status}</p>

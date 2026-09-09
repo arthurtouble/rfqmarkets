@@ -58,11 +58,52 @@ library RFQRiskMath {
         if (reward > penalty / 5) reward = penalty / 5;
     }
 
+    /// @notice Computes a position's next size, entry price and realized PnL without touching custody state.
+    function positionTransition(int256 oldSize, uint256 oldEntry, int256 delta, uint256 price)
+        public pure returns (int256 nextSize, uint256 nextEntry, int256 realizedPnl)
+    {
+        nextSize = oldSize + delta;
+        if (oldSize == 0 || (oldSize > 0) == (delta > 0)) {
+            uint256 combined = abs(nextSize);
+            nextEntry = combined == 0 ? 0 : (abs(oldSize) * oldEntry + abs(delta) * price) / combined;
+            return (nextSize, nextEntry, 0);
+        }
+        uint256 closed = abs(delta) < abs(oldSize) ? abs(delta) : abs(oldSize);
+        realizedPnl = oldSize > 0
+            ? int256(closed * price / 1e18) - int256(closed * oldEntry / 1e18)
+            : int256(closed * oldEntry / 1e18) - int256(closed * price / 1e18);
+        nextEntry = nextSize == 0 ? 0 : (nextSize > 0) != (oldSize > 0) ? price : oldEntry;
+    }
+
+    function positionPnl(int256 size, uint256 entryPrice, uint256 mark) public pure returns (int256) {
+        if (size == 0) return 0;
+        uint256 quantity = abs(size);
+        return size > 0
+            ? int256(quantity * mark / 1e18) - int256(quantity * entryPrice / 1e18)
+            : int256(quantity * entryPrice / 1e18) - int256(quantity * mark / 1e18);
+    }
+
+    function fundingStep(
+        int256 aggregateBase, uint256 mark, int256 currentIndex, uint64 fundingTime,
+        uint64 currentTime, uint256 maxMarketNotional
+    ) public pure returns (int256 nextIndex, uint64 nextFundingTime) {
+        uint256 elapsed = currentTime - fundingTime;
+        if (elapsed == 0) return (currentIndex, fundingTime);
+        if (elapsed > 7 days) elapsed = 7 days;
+        int256 skewNotional = aggregateBase * int256(mark) / 1e18;
+        int256 apr = skewNotional * RATE / int256(maxMarketNotional);
+        if (apr > RATE) apr = RATE;
+        if (apr < -RATE) apr = -RATE;
+        nextIndex = currentIndex + int256(mark) * apr * int256(elapsed) / (RATE * int256(365 days));
+        nextFundingTime = fundingTime + uint64(elapsed);
+    }
+
     function scenario(int256 btc, int256 eth, int256 btcReturn, int256 ethReturn) private pure returns (int256) {
         return floorDiv(btc * btcReturn, 100) + floorDiv(eth * ethReturn, 100);
     }
 
     function max(int256 a, int256 b) private pure returns (int256) { return a > b ? a : b; }
+    function abs(int256 value) private pure returns (uint256) { return uint256(value < 0 ? -value : value); }
     function floorDiv(int256 numerator, int256 denominator) private pure returns (int256 quotient) {
         quotient = numerator / denominator;
         if (numerator < 0 && numerator % denominator != 0) --quotient;

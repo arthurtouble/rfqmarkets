@@ -24,8 +24,6 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
     uint256 internal constant BASE = 1e18;
-    uint256 internal constant RATE = 1e12;
-    uint256 internal constant YEAR = 365 days;
     uint256 internal constant MAX_ORACLE_AGE = 15;
     uint256 internal constant MAX_WIDTH_BPS = 100;
     uint256 internal constant ABSOLUTE_MAX_TRADE_NOTIONAL = 1_000_000e6;
@@ -545,13 +543,10 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         emit SessionGranted(account, session, validUntil, maxCumulativeNotional);
     }
     function _updateFunding(uint8 marketId, uint256 mark) private {
-        Market storage market = markets[marketId]; uint256 elapsed = block.timestamp - market.fundingTime; if (elapsed == 0) return;
-        if (elapsed > 7 days) elapsed = 7 days;
-        int256 skewNotional = market.aggregateBase * int256(mark) / int256(BASE);
-        int256 apr = skewNotional * int256(RATE) / int256(_marketLimit(marketId));
-        if (apr > int256(RATE)) apr = int256(RATE); if (apr < -int256(RATE)) apr = -int256(RATE);
-        market.fundingIndex += int256(mark) * apr * int256(elapsed) / int256(RATE * YEAR);
-        market.fundingTime += uint64(elapsed);
+        Market storage market = markets[marketId];
+        (market.fundingIndex, market.fundingTime) = RFQRiskMath.fundingStep(
+            market.aggregateBase, mark, market.fundingIndex, market.fundingTime, uint64(block.timestamp), _marketLimit(marketId)
+        );
     }
     function _settleAllFunding(address account) private { for (uint8 i; i < 2; ++i) _settleFunding(account, i); }
     function _settleFunding(address account, uint8 marketId) private {
@@ -560,16 +555,10 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
         p.lastFundingIndex = markets[marketId].fundingIndex;
     }
     function _applyPosition(address account, uint8 marketId, int256 delta, uint256 price) private {
-        Position storage p = _accounts[account].positions[marketId]; int256 old = p.size; int256 next = old + delta;
-        if (old == 0 || (old > 0) == (delta > 0)) {
-            uint256 combined = _abs(next); p.entryPrice = combined == 0 ? 0 : (_abs(old) * p.entryPrice + _abs(delta) * price) / combined;
-        } else {
-            uint256 closed = _abs(delta) < _abs(old) ? _abs(delta) : _abs(old);
-            int256 pnl = old > 0 ? int256(closed * price / BASE) - int256(closed * p.entryPrice / BASE) : int256(closed * p.entryPrice / BASE) - int256(closed * price / BASE);
-            _changeCollateral(account, pnl); _changeMaker(-pnl);
-            if (next == 0) p.entryPrice = 0; else if ((next > 0) != (old > 0)) p.entryPrice = price;
-        }
-        p.size = next; p.lastFundingIndex = markets[marketId].fundingIndex; markets[marketId].aggregateBase += delta;
+        Position storage p = _accounts[account].positions[marketId];
+        (int256 next, uint256 entry, int256 pnl) = RFQRiskMath.positionTransition(p.size, p.entryPrice, delta, price);
+        if (pnl != 0) { _changeCollateral(account, pnl); _changeMaker(-pnl); }
+        p.size = next; p.entryPrice = entry; p.lastFundingIndex = markets[marketId].fundingIndex; markets[marketId].aggregateBase += delta;
     }
     function _chargeFee(address account, uint256 fee) private {
         _changeCollateral(account, -int256(fee));
@@ -593,7 +582,7 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     function _unrealized(address account, uint8 marketId) private view returns (int256) {
         Position storage p = _accounts[account].positions[marketId]; if (p.size == 0) return 0;
         uint256 mark = p.size > 0 ? markets[marketId].lastBid : markets[marketId].lastAsk;
-        return p.size > 0 ? int256(_abs(p.size) * mark / BASE) - int256(_abs(p.size) * p.entryPrice / BASE) : int256(_abs(p.size) * p.entryPrice / BASE) - int256(_abs(p.size) * mark / BASE);
+        return RFQRiskMath.positionPnl(p.size, p.entryPrice, mark);
     }
     function _positionNotional(address account, uint8 marketId) private view returns (uint256) {
         Position storage p = _accounts[account].positions[marketId]; return _abs(p.size) * markets[marketId].lastAsk / BASE;
@@ -614,6 +603,6 @@ contract RFQClearing is Initializable, EIP712Upgradeable, UUPSUpgradeable {
     function _median3(uint256 a,uint256 b,uint256 c) private pure returns(uint256){if(a>b)(a,b)=(b,a);if(b>c)(b,c)=(c,b);if(a>b)(a,b)=(b,a);return b;}
     function _resolutionEquity(address account) private view returns (int256 value) {
         Account storage a = _accounts[account]; value = a.collateral;
-        for (uint8 i; i < 2; ++i) { Position storage p=a.positions[i]; if(p.size==0) continue; uint256 price=resolutionPrice[i]; value += p.size>0 ? int256(_abs(p.size)*price/BASE)-int256(_abs(p.size)*p.entryPrice/BASE) : int256(_abs(p.size)*p.entryPrice/BASE)-int256(_abs(p.size)*price/BASE); }
+        for (uint8 i; i < 2; ++i) { Position storage p=a.positions[i]; value += RFQRiskMath.positionPnl(p.size, p.entryPrice, resolutionPrice[i]); }
     }
 }

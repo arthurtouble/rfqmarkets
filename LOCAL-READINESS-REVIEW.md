@@ -6,6 +6,7 @@ Status date: 2026-09-09. The system is locally integrated for its principal happ
 
 - A UUPS clearing proxy holds mock USDC and enforces EOA, ERC-1271 contract-wallet or scoped-session signatures, two distinct current approvers, price limits, replay protection, margin, maker backing, exposure limits, funding, liquidation and insolvency accounting. It also supports signed sponsored withdrawals, nonce cancellation, paused-market conservative closes and capital-floor-limited maker withdrawals.
 - One API process quotes from a shared portfolio state, verifies user signatures, requests all three approvers concurrently, accepts two matching approvals and sponsors the settlement transaction.
+- A separate secret-free SSE gateway maintains one upstream connection, fans complete frames out to browsers, replays the latest snapshot on reconnect and evicts slow readers. The core fanout test covers 100,000 clients without multiplying API quote work.
 - The sponsor signs and journals raw transactions before broadcasting. Restarts reconcile inclusion and avoid allocating the same nonce concurrently.
 - Each approver has a distinct key and durable log. Each independently checks the chain, exact intent, signer set, policy version, oracle observation and inventory-impact floor before signing.
 - The disposable indexer follows canonical block hashes, revalidates the tip after each sync pass, and provides account state, finalized aggregate risk, pseudonymous open positions and event history. A forced-fork drill proves orphaned state is removed. The client has separate Trade and Markets views; the private dashboard shows hedge state.
@@ -35,13 +36,13 @@ Code modules can be separated without creating more servers. The frontend is spl
 | --- | --- | --- |
 | Settlement chain | Hardhat OP-compatible node | Base Sepolia soak, then Base mainnet configuration and reorg/RPC drills. |
 | Collateral | Mock USDC and local EIP-3009 | Native Base USDC behavior and wallet compatibility tests. |
-| Oracle | Mock verifier locally; official SDK acquisition and v3 decoding boundary implemented | Paid Data Streams account, subscribed feed IDs, independent credential paths and Base verifier integration. |
+| Oracle | Coinbase WebSocket for moving local BBO; mock verifier plus tested Chainlink Data Streams and Pyth Core adapters | Select and validate Chainlink or Pyth on Base Sepolia. Both current data acquisition paths require credentials; keep independent access credentials and fail closed. |
 | Wallet UX | Injected EIP-1193, limited local session mode, and pinned-block ERC-1271 verification | Provider-neutral wallet kit, mobile wallet tests and hardened session-secret storage. |
 | Cross-chain deposit | Signed local route simulator | LI.FI or Socket quote/execution adapter, allowance safety, destination verification, refunds and failure recovery. |
 | Hedging | Deterministic local venue adapter | Hyperliquid testnet agent wallet/subaccount, real order/fill reconciliation, rate limits and fenced failover. |
 | Governance | Contract roles | Deployed multisigs, 72-hour timelock, selector review and recovery drill. |
 | Availability | Expected-epoch council transition and live fencing drill | Production 2-of-3 council/Safe, warm-standby reconciliation, independent RPCs and process/network fault injection. |
-| Contract shape | 23,939-byte IR build plus linked stateless risk library | Further production module split, linked-library verification and repeated storage/upgrade validation. |
+| Contract shape | 24,063-byte IR build plus linked stateless risk library for impact, margin helpers, positions, PnL and funding | Further production module split, linked-library verification and repeated storage/upgrade validation. |
 | Assurance | Internal deterministic tests, including 120 stateful cross-market trades | Broader invariant fuzzing, economic stress calibration and independent contract/infrastructure audits. |
 
 ## Readiness verdict
@@ -52,9 +53,9 @@ The local product is end-to-end enough to validate the interaction model: a user
 
 ## Next implementation sequence
 
-1. Continue the module split beyond the linked risk library; split API/indexer internals without adding deployable services.
-2. Expand the deterministic stateful contract suite and extend local fault drills with RPC disagreement, process kills during settlement, sponsor recovery and leader promotion.
-3. Obtain Chainlink Data Streams development credentials and wire real reports through the existing adapter on Base Sepolia. Measure report acquisition and approval latency.
+1. Split API/indexer internals without adding deployable services, and keep further clearing growth out of the near-limit implementation.
+2. Run the real-socket gateway storm at the host ceiling and extend fault drills with RPC disagreement and process kills during settlement.
+3. Obtain Chainlink Data Streams or Pyth Hermes development credentials and wire real reports through the selected adapter on Base Sepolia. Measure report acquisition and approval latency.
 4. Replace mock collateral and deposit routing on Base Sepolia, then validate injected, mobile and smart-contract wallets.
 5. Add a Hyperliquid testnet adapter using a dedicated revocable agent wallet and separately funded subaccount or vault. Keep its state and controls on the private operations surface.
 6. Run sustained load, quote-quality, hedge-basis and outage drills; freeze parameters; commission independent audits before any capped deployment.

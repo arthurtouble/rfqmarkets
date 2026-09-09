@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { API, INDEXER, base, dollars, getJson, shortAddress } from "./config.js";
+import { API, INDEXER, MARKET_STREAM, base, dollars, getJson, shortAddress } from "./config.js";
 import type { Market, MarketState, MarketSnapshot, Position, Risk, TradeActivity } from "./types.js";
 
 type Health = { ok: boolean; indexedBlock: number; finalizedBlock: number; headBlock: number; lag: number };
@@ -34,7 +34,7 @@ export function MarketsPage() {
         setSnapshot(current=>({risk,positions,activity,health,live:live??current?.live??({} as MarketSnapshot)})); setUpdatedAt(new Date()); setError(null);
       } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Indexer unavailable"); }
     };
-    void refresh(true);const indexStream=new EventSource(`${INDEXER}/v1/updates/stream`),marketStream=new EventSource(`${API}/v1/markets/stream`);
+    void refresh(true);const indexStream=new EventSource(`${INDEXER}/v1/updates/stream`),marketStream=new EventSource(`${MARKET_STREAM}/v1/markets/stream`);
     indexStream.addEventListener("indexed",event=>{try{const update=JSON.parse((event as MessageEvent).data) as {changed?:boolean};if(update.changed)void refresh();}catch{}});marketStream.addEventListener("markets",event=>{try{const live=JSON.parse((event as MessageEvent).data) as MarketSnapshot;setSnapshot(current=>current?{...current,live}:current);}catch{}});
     return () => { controller.abort();indexStream.close();marketStream.close(); };
   }, []);

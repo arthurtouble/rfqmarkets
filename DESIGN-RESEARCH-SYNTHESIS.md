@@ -1,6 +1,6 @@
 # RFQ Markets — design research synthesis
 
-2026-09-08. Primary protocol documentation, public source and selected market-making literature used for version 0.1. A documented mechanism is evidence of a design pattern, not proof that it is safe for this protocol or every deployment of the referenced system.
+Updated 2026-09-09. Primary protocol documentation, public source and selected market-making literature used for version 0.1. A documented mechanism is evidence of a design pattern, not proof that it is safe for this protocol or every deployment of the referenced system.
 
 | Source | Useful method | Adopted here | Deliberately not copied |
 | --- | --- | --- | --- |
@@ -19,6 +19,22 @@
 | Base Flashblocks | Pending-state calls/simulation and approximately 200 ms preconfirmation events. | Fast provisional UI and pre-submit simulation while retaining sealed/final reconciliation. | Calling a preconfirmation irreversible finality. [Overview](https://docs.base.org/base-chain/api-reference/flashblocks-api/flashblocks-api-overview) |
 | Circle FiatToken | EIP-2612 permits and EIP-3009 transfer authorization with relayed execution. | Exact, short-lived sponsored USDC deposit candidate after deployed-bytecode compatibility checks. | Unlimited approvals or assuming all smart wallets behave identically. [Token design](https://github.com/circlefin/stablecoin-evm/blob/master/doc/tokendesign.md) |
 | OpenZeppelin | Stable proxy pattern, role separation and delayed administration. | One stable clearing proxy, self-administered timelock, narrow emergency role and migration tests. | Unrestricted proxy admin or an emergency upgrade bypass. [Proxy pattern](https://docs.openzeppelin.com/upgrades-plugins/proxies), [access control](https://docs.openzeppelin.com/contracts/5.x/access-control) |
+
+## 2026 local parity review
+
+| Product capability | Local state | Decision |
+| --- | --- | --- |
+| Indicative versus firm, size-sensitive execution | Implemented. Shared streaming inputs drive free local indications; one firm request is made only on click and binds worst price. | Keep. This is the RFQ advantage over publishing one shallow top-of-book price. |
+| Cross margin, funding, tiered margin and partial liquidation | Implemented in contract, read API and UI. Positive unrealized PnL receives no opening-risk credit. | Keep conservative launch tiers and calibrate with the simulator before changing them. |
+| Reduce-only | Bound into EIP-712 and exposed for market and limit orders. | Keep as a first-class safety control. Add close-all and percentage shortcuts without changing settlement semantics. |
+| Resting limit orders | Durable, all-or-none, price-time trigger heaps followed by a fresh inventory-aware firm quote. | Keep for launch. Partial fill, TP/SL, scale and TWAP require separately signed quantity/trigger semantics and are deferred. |
+| Fast chain feedback | Standard Base settlement currently; credential-free preflight now probes the Flashblocks pending endpoint. | Add pending simulation and provisional transaction status on Base Sepolia, while the canonical indexer remains finalized truth. |
+| Market data fanout | Dedicated secret-free SSE gateway with complete-frame replay, reconnect and bounded slow readers. | Keep SSE for browsers and add the same versioned schema over WebSocket only when native/mobile demand justifies it. |
+| Oracle diversity | Chainlink Data Streams and Pyth Core contract adapters are implemented; Coinbase WebSocket drives local moving prices. | Select one primary after live latency/failure testing and retain the other as a governance-switched outage path. Never blend unsigned exchange data into settlement. |
+| Portfolio/isolated and multi-collateral modes | Not implemented. | Defer. They add liquidation, valuation and UI states before the two-market USDC system has production evidence. |
+| Public transparency and export | Public positions/activity and account history exist through the rebuildable indexer. | Add bounded CSV export after pagination; do not introduce a second ledger. |
+
+Hyperliquid's breadth of order controls and fast feedback, Variational's clear indicative/firm labeling, dYdX's indexed read fanout and liquidity tiers, and Synthetix's explicit margin/fee previews are the useful launch references. Validator consensus, delayed settlement, portfolio margin, multi-collateral and a long list of conditional orders solve different product problems and would enlarge the attack surface today.
 
 ## Resulting design position
 

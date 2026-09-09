@@ -31,7 +31,7 @@ flowchart LR
 
 One active execution leader remains the serial authority for the shared maker budget and pending reservations. Public stream gateways are stateless and may all be active: they hold no gas key, signer key, reservation authority or customer ledger. They fan out the same immutable versioned frame. This preserves deterministic portfolio admission without forcing idle connections through the writer.
 
-The local monoprocess implements this boundary with an in-process broadcaster. It performs one upstream refresh and serialization per frame, coalesces bursts, shares the frame across clients and closes slow consumers above a bounded buffer. Moving fanout to regional gateways changes transport and capacity, not pricing or settlement semantics.
+The local stack now implements this boundary as a separate, secret-free gateway on port 4500. It holds one upstream SSE connection to the execution API, replays the newest complete frame to reconnecting clients, performs one serialization per upstream frame, and closes slow consumers above a bounded buffer. Browsers never connect to the execution API for market streaming. Moving this process to regional gateways changes transport and capacity, not pricing or settlement semantics.
 
 ## Capacity controls
 
@@ -61,4 +61,4 @@ Internal chain catch-up, hedge reconciliation and oracle REST recovery may use b
 
 ## Production gates
 
-Before public testnet traffic, add a gateway load harness for at least 100,000 concurrent idle connections, reconnect storms, slow readers and sustained source bursts. Before mainnet, test peak filled-trade rate through firm quote, approvals, durable sender and Base inclusion; prove bounded quote memory; replace full-account scans in public index queries; and exercise gateway loss without interrupting the leader or exposing approvers.
+The deterministic gateway harness exercises 100,000 in-memory clients, complete-frame replay, upstream reconnect and slow-reader eviction. `npm run smoke:sse-gateway` additionally exercises real HTTP connections and a 50% reconnect storm against the running stack. Before public testnet traffic, run it at the host's file-descriptor ceiling and add sustained source-burst and regional edge tests. Before mainnet, test peak filled-trade rate through firm quote, approvals, durable sender and Base inclusion; prove bounded quote memory; replace full-account scans in public index queries; and exercise gateway loss without interrupting the leader or exposing approvers.

@@ -6,6 +6,7 @@ import { buildIndexer } from "../services/indexer/src/server.js";
 import { buildHedger } from "../services/hedger/src/server.js";
 import { CoinbaseMarketDataSource } from "../services/api/src/oracle.js";
 import { HttpHedgeRiskSource } from "../services/api/src/hedge-risk.js";
+import { buildGateway } from "../services/gateway/src/server.js";
 
 const deployment=JSON.parse(readFileSync(resolve(".local-state","deployment.json"),"utf8")) as {deploymentId?:string;rpcUrl:string;chainId:string;clearingAddress:string;tokenAddress:string;sponsorPrivateKey:string;devWallet?:{account:string;privateKey:string};deploymentBlock?:number;approvers:Array<{address:string;privateKey:string}>};
 const state = resolve(".local-state", deployment.deploymentId??"legacy-runtime");
@@ -29,7 +30,8 @@ for (let index=0; index<3; index++) {
 const oracleSource=new CoinbaseMarketDataSource();
 const api = buildApi({approvers:approverConfigs,chainId,verifyingContract,journalPath:resolve(state,"api.sqlite"),oracleSource,hedgeRiskSource,chain:{rpcUrl:deployment.rpcUrl,sponsorPrivateKey:deployment.sponsorPrivateKey,clearingAddress:deployment.clearingAddress,tokenAddress:deployment.tokenAddress,devFund:true,devWallet:deployment.devWallet}});
 await api.listen({host:"127.0.0.1",port:4100}); servers.push(api);
-console.log("Local RFQ services ready: API :4100; private approvers :4201-4203; indexer :4300; hedge worker :4400");
+const gateway=buildGateway({upstreamUrl:"http://127.0.0.1:4100"});await gateway.listen({host:"127.0.0.1",port:4500});servers.push(gateway);
+console.log("Local RFQ services ready: API :4100; private approvers :4201-4203; indexer :4300; hedge worker :4400; stream gateway :4500");
 console.log("Run `npm run dev:web` for the trade UI and `npm run dev:admin` for private hedge operations");
 const shutdown = async () => {
   const forced=setTimeout(()=>process.exit(1),5_000);forced.unref();
