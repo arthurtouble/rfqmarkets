@@ -19,12 +19,12 @@ Official references:
 
 1. Read a sealed/finalized Base block from the indexer and independently verify the block and aggregate market state through an RPC.
 2. Treat the maker's economic exposure as the opposite of aggregate customer base. The venue target is therefore the customer aggregate base: customer long BTC produces a long BTC venue hedge, offsetting the maker's short BTC exposure.
-3. Include reconciled venue position, open orders, fills, fees and funding. Never count a requested or ambiguous order as filled.
+3. Include reconciled venue position, open orders, fills, fees and funding. Never count a requested or ambiguous order as filled. While an order remains open, reserve that market and do not submit another slice.
 4. Inside the launch band, leave exposure unchanged. Outside it, trade toward half the band using capped IOC/marketable-limit slices. The local defaults are a 25,000 USDC action band, 25,000 USDC maximum slice and 20 bps limit protection.
 5. Write the deterministic client order ID and exact intended order before submission. On timeout, query Hyperliquid by account/order/client ID and reconcile fills before any retry.
 6. If chain, indexer, venue or credentials disagree, stop increasing customer exposure. Existing positions remain visible and the API can restrict quotes to exposure-reducing flow.
 
-The current `local-simulator` venue applies fills atomically in SQLite so restart and idempotency behavior can be tested without capital. A live adapter must use the official SDK's signing logic rather than independently recreating Hyperliquid's msgpack signing rules.
+The current `local-simulator` venue applies fills atomically in SQLite so restart and idempotency behavior can be tested without capital. The worker's `HedgeVenue` boundary exposes position lookup, client-ID reconciliation and order submission with open, partial, filled and rejected outcomes. Tests cover restart, a lost partial-fill acknowledgement, and a permanently open order. A live adapter must use the official SDK's signing logic rather than independently recreating Hyperliquid's msgpack signing rules.
 
 ## Visibility boundary
 

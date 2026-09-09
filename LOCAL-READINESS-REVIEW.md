@@ -9,7 +9,7 @@ Status date: 2026-09-09. The system is locally integrated for its principal happ
 - The sponsor signs and journals raw transactions before broadcasting. Restarts reconcile inclusion and avoid allocating the same nonce concurrently.
 - Each approver has a distinct key and durable log. Each independently checks the chain, exact intent, signer set, policy version, oracle observation and inventory-impact floor before signing.
 - The disposable indexer follows canonical block hashes, revalidates the tip after each sync pass, and provides account state, finalized aggregate risk, pseudonymous open positions and event history. A forced-fork drill proves orphaned state is removed. The client has separate Trade and Markets views; the private dashboard shows hedge state.
-- The hedge worker reads finalized exposure, applies an explicit no-trade band and records a stable client order identifier before using its local venue simulator. Restarting does not create a duplicate order.
+- The hedge worker reads finalized exposure, applies an explicit no-trade band and records a stable client order identifier before using its local venue simulator. It reconciles partial and ambiguous fills, and an open order prevents another slice in that market. Restarting does not create a duplicate order.
 
 The public positions page does not create a new ledger. It reads the same rebuildable chain projection as account history. Addresses and positions are public and pseudonymous; the application should avoid adding identity, IP or session linkage to that data.
 
@@ -42,7 +42,7 @@ Code modules can be separated without creating more servers. The frontend is spl
 | Governance | Contract roles | Deployed multisigs, 72-hour timelock, selector review and recovery drill. |
 | Availability | Expected-epoch council transition and live fencing drill | Production 2-of-3 council/Safe, warm-standby reconciliation, independent RPCs and process/network fault injection. |
 | Contract shape | 23,939-byte IR build plus linked stateless risk library | Further production module split, linked-library verification and repeated storage/upgrade validation. |
-| Assurance | Internal deterministic tests | Stateful fuzzing, economic stress calibration and independent contract/infrastructure audits. |
+| Assurance | Internal deterministic tests, including 120 stateful cross-market trades | Broader invariant fuzzing, economic stress calibration and independent contract/infrastructure audits. |
 
 ## Readiness verdict
 
@@ -53,7 +53,7 @@ The local product is end-to-end enough to validate the interaction model: a user
 ## Next implementation sequence
 
 1. Continue the module split beyond the linked risk library; split API/indexer internals without adding deployable services.
-2. Add stateful Solidity fuzzing and extend the local reorg drill with process-kill/RPC-disagreement tests around settlement, sponsor recovery and leader promotion.
+2. Expand the deterministic stateful contract suite and extend local fault drills with RPC disagreement, process kills during settlement, sponsor recovery and leader promotion.
 3. Obtain Chainlink Data Streams development credentials and wire real reports through the existing adapter on Base Sepolia. Measure report acquisition and approval latency.
 4. Replace mock collateral and deposit routing on Base Sepolia, then validate injected, mobile and smart-contract wallets.
 5. Add a Hyperliquid testnet adapter using a dedicated revocable agent wallet and separately funded subaccount or vault. Keep its state and controls on the private operations surface.

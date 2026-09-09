@@ -4,19 +4,26 @@ import { resolve } from "node:path";
 import { Contract, JsonRpcProvider, NonceManager, Wallet, keccak256, toUtf8Bytes } from "ethers";
 
 const indexer=process.env.RFQ_INDEXER_URL??"http://127.0.0.1:4300";
-const deployment=JSON.parse(readFileSync(resolve(".local-state","deployment.json"),"utf8")) as {rpcUrl:string;clearingAddress:string;tokenAddress:string;sponsorPrivateKey:string};
+const deployment=JSON.parse(readFileSync(resolve(".local-state","deployment.json"),"utf8")) as {rpcUrl:string;clearingAddress:string;tokenAddress:string};
 const provider=new JsonRpcProvider(process.env.RFQ_RPC_URL??deployment.rpcUrl);
-const sponsor=new NonceManager(new Wallet(deployment.sponsorPrivateKey,provider));
-const token=new Contract(deployment.tokenAddress,["function mint(address,uint256)"],sponsor);
-const clearing=new Contract(deployment.clearingAddress,["function depositWithAuthorization(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"],sponsor);
+// Use a dedicated local-chain signer so the drill cannot race the API sender's nonce.
+const writer=new NonceManager(await provider.getSigner(0));
+const token=new Contract(deployment.tokenAddress,["function mint(address,uint256)"],writer);
+const clearing=new Contract(deployment.clearingAddress,["function depositWithAuthorization(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"],writer);
 const user=Wallet.createRandom(),amount=100n*1_000_000n,zero=`0x${"00".repeat(32)}`;
 
 async function rpc(method:string,params:unknown[]=[]){return provider.send(method,params);}
 async function mine(count:number){for(let index=0;index<count;index++)await rpc("evm_mine");}
 async function get(path:string){const response=await fetch(`${indexer}${path}`);return {response,payload:await response.json()};}
+async function allActivity(){
+  const items:Array<{tx_hash:string}>=[];let cursor:string|null=null;
+  do{const suffix=cursor?`&cursor=${encodeURIComponent(cursor)}`:"",result=await get(`/v1/activity?limit=100${suffix}`);assert.equal(result.response.status,200,JSON.stringify(result.payload));const page=result.payload as {items:Array<{tx_hash:string}>;nextCursor:string|null};items.push(...page.items);cursor=page.nextCursor;}while(cursor);
+  return items;
+}
+async function waitCaughtUp(){for(let attempt=0;attempt<100;attempt++){const health=await get("/health");if(health.response.ok&&(health.payload as {ok:boolean;lag:number}).ok&&(health.payload as {lag:number}).lag===0)return;await new Promise(resolve=>setTimeout(resolve,100));}throw new Error("indexer did not catch up");}
 
-const baseline=(await get("/v1/activity?limit=100")).payload as {items:Array<{tx_hash:string}>};
-const baselineHashes=new Set(baseline.items.map(item=>item.tx_hash));
+await waitCaughtUp();
+const baselineHashes=new Set((await allActivity()).map(item=>item.tx_hash));
 const snapshot=await rpc("evm_snapshot") as string;
 let depositHash="";
 try{
@@ -39,14 +46,13 @@ try{
 }
 
 let rebuilt=await get(`/v1/account/${user.address}`);
-for(let attempt=0;attempt<20&&rebuilt.response.status!==404;attempt++){
+for(let attempt=0;attempt<100&&rebuilt.response.status!==404;attempt++){
   await new Promise(resolve=>setTimeout(resolve,100));
   rebuilt=await get(`/v1/account/${user.address}`);
 }
 assert.equal(rebuilt.response.status,404,"orphaned account survived the reorg rebuild");
-const activity=await get("/v1/activity?limit=100");
-assert.equal(activity.response.status,200);
-const hashes=new Set((activity.payload as {items:Array<{tx_hash:string}>}).items.map(item=>item.tx_hash));
+await waitCaughtUp();
+const hashes=new Set((await allActivity()).map(item=>item.tx_hash));
 assert(!hashes.has(depositHash),"orphaned deposit survived the reorg rebuild");
 for(const hash of baselineHashes)assert(hashes.has(hash),`canonical activity ${hash} disappeared during rebuild`);
 const health=await get("/health");

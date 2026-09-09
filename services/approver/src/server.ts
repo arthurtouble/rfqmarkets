@@ -17,11 +17,12 @@ const requestSchema=z.object({
   oracleAgeMs:z.number().nonnegative(),
 });
 
-export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; maxFutureSeconds?:number }
+export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; maxFutureSeconds?:number }
 
 export function buildApprover(options:ApproverOptions) {
   const app=Fastify({logger:false,bodyLimit:16_384}); const wallet=new Wallet(options.privateKey); const database=new DatabaseSync(options.databasePath);
   const provider=options.rpcUrl?new JsonRpcProvider(options.rpcUrl):undefined;
+  const secondaryProvider=options.secondaryRpcUrl?new JsonRpcProvider(options.secondaryRpcUrl):undefined;
   const clearing=provider&&options.expectedVerifyingContract?new Contract(options.expectedVerifyingContract,clearingApproverAbi,provider):undefined;
   database.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS approvals (digest TEXT PRIMARY KEY, epoch INTEGER NOT NULL, expiry_ms INTEGER NOT NULL, signature TEXT NOT NULL, created_ms INTEGER NOT NULL)");
   app.get("/health",async()=>({ok:true,signer:wallet.address}));
@@ -57,11 +58,13 @@ export function buildApprover(options:ApproverOptions) {
     if(clearing&&provider){
       try{
         const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));
-        const [block,epoch,setVersion,policy,paused,resolution,member,btc,eth,session]=await Promise.all([
-          provider.getBlock(blockNumber),clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
+        const [block,secondaryBlock,epoch,setVersion,policy,paused,resolution,member,btc,eth,session]=await Promise.all([
+          provider.getBlock(blockNumber),secondaryProvider?.getBlock(blockNumber),
+          clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
           clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),clearing.isApprover(wallet.address,{blockTag:blockNumber}),
           clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),intentSigner===intent.account?Promise.resolve(undefined):clearing.sessions(intentSigner,{blockTag:blockNumber}),
         ]);
+        if(secondaryProvider&&(!secondaryBlock||secondaryBlock.hash!==block?.hash))return reply.code(409).send({error:"rpc divergence"});
         if(!block||BigInt(epoch)!==intent.leaderEpoch||BigInt(setVersion)!==approval.signerSetVersion||BigInt(policy)!==intent.policyVersion||paused||resolution||!member)return reply.code(409).send({error:"independent chain policy rejected"});
         if(session&&(getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<approval.fee||BigInt(session.usedNotional)+notional>BigInt(session.maxCumulativeNotional)||notional>BigInt(session.maxTradeNotional)))return reply.code(409).send({error:"session policy rejected"});
         const selected=market===0?btc:eth;if(!selected.enabled)return reply.code(409).send({error:"market disabled"});

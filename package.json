@@ -5,9 +5,9 @@
   "scripts": {
     "compile:contracts": "node scripts/compile-contracts.mjs",
     "validate:upgrades": "npm run compile:contracts && openzeppelin-upgrades-core validate artifacts/build-info --contract RFQClearing --unsafeAllowLinkedLibraries",
-    "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs",
+    "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/stateful-clearing-e2e.mjs",
     "test:python": "cd simulator && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -v",
-    "test:services": "node --import tsx --test services/**/*.test.ts",
+    "test:services": "node --import tsx --test services/**/*.test.ts scripts/*.test.ts",
     "typecheck": "tsc",
     "build:web": "vite build apps/web --outDir ../../dist/web --emptyOutDir",
     "build:admin": "vite build apps/admin --outDir ../../dist/admin --emptyOutDir",
@@ -16,9 +16,13 @@
     "dev:admin": "vite apps/admin",
     "dev:chain": "hardhat --verbosity 0 node --network hardhatOp --hostname 127.0.0.1 --port 8545",
     "deploy:local": "node --import tsx scripts/deploy-local.ts",
+    "preflight:base-sepolia": "node --import tsx scripts/preflight-base-sepolia.ts",
+    "deploy:base-sepolia": "npm run compile:contracts && npm run preflight:base-sepolia && node --import tsx scripts/deploy-base-sepolia.ts",
     "smoke:local": "node --import tsx scripts/live-smoke.ts",
     "smoke:reorg": "node --import tsx scripts/reorg-smoke.ts",
     "smoke:failover": "node --import tsx scripts/leader-failover-smoke.ts",
+    "smoke:approver-outage": "node --import tsx scripts/approver-outage-smoke.ts",
+    "smoke:sender-replacement": "node --import tsx scripts/sender-replacement-smoke.ts",
     "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin"
   },
   "devDependencies": {

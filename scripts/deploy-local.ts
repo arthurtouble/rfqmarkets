@@ -12,7 +12,7 @@ const deploy=async(name:string,args:unknown[]=[])=>{const item=linkArtifact(arti
 
 const chain=await provider.getNetwork(); if(chain.chainId!==31_337n)throw new Error(`unexpected local chain ${chain.chainId}`);
 const approvers=[Wallet.createRandom(),Wallet.createRandom(),Wallet.createRandom()];
-const token=await deploy("MockUSDC"); const oracle=await deploy("MockPriceOracle"); const riskMath=await deploy("RFQRiskMath");libraryAddresses.RFQRiskMath=await riskMath.getAddress();const implementation=await deploy("RFQClearing");
+const token=await deploy("MockUSDC") as unknown as Contract; const oracle=await deploy("MockPriceOracle"); const riskMath=await deploy("RFQRiskMath");libraryAddresses.RFQRiskMath=await riskMath.getAddress();const implementation=await deploy("RFQClearing");
 const clearingInterface=new Interface(artifact("RFQClearing").abi);
 const init=clearingInterface.encodeFunctionData("initialize",[await token.getAddress(),await oracle.getAddress(),ownerAddress,ownerAddress,approvers.map(item=>item.address),600_000_000_000n]);
 const proxy=await deploy("TestProxy",[await implementation.getAddress(),init]); const clearing=new Contract(await proxy.getAddress(),artifact("RFQClearing").abi,deployer);
