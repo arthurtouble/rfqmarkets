@@ -28,7 +28,7 @@ The current five logical deployable roles are the minimum defensible set:
 
 There is no need for a coordinator, separate quoter, public relayer, second customer database or separate analytics backend. The API already performs coordination, quoting and sponsored submission. SQLite journals record only pending operational commitments and hedge orders. The chain remains the sole customer ledger.
 
-Code modules can be separated without creating more servers. The frontend is split into trade, public markets, shared types and formatting, and the API, approvers and indexer now consume one shared clearing ABI definition. The next maintainability pass should split the API and indexer files by route/domain. This preserves one process per role while reducing audit surface and drift.
+Code modules can be separated without creating more servers. The frontend is split into trade, public markets, shared types and formatting, and the API, approvers and indexer consume one shared clearing ABI definition. The current API is a bounded 390-line composition root and the indexer is 65 lines around a separate projection module; further splitting should follow actual change pressure so indirection does not grow faster than the audit surface it removes.
 
 ## What is still simulated or gated
 
@@ -53,9 +53,9 @@ The local product is end-to-end enough to validate the interaction model: a user
 
 ## Next implementation sequence
 
-1. Replace linear public indexer projections with indexed/precomputed views, split API/indexer internals without adding deployable services, and keep further clearing growth out of the implementation.
-2. Run the real-socket gateway storm at the host ceiling and extend fault drills with RPC disagreement and process kills during settlement.
-3. Obtain Chainlink Data Streams or Pyth Hermes development credentials and wire real reports through the selected adapter on Base Sepolia. Measure report acquisition and approval latency.
-4. Replace mock collateral and deposit routing on Base Sepolia, then validate injected, mobile and smart-contract wallets.
+1. Obtain Chainlink Data Streams development credentials and wire real reports through the selected adapter on Base Sepolia. Measure report acquisition and approval latency.
+2. Deploy the Safe/timelock roles, implementation, adapter and proxy against native Base Sepolia USDC; verify every role and selector before funding synthetic test accounts.
+3. Repeat the socket, RPC disagreement, reorg, process-death, quote-quality and transaction-replacement drills against independent external RPC paths.
+4. Validate injected, mobile and smart-contract wallets, then exercise bridge/deposit failure and refund paths with the selected routing provider.
 5. Add a Hyperliquid testnet adapter using a dedicated revocable agent wallet and separately funded subaccount or vault. Keep its state and controls on the private operations surface.
-6. Run sustained load, quote-quality, hedge-basis and outage drills; freeze parameters; commission independent audits before any capped deployment.
+6. Run sustained load, hedge-basis and outage drills; freeze parameters; commission independent audits before any capped deployment.

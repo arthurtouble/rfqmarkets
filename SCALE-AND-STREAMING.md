@@ -49,7 +49,7 @@ The local stack now implements this boundary as a separate, secret-free gateway 
 
 Public chain-derived updates are event driven. The indexer publishes an invalidation after its canonical projection changes; browsers fetch a coherent bounded snapshot on that event. Account clients ignore updates that do not name their address and recompute mark-to-market, funding, equity and margin locally from the shared market frame. This avoids an RPC read for every account on every price tick.
 
-At production volume, identical public risk/activity responses belong behind a short-lived edge cache or in the indexer event frame. Position queries still require keyset pagination, an indexed open-position projection and precomputed aggregate risk; the current full-account public scans are a launch blocker. Personalized history is indexed by address and bounded. The indexer is rebuildable and never participates in authorization.
+Public risk totals are incrementally maintained for both included and finalized projections. Open-position queries use partial indexes and address-cursor pagination, so public requests do not scan or refetch every account. At production volume, identical public responses may additionally use short-lived edge caching. Personalized history is indexed by address and bounded. The indexer is rebuildable and never participates in authorization.
 
 ## Bottlenecks and correctness boundaries
 
@@ -61,4 +61,4 @@ Internal chain catch-up, hedge reconciliation and oracle REST recovery may use b
 
 ## Production gates
 
-The deterministic gateway harness exercises 100,000 in-memory clients, complete-frame replay, upstream reconnect and slow-reader eviction. `npm run smoke:sse-gateway` additionally exercises real HTTP connections and a 50% reconnect storm against the running stack. Before public testnet traffic, run it at the host's file-descriptor ceiling and add sustained source-burst and regional edge tests. Before mainnet, test peak filled-trade rate through firm quote, approvals, durable sender and Base inclusion; prove bounded quote memory; replace full-account scans in public index queries; and exercise gateway loss without interrupting the leader or exposing approvers.
+The deterministic gateway harness exercises 100,000 in-memory clients, complete-frame replay, upstream reconnect and slow-reader eviction. `npm run smoke:sse-gateway` additionally exercises real HTTP connections and a 50% reconnect storm against the running stack. Before public testnet traffic, run it at the host's file-descriptor ceiling and add sustained source-burst and regional edge tests. Before mainnet, test peak filled-trade rate through firm quote, approvals, durable sender and Base inclusion, and exercise gateway loss without interrupting the leader or exposing approvers.

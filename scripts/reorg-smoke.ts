@@ -24,6 +24,7 @@ async function waitCaughtUp(){for(let attempt=0;attempt<100;attempt++){const hea
 
 await waitCaughtUp();
 const baselineHashes=new Set((await allActivity()).map(item=>item.tx_hash));
+const baselineRiskRaw=(await get("/v1/risk?finalized=true")).payload as {accountCount:number;totalCollateral:string};const baselineRisk={accountCount:baselineRiskRaw.accountCount,totalCollateral:baselineRiskRaw.totalCollateral};
 const snapshot=await rpc("evm_snapshot") as string;
 let depositHash="";
 try{
@@ -40,6 +41,7 @@ try{
   const branchActivity=await get(`/v1/account/${user.address}/activity`);
   assert.equal(branchActivity.response.status,200);
   assert((branchActivity.payload as {items:Array<{tx_hash:string;kind:string}>}).items.some(item=>item.tx_hash===depositHash&&item.kind==="Deposited"));
+  const branchRisk=await get("/v1/risk?finalized=true");assert.equal(branchRisk.response.status,200);assert.equal(branchRisk.payload.accountCount,baselineRisk.accountCount+1,"finalized projection missed branch account");assert.equal(BigInt(branchRisk.payload.totalCollateral),BigInt(baselineRisk.totalCollateral)+amount,"finalized projection missed branch collateral");
 } finally {
   assert.equal(await rpc("evm_revert",[snapshot]),true,"failed to restore canonical snapshot");
   await mine(3);
@@ -55,6 +57,8 @@ await waitCaughtUp();
 const hashes=new Set((await allActivity()).map(item=>item.tx_hash));
 assert(!hashes.has(depositHash),"orphaned deposit survived the reorg rebuild");
 for(const hash of baselineHashes)assert(hashes.has(hash),`canonical activity ${hash} disappeared during rebuild`);
+const rebuiltRisk=await get("/v1/risk?finalized=true");assert.deepEqual({accountCount:rebuiltRisk.payload.accountCount,totalCollateral:rebuiltRisk.payload.totalCollateral},baselineRisk,"finalized risk projection retained orphaned state");
+const rebuiltPositions=await get("/v1/positions?finalized=true&limit=100");assert(!(rebuiltPositions.payload as {items:Array<{account:string}>}).items.some(item=>item.account.toLowerCase()===user.address.toLowerCase()),"finalized positions retained orphaned account");
 const health=await get("/health");
 assert.equal(health.response.status,200);assert.equal((health.payload as {ok:boolean}).ok,true,JSON.stringify(health.payload));
 console.log(`Reorg smoke passed: orphaned deposit ${depositHash} was removed and ${baselineHashes.size} canonical activity records survived rebuild`);

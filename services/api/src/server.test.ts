@@ -78,6 +78,13 @@ test("one unavailable approver still leaves quorum", async () => {
   await degraded.close();
 });
 
+test("duplicate signed submissions share one approver quorum request",async()=>{
+  let calls=0;const delayedFetch=(async(input:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1])=>{calls++;await new Promise(resolve=>setTimeout(resolve,20));return routedFetch(input,init);}) as typeof fetch;
+  const target=buildApi({approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:delayedFetch});await target.ready();
+  const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json(),nonce="424242",prepared=(await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}})).json(),userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),payload={quoteId:quote.quoteId,account:user.address,nonce,userSignature};
+  const [first,second]=await Promise.all([target.inject({method:"POST",url:"/v1/approve",payload}),target.inject({method:"POST",url:"/v1/approve",payload})]);assert.equal(first.statusCode,200,first.body);assert.equal(second.statusCode,200,second.body);assert.equal(calls,3,"duplicate submission multiplied signer work");await target.close();
+});
+
 test("real oracle source drives quotes and fails closed when unavailable",async()=>{
   const now=Math.floor(Date.now()/1_000),oracleApi=buildApi({oracleSource:{latest:async market=>({snapshot:{market,bid:market==="BTC"?89_990n*1_000_000n:2_990n*1_000_000n,ask:market==="BTC"?90_010n*1_000_000n:3_010n*1_000_000n,observedAtMs:Date.now()},report:"0x1234",validUntil:now+10})}});await oracleApi.ready();
   const response=await oracleApi.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}});assert.equal(response.statusCode,200,response.body);const quote=response.json();assert(BigInt(quote.expectedPrice)>89_990n*1_000_000n);assert(Number(quote.expiresAtMs)<=((now+10)*1_000));await oracleApi.close();

@@ -24,16 +24,16 @@ It is not ready for real capital. External oracle, RPC, Base, native USDC, walle
 - The client detects a broken stream or an oracle observation older than 2.5 seconds, removes the actionable indication and disables submission while reconnecting.
 - Clearing initialization rejects identical governance/emergency roles and a zero maker-capital floor. Empty-position liquidation, zero-value reserve funding and overfunded insolvency recovery now revert. Resolution deletes complete position records.
 - The production npm dependency audit reports no known vulnerabilities as of this review.
+- Public risk totals are now incrementally materialized for included and finalized state. Open positions use partial indexes and address-cursor pagination instead of per-request account scans or RPC fanout.
+- Concurrent copies of one valid signed intent share one three-approver request. The durable sender's operation ID and one-time pending removal preserve idempotent settlement accounting.
 
 ## Remaining risks and ordered work
 
 ### Before Base Sepolia
 
 1. Split the API and indexer source files by domain while keeping the same processes. This is an auditability change, not a service-topology change.
-2. Replace public full-account projection scans with an indexed open-position projection and precomputed aggregate risk. The current implementation is correct locally but grows linearly with account count for public risk/finalized-position requests.
-3. Add per-quote in-flight coalescing so repeated copies of one valid signed request cannot multiply approver work while the first request is pending. Contract replay protection prevents double settlement, but the API should also bound duplicate work.
-4. Add process-kill tests at reservation write, approval quorum, signed transaction persistence, broadcast, inclusion and response boundaries. Run RPC disagreement and longer reorg drills.
-5. Run sustained real-socket gateway tests at the host file-descriptor ceiling, plus firm-request load through approvals and transaction inclusion. The deterministic 100,000-client fanout test proves algorithmic behavior, not host capacity.
+2. Add process-kill tests at reservation write, approval quorum, signed transaction persistence, broadcast, inclusion and response boundaries. Run RPC disagreement and longer reorg drills.
+3. Run sustained real-socket gateway tests at the host file-descriptor ceiling, plus firm-request load through approvals and transaction inclusion. The deterministic 100,000-client fanout test proves algorithmic behavior, not host capacity.
 
 ### Before any public testnet claim
 

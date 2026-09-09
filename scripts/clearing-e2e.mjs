@@ -265,6 +265,14 @@ const upgraded = new ethers.Contract(await clearing.getAddress(), artifact("RFQC
 assert.equal(await upgraded.implementationVersion(), 2n);
 assert.equal((await upgraded.positionOf(user.address, 0)).size, 187_425_000_000_000_000n);
 
+// Roll back the candidate implementation, verify live storage, then reapply it.
+await (await proxyAdmin.connect(governance).upgradeAndCall(await proxy.getAddress(),await implementation.getAddress(),"0x")).wait();
+const rolledBack = new ethers.Contract(await clearing.getAddress(), artifact("RFQClearing").abi, governance);
+assert.equal((await rolledBack.positionOf(user.address, 0)).size, 187_425_000_000_000_000n);
+await (await proxyAdmin.connect(governance).upgradeAndCall(await proxy.getAddress(),await v2Implementation.getAddress(),"0x")).wait();
+assert.equal(await upgraded.implementationVersion(),2n);
+assert.equal((await upgraded.positionOf(user.address, 0)).size,187_425_000_000_000_000n);
+
 // Deterministic, batched global resolution uses three observations over >=30s.
 await (await upgraded.connect(governance).pause()).wait();
 const closeBlock = await ethers.provider.getBlock("latest");
@@ -309,4 +317,4 @@ const userBeforeRecovery=await token.balanceOf(user.address);
 await (await upgraded.connect(user).claimResolution()).wait();
 assert.equal(await token.balanceOf(user.address)-userBeforeRecovery,claim-claim*pool/totalClaims);
 
-console.log("Clearing E2E passed: proxy, custody, ERC-1271, scoped sessions, relayed exits, epoch failover, maker floor, trade, margin, liquidation, upgrade, resolution");
+console.log("Clearing E2E passed: proxy, custody, ERC-1271, scoped sessions, relayed exits, epoch failover, maker floor, trade, margin, liquidation, upgrade rollback/reapply, resolution");

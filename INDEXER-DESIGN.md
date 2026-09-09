@@ -16,15 +16,13 @@ All integer financial fields remain decimal strings at the HTTP boundary and `bi
 
 | Table | Primary key | Content |
 | --- | --- | --- |
-| `account` | account address | Current collateral, initial/maintenance margin, latest indexed block and transaction. |
-| `position` | account + market | Signed base size, entry price, last funding index and latest indexed block. |
-| `trade` | transaction hash + log index | Intent hash, account, market, base delta, execution price, fee, block time and finality state. |
-| `collateral_event` | transaction hash + log index | Deposit or withdrawal amount and resulting on-chain collateral. |
-| `liquidation` | transaction hash + log index | Account, market, closed base, penalty, keeper reward and post-event position/account snapshot. |
-| `protocol_event` | transaction hash + log index | Epoch, resolution and other user-visible safety-state transitions. |
-| `indexer_status` | chain ID + contract | Indexed block/hash, finalized block/hash and health metadata exposed to the UI. |
+| `blocks` | block number | Canonical block hash, parent and timestamp. |
+| `activity` | transaction hash + log index | Typed clearing events, account/market indexes and JSON payload. |
+| `accounts` | account address | Latest included collateral and both position snapshots. |
+| `finalized_accounts` | account address | Independently advanced projection at the configured confirmation boundary. |
+| `metadata` | key | Finalized projection cursor and rebuild metadata. |
 
-Event rows are immutable for a canonical block. Current account and position rows are replaceable projections. Every mutation handler reads `collateralOf(account)` and both `positionOf(account, market)` at the event's block using Ponder's cached client. This is required because the current events do not contain funding settlement and every resulting account field. Ponder documents that its event-scoped `readContract` defaults to the current event block, which makes the snapshot deterministic.
+Event rows are immutable for a canonical block. Account rows are replaceable projections. Every affected account is read with `collateralOf(account)` and both `positionOf(account, market)` at one block tag because the events do not contain every resulting field. Included and finalized aggregate risk are updated by subtracting the prior account values and adding the replacement values. Partial indexes cover open positions, and address cursors keep page work bounded.
 
 ## Frontend query surface
 
@@ -33,9 +31,11 @@ The public surface is deliberately narrow:
 - `GET /health` returns indexed, finalized and head blocks plus lag.
 - `GET /v1/account/:address` returns collateral, margins and both positions with the indexed block.
 - `GET /v1/account/:address/activity?cursor=&limit=` returns a bounded, cursor-paginated union of trades, collateral actions and liquidations.
+- `GET /v1/risk?finalized=true` returns precomputed aggregate collateral and long/short exposure.
+- `GET /v1/positions?finalized=true&cursor=&limit=` returns an indexed page of pseudonymous open positions.
 - `GET /v1/protocol` returns pause/resolution state and the current epoch/version metadata needed for display.
 
-The frontend queries Ponder directly for history and current projections. It compares `indexedBlock` with the wallet RPC head and shows a syncing state when lag exceeds the configured bound. Transaction submission status comes from the wallet/API receipt path first; the UI then replaces it with indexed canonical history. It never invents a second balance from optimistic client arithmetic.
+The frontend queries the indexer directly for history and current projections. It compares `indexedBlock` with the RPC head and shows a syncing state when lag exceeds the configured bound. Transaction submission status comes from the wallet/API receipt path first; the UI then replaces it with indexed canonical history. It never invents a second balance from optimistic client arithmetic.
 
 ## Reorg and recovery rules
 

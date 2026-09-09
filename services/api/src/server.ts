@@ -64,6 +64,7 @@ export function buildApi(options: ApiOptions = {}) {
   const quotes = new Map<string,Quote>();
   const quoteExpiries=new ExpiryIndex(),preparedOrderExpiries=new ExpiryIndex();
   const quoteReports = new Map<string,{report:string;validUntil:number}>();
+  const approvalQuorums=new Map<string,Promise<PromiseSettledResult<{digest:string;signer:string;signature:string}>[]>>();
   const quoteVersions = new Map<string,ProtocolVersions>();
   const quoteBindings = new Map<string,{account:string;nonce:string}>();
   const preparedIntents=new Map<string,TradeIntent>();
@@ -116,6 +117,16 @@ export function buildApi(options: ApiOptions = {}) {
     pending.prune(now);
     for(const id of quoteExpiries.takeExpired(now)){quotes.delete(id);quoteReports.delete(id);quoteVersions.delete(id);quoteBindings.delete(id);preparedIntents.delete(id);}
     for(const id of preparedOrderExpiries.takeExpired(now)){const order=restingOrders.get(id);if(order?.status==="prepared")restingOrders.delete(id);}
+  }
+  function collectApprovals(digest:string,payload:unknown){
+    const existing=approvalQuorums.get(digest);if(existing)return existing;
+    const job=Promise.allSettled((options.approvers??[]).map(async approver=>{
+      const response=await fetchImpl(`${approver.url}/approve`,{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${approver.token}`},body:JSON.stringify(payload),signal:AbortSignal.timeout(1_000)});
+      if(!response.ok)throw new Error(`approver ${response.status}: ${await response.text()}`);
+      const result=await response.json() as {digest:string;signer:string;signature:string};
+      if(result.digest!==digest||recoverAddress(digest,result.signature).toLowerCase()!==result.signer.toLowerCase())throw new Error("invalid approver response");
+      return result;
+    })).finally(()=>approvalQuorums.delete(digest));approvalQuorums.set(digest,job);return job;
   }
   const activeOrderCount=()=>{let count=0;for(const order of restingOrders.values())if(order.status==="prepared"||order.status==="open"||order.status==="executing")count++;return count;};
   function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string,reduceOnly=false):TradeIntent {
@@ -330,13 +341,7 @@ export function buildApi(options: ApiOptions = {}) {
     journal?.prepare("INSERT INTO commitments VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, NULL, ?) ON CONFLICT(quote_id) DO UPDATE SET status='reserved', intent_json=excluded.intent_json, user_signature=excluded.user_signature, approval_json=excluded.approval_json, updated_ms=excluded.updated_ms").run(quote.quoteId,quote.market,quote.delta.toString(),Number(approvalDeadline)*1_000,JSON.stringify(intentToWire(intent)),parsed.data.userSignature,JSON.stringify(approvalToWire(approval)),Date.now());
     if(!pending.has(quote.quoteId)){pending.add(quote.quoteId,{market:quote.market,delta:quote.delta,expiresAtMs:Number(approvalDeadline)*1_000});marketReadCache=undefined;scheduleStreamPublish();}
     const approverPayload={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),quote:quoteToWire(quote),report,oracleAgeMs:Date.now()-quote.snapshot.observedAtMs};
-    const responses=await Promise.allSettled((options.approvers??[]).map(async approver=>{
-      const response=await fetchImpl(`${approver.url}/approve`,{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${approver.token}`},body:JSON.stringify(approverPayload),signal:AbortSignal.timeout(1_000)});
-      if(!response.ok)throw new Error(`approver ${response.status}: ${await response.text()}`);
-      const result=await response.json() as {digest:string;signer:string;signature:string};
-      if(result.digest!==digest||recoverAddress(digest,result.signature).toLowerCase()!==result.signer.toLowerCase())throw new Error("invalid approver response");
-      return result;
-    }));
+    const responses=await collectApprovals(digest,approverPayload);
     const approvals=responses.filter((item):item is PromiseFulfilledResult<{digest:string;signer:string;signature:string}>=>item.status==="fulfilled").map(item=>item.value);
     const distinct=new Map(approvals.map(item=>[item.signer.toLowerCase(),item]));
     if(distinct.size<2)return reply.code(503).send({error:"approver quorum unavailable",details:options.chain?.devFund?responses.filter(item=>item.status==="rejected").map(item=>String(item.reason)):undefined});
@@ -354,7 +359,7 @@ export function buildApi(options: ApiOptions = {}) {
         const collateral=await clearing.collateralOf(intent.account); const position=await clearing.positionOf(intent.account,intent.market);
         transaction={hash:receipt.hash,blockNumber:receipt.blockNumber,collateral:collateral.toString(),position:{size:position.size.toString(),entryPrice:position.entryPrice.toString(),lastFundingIndex:position.lastFundingIndex.toString()}};
         journal?.prepare("UPDATE commitments SET status='included', updated_ms=? WHERE quote_id=?").run(Date.now(),quote.quoteId);
-        settled[quote.market]+=quote.delta;pending.delete(quote.quoteId);marketReadCache=undefined;scheduleStreamPublish();
+        if(pending.delete(quote.quoteId))settled[quote.market]+=quote.delta;marketReadCache=undefined;scheduleStreamPublish();
       } catch(error){return reply.code(409).send({error:error instanceof Error?`chain submission failed: ${error.message}`:"chain submission failed"});}
     }
     return {domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),approvals:selected,quote:quoteToWire(quote),transaction};

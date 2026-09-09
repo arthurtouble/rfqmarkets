@@ -16,6 +16,7 @@
     "dev:admin": "vite apps/admin",
     "dev:chain": "hardhat --verbosity 0 node --network hardhatOp --hostname 127.0.0.1 --port 8545",
     "deploy:local": "node --import tsx scripts/deploy-local.ts",
+    "prepare:base-sepolia": "node --import tsx scripts/prepare-testnet-identities.ts",
     "preflight:base-sepolia": "node --import tsx scripts/preflight-base-sepolia.ts",
     "probe:base-sepolia": "node --import tsx scripts/probe-base-sepolia.ts",
     "deploy:base-sepolia": "npm run compile:contracts && npm run preflight:base-sepolia && node --import tsx scripts/deploy-base-sepolia.ts",
