@@ -2,12 +2,18 @@
 
 The repository creates and stores testnet-only identities in `.local-state/testnet-identities.json` with owner-only file permissions. These identities are disposable and must never become mainnet authorities. Their public addresses are in `.local-state/testnet-addresses.json`.
 
-The generated `governanceController` and `emergencyCouncil` entries are proposed testnet controller/owner identities. They are not valid values for `RFQ_GOVERNANCE_ADDRESS` or `RFQ_EMERGENCY_COUNCIL_ADDRESS`: deployment preflight requires those variables to contain deployed contract addresses. The intended testnet topology is a governance Safe controlling a timelock and a separate emergency Safe. Their deployed addresses go in the environment file; their owners/controllers should include identities chosen for the testnet ceremony.
+The generated owner identities control disposable testnet-only Safes. They are not valid values for `RFQ_GOVERNANCE_ADDRESS` or `RFQ_EMERGENCY_COUNCIL_ADDRESS`: deployment preflight requires the deployed timelock and emergency Safe addresses. The populated ignored environment file contains those deployed addresses.
 
-## Needed now
+## Completed without production credentials
 
-1. Fund the generated `deployer` address with at least 0.01 Base Sepolia ETH. This covers deployment and repeated verification transactions with margin for testnet fee changes. The official public faucet or any Base Sepolia faucet is sufficient.
-2. Obtain Chainlink Data Streams testnet access and provide, through a local untracked environment file:
+The disposable deployer has been funded. Two 2-of-3 Safes, a self-administered 72-hour timelock, the Pyth adapter, risk library, clearing implementation and transparent proxy are deployed on Base Sepolia. The timelock owns the ProxyAdmin, the emergency Safe has the emergency role, and the temporary timelock bootstrap admin was renounced. Native testnet USDC now exercises maker, insurance and trader deposit custody. See `BASE-SEPOLIA-DEPLOYMENT.md` for addresses and reproducible verification.
+
+## Needed for authenticated live oracle reports
+
+Choose one report source and provide its bearer credentials only through the ignored local environment:
+
+1. Pyth Core, matching the current deployment: a Pyth/Hermes API key that can fetch BTC/USD and ETH/USD update payloads.
+2. Chainlink Data Streams, requiring:
    - API key;
    - user secret;
    - Base Sepolia VerifierProxy address supplied for the subscription;
@@ -15,7 +21,7 @@ The generated `governanceController` and `emergencyCouncil` entries are proposed
 
 Do not paste private credentials into tracked files. `npm run prepare:base-sepolia` creates `base-sepolia.env` with mode `0600`, fills the disposable deployer key and approver addresses, and leaves the external values as explicit placeholders. The file is ignored by Git. The official Base Sepolia USDC address is already pinned and verified by `npm run probe:base-sepolia`.
 
-3. Choose the owners for the testnet governance and emergency Safes. For a disposable engineering deployment, the generated controller identities can be used. For a realistic ceremony, provide at least two distinct owner wallet addresses for each Safe. Once the owner set and thresholds are known, the Safe/timelock contracts can be deployed and their addresses placed in the environment file.
+Switching to Chainlink requires deploying its adapter and a new clearing proxy or performing a reviewed governance upgrade that supports changing the oracle boundary. The current Pyth deployment must never accept unsigned spot prices as a fallback.
 
 ## Needed for real Hyperliquid testnet hedging
 

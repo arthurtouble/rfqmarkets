@@ -14,6 +14,7 @@ const files = [
   "contracts/mocks/MockPythCore.sol",
   "contracts/oracle/ChainlinkDataStreamsV3Adapter.sol",
   "contracts/oracle/PythCoreAdapter.sol",
+  "contracts/testnet/RFQTimelock.sol",
   "contracts/test/RFQInvariants.sol",
   "contracts/test/TestProxy.sol",
   "contracts/test/RFQClearingV2.sol",

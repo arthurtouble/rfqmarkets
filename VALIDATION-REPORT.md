@@ -1,6 +1,6 @@
 # RFQ Markets validation report
 
-Status date: 2026-09-09. This separates executable evidence from architectural intent. The repository now contains a local clearing prototype. It has not been independently audited or deployed.
+Status date: 2026-09-09. This separates executable evidence from architectural intent. The repository contains a local clearing prototype and a small-capital Base Sepolia deployment. It has not been independently audited.
 
 ## What now runs
 
@@ -60,15 +60,21 @@ This is a risk replay, not evidence of expected profit. Hourly closes understate
 
 ## Toolchain integrity
 
-Direct development versions are exact-pinned in `package.json` and resolved in `package-lock.json`. The transitive `tmp` dependency is overridden to 0.2.7. `npm audit --omit=dev` reports zero runtime vulnerabilities. A full audit reports five low-severity advisories in the development-only OpenZeppelin upgrade validator's legacy crypto dependency chain; npm reports no upstream fix. That CLI is not linked into deployed bytecode. Generated artifacts are reproducible with `npm run compile:contracts`.
+Direct development versions are exact-pinned in `package.json` and resolved in `package-lock.json`. The transitive `tmp` dependency is overridden to 0.2.7. `npm audit --omit=dev` reports zero runtime vulnerabilities. A full audit reports five low-severity advisories in the development-only OpenZeppelin upgrade validator's legacy crypto dependency chain and two moderate findings from Hardhat's `adm-zip` dependency. npm offers only an older Hardhat release as a nominal fix, so it is not applied. These tools are not linked into deployed bytecode and do not process untrusted archives in the project workflow. Generated artifacts are reproducible with `npm run compile:contracts`.
 
 Ponder 0.17.10 was evaluated for the read model and then removed from the executable dependency set. Its 2026-09-08 production audit produced seven findings (five high, two moderate) through pinned Hono, Drizzle, Kysely and Vite dependencies. The executable local indexer therefore uses the platform SQLite API with no added runtime dependency. Adopting Ponder remains gated until upstream releases a clean compatible tree or tested overrides pass behavior and audit checks.
 
 `RFQClearing` is 20,850 bytes with the Solidity IR optimizer and optimizer runs set to 1, 15.2% below the EVM's 24,576-byte runtime limit. The repository rejects builds above 21,000 bytes. Upgrade dispatch is isolated in OpenZeppelin's transparent proxy and governance-owned ProxyAdmin. Portfolio impact, trade assessment, stress, liquidation, position transition, PnL and funding calculations are in a separately deployed stateless `RFQRiskMath` library linked into the implementation. The current artifact is suitable for local validation, not a final deployment shape.
 
+## Base Sepolia evidence
+
+The complete protocol topology is deployed on Base Sepolia at clearing proxy `0x1114cA912b2c3440C7D6B5dcdaB499f897C86782`. The repeatable verifier proves chain ID, component bytecode, clearing/oracle/governance/emergency wiring, all three approvers, pinned Pyth BTC/USD and ETH/USD feeds, both 2-of-3 Safe owner sets, the 72-hour delay, self-administered timelock, ProxyAdmin ownership and initial epoch/version values. Native testnet USDC custody is live with 15 USDC maker backing, 5 USDC insurance and 10 USDC trader collateral. Exact addresses are recorded in `BASE-SEPOLIA-DEPLOYMENT.md`.
+
+This proves deployment and custody mechanics with disposable identities and negligible testnet capital. It does not prove live oracle execution, realistic Base latency, hedge-venue behavior or production key custody.
+
 ## What is still unproven
 
-The clearing contract is still a prototype. The Chainlink and Pyth adapters are tested against mocks rather than live BTC/ETH reports. Feed IDs, subscription billing/data access and final oracle selection remain deployment inputs. A credential-free probe confirmed Base Sepolia chain 84532, standard and pending-state RPC access, official six-decimal USDC bytecode and upgraded Pyth Core bytecode on 2026-09-09. The governance and emergency roles are address boundaries, but the actual 72-hour timelock and independent multisigs are not deployed. The local suite proves implementation rollback and reapplication with an open position; the signed operational runbook and Safe/timelock ceremony remain deployment work. Funding catch-up uses the current mark for each bounded seven-day chunk and needs a deliberate outage policy.
+The clearing contract is still a prototype. The Chainlink and Pyth adapters are tested against mocks rather than live authenticated BTC/ETH reports. A credential-free probe and deployment confirmed Base Sepolia chain 84532, standard and pending-state RPC access, official six-decimal USDC bytecode and upgraded Pyth Core bytecode on 2026-09-09. The 72-hour timelock and independent testnet multisigs are deployed and verified, but the signed production operational runbook and hardware-backed key ceremony remain future work. Funding catch-up uses the current mark for each bounded seven-day chunk and needs a deliberate outage policy.
 
 The Solidity suite is example-based with deterministic arithmetic and stateful samples, not exhaustive invariant fuzzing or formal verification. Liquidation races, adversarial ERC-1271 callbacks, rounding reserves, repeated funding catch-up, oracle-fee refunds, storage upgrades beyond the no-storage V2 example, and resolution recoveries after partial payouts need more tests. The code has received an internal review during implementation, not an independent audit.
 
@@ -82,6 +88,6 @@ No test is independent review. Before real capital, the remaining sequence is:
 
 1. Continue splitting resolution/risk into reviewable production modules and expand the new deterministic stateful Solidity run into invariant fuzzing and differential Python/Solidity traces.
 2. Continue systematic process and network fault injection across the connected API, isolated approvers, sender journal, indexer and venue adapter, including long outages and restore drills.
-3. Deploy to Base Sepolia with synthetic collateral; measure p50/p95/p99 quote, approval and inclusion latency and perform reorg/RPC/oracle/gas/restore drills.
+3. Connect authenticated oracle reports and the Hyperliquid testnet account, then measure p50/p95/p99 quote, approval and inclusion latency and perform Base reorg/RPC/oracle/gas/restore drills.
 4. Freeze a review commit and commission independent economic, smart-contract and infrastructure/key-management reviews. Remediate findings and repeat the relevant gates.
 5. Start a capped canary only after every launch gate in `CURRENT-ARCHITECTURE.md` has recorded evidence and an accountable owner.
