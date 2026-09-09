@@ -42,6 +42,7 @@ The local monoprocess implements this boundary with an in-process broadcaster. I
 - Bound slow-client buffers and reconnect with jitter. Never retain an unbounded sequence of obsolete prices.
 - Rate-limit firm creation by wallet/session and edge token, while contract-wide capacity and price checks remain the Sybil-resistant protection. Browsing consumes no firm capacity.
 - Put a hard global cap and expiry index on unconsumed firm quotes. The current in-memory maps require a bounded-cache implementation before public launch.
+- Resting limit orders use per-market price heaps and a separate expiry heap. A market tick examines only orders whose raw limit crosses the current bid or ask, then runs the exact inventory-aware firm quote check. Dormant orders therefore do not create linear work per tick; cancellation and replacement use lazy deletion. The active-order ceiling remains 100,000 locally and must be calibrated against measured execution throughput.
 - Measure connected streams, bytes per frame, fanout delay, dropped consumers, reconnects, firm requests per second, active commitments, admission latency, approval latency and inclusion latency separately.
 
 ## Read paths
@@ -52,7 +53,7 @@ At production volume, identical public risk/activity responses belong behind a s
 
 ## Bottlenecks and correctness boundaries
 
-Base blockspace is the settlement-throughput ceiling. Two-of-three signing, sponsor nonce sequencing and the single portfolio-admission lane must be tested against filled-trade rate, not connected viewers. Replicas within one signer domain may share a protected signing service and durable decision log, but remain one trust identity. Multiple execution writers are unsafe until reservations use a linearizable shared mechanism with tested failover.
+Base blockspace is the settlement-throughput ceiling. Two-of-three signing, sponsor nonce sequencing and the single portfolio-admission lane must be tested against filled-trade rate, not connected viewers. Hedge health is read through a 200 ms coalescing cache for market frames, while each firm approval independently checks the protected hedge snapshot. Replicas within one signer domain may share a protected signing service and durable decision log, but remain one trust identity. Multiple execution writers are unsafe until reservations use a linearizable shared mechanism with tested failover.
 
 SQLite is reasonable for the local writer and an early bounded deployment. It is not unlimited throughput or multi-host consensus. A replicated durable log is triggered by measured write latency, recovery time and availability needs; it must preserve durable-before-response signing and nonce ordering.
 

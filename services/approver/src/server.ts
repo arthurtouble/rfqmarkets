@@ -6,6 +6,7 @@ import { clearingApproverAbi } from "../../../packages/shared/src/abi.js";
 import { DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, recoverIntentSigner, type MakerApproval, type SigningDomain, type TradeIntent } from "../../../packages/shared/src/eip712.js";
 import { BASE, impactCost, type Exposure } from "../../../packages/shared/src/policy.js";
 import { decodeStreamsV3Envelope } from "../../../packages/shared/src/streams.js";
+import { hedgeAdmission, type HedgeRiskSnapshot } from "../../../packages/shared/src/hedge-risk.js";
 
 const unsigned=z.string().regex(/^\d+$/); const signed=z.string().regex(/^-?\d+$/); const hex32=z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const requestSchema=z.object({
@@ -18,7 +19,7 @@ const requestSchema=z.object({
   oracleAgeMs:z.number().nonnegative(),
 });
 
-export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; maxFutureSeconds?:number; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]} }
+export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; maxFutureSeconds?:number; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]};hedgeRisk?:{url:string;token:string;maxAgeMs?:number} }
 
 export function buildApprover(options:ApproverOptions) {
   const app=Fastify({logger:false,bodyLimit:16_384}); const wallet=new Wallet(options.privateKey); const database=new DatabaseSync(options.databasePath);
@@ -82,10 +83,11 @@ export function buildApprover(options:ApproverOptions) {
         if(intent.deadline<=BigInt(block.timestamp)||approval.deadline<=BigInt(block.timestamp)||approval.deadline>BigInt(block.timestamp+31+(options.maxFutureSeconds??5)))return reply.code(409).send({error:"chain-time expiry rejected"});
         if(!accountSignature&&(!session||getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<approval.fee||BigInt(session.usedNotional)+notional>BigInt(session.maxCumulativeNotional)||notional>BigInt(session.maxTradeNotional)))return reply.code(409).send({error:"user authorization rejected"});
         const selected=market===0?btc:eth;if(!selected.enabled)return reply.code(409).send({error:"market disabled"});
+        if(options.hedgeRisk){let risk:HedgeRiskSnapshot;try{const response=await fetch(options.hedgeRisk.url,{headers:{authorization:`Bearer ${options.hedgeRisk.token}`},signal:AbortSignal.timeout(500)});if(!response.ok)throw new Error();risk=await response.json() as HedgeRiskSnapshot;}catch{return reply.code(503).send({error:"hedge health unavailable"});}const reported=risk.markets[input.quote.market]?.mode??"reduce_only",mode=!risk.healthy||!risk.observedAtMs||now-risk.observedAtMs>(options.hedgeRisk.maxAgeMs??3_000)?"reduce_only":reported,admission=hedgeAdmission(mode,BigInt(selected.aggregateBase),intent.baseDelta,BigInt(marketLimitWord)&((1n<<128n)-1n));if(!admission.allowed)return reply.code(409).send({error:"hedge risk requires exposure reduction"});if(executionNotional>admission.maxTradeNotional)return reply.code(409).send({error:"guarded hedge limit exceeded"});}
         if(reportObservation&&(reportObservation.observedAt>BigInt(block.timestamp)||BigInt(block.timestamp)>reportObservation.validUntil||BigInt(block.timestamp)-reportObservation.observedAt>8n))return reply.code(409).send({error:"chain-time oracle rejected"});
         const mark=(BigInt(input.quote.bid)+BigInt(input.quote.ask))/2n;
-        const marketNotional=(state:typeof btc,fallback:bigint)=>BigInt(state.aggregateBase)*(BigInt(state.lastBid)+BigInt(state.lastAsk)===0n?fallback:(BigInt(state.lastBid)+BigInt(state.lastAsk))/2n)/BASE;
-        const exposure:Exposure={BTC:marketNotional(btc,market===0?mark:0n),ETH:marketNotional(eth,market===1?mark:0n)};
+        const marketNotional=(state:typeof btc,currentMark?:bigint)=>BigInt(state.aggregateBase)*(currentMark??(BigInt(state.lastBid)+BigInt(state.lastAsk))/2n)/BASE;
+        const exposure:Exposure={BTC:marketNotional(btc,market===0?mark:undefined),ETH:marketNotional(eth,market===1?mark:undefined)};
         const delta=BigInt(intent.baseDelta)*mark/BASE;
         if(approval.impactCharge<impactCost(exposure,input.quote.market,delta))return reply.code(409).send({error:"independent impact check rejected"});
       }catch(error){return reply.code(503).send({error:"independent chain read unavailable",detail:process.env.NODE_ENV==="test"?String(error):undefined});}

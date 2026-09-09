@@ -9,7 +9,7 @@ Status date: 2026-09-09. The system is locally integrated for its principal happ
 - The sponsor signs and journals raw transactions before broadcasting. Restarts reconcile inclusion and avoid allocating the same nonce concurrently.
 - Each approver has a distinct key and durable log. Each independently checks the chain, exact intent, signer set, policy version, oracle observation and inventory-impact floor before signing.
 - The disposable indexer follows canonical block hashes, revalidates the tip after each sync pass, and provides account state, finalized aggregate risk, pseudonymous open positions and event history. A forced-fork drill proves orphaned state is removed. The client has separate Trade and Markets views; the private dashboard shows hedge state.
-- The hedge worker reads finalized exposure, applies an explicit no-trade band and records a stable client order identifier before using its local venue simulator. It reconciles partial and ambiguous fills, and an open order prevents another slice in that market. Restarting does not create a duplicate order.
+- The hedge worker reads finalized exposure, applies an explicit no-trade band and records a stable client order identifier before using its local venue simulator. It reconciles partial and ambiguous fills, and an open order prevents another slice in that market. Restarting does not create a duplicate order. Its authenticated health snapshot now gates both API quoting and each approver: excessive gap halves size, while outage, stale state or severe gap permits only strict exposure reduction.
 
 The public positions page does not create a new ledger. It reads the same rebuildable chain projection as account history. Addresses and positions are public and pseudonymous; the application should avoid adding identity, IP or session linkage to that data.
 
@@ -46,7 +46,7 @@ Code modules can be separated without creating more servers. The frontend is spl
 
 ## Readiness verdict
 
-The local product is end-to-end enough to validate the interaction model: a user can deposit, receive a shared live pricing frame, view an exact locally computed indication, request one firm quote on click, sign once, receive a sponsored two-of-three-approved fill, see the resulting public state and drive the hedge loop. Restart-safe sender, signer, index and hedge journals exercise the important persistence boundaries.
+The local product is end-to-end enough to validate the interaction model: a user can deposit, receive a shared live pricing frame, view an exact locally computed indication, request one firm quote on click, sign once, receive a sponsored two-of-three-approved fill, see the resulting public state and drive the hedge loop. Restart-safe sender, signer, index and hedge journals exercise the important persistence boundaries. Resting orders are indexed by trigger price and expiry, so a large dormant book no longer causes a full scan on every oracle update.
 
 “Bulletproof” is not yet a supportable description. The external integrations and adversarial failure modes above materially change security and latency. Real capital must wait for evidence from the testnet, fault-injection and independent-review gates.
 

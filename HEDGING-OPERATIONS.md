@@ -24,6 +24,12 @@ Official references:
 5. Write the deterministic client order ID and exact intended order before submission. On timeout, query Hyperliquid by account/order/client ID and reconcile fills before any retry.
 6. If chain, indexer, venue or credentials disagree, stop increasing customer exposure. Existing positions remain visible and the API can restrict quotes to exposure-reducing flow.
 
+The local stack now enforces that last rule on both authorization paths. The hedge worker publishes an authenticated loopback-only risk snapshot; it never exposes venue credentials. A gap above the hedge band halves the market's operating trade limit. A gap above twice the band, an unhealthy worker, an unreadable snapshot or a snapshot older than three seconds changes the market to reduce-only. The API uses that state before creating a firm quote, and every approver reads it independently before signing, so a compromised API cannot bypass the restriction. Reduce-only means the proposed base delta must strictly reduce absolute aggregate exposure; a direction flip of equal size is rejected.
+
+The internal snapshot is deliberately small: health, finalized indexed block, per-market mode, absolute gap notional and configured band. The browser receives only `normal`, `guarded` or `reduce_only`, the effective maximum trade amount and permitted sides as part of its existing shared market stream.
+
+For the selected market, both the API and approvers value existing aggregate base at the oracle mark contained in the proposed settlement report. This matches the contract, which records that report before computing inventory impact. Other-market exposure uses its last verified on-chain mark. Using an older selected-market mark can undercharge an inventory-reducing quote after a large price move, so the full local smoke suite deliberately runs trades across changing live prices.
+
 The current `local-simulator` venue applies fills atomically in SQLite so restart and idempotency behavior can be tested without capital. The worker's `HedgeVenue` boundary exposes position lookup, client-ID reconciliation and order submission with open, partial, filled and rejected outcomes. Tests cover restart, a lost partial-fill acknowledgement, and a permanently open order. A live adapter must use the official SDK's signing logic rather than independently recreating Hyperliquid's msgpack signing rules.
 
 ## Visibility boundary
@@ -36,6 +42,7 @@ Local endpoints:
 
 - Public/indexer risk: `http://127.0.0.1:4300/v1/risk`
 - Private hedge status: `http://127.0.0.1:4400/v1/status`
+- Authenticated quote-admission status: `http://127.0.0.1:4400/internal/risk`
 - Private dashboard: `http://127.0.0.1:4174`
 
 ## Chainlink Data Streams

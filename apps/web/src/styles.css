@@ -52,6 +52,7 @@ main.wide .app-frame { width: min(100%, 1180px); }
 .price-details summary { padding: 12px 0 6px; cursor: pointer; color: #a9b3c8; }
 .price-details > div { display: grid; gap: 8px; padding: 4px 0 8px; }
 .price-details span { display: flex; justify-content: space-between; gap: 12px; }.price-details b { color: #eef2ff; font-variant-numeric: tabular-nums; }
+.risk-notice { margin: 10px 0 0; padding: 10px 12px; border: 1px solid #6e5624; border-radius: 10px; background: #2c2414; color: #f3cf7a; font-size: 12px; line-height: 1.4; }
 .quote-waterfall { display: grid; margin-top: 28px; border-block: 1px solid #293247; }
 .quote-waterfall span { display: flex; justify-content: space-between; gap: 20px; padding: 14px 3px; border-bottom: 1px solid #202737; color: #8994aa; font-size: 13px; }
 .quote-waterfall span:last-child { border: 0; }.quote-waterfall b { color: #eef2ff; font-variant-numeric: tabular-nums; text-align: right; }

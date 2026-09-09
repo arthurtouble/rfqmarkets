@@ -41,3 +41,17 @@ test("does not stack hedge slices while a venue order remains open",async()=>{
   const status=(await hedge.inject({method:"GET",url:"/v1/status"})).json();assert.equal(status.orders.length,1);assert.equal(status.orders[0].status,"open");assert.equal(venue.submissions,1);
   await hedge.close();rmSync(directory,{recursive:true,force:true});
 });
+
+test("protected risk endpoint reports normal, guarded and reduce-only operating modes",async()=>{
+  for(const [name,aggregateBase,expected] of [["normal","300000000000000000","normal"],["guarded","650000000000000000","guarded"],["reduce","1000000000000000000","reduce_only"]] as const){
+    const directory=mkdtempSync(join(tmpdir(),`rfq-risk-${name}-`)),payload={blockNumber:90,markets:{BTC:{aggregateBase,bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;
+    const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,healthToken:"risk-secret"});await hedge.ready();
+    assert.equal((await hedge.inject({method:"GET",url:"/internal/risk"})).statusCode,401);const response=await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer risk-secret"}});assert.equal(response.statusCode,200,response.body);const risk=response.json();assert.equal(risk.healthy,true);assert.equal(risk.indexedBlock,90);assert.equal(risk.markets.BTC.mode,expected);
+    await hedge.close();rmSync(directory,{recursive:true,force:true});
+  }
+});
+
+test("risk endpoint fails closed when finalized exposure cannot be read",async()=>{
+  const directory=mkdtempSync(join(tmpdir(),"rfq-risk-failure-")),fetchImpl=(async()=>new Response("offline",{status:503})) as typeof fetch,hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,healthToken:"risk-secret"});await hedge.ready();
+  const risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer risk-secret"}})).json();assert.equal(risk.healthy,false);assert.equal(risk.markets.BTC.mode,"reduce_only");await hedge.close();rmSync(directory,{recursive:true,force:true});
+});

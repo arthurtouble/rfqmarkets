@@ -96,6 +96,12 @@ test("market snapshots expose bid, ask, mid and signed funding without a chain",
   await marketApi.close();
 });
 
+test("hedge monitor failure fails firm quotes closed and exposes reduce-only market state",async()=>{
+  const hedgeRiskSource={latest:async()=>{throw new Error("hedger offline")}},marketApi=buildApi({hedgeRiskSource});await marketApi.ready();
+  const markets=(await marketApi.inject({method:"GET",url:"/v1/markets"})).json();assert.equal(markets.markets.BTC.riskMode,"reduce_only");assert.equal(markets.markets.BTC.canBuy,false);assert.equal(markets.markets.BTC.canSell,false);
+  const quote=await marketApi.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}});assert.equal(quote.statusCode,503);assert.match(quote.body,/exposure-reducing/);await marketApi.close();
+});
+
 test("firm quote and unsigned order preparation have bounded admission",async()=>{
   const bounded=buildApi({maxActiveQuotes:1,maxRestingOrders:1});await bounded.ready();
   assert.equal((await bounded.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).statusCode,200);
