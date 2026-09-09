@@ -70,6 +70,8 @@ export function buildApi(options: ApiOptions = {}) {
     name:DOMAIN_NAME, version:DOMAIN_VERSION, chainId:options.chainId ?? 31_337n,
     verifyingContract:getAddress(options.verifyingContract ?? "0x0000000000000000000000000000000000000001"),
   };
+  let localAdvance:Promise<number>|undefined,lastLocalAdvanceAt=0,lastLocalTimestamp=0;
+  let quoteSnapshotCache:{at:number;promise:Promise<{blockNumber:number;values:any[]}>}|undefined;
 
   function prune(now=Date.now()) {
     for (let index=pending.length-1; index>=0; index--) if (pending[index].expiresAtMs<=now) pending.splice(index,1);
@@ -92,9 +94,14 @@ export function buildApi(options: ApiOptions = {}) {
   }
   async function advanceLocalChainTime(){
     if(!provider)throw new Error("local chain unavailable");
-    const latest=await provider.send("eth_getBlockByNumber",["latest",false]) as {timestamp:string};
-    const timestamp=Math.max(Math.floor(Date.now()/1_000),Number(BigInt(latest.timestamp))+1);
-    await provider.send("evm_setNextBlockTimestamp",[timestamp]);await provider.send("evm_mine",[]);return timestamp;
+    if(Date.now()-lastLocalAdvanceAt<250&&lastLocalTimestamp)return lastLocalTimestamp;
+    if(localAdvance)return localAdvance;
+    localAdvance=(async()=>{const latest=await provider.send("eth_getBlockByNumber",["latest",false]) as {timestamp:string};const timestamp=Math.max(Math.floor(Date.now()/1_000),Number(BigInt(latest.timestamp))+1);await provider.send("evm_setNextBlockTimestamp",[timestamp]);await provider.send("evm_mine",[]);lastLocalAdvanceAt=Date.now();lastLocalTimestamp=timestamp;quoteSnapshotCache=undefined;return timestamp;})().finally(()=>{localAdvance=undefined});
+    return localAdvance;
+  }
+  async function readQuoteSnapshot(){
+    if(!clearing||!provider)throw new Error("chain unavailable");const now=Date.now();if(quoteSnapshotCache&&now-quoteSnapshotCache.at<250)return quoteSnapshotCache.promise;
+    const promise=(async()=>{const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));const values=await Promise.all([provider.getBlock(blockNumber),clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber})]);return {blockNumber,values};})();quoteSnapshotCache={at:now,promise};try{return await promise;}catch(error){quoteSnapshotCache=undefined;throw error;}
   }
 
   app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,sender:sender?.status()}));
@@ -161,12 +168,7 @@ export function buildApi(options: ApiOptions = {}) {
         // A local automining chain stops advancing while idle. Synchronize it before
         // pinning the block so the next transaction cannot jump past the deadline.
         if(options.chain?.devFund)await advanceLocalChainTime();
-        const readSnapshot=async()=>{const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));const values=await Promise.all([
-          provider.getBlock(blockNumber),clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),
-          clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),
-          clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber}),
-        ]);return {blockNumber,values};};
-        let {blockNumber,values}=await readSnapshot();let [block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;
+        let {blockNumber,values}=await readQuoteSnapshot();let [block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;
         if(!block||paused||resolutionRequired)throw new Error("market is paused");
         // The production system uses an independent keeper. Locally, catch up an
         // exposed nontraded market only when its mark would otherwise block risk checks.
@@ -174,7 +176,7 @@ export function buildApi(options: ApiOptions = {}) {
         if(options.chain?.devFund&&sender&&BigInt(otherState.aggregateBase)!==0n&&block.timestamp-Number(otherState.lastPriceTime)>8){
           const snapshot=prices[otherMarket],report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[otherIndex,snapshot.bid,snapshot.ask,BigInt(block.timestamp),BigInt(block.timestamp+60)]]);
           await sender.submit(`local-oracle:${otherMarket}:${blockNumber}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("refreshOracle",[report])});
-          ({blockNumber,values}=await readSnapshot());[block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;
+          quoteSnapshotCache=undefined;({blockNumber,values}=await readQuoteSnapshot());[block,btc,eth,leaderEpoch,signerSetVersion,policyVersion,paused,resolutionRequired]=values;
           if(!block||paused||resolutionRequired)throw new Error("market is paused");
         }
         settled.BTC=BigInt(btc.aggregateBase)*(prices.BTC.bid+prices.BTC.ask)/2n/BASE;

@@ -23,6 +23,7 @@
     "smoke:failover": "node --import tsx scripts/leader-failover-smoke.ts",
     "smoke:approver-outage": "node --import tsx scripts/approver-outage-smoke.ts",
     "smoke:sender-replacement": "node --import tsx scripts/sender-replacement-smoke.ts",
+    "smoke:quote-load": "node --import tsx scripts/quote-load-smoke.ts",
     "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin"
   },
   "devDependencies": {

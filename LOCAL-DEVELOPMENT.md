@@ -39,6 +39,7 @@ With the services running, exercise the real HTTP signature path using an epheme
 
 ```bash
 npm run smoke:local
+npm run smoke:quote-load
 ```
 
 ## Current request path

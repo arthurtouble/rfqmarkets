@@ -10,14 +10,15 @@ export interface ChainlinkSourceOptions {apiKey:string;userSecret:string;endpoin
 
 export class ChainlinkDataStreamsSource implements OracleSource{
   private client:LatestReportClient;
+  private inFlight:Partial<Record<OracleMarket,Promise<OracleQuote>>>={};
   constructor(private options:ChainlinkSourceOptions){
     if(!options.endpoint.startsWith("https://")||!options.wsEndpoint.startsWith("wss://"))throw new Error("Data Streams endpoints must use TLS");
     if(!options.apiKey||!options.userSecret)throw new Error("Data Streams credentials are required");
     this.client=options.client??createClient({apiKey:options.apiKey,userSecret:options.userSecret,endpoint:options.endpoint,wsEndpoint:options.wsEndpoint,timeout:options.timeoutMs??2_000,retryAttempts:1}) as DataStreamsClient;
   }
   async latest(market:OracleMarket){
-    const feedId=this.options.feedIds[market],report=await this.client.getLatestReport(feedId),decoded=decodeStreamsV3Envelope(report.fullReport,feedId,this.options.feedDecimals[market]);
-    if(report.feedID.toLowerCase()!==feedId.toLowerCase()||report.observationsTimestamp!==decoded.observedAt)throw new Error("Data Streams metadata mismatch");
-    return {snapshot:{market,bid:decoded.bid,ask:decoded.ask,observedAtMs:decoded.observedAt*1_000},report:report.fullReport,validUntil:decoded.validUntil};
+    const active=this.inFlight[market];if(active)return active;
+    const request=(async()=>{const feedId=this.options.feedIds[market],report=await this.client.getLatestReport(feedId),decoded=decodeStreamsV3Envelope(report.fullReport,feedId,this.options.feedDecimals[market]);if(report.feedID.toLowerCase()!==feedId.toLowerCase()||report.observationsTimestamp!==decoded.observedAt)throw new Error("Data Streams metadata mismatch");return {snapshot:{market,bid:decoded.bid,ask:decoded.ask,observedAtMs:decoded.observedAt*1_000},report:report.fullReport,validUntil:decoded.validUntil};})().finally(()=>{delete this.inFlight[market]});
+    this.inFlight[market]=request;return request;
   }
 }

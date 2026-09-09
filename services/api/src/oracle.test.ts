@@ -18,3 +18,8 @@ test("rejects mismatched Data Streams response metadata",async()=>{
   const fullReport=report(),source=new ChainlinkDataStreamsSource({apiKey:"test",userSecret:"secret",endpoint:"https://data.example",wsEndpoint:"wss://data.example",feedIds:{BTC:feedId,ETH:`0x0003${"22".repeat(30)}`},feedDecimals:{BTC:8,ETH:8},client:{getLatestReport:async()=>({feedID:feedId,fullReport,validFromTimestamp:1_799_999_999,observationsTimestamp:1})}});
   await assert.rejects(source.latest("BTC"),/metadata mismatch/);
 });
+
+test("coalesces concurrent report acquisition per market",async()=>{
+  const fullReport=report();let calls=0;const source=new ChainlinkDataStreamsSource({apiKey:"test",userSecret:"secret",endpoint:"https://data.example",wsEndpoint:"wss://data.example",feedIds:{BTC:feedId,ETH:`0x0003${"22".repeat(30)}`},feedDecimals:{BTC:8,ETH:8},client:{getLatestReport:async()=>{calls++;await new Promise(resolve=>setTimeout(resolve,5));return {feedID:feedId,fullReport,validFromTimestamp:1_799_999_999,observationsTimestamp:1_800_000_000};}}});
+  await Promise.all(Array.from({length:20},()=>source.latest("BTC")));assert.equal(calls,1);
+});
