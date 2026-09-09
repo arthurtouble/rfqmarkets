@@ -151,6 +151,19 @@ const makerBeforeWithdrawal = await token.balanceOf(maker.address);
 await (await clearing.connect(governance).withdrawMakerExcess(maker.address, 10_000_000n)).wait();
 assert.equal(await token.balanceOf(maker.address) - makerBeforeWithdrawal, 10_000_000n);
 
+// Contract accounts use ERC-1271 without weakening the signed intent boundary.
+const smartWallet=await deploy("Mock1271Wallet",[keeper.address]);
+await (await token.mint(await smartWallet.getAddress(),1_000_000_000n)).wait();
+const smartDepositBlock=await ethers.provider.getBlock("latest");
+await (await clearing.connect(relayer).depositWithAuthorization(await smartWallet.getAddress(),1_000_000_000n,smartDepositBlock.timestamp-1,smartDepositBlock.timestamp+60,ethers.keccak256(ethers.toUtf8Bytes("smart-wallet-deposit")),27,ethers.ZeroHash,ethers.ZeroHash)).wait();
+const smartReport=(await observation(0,99_990_000_000n,100_010_000_000n)).report;
+const smartOpen=await order({nonce:801n,delta:1_000_000_000_000_000n,executionPrice:100_010_050_000n,limitPrice:100_010_100_000n,impactCharge:50n,report:smartReport,account:await smartWallet.getAddress(),signer:keeper});
+await (await clearing.connect(relayer).executeTrade(smartOpen.intent,smartOpen.approval,smartReport,smartOpen.userSignature,smartOpen.sigA,smartOpen.sigB)).wait();
+assert.equal((await clearing.positionOf(await smartWallet.getAddress(),0)).size,1_000_000_000_000_000n);
+const smartClose=await order({nonce:802n,delta:-1_000_000_000_000_000n,executionPrice:99_990_000_000n,limitPrice:99_980_000_000n,impactCharge:0n,report:smartReport,account:await smartWallet.getAddress(),signer:keeper,reduceOnly:true});
+await (await clearing.connect(relayer).executeTrade(smartClose.intent,smartClose.approval,smartReport,smartClose.userSignature,smartClose.sigA,smartClose.sigB)).wait();
+assert.equal((await clearing.positionOf(await smartWallet.getAddress(),0)).size,0n);
+
 const initialOracle = await observation(0, 99_990_000_000n, 100_010_000_000n);
 const cancelledOrder = await order({ nonce:91n, delta:10_000_000_000_000_000n, executionPrice:100_020_000_000n, limitPrice:100_030_000_000n, impactCharge:1_000_000n, report:initialOracle.report });
 await reject(clearing.connect(relayer).executeTrade(cancelledOrder.intent,cancelledOrder.approval,initialOracle.report,cancelledOrder.userSignature,cancelledOrder.sigA,cancelledOrder.sigB),"cancelled nonce must block a later trade");
@@ -235,4 +248,4 @@ await (await upgraded.connect(relayer).claimResolution()).wait();
 assert.equal(await token.balanceOf(relayer.address) - relayerBefore, relayerClaim * pool / totalClaims);
 assert(pool < totalClaims, "fault injection must exercise a real pro-rata haircut");
 
-console.log("Clearing E2E passed: proxy, custody, scoped sessions, relayed exits, epoch failover, maker floor, trade, margin, liquidation, upgrade, resolution");
+console.log("Clearing E2E passed: proxy, custody, ERC-1271, scoped sessions, relayed exits, epoch failover, maker floor, trade, margin, liquidation, upgrade, resolution");

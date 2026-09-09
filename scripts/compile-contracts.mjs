@@ -15,6 +15,7 @@ const files = [
   "contracts/test/RFQInvariants.sol",
   "contracts/test/TestProxy.sol",
   "contracts/test/RFQClearingV2.sol",
+  "contracts/test/Mock1271Wallet.sol",
 ];
 const sources = Object.fromEntries(files.map((file) => [file, { content: fs.readFileSync(path.join(root, file), "utf8") }]));
 const input = {
