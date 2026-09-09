@@ -10,7 +10,7 @@ The interface keeps three price concepts separate:
 2. **Indicative execution** is a size-specific RFQ computed by the API from the directional oracle price, base spread, fee, settled portfolio inventory and every still-executable reservation. It updates without reserving capacity.
 3. **Firm execution** is created after the click, bounded by the user's signed worst price, approved by two independent approvers and checked again by the contract against the exact oracle report and current settled state.
 
-`GET /v1/markets` returns a coherent BTC/ETH snapshot. `GET /v1/markets/stream` exposes the same snapshot as Server-Sent Events. The client uses SSE where available and one-second HTTP refresh as a compatibility fallback. A one-way stream is sufficient because order entry remains an authenticated HTTP request.
+`GET /v1/markets` returns a coherent BTC/ETH snapshot. `GET /v1/markets/stream` pushes complete pricing frames as Server-Sent Events. The browser does not poll and does not request a server quote while the user types. It applies the shared integer pricing function to the streamed BBO and portfolio envelope, then requests one authoritative firm quote after the click. Native SSE reconnect replaces the whole frame. Production may offer the same schema over WebSocket where required. See [SCALE-AND-STREAMING.md](SCALE-AND-STREAMING.md).
 
 The public hostname should terminate at Cloudflare. A Cloudflare Tunnel gives the API an outbound-only path to the edge, so the origin does not require a publicly routable address. Only the public API and price stream enter that tunnel. Approvers remain on a separate private network reachable only from enrolled API hosts. The hedge service and its dashboard have no route from the public hostname.
 

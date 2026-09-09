@@ -41,6 +41,13 @@ test("uses Coinbase WebSocket BBO and produces a local on-chain report",async()=
   await source.close();
 });
 
+test("publishes upstream WebSocket changes to stream consumers",async()=>{
+  const listeners:Record<string,Array<(event:any)=>void>>={},socket={readyState:1,send:()=>{},close:()=>{},addEventListener:(type:string,listener:(event:any)=>void)=>{(listeners[type]??=[]).push(listener);}};
+  const source=new CoinbaseMarketDataSource({socketFactory:()=>socket});let changed:string|undefined;const unsubscribe=source.subscribe(market=>{changed=market});await source.start();
+  listeners.message[0]({data:JSON.stringify({channel:"ticker",events:[{tickers:[{product_id:"ETH-USD",best_bid:"3000",best_ask:"3001"}]}]})});assert.equal(changed,"ETH");unsubscribe();changed=undefined;
+  listeners.message[0]({data:JSON.stringify({channel:"ticker",events:[{tickers:[{product_id:"BTC-USD",best_bid:"60000",best_ask:"60001"}]}]})});assert.equal(changed,undefined);await source.close();
+});
+
 test("falls back to Coinbase REST when the WebSocket snapshot is absent",async()=>{
   let calls=0;const source=new CoinbaseMarketDataSource({socketFactory:()=>({readyState:0,send:()=>{},close:()=>{},addEventListener:()=>{}}),fetchImpl:async url=>{calls++;assert.match(String(url),/ETH-USD\/ticker$/);return new Response(JSON.stringify({bid:"3999.10",ask:"4000.20"}),{status:200});}});
   const quote=await source.latest("ETH");assert.equal(calls,1);assert.equal(quote.snapshot.bid,3_999_100_000n);assert.equal(quote.snapshot.ask,4_000_200_000n);

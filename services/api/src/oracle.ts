@@ -5,7 +5,8 @@ import type { PriceSnapshot } from "../../../packages/shared/src/policy.js";
 
 export type OracleMarket="BTC"|"ETH";
 export interface OracleQuote {snapshot:PriceSnapshot;report:string;validUntil:number}
-export interface OracleSource {latest(market:OracleMarket):Promise<OracleQuote>;start?():Promise<void>;close?():Promise<void>;status?():unknown}
+export type OracleListener=(market:OracleMarket)=>void;
+export interface OracleSource {latest(market:OracleMarket):Promise<OracleQuote>;subscribe?(listener:OracleListener):()=>void;start?():Promise<void>;close?():Promise<void>;status?():unknown}
 interface ReportStream {on(event:"report",listener:(report:Report)=>void):this;connect():Promise<void>;close():Promise<void>}
 interface LatestReportClient {getLatestReport(feedId:string):Promise<Report>;createStream?(feedIds:string[]):ReportStream}
 export interface ChainlinkSourceOptions {apiKey:string;userSecret:string;endpoint:string;wsEndpoint:string;feedIds:Record<OracleMarket,string>;feedDecimals:Record<OracleMarket,number>;timeoutMs?:number;client?:LatestReportClient}
@@ -18,11 +19,13 @@ export class CoinbaseMarketDataSource implements OracleSource {
   private reconnectTimer?:ReturnType<typeof setTimeout>;
   private stopped=false;
   private inFlight:Partial<Record<OracleMarket,Promise<OracleQuote>>>={};
+  private listeners=new Set<OracleListener>();
   constructor(private options:CoinbaseSourceOptions={}){}
   private store(market:OracleMarket,bidText:string,askText:string,receivedAtMs=Date.now()){
     const bid=parseUnits(bidText,6),ask=parseUnits(askText,6);
     if(bid<=0n||ask<bid)throw new Error("invalid Coinbase market data");
     this.cached[market]={snapshot:{market,bid,ask,observedAtMs:receivedAtMs,source:"coinbase"},receivedAtMs};
+    for(const listener of this.listeners)listener(market);
   }
   private quote(market:OracleMarket):OracleQuote {
     const item=this.cached[market];if(!item)throw new Error(`${market} market data unavailable`);
@@ -43,6 +46,7 @@ export class CoinbaseMarketDataSource implements OracleSource {
     socket.addEventListener("close",reconnect);socket.addEventListener("error",()=>{try{socket.close();}catch{reconnect();}});
   }
   async start(){this.stopped=false;this.connect();}
+  subscribe(listener:OracleListener){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
   async close(){this.stopped=true;if(this.reconnectTimer)clearTimeout(this.reconnectTimer);this.reconnectTimer=undefined;const socket=this.socket;this.socket=undefined;socket?.close();}
   status(){const now=Date.now();return {source:"coinbase",transport:this.socket?.readyState===1?"websocket":"rest-fallback",agesMs:{BTC:this.cached.BTC?now-this.cached.BTC.receivedAtMs:null,ETH:this.cached.ETH?now-this.cached.ETH.receivedAtMs:null}};}
   async latest(market:OracleMarket){
@@ -58,13 +62,15 @@ export class ChainlinkDataStreamsSource implements OracleSource{
   private inFlight:Partial<Record<OracleMarket,Promise<OracleQuote>>>={};
   private cached:Partial<Record<OracleMarket,OracleQuote>>={};
   private stream?:ReportStream;
+  private listeners=new Set<OracleListener>();
   constructor(private options:ChainlinkSourceOptions){
     if(!options.endpoint.startsWith("https://")||!options.wsEndpoint.startsWith("wss://"))throw new Error("Data Streams endpoints must use TLS");
     if(!options.apiKey||!options.userSecret)throw new Error("Data Streams credentials are required");
     this.client=options.client??createClient({apiKey:options.apiKey,userSecret:options.userSecret,endpoint:options.endpoint,wsEndpoint:options.wsEndpoint,timeout:options.timeoutMs??2_000,retryAttempts:1}) as DataStreamsClient;
   }
   private normalize(market:OracleMarket,report:Report){const feedId=this.options.feedIds[market],decoded=decodeStreamsV3Envelope(report.fullReport,feedId,this.options.feedDecimals[market]);if(report.feedID.toLowerCase()!==feedId.toLowerCase()||report.observationsTimestamp!==decoded.observedAt)throw new Error("Data Streams metadata mismatch");return {snapshot:{market,bid:decoded.bid,ask:decoded.ask,observedAtMs:decoded.observedAt*1_000,source:"chainlink-data-streams"},report:report.fullReport,validUntil:decoded.validUntil};}
-  async start(){if(this.stream||!this.client.createStream)return;this.stream=this.client.createStream(Object.values(this.options.feedIds));const byFeed=new Map(Object.entries(this.options.feedIds).map(([market,feed])=>[feed.toLowerCase(),market as OracleMarket]));this.stream.on("report",report=>{const market=byFeed.get(report.feedID.toLowerCase());if(!market)return;try{this.cached[market]=this.normalize(market,report);}catch{}});await this.stream.connect();}
+  async start(){if(this.stream||!this.client.createStream)return;this.stream=this.client.createStream(Object.values(this.options.feedIds));const byFeed=new Map(Object.entries(this.options.feedIds).map(([market,feed])=>[feed.toLowerCase(),market as OracleMarket]));this.stream.on("report",report=>{const market=byFeed.get(report.feedID.toLowerCase());if(!market)return;try{this.cached[market]=this.normalize(market,report);for(const listener of this.listeners)listener(market);}catch{}});await this.stream.connect();}
+  subscribe(listener:OracleListener){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
   async close(){const stream=this.stream;this.stream=undefined;if(stream)await stream.close();}
   status(){const now=Date.now();return {source:"chainlink-data-streams",transport:this.stream?"websocket":"rest",agesMs:{BTC:this.cached.BTC?now-this.cached.BTC.snapshot.observedAtMs:null,ETH:this.cached.ETH?now-this.cached.ETH.snapshot.observedAtMs:null}};}
   async latest(market:OracleMarket){

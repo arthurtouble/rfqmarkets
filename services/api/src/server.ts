@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type { ServerResponse } from "node:http";
 import cors from "@fastify/cors";
 import { DatabaseSync } from "node:sqlite";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256, parseUnits, recoverAddress, toUtf8Bytes } from "ethers";
@@ -20,6 +21,8 @@ export interface ApiOptions {
   chain?: { rpcUrl:string; sponsorPrivateKey:string; clearingAddress:string; tokenAddress:string; devFund?:boolean; devWallet?:{account:string;privateKey:string} };
   journalPath?:string;
   oracleSource?:OracleSource;
+  maxActiveQuotes?:number;
+  maxRestingOrders?:number;
 }
 
 const intentRequestSchema = z.object({ quoteId:z.string().uuid(), account:z.string(), nonce:z.string().regex(/^\d+$/) });
@@ -86,11 +89,26 @@ export function buildApi(options: ApiOptions = {}) {
   let quoteSnapshotCache:{at:number;blockNumber:number;promise:Promise<{blockNumber:number;values:any[]}>}|undefined;
   let marketReadCache:{at:number;promise:Promise<any>}|undefined;
   let orderTimer:ReturnType<typeof setInterval>|undefined,checkingOrders=false;
+  type StreamClient={response:ServerResponse;writable:boolean};
+  const marketClients=new Set<StreamClient>();
+  let streamTimer:ReturnType<typeof setTimeout>|undefined,heartbeatTimer:ReturnType<typeof setInterval>|undefined,streamSequence=0,streamPublishing=false,streamPublishQueued=false,lastMarketPayload="",unsubscribeOracle:(()=>void)|undefined;
+
+  function writeEvent(client:StreamClient,event:string,payload:unknown){
+    if(client.response.destroyed||client.response.writableEnded)return false;
+    if(!client.writable){if(client.response.writableLength>262_144)client.response.destroy();return false;}
+    const ok=client.response.write(`id: ${++streamSequence}\nevent: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    if(!ok){client.writable=false;client.response.once("drain",()=>{client.writable=true;});}
+    return true;
+  }
+  function addStreamClient(response:ServerResponse,clients:Set<StreamClient>){const client={response,writable:true};clients.add(client);response.on("close",()=>clients.delete(client));return client;}
+  function scheduleStreamPublish(delay=40){if(!marketClients.size)return;if(streamPublishing){streamPublishQueued=true;return;}if(streamTimer)return;streamTimer=setTimeout(()=>{streamTimer=undefined;void publishStreams();},delay);streamTimer.unref();}
 
   function prune(now=Date.now()) {
     for (let index=pending.length-1; index>=0; index--) if (pending[index].expiresAtMs<=now) pending.splice(index,1);
     for (const [id,quote] of quotes) if (quote.expiresAtMs+60_000<=now) { quotes.delete(id); quoteReports.delete(id); quoteVersions.delete(id); quoteBindings.delete(id); }
+    for(const [id,order] of restingOrders)if(order.status==="prepared"&&order.createdAtMs+300_000<=now)restingOrders.delete(id);
   }
+  const activeOrderCount=()=>{let count=0;for(const order of restingOrders.values())if(order.status==="prepared"||order.status==="open"||order.status==="executing")count++;return count;};
   function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string):TradeIntent {
     const prepared=preparedIntents.get(quote.quoteId);if(prepared)return prepared;
     const reportExpiry=quoteReports.get(quote.quoteId)?.validUntil??versions.blockTimestamp+30,deadline=Math.min(versions.blockTimestamp+30,reportExpiry);
@@ -116,7 +134,7 @@ export function buildApi(options: ApiOptions = {}) {
   }
   async function chainTimestamp(){if(!provider)return Math.floor(Date.now()/1_000);const block=await provider.getBlock("latest");if(!block)throw new Error("latest block unavailable");return block.timestamp;}
   async function readQuoteSnapshot(){
-    if(!clearing||!provider)throw new Error("chain unavailable");const now=Date.now(),blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));if(quoteSnapshotCache&&quoteSnapshotCache.blockNumber===blockNumber&&now-quoteSnapshotCache.at<250)return quoteSnapshotCache.promise;
+    if(!clearing||!provider)throw new Error("chain unavailable");const now=Date.now();if(quoteSnapshotCache&&now-quoteSnapshotCache.at<100)return quoteSnapshotCache.promise;const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[])));if(quoteSnapshotCache&&quoteSnapshotCache.blockNumber===blockNumber&&now-quoteSnapshotCache.at<250)return quoteSnapshotCache.promise;
     const promise=(async()=>{const values=await Promise.all([provider.getBlock(blockNumber),clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),clearing.leaderEpoch({blockTag:blockNumber}),clearing.signerSetVersion({blockTag:blockNumber}),clearing.policyVersion({blockTag:blockNumber}),clearing.paused({blockTag:blockNumber}),clearing.resolutionRequired({blockTag:blockNumber})]);return {blockNumber,values};})();quoteSnapshotCache={at:now,blockNumber,promise};try{return await promise;}catch(error){quoteSnapshotCache=undefined;throw error;}
   }
 
@@ -130,17 +148,19 @@ export function buildApi(options: ApiOptions = {}) {
       const result:Record<string,unknown>={};
       for(const [index,name] of (["BTC","ETH"] as const).entries()){
         const snapshot=prices[name],chain=chainMarkets[index],mid=(snapshot.bid+snapshot.ask)/2n,aggregateBase=chain?BigInt(chain.aggregateBase):0n;
+        const inventoryMark=chain&&BigInt(chain.lastBid)+BigInt(chain.lastAsk)>0n?(BigInt(chain.lastBid)+BigInt(chain.lastAsk))/2n:mid;settled[name]=aggregateBase*inventoryMark/BASE;
         const skewNotional=aggregateBase*mid/BASE;let fundingApr=skewNotional*RATE/MAX_MARKET_NOTIONAL;if(fundingApr>RATE)fundingApr=RATE;if(fundingApr<-RATE)fundingApr=-RATE;
         const storedIndex=chain?BigInt(chain.fundingIndex):0n,fundingTime=chain?Number(chain.fundingTime):Math.floor(now/1_000),elapsed=BigInt(Math.min(7*24*60*60,Math.max(0,(block?.timestamp??Math.floor(now/1_000))-fundingTime)));
         const projectedFundingIndex=storedIndex+mid*fundingApr*elapsed/(RATE*YEAR);
         result[name]={market:name,bid:snapshot.bid.toString(),ask:snapshot.ask.toString(),mid:mid.toString(),observedAtMs:snapshot.observedAtMs,source:snapshot.source??"configured",aggregateBase:aggregateBase.toString(),fundingApr:fundingApr.toString(),fundingIndex:storedIndex.toString(),projectedFundingIndex:projectedFundingIndex.toString(),fundingTime,lastPriceTime:chain?Number(chain.lastPriceTime):0,enabled:chain?Boolean(chain.enabled):true};
       }
-      return {blockNumber,serverTimeMs:now,markets:result};
+      prune(now);const pendingEnvelope:{market:"BTC"|"ETH";delta:string}[]=[];for(const name of ["BTC","ETH"] as const){let low=0n,high=0n;for(const item of pending)if(item.market===name){if(item.delta<0n)low+=item.delta;else high+=item.delta;}if(low)pendingEnvelope.push({market:name,delta:low.toString()});if(high)pendingEnvelope.push({market:name,delta:high.toString()});}
+      return {blockNumber,serverTimeMs:now,markets:result,pricing:{settled:{BTC:settled.BTC.toString(),ETH:settled.ETH.toString()},pending:pendingEnvelope,baseSpreadBps:2,feeBps:2,toleranceBps:8,maxNotional:"25000000000"}};
     })();marketReadCache={at:now,promise};try{return await promise;}catch(error){marketReadCache=undefined;throw error;}
   }
 
-  async function createQuote(request:{market:"BTC"|"ETH";side:"buy"|"sell";amount:string}){
-    prune();let oracleQuote:Awaited<ReturnType<OracleSource["latest"]>>|undefined;
+  async function createQuote(request:{market:"BTC"|"ETH";side:"buy"|"sell";amount:string},persist=true){
+    prune();if(persist&&quotes.size>=(options.maxActiveQuotes??50_000))throw new Error("firm quote capacity reached");let oracleQuote:Awaited<ReturnType<OracleSource["latest"]>>|undefined;
     if(options.oracleSource){oracleQuote=await options.oracleSource.latest(request.market);prices[request.market]=oracleQuote.snapshot;}
     else prices[request.market].observedAtMs=Date.now();
     let versions:ProtocolVersions;
@@ -160,19 +180,25 @@ export function buildApi(options: ApiOptions = {}) {
       const localTimestamp=options.chain?.devFund?versions.blockTimestamp:undefined;
       const validUntil=localTimestamp===undefined?oracleQuote.validUntil:localTimestamp+60;
       const report=localTimestamp===undefined?oracleQuote.report:AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[request.market==="BTC"?0:1,quote.snapshot.bid,quote.snapshot.ask,localTimestamp,validUntil]]);
-      quote.expiresAtMs=Math.min(quote.expiresAtMs,validUntil*1_000-4_000);if(quote.expiresAtMs<=Date.now())throw new Error("oracle report lacks inclusion time");quoteReports.set(quote.quoteId,{report,validUntil});
+      quote.expiresAtMs=Math.min(quote.expiresAtMs,validUntil*1_000-4_000);if(quote.expiresAtMs<=Date.now())throw new Error("oracle report lacks inclusion time");if(persist)quoteReports.set(quote.quoteId,{report,validUntil});
     }
-    quotes.set(quote.quoteId,quote);quoteVersions.set(quote.quoteId,versions);return {quote,versions};
+    if(persist){quotes.set(quote.quoteId,quote);quoteVersions.set(quote.quoteId,versions);}return {quote,versions};
   }
 
-  app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,marketData:options.oracleSource?.status?.()??{source:"configured"},sender:sender?.status()}));
+  async function publishStreams(){
+    if(streamPublishing)return;streamPublishing=true;
+    try{
+      if(marketClients.size){try{const snapshot=await readMarkets(),payload=JSON.stringify(snapshot);if(payload!==lastMarketPayload){lastMarketPayload=payload;for(const client of marketClients)writeEvent(client,"markets",snapshot);}}catch(error){for(const client of marketClients)writeEvent(client,"stream-error",{error:error instanceof Error?error.message:"market data unavailable"});}}
+    }finally{streamPublishing=false;if(streamPublishQueued){streamPublishQueued=false;scheduleStreamPublish();}}
+  }
+
+  app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,marketData:options.oracleSource?.status?.()??{source:"configured"},streams:{connections:marketClients.size,eventsSent:streamSequence},firmQuotes:{active:quotes.size,capacity:options.maxActiveQuotes??50_000},orders:{active:activeOrderCount(),capacity:options.maxRestingOrders??100_000},sender:sender?.status()}));
   app.get("/v1/config",async()=>({chainId:`0x${domain.chainId.toString(16)}`,chainName:options.chain?.devFund?"RFQ Local":"Base",rpcUrl:options.chain?.rpcUrl,clearingAddress:domain.verifyingContract,tokenAddress:options.chain?.tokenAddress}));
   if(localDevMode&&options.chain?.devWallet)app.get("/v1/dev/wallet",async()=>({mode:"local-development",...options.chain!.devWallet}));
   app.get("/v1/markets",async(_request,reply)=>{try{return await readMarkets();}catch(error){return reply.code(503).send({error:error instanceof Error?error.message:"market data unavailable"});}});
   app.get("/v1/markets/stream",async(request,reply)=>{
     reply.hijack();reply.raw.writeHead(200,{"content-type":"text/event-stream","cache-control":"no-cache, no-transform","connection":"keep-alive","access-control-allow-origin":options.corsOrigin??"http://127.0.0.1:4173"});
-    let closed=false,busy=false;const send=async()=>{if(closed||busy)return;busy=true;try{reply.raw.write(`event: markets\ndata: ${JSON.stringify(await readMarkets())}\n\n`);}catch(error){reply.raw.write(`event: error\ndata: ${JSON.stringify({error:error instanceof Error?error.message:"market data unavailable"})}\n\n`);}finally{busy=false;}};
-    const timer=setInterval(()=>void send(),250);timer.unref();request.raw.on("close",()=>{closed=true;clearInterval(timer);});await send();
+    const client=addStreamClient(reply.raw,marketClients);void readMarkets().then(snapshot=>writeEvent(client,"markets",snapshot)).catch(error=>writeEvent(client,"stream-error",{error:error instanceof Error?error.message:"market data unavailable"}));
   });
   app.get("/v1/account/:address",async(request,reply)=>{
     if(!clearing)return reply.code(503).send({error:"chain unavailable"});
@@ -240,7 +266,7 @@ export function buildApi(options: ApiOptions = {}) {
   app.post("/v1/close/execute",async(request,reply)=>{const parsed=closeExecuteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid signed close"});try{const intent:CloseIntent={account:getAddress(parsed.data.intent.account),market:parsed.data.intent.market,nonce:BigInt(parsed.data.intent.nonce),deadline:BigInt(parsed.data.intent.deadline)};if(Number(intent.deadline)*1_000<=Date.now()||recoverCloseSigner(domain,intent,parsed.data.userSignature)!==intent.account)return reply.code(401).send({error:"invalid close signature"});if(!clearing||!sender||!provider||!options.chain)return reply.code(503).send({error:"chain unavailable"});const market=intent.market===0?"BTC":"ETH";let report:string;if(options.oracleSource){const observation=await options.oracleSource.latest(market);prices[market]=observation.snapshot;if(options.chain.devFund){const timestamp=await advanceLocalChainTime();report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[intent.market,observation.snapshot.bid,observation.snapshot.ask,BigInt(timestamp),BigInt(timestamp+60)]]);}else report=observation.report;}else{const timestamp=options.chain.devFund?await advanceLocalChainTime():Number(BigInt((await provider.send("eth_getBlockByNumber",["latest",false]) as {timestamp:string}).timestamp)),snapshot=prices[market];report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[intent.market,snapshot.bid,snapshot.ask,BigInt(timestamp),BigInt(timestamp+60)]]);}const receipt=await sender.submit(`close:${intent.account}:${intent.market}:${intent.nonce}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("closePositionWithSignature",[intent.account,intent.market,intent.nonce,intent.deadline,report,parsed.data.userSignature])});const position=await clearing.positionOf(intent.account,intent.market);return {status:"included",transaction:{hash:receipt.hash,blockNumber:receipt.blockNumber},position:{size:position.size.toString(),entryPrice:position.entryPrice.toString()}};}catch(error){return reply.code(409).send({error:error instanceof Error?`close failed: ${error.message}`:"close failed"});}});
   app.post("/v1/session/prepare",async(request,reply)=>{const parsed=sessionPrepareSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid session request"});try{const account=getAddress(parsed.data.account),session=getAddress(parsed.data.session),now=await chainTimestamp();const grant:SessionGrant={account,session,marketMask:parsed.data.marketMask,maxTradeNotional:parseUnits(parsed.data.maxTradeAmount,6),maxCumulativeNotional:parseUnits(parsed.data.maxCumulativeAmount,6),maxFee:parseUnits(parsed.data.maxFee,6),validUntil:BigInt(now+parsed.data.durationSeconds),nonce:BigInt(parsed.data.nonce),deadline:BigInt(now+120)};if(grant.maxTradeNotional<=0n||grant.maxTradeNotional>grant.maxCumulativeNotional)throw new Error();return {domain:{...domain,chainId:domain.chainId.toString()},types:sessionGrantTypes,grant:sessionGrantToWire(grant)};}catch{return reply.code(400).send({error:"invalid session request"});}});
   app.post("/v1/session/execute",async(request,reply)=>{const parsed=sessionExecuteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid signed session"});try{const grant:SessionGrant={...parsed.data.grant,account:getAddress(parsed.data.grant.account),session:getAddress(parsed.data.grant.session),maxTradeNotional:BigInt(parsed.data.grant.maxTradeNotional),maxCumulativeNotional:BigInt(parsed.data.grant.maxCumulativeNotional),maxFee:BigInt(parsed.data.grant.maxFee),validUntil:BigInt(parsed.data.grant.validUntil),nonce:BigInt(parsed.data.grant.nonce),deadline:BigInt(parsed.data.grant.deadline)};if(Number(grant.deadline)*1_000<=Date.now()||recoverSessionGrantSigner(domain,grant,parsed.data.userSignature)!==grant.account)return reply.code(401).send({error:"invalid session signature"});if(!clearing||!sender||!options.chain)return reply.code(503).send({error:"chain unavailable"});const receipt=await sender.submit(`session:${grant.account}:${grant.session}:${grant.nonce}`,{to:options.chain.clearingAddress,data:clearing.interface.encodeFunctionData("grantSessionWithSignature",[grant,parsed.data.userSignature])});return {status:"active",session:grant.session,validUntil:grant.validUntil.toString(),transaction:{hash:receipt.hash,blockNumber:receipt.blockNumber}};}catch(error){return reply.code(409).send({error:error instanceof Error?`session failed: ${error.message}`:"session failed"});}});
-  app.post("/v1/orders/prepare",async(request,reply)=>{const parsed=orderPrepareSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid limit order"});try{const account=getAddress(parsed.data.account),{quote,versions}=await createQuote({market:parsed.data.market,side:parsed.data.side,amount:parsed.data.amount}),limitPrice=parseUnits(parsed.data.limitPrice,6),maximumNotional=abs(quote.baseDelta)*limitPrice/BASE,maxFee=(maximumNotional*2n+9_999n)/10_000n,deadline=BigInt(versions.blockTimestamp+parsed.data.durationSeconds),intent:TradeIntent={account,market:parsed.data.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice,maxFee,nonce:BigInt(parsed.data.nonce),deadline,reduceOnly:parsed.data.reduceOnly},orderId=crypto.randomUUID(),now=Date.now();if(limitPrice<=0n)throw new Error("invalid limit price");const order:RestingOrder={orderId,intent,market:parsed.data.market,side:parsed.data.side,amount:parsed.data.amount,status:"prepared",createdAtMs:now,updatedAtMs:now};restingOrders.set(orderId,order);return {orderId,domain:{...domain,chainId:domain.chainId.toString()},types:intentTypes,intent:intentToWire(intent),summary:{market:order.market,side:order.side,amount:order.amount,baseDelta:intent.baseDelta.toString(),limitPrice:intent.limitPrice.toString(),maxFee:intent.maxFee.toString(),expiresAtMs:Number(intent.deadline)*1_000}};}catch(error){return reply.code(409).send({error:error instanceof Error?error.message:"limit order rejected"});}});
+  app.post("/v1/orders/prepare",async(request,reply)=>{const parsed=orderPrepareSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid limit order"});try{prune();if(activeOrderCount()>=(options.maxRestingOrders??100_000))throw new Error("order capacity reached");const account=getAddress(parsed.data.account),{quote,versions}=await createQuote({market:parsed.data.market,side:parsed.data.side,amount:parsed.data.amount},false),limitPrice=parseUnits(parsed.data.limitPrice,6),maximumNotional=abs(quote.baseDelta)*limitPrice/BASE,maxFee=(maximumNotional*2n+9_999n)/10_000n,deadline=BigInt(versions.blockTimestamp+parsed.data.durationSeconds),intent:TradeIntent={account,market:parsed.data.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice,maxFee,nonce:BigInt(parsed.data.nonce),deadline,reduceOnly:parsed.data.reduceOnly},orderId=crypto.randomUUID(),now=Date.now();if(limitPrice<=0n)throw new Error("invalid limit price");const order:RestingOrder={orderId,intent,market:parsed.data.market,side:parsed.data.side,amount:parsed.data.amount,status:"prepared",createdAtMs:now,updatedAtMs:now};restingOrders.set(orderId,order);return {orderId,domain:{...domain,chainId:domain.chainId.toString()},types:intentTypes,intent:intentToWire(intent),summary:{market:order.market,side:order.side,amount:order.amount,baseDelta:intent.baseDelta.toString(),limitPrice:intent.limitPrice.toString(),maxFee:intent.maxFee.toString(),expiresAtMs:Number(intent.deadline)*1_000}};}catch(error){return reply.code(409).send({error:error instanceof Error?error.message:"limit order rejected"});}});
   app.post("/v1/orders",async(request,reply)=>{const parsed=orderPlaceSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid signed order"});const order=restingOrders.get(parsed.data.orderId);if(!order||order.status!=="prepared")return reply.code(404).send({error:"prepared order not found"});try{let valid=false;try{valid=recoverIntentSigner(domain,order.intent,parsed.data.userSignature)===order.intent.account;}catch{}if(!valid&&provider&&await provider.getCode(order.intent.account)!=="0x"){const wallet=new Contract(order.intent.account,["function isValidSignature(bytes32,bytes) view returns(bytes4)"],provider);valid=await wallet.isValidSignature(hashIntent(domain,order.intent),parsed.data.userSignature).then((value:string)=>value.toLowerCase()==="0x1626ba7e").catch(()=>false);}if(!valid)return reply.code(401).send({error:"invalid order signature"});order.userSignature=parsed.data.userSignature;order.status="open";order.updatedAtMs=Date.now();journal?.prepare("INSERT INTO resting_orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(order.orderId,order.intent.account,order.market,order.side,order.amount,JSON.stringify(intentToWire(order.intent)),order.userSignature,order.status,order.createdAtMs,order.updatedAtMs,null,null);return {orderId:order.orderId,status:order.status,intent:intentToWire(order.intent)};}catch{return reply.code(401).send({error:"invalid order signature"});}});
   app.get("/v1/orders/:address",async(request,reply)=>{let account:string;try{account=getAddress((request.params as {address:string}).address);}catch{return reply.code(400).send({error:"invalid account"});}return {items:[...restingOrders.values()].filter(order=>order.intent.account===account&&order.status!=="prepared").sort((a,b)=>b.createdAtMs-a.createdAtMs).map(order=>({orderId:order.orderId,market:order.market,side:order.side,amount:order.amount,baseDelta:order.intent.baseDelta.toString(),limitPrice:order.intent.limitPrice.toString(),maxFee:order.intent.maxFee.toString(),nonce:order.intent.nonce.toString(),expiresAtMs:Number(order.intent.deadline)*1_000,status:order.status,transactionHash:order.transactionHash,lastError:order.lastError}))};});
   app.post("/v1/orders/:orderId/cancel/prepare",async(request,reply)=>{const order=restingOrders.get((request.params as {orderId:string}).orderId);if(!order||!order.userSignature)return reply.code(404).send({error:"order not found"});const intent:CancelIntent={account:order.intent.account,nonce:order.intent.nonce,deadline:BigInt(await chainTimestamp()+120)};return {domain:{...domain,chainId:domain.chainId.toString()},types:cancelTypes,intent:cancelToWire(intent)};});
@@ -277,7 +303,7 @@ export function buildApi(options: ApiOptions = {}) {
     try { intent=makeIntent(quote,versions,parsed.data.account,parsed.data.nonce);let signer:string|undefined;try{signer=recoverIntentSigner(domain,intent,parsed.data.userSignature);}catch{}let accountAuthorized=signer===intent.account;if(!accountAuthorized&&provider&&await provider.getCode(intent.account)!=="0x"){const wallet=new Contract(intent.account,["function isValidSignature(bytes32,bytes) view returns(bytes4)"],provider);accountAuthorized=await wallet.isValidSignature(hashIntent(domain,intent),parsed.data.userSignature,{blockTag:versions.blockNumber}).then((value:string)=>value.toLowerCase()==="0x1626ba7e").catch(()=>false);}if(!accountAuthorized){if(!clearing||!signer)throw new Error();const session=await clearing.sessions(signer,{blockTag:versions.blockNumber});if(getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<intent.maxFee)throw new Error();} }
     catch{return reply.code(401).send({error:"invalid user signature"});}
     prune();const reportExpiry=quoteReports.get(quote.quoteId)?.validUntil??versions.blockTimestamp+30,approvalDeadline=BigInt(Math.min(Number(intent.deadline),versions.blockTimestamp+30,reportExpiry));
-    if(!pending.some(item=>item.quoteId===quote.quoteId))pending.push({quoteId:quote.quoteId,market:quote.market,delta:quote.delta,expiresAtMs:Number(approvalDeadline)*1_000});
+    if(!pending.some(item=>item.quoteId===quote.quoteId)){pending.push({quoteId:quote.quoteId,market:quote.market,delta:quote.delta,expiresAtMs:Number(approvalDeadline)*1_000});marketReadCache=undefined;scheduleStreamPublish();}
     const intentHash=hashIntent(domain,intent);
     let report=quoteReports.get(quote.quoteId)?.report??"0x";
     if(provider&&report==="0x"){
@@ -313,7 +339,7 @@ export function buildApi(options: ApiOptions = {}) {
         const collateral=await clearing.collateralOf(intent.account); const position=await clearing.positionOf(intent.account,intent.market);
         transaction={hash:receipt.hash,blockNumber:receipt.blockNumber,collateral:collateral.toString(),position:{size:position.size.toString(),entryPrice:position.entryPrice.toString(),lastFundingIndex:position.lastFundingIndex.toString()}};
         journal?.prepare("UPDATE commitments SET status='included', updated_ms=? WHERE quote_id=?").run(Date.now(),quote.quoteId);
-        settled[quote.market]+=quote.delta; const index=pending.findIndex(item=>item.quoteId===quote.quoteId); if(index>=0)pending.splice(index,1);
+        settled[quote.market]+=quote.delta; const index=pending.findIndex(item=>item.quoteId===quote.quoteId); if(index>=0)pending.splice(index,1);marketReadCache=undefined;scheduleStreamPublish();
       } catch(error){return reply.code(409).send({error:error instanceof Error?`chain submission failed: ${error.message}`:"chain submission failed"});}
     }
     return {domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),approvals:selected,quote:quoteToWire(quote),transaction};
@@ -336,7 +362,7 @@ export function buildApi(options: ApiOptions = {}) {
       break;
     }}finally{checkingOrders=false;}
   }
-  app.addHook("onReady",async()=>{await sender?.reconcile();await options.oracleSource?.start?.();orderTimer=setInterval(()=>void checkRestingOrders(),250);orderTimer.unref();});
-  app.addHook("onClose",async()=>{if(orderTimer)clearInterval(orderTimer);await options.oracleSource?.close?.();journal?.close();});
+  app.addHook("onReady",async()=>{await sender?.reconcile();unsubscribeOracle=options.oracleSource?.subscribe?.(()=>scheduleStreamPublish());await options.oracleSource?.start?.();orderTimer=setInterval(()=>void checkRestingOrders(),250);orderTimer.unref();heartbeatTimer=setInterval(()=>{for(const client of marketClients)client.response.write(": heartbeat\n\n");},15_000);heartbeatTimer.unref();});
+  app.addHook("onClose",async()=>{if(orderTimer)clearInterval(orderTimer);if(streamTimer)clearTimeout(streamTimer);if(heartbeatTimer)clearInterval(heartbeatTimer);unsubscribeOracle?.();for(const client of marketClients)client.response.end();await options.oracleSource?.close?.();journal?.close();});
   return app;
 }

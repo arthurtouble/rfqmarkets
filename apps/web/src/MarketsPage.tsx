@@ -22,24 +22,25 @@ export function MarketsPage() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   useEffect(() => {
     const controller = new AbortController();
-    const refresh = async () => {
+    const refresh = async (includeLive=false) => {
       try {
-        const [risk, positions, activity, health, live] = await Promise.all([
+        const [risk, positions, activity, health] = await Promise.all([
           getJson<Risk>(`${INDEXER}/v1/risk?finalized=true`, controller.signal),
           getJson<PublicSnapshot["positions"]>(`${INDEXER}/v1/positions?finalized=true&limit=100`, controller.signal),
           getJson<PublicSnapshot["activity"]>(`${INDEXER}/v1/activity?kind=TradeExecuted&finalized=true&limit=30`, controller.signal),
           getJson<Health>(`${INDEXER}/health`, controller.signal),
-          getJson<MarketSnapshot>(`${API}/v1/markets`, controller.signal),
         ]);
-        setSnapshot({ risk, positions, activity, health, live }); setUpdatedAt(new Date()); setError(null);
+        const live=includeLive?await getJson<MarketSnapshot>(`${API}/v1/markets`,controller.signal):undefined;
+        setSnapshot(current=>({risk,positions,activity,health,live:live??current?.live??({} as MarketSnapshot)})); setUpdatedAt(new Date()); setError(null);
       } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Indexer unavailable"); }
     };
-    void refresh(); const timer = setInterval(refresh, 500);
-    return () => { controller.abort(); clearInterval(timer); };
+    void refresh(true);const indexStream=new EventSource(`${INDEXER}/v1/updates/stream`),marketStream=new EventSource(`${API}/v1/markets/stream`);
+    indexStream.addEventListener("indexed",event=>{try{const update=JSON.parse((event as MessageEvent).data) as {changed?:boolean};if(update.changed)void refresh();}catch{}});marketStream.addEventListener("markets",event=>{try{const live=JSON.parse((event as MessageEvent).data) as MarketSnapshot;setSnapshot(current=>current?{...current,live}:current);}catch{}});
+    return () => { controller.abort();indexStream.close();marketStream.close(); };
   }, []);
 
   if (!snapshot) return <section className="public-dashboard empty"><div className="eyebrow">Chain activity</div><h1>Loading finalized state…</h1>{error && <p>{error}</p>}</section>;
-  const { risk, positions, activity, health } = snapshot;
+  const { risk, positions, activity, health } = snapshot;if(!snapshot.live.markets)return <section className="public-dashboard empty"><div className="eyebrow">Market data</div><h1>Waiting for live prices…</h1></section>;
   return <section className="public-dashboard">
     <div className="dashboard-heading"><div><div className="eyebrow"><i className={health.ok ? "online" : ""} /> Chain-derived · Finalized</div><h1>Market activity</h1><p>Open positions and executions indexed from the public settlement contract.</p></div><div className="block-state"><span>Finalized block</span><strong>{risk.indexedBlock.toLocaleString()}</strong><small>{health.lag === 0 ? "Indexer caught up" : `${health.lag} blocks behind`} · updated {updatedAt?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small></div></div>
     {error && <div className="warning">Last refresh failed: {error}. Showing the last complete snapshot.</div>}

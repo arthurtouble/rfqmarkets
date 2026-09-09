@@ -92,7 +92,16 @@ test("market snapshots expose bid, ask, mid and signed funding without a chain",
   const marketApi=buildApi();await marketApi.ready();
   const response=await marketApi.inject({method:"GET",url:"/v1/markets"});assert.equal(response.statusCode,200,response.body);
   const snapshot=response.json();assert.equal(snapshot.markets.BTC.mid,"100000000000");assert.equal(snapshot.markets.BTC.bid,"99990000000");assert.equal(snapshot.markets.BTC.ask,"100010000000");assert.equal(snapshot.markets.BTC.fundingApr,"0");assert.equal(snapshot.markets.ETH.enabled,true);
+  assert.deepEqual(snapshot.pricing.settled,{BTC:"0",ETH:"0"});assert.deepEqual(snapshot.pricing.pending,[]);assert.equal(snapshot.pricing.maxNotional,"25000000000");
   await marketApi.close();
+});
+
+test("firm quote and unsigned order preparation have bounded admission",async()=>{
+  const bounded=buildApi({maxActiveQuotes:1,maxRestingOrders:1});await bounded.ready();
+  assert.equal((await bounded.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).statusCode,200);
+  const full=await bounded.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"101"}});assert.equal(full.statusCode,409);assert.match(full.body,/capacity/);
+  const payload={account:user.address,market:"ETH",side:"buy",amount:"100",limitPrice:"2000",durationSeconds:3600,nonce:"991",reduceOnly:false};assert.equal((await bounded.inject({method:"POST",url:"/v1/orders/prepare",payload})).statusCode,200);
+  const orderFull=await bounded.inject({method:"POST",url:"/v1/orders/prepare",payload:{...payload,nonce:"992"}});assert.equal(orderFull.statusCode,409);assert.match(orderFull.body,/capacity/);await bounded.close();
 });
 
 test("a durable all-or-none limit order binds size, price, fee, nonce and expiry",async()=>{

@@ -14,7 +14,8 @@ The product is a proposed leveraged perpetual RFQ venue: on-chain USDC collatera
 flowchart TB
     U[React frontend and wallet]
     E[Public edge and independent fallback gateway]
-    API[One active API: pricing, admission, approvals, submission]
+    GW[Stateless regional stream and request gateways]
+    API[One active execution leader: pricing, admission, approvals, submission]
     ST[Warm standby API]
     J[Pending intent and sender journal]
     A[Private approver A]
@@ -30,7 +31,8 @@ flowchart TB
     G[Cold governance and timelock]
     GAS[Bounded gas reserve and refill trigger]
 
-    U --> E --> API
+    U --> E --> GW --> API
+    API -->|Versioned pricing frames| GW
     ST -. Epoch fencing and reconciliation .-> API
     API <--> J
     API <--> A
@@ -66,7 +68,8 @@ The oracle report bundle accompanies applicable settlement/keeper calls for on-c
 | --- | --- | --- |
 | Frontend | React, TypeScript; injected EIP-1193 wallet through ethers | Quotes, generated user limits, exact typed signatures, positions, collateral and transaction state. Never trusted accounting. |
 | Public ingress | Managed edge candidate plus independent fallback | Static delivery, abuse limits and routing; cannot approve trades. Exact vendor configuration pending. |
-| API leader + warm standby | TypeScript, Fastify, HTTP + Server-Sent Events | Pricing, live market/account reads, portfolio admission, reservation, approval collection, gas signing and broadcast in one application. |
+| Public gateways | Stateless regional HTTP + SSE; optional equivalent WebSocket transport | Fan out shared pricing frames and forward one-shot firm requests; hold no settlement authority. |
+| API leader + warm standby | TypeScript, Fastify | Produces pricing frames and serializes firm pricing, portfolio admission, reservations, approval collection, gas signing and broadcast. Only this writer is single-active. |
 | API journal | SQLite baseline candidate for one writer; tested recovery | Pending intents, escaped approvals, reservations, sender nonces and replacements. No second customer balance ledger. |
 | Approvers A/B/C | Minimal isolated services; TypeScript/viem candidate | Each independently verifies the complete deterministic policy and signs identical exact terms with its own key. |
 | Clearing system | Solidity, stable upgradeable proxy; Foundry for tests | Authoritative collateral, positions, funding, settlement, margin, risk, replay and resolution rules. |
@@ -97,7 +100,7 @@ Owner-authorized deposit, withdrawal, cancellation and session revocation bypass
 
 The normal user-facing and generated-intent behavior is specified in [UX-AND-INTENT.md](UX-AND-INTENT.md). Users enter an amount, view the live estimate and click Buy/Sell. Protective intent fields are populated automatically; advanced settings expose slippage and related preferences.
 
-1. Stream size-aware indicative quotes from warm inputs. Browsing reserves no capacity.
+1. Stream one shared market and portfolio-pricing frame. The browser computes the exact-size indication with shared fixed-point code; browsing and typing create no request or reservation. A firm quote is minted only after the click.
 2. User signs a bounded intent: account, market, direction, size, limit, fee ceiling, deadline, nonce and relevant reduce-only/session constraints. Domain binds chain and contract.
 3. The one active API atomically calculates price and reserves portfolio capacity in a short local critical section. It does not wait for remote approvals or chain settlement inside the queue.
 4. Price from shared cumulative inventory cost; splitting wallets does not reset liquidity or size charges. Include fees, hedge cost and bounded inventory adjustments.
@@ -147,7 +150,7 @@ Countries below retain the earlier shortlist, not verified privacy guarantees or
 | Public edge | Managed global service candidate | Primary frontend/ingress; independent fallback avoids sole-edge dependency. |
 | Optional owned Base node | Dedicated separately sized host | Additional data independence; production RPC diversity still needed. |
 
-This concrete recovery layout is ten VPS instances plus managed edge, with an owned node optional as an eleventh. It consolidates application roles, not security boundaries. Development can run locally. Additional warm APIs or dedicated indexer read replicas are demand-driven, not baseline requirements. A provider outage can still pause trading during data/hedge recovery despite an available signer quorum.
+This concrete recovery layout is ten VPS instances plus managed edge, with an owned node optional as an eleventh. It consolidates application roles, not security boundaries. Development can run locally. Stateless stream gateways scale horizontally from the start; only the execution writer and its warm standby are single-active. Dedicated indexer read replicas remain demand-driven. A provider outage can still pause trading during data/hedge recovery despite an available signer quorum.
 
 Origins are hidden from ordinary public ingress, not from providers or every network observer. Limit wallet/IP linkage, logs and retention; isolate admin access and signer deployment credentials; keep backups encrypted with separate recovery controls. Hosting country does not make public chain balances private or remove stablecoin/chain/venue dependencies.
 

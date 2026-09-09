@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { API, INDEXER, base, dollars } from "./config.js";
 import type { AccountState, Market, MarketSnapshot, Quote, RestingOrder, Side, TradeActivity, WalletProvider } from "./types.js";
+import { constructQuote } from "../../../packages/shared/src/pricing.js";
+import { quoteToWire } from "../../../packages/shared/src/wire.js";
 
 const chains = { 1: "Ethereum", 42161: "Arbitrum", 10: "Optimism", 8453: "Base" } as const;
 type QuickSession={account:string;privateKey:string;validUntil:number};
@@ -9,6 +11,13 @@ const signedDollars=(value?:string)=>value===undefined?"—":`${BigInt(value)>0n
 const ratio=(bps?:string|null)=>bps===null||bps===undefined?"—":`${(Number(bps)/100).toFixed(2)}%`;
 const leverage=(bps?:string|null)=>bps===null||bps===undefined?"—":`${(Number(bps)/10_000).toFixed(2)}×`;
 const inputDollars=(value:string)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:2}).format(Number(value));
+const abs=(value:bigint)=>value<0n?-value:value;
+const marginRate=(notional:bigint,initial:boolean)=>notional<=25_000_000_000n?(initial?2_000n:1_200n):notional<=50_000_000_000n?(initial?2_500n:1_500n):notional<=100_000_000_000n?(initial?3_300n:2_000n):10_000n;
+function markAccount(state:AccountState,snapshot:MarketSnapshot|null):AccountState{
+  if(!snapshot)return state;let unrealized=0n,funding=0n,gross=0n,initial=0n,maintenance=0n;const positions={...state.positions};
+  for(const market of ["BTC","ETH"] as Market[]){const position=state.positions[market],size=BigInt(position.size),live=snapshot.markets[market],mark=size>=0n?BigInt(live.bid):BigInt(live.ask),notional=abs(size)*BigInt(live.ask)/10n**18n,pnl=size>0n?abs(size)*(mark-BigInt(position.entryPrice))/10n**18n:size<0n?abs(size)*(BigInt(position.entryPrice)-mark)/10n**18n:0n,accrued=-size*(BigInt(live.projectedFundingIndex)-BigInt(position.lastFundingIndex))/10n**18n;unrealized+=pnl;funding+=accrued;gross+=notional;initial+=notional*marginRate(notional,true)/10_000n;maintenance+=notional*marginRate(notional,false)/10_000n;positions[market]={...position,markPrice:mark.toString(),notional:notional.toString(),unrealizedPnl:pnl.toString(),accruedFunding:accrued.toString()};}
+  const collateral=BigInt(state.collateral),equity=collateral+unrealized+funding,openingEquity=collateral+funding+(unrealized<0n?unrealized:0n);return {...state,blockNumber:snapshot.blockNumber,positions,unrealizedPnl:unrealized.toString(),accruedFunding:funding.toString(),grossNotional:gross.toString(),equity:equity.toString(),openingEquity:openingEquity.toString(),initialMargin:initial.toString(),maintenanceMargin:maintenance.toString(),availableMargin:(openingEquity-initial).toString(),maintenanceBuffer:(equity-maintenance).toString(),marginRatioBps:equity>0n?(maintenance*10_000n/equity).toString():null,effectiveLeverageBps:equity>0n?(gross*10_000n/equity).toString():null,liquidatable:equity<maintenance};
+}
 
 export function TradePage() {
   const [market, setMarket] = useState<Market>("BTC");
@@ -59,29 +68,13 @@ export function TradePage() {
   }
   const randomNonce=()=>BigInt(`0x${[...crypto.getRandomValues(new Uint8Array(32))].map(value => value.toString(16).padStart(2, "0")).join("")}`).toString();
   useEffect(() => {
-    const controller = new AbortController();
-    const refresh = async () => {
-      try {
-        setQuote(await requestQuote(controller.signal));
-        setStatus(current => ["Waiting for wallet…", "Requesting two approvals…", "No browser wallet detected"].includes(current) || current.startsWith("Executed") ? current : "Live estimate");
-      } catch (error) {
-        if (!controller.signal.aborted) { setQuote(null); setStatus(error instanceof Error ? error.message : "Unavailable"); }
-      }
-    };
-    const timer = setTimeout(refresh, 120); const interval = setInterval(refresh, 500);
-    return () => { clearTimeout(timer); clearInterval(interval); controller.abort(); };
-  }, [market, side, amount]);
+    if(!marketSnapshot){setQuote(null);return;}try{const live=marketSnapshot.markets[market],pricing=marketSnapshot.pricing,value=constructQuote({market,side,amount},{market,bid:BigInt(live.bid),ask:BigInt(live.ask),observedAtMs:live.observedAtMs,source:live.source},{BTC:BigInt(pricing.settled.BTC),ETH:BigInt(pricing.settled.ETH)},pricing.pending.map(item=>({market:item.market,delta:BigInt(item.delta)})),Date.now());setQuote({...quoteToWire(value),quoteId:undefined,indicative:true});setStatus(current=>["Waiting for wallet…","Requesting two approvals…","No browser wallet detected"].includes(current)||current.startsWith("Executed")?current:"Live estimate");}catch(error){setQuote(null);setStatus(error instanceof Error?error.message:"Quote unavailable");}
+  }, [marketSnapshot,market,side,amount]);
   useEffect(()=>{
-    let stopped=false;const refresh=()=>fetch(`${API}/v1/markets`).then(response=>response.ok?response.json():Promise.reject()).then(value=>{if(!stopped)setMarketSnapshot(value);}).catch(()=>{});
-    void refresh();
-    if(typeof EventSource!=="undefined"){
-      const stream=new EventSource(`${API}/v1/markets/stream`);stream.addEventListener("markets",event=>{try{setMarketSnapshot(JSON.parse((event as MessageEvent).data));}catch{}});
-      return()=>{stopped=true;stream.close();};
-    }
-    const timer=setInterval(refresh,500);return()=>{stopped=true;clearInterval(timer);};
+    const stream=new EventSource(`${API}/v1/markets/stream`);stream.addEventListener("markets",event=>{try{setMarketSnapshot(JSON.parse((event as MessageEvent).data));}catch{}});return()=>stream.close();
   },[]);
   useEffect(()=>{let stopped=false;fetch(`${API}/v1/dev/wallet`).then(response=>response.ok?response.json():null).then(value=>{if(stopped||!value?.account||!value?.privateKey)return;setLocalPrivateKey(value.privateKey);setAccount(value.account);void refreshAccount(value.account);}).catch(()=>{});return()=>{stopped=true;};},[]);
-  useEffect(()=>{if(!account)return;const timer=setInterval(()=>void refreshAccount(account),2_000);return()=>clearInterval(timer);},[account]);
+  useEffect(()=>{if(!account)return;const stream=new EventSource(`${INDEXER}/v1/updates/stream`);stream.addEventListener("indexed",event=>{try{const update=JSON.parse((event as MessageEvent).data) as {initial?:boolean;reset?:boolean;accounts?:string[]};if(update.initial||update.reset||update.accounts?.some(value=>value.toLowerCase()===account.toLowerCase()))void refreshAccount(account);}catch{}});return()=>stream.close();},[account]);
 
   async function wallet(): Promise<ConnectedWallet> {
     if(account&&localPrivateKey)return {account,privateKey:localPrivateKey};
@@ -110,9 +103,8 @@ export function TradePage() {
     if (!quote) return;
     setStatus("Waiting for wallet…");
     try {
-      const current = quote.expiresAtMs - Date.now() < 1_200 ? await requestQuote() : quote;
-      if (current !== quote) setQuote(current);
       const connected = await wallet();
+      const current=await requestQuote();setQuote(current);
       const nonce = randomNonce();
       const prepared = await post("/v1/prepare", { quoteId: current.quoteId, account: connected.account, nonce });
       let userSignature:string;
@@ -193,7 +185,7 @@ export function TradePage() {
 
   const live=marketSnapshot?.markets[market];
   const emptyPosition=(name:Market)=>({size:"0",entryPrice:"0",markPrice:marketSnapshot?.markets[name].mid??"0",notional:"0",unrealizedPnl:"0",accruedFunding:"0",lastFundingIndex:"0",estimatedLiquidationPrice:null});
-  const shownAccount:AccountState=accountState??{account:account??"",blockNumber:marketSnapshot?.blockNumber??0,collateral:"0",equity:"0",openingEquity:"0",unrealizedPnl:"0",accruedFunding:"0",grossNotional:"0",initialMargin:"0",maintenanceMargin:"0",availableMargin:"0",maintenanceBuffer:"0",marginRatioBps:null,effectiveLeverageBps:null,liquidatable:false,positions:{BTC:emptyPosition("BTC"),ETH:emptyPosition("ETH")}};
+  const shownAccount:AccountState=markAccount(accountState??{account:account??"",blockNumber:marketSnapshot?.blockNumber??0,collateral:"0",equity:"0",openingEquity:"0",unrealizedPnl:"0",accruedFunding:"0",grossNotional:"0",initialMargin:"0",maintenanceMargin:"0",availableMargin:"0",maintenanceBuffer:"0",marginRatioBps:null,effectiveLeverageBps:null,liquidatable:false,positions:{BTC:emptyPosition("BTC"),ETH:emptyPosition("ETH")}},marketSnapshot);
   const quoteAge=quote?Math.max(0,Date.now()-quote.observedAtMs):null;
   return <section className="trading-workspace">
     <article className="trade-card order-ticket">

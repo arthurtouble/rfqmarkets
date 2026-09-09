@@ -46,7 +46,7 @@ Code modules can be separated without creating more servers. The frontend is spl
 
 ## Readiness verdict
 
-The local product is end-to-end enough to validate the interaction model: a user can deposit, request a continuously refreshed quote, sign once, receive a sponsored two-of-three-approved fill, see the resulting public state and drive the hedge loop. Restart-safe sender, signer, index and hedge journals exercise the important persistence boundaries.
+The local product is end-to-end enough to validate the interaction model: a user can deposit, receive a shared live pricing frame, view an exact locally computed indication, request one firm quote on click, sign once, receive a sponsored two-of-three-approved fill, see the resulting public state and drive the hedge loop. Restart-safe sender, signer, index and hedge journals exercise the important persistence boundaries.
 
 “Bulletproof” is not yet a supportable description. The external integrations and adversarial failure modes above materially change security and latency. Real capital must wait for evidence from the testnet, fault-injection and independent-review gates.
 
