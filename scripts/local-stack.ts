@@ -28,7 +28,7 @@ for (let index=0; index<3; index++) {
   await waitForHealth(url,child);writeFileSync(resolve(state,`approver-${index}.pid`),String(child.pid));approverProcesses.push(child);approverConfigs.push({url,token});
 }
 const oracleSource=new CoinbaseMarketDataSource();
-const api = buildApi({approvers:approverConfigs,chainId,verifyingContract,journalPath:resolve(state,"api.sqlite"),oracleSource,hedgeRiskSource,chain:{rpcUrl:deployment.rpcUrl,sponsorPrivateKey:deployment.sponsorPrivateKey,clearingAddress:deployment.clearingAddress,tokenAddress:deployment.tokenAddress,devFund:true,devWallet:deployment.devWallet}});
+const api = buildApi({approvers:approverConfigs,chainId,verifyingContract,journalPath:resolve(state,"api.sqlite"),oracleSource,hedgeRiskSource,publicRpcUrl:deployment.rpcUrl,chain:{rpcUrl:deployment.rpcUrl,sponsorPrivateKey:deployment.sponsorPrivateKey,clearingAddress:deployment.clearingAddress,tokenAddress:deployment.tokenAddress,devFund:true,devWallet:deployment.devWallet}});
 await api.listen({host:"127.0.0.1",port:4100}); servers.push(api);
 const gateway=buildGateway({upstreamUrl:"http://127.0.0.1:4100"});await gateway.listen({host:"127.0.0.1",port:4500});servers.push(gateway);
 console.log("Local RFQ services ready: API :4100; private approvers :4201-4203; indexer :4300; hedge worker :4400; stream gateway :4500");

@@ -33,6 +33,7 @@ Status date: 2026-09-10. This is the promotion record for a capped Base mainnet 
 - [ ] Expose approvers only through authenticated private transport. Deny public ingress and verify the denial externally.
 - [ ] Deploy one active API writer and warm standbys with distinct gas wallets. Rehearse epoch promotion, commitment reconciliation and DNS/edge routing without double submission.
 - [ ] Put the public static UI and stateless SSE gateway behind edge DDoS controls. Keep the direct contract exit interface independently hosted and reproducibly built.
+- [ ] Verify `/v1/config`, health, errors, logs and browser bundles contain no oracle, RPC, signer, hedge or transport credential; configure a separate browser-safe `RFQ_PUBLIC_RPC_URL`.
 - [ ] Put the hedge dashboard and internal documentation behind identity-aware private access. Keep trading credentials out of both browser and dashboard processes.
 - [ ] Alert on oracle age, proof-budget refreshes/failures, approval disagreement, quorum loss, signed-to-inclusion latency, sender ambiguity, gas runway, indexer lag/reorg, hedge gap, venue rejection and capital headroom.
 - [ ] Restore API, approver, sender, indexer and hedge journals from encrypted backups on clean hosts. Record recovery time and reconcile every chain/venue operation.
