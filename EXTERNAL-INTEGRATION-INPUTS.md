@@ -8,18 +8,17 @@ The generated owner identities control disposable testnet-only Safes. They are n
 
 The disposable deployer has been funded. Two 2-of-3 Safes, a self-administered 72-hour timelock, the Pyth adapter, risk library, clearing implementation and transparent proxy are deployed on Base Sepolia. The timelock owns the ProxyAdmin, the emergency Safe has the emergency role, and the temporary timelock bootstrap admin was renounced. Native testnet USDC now exercises maker, insurance and trader deposit custody. See `BASE-SEPOLIA-DEPLOYMENT.md` for addresses and reproducible verification.
 
-## Needed for authenticated live oracle reports
+## Authenticated live oracle reports
 
-Choose one report source and provide its bearer credentials only through the ignored local environment:
+Pyth access for BTC/USD and ETH/USD is configured in the ignored mode-0600 environment and has passed both live transport and on-chain settlement tests. The repository never writes or logs the bearer credential. The remaining alternative is optional:
 
-1. Pyth Core, matching the current deployment: a Pyth/Hermes API key that can fetch BTC/USD and ETH/USD update payloads.
-2. Chainlink Data Streams, requiring:
+1. Chainlink Data Streams, if selected later, requires:
    - API key;
    - user secret;
    - Base Sepolia VerifierProxy address supplied for the subscription;
    - subscribed BTC/USD and ETH/USD feed IDs and their decimals.
 
-Do not paste private credentials into tracked files. `npm run prepare:base-sepolia` creates `base-sepolia.env` with mode `0600`, fills the disposable deployer key and approver addresses, and leaves the external values as explicit placeholders. The file is ignored by Git. The official Base Sepolia USDC address is already pinned and verified by `npm run probe:base-sepolia`.
+Do not put private credentials in tracked files. `npm run prepare:base-sepolia` creates `base-sepolia.env` with mode `0600`, fills the disposable deployer key and approver addresses, and leaves external values as explicit placeholders. The file is ignored by Git. The official Base Sepolia USDC address is already pinned and verified by `npm run probe:base-sepolia`.
 
 Switching to Chainlink requires deploying its adapter and a new clearing proxy or performing a reviewed governance upgrade that supports changing the oracle boundary. The current Pyth deployment must never accept unsigned spot prices as a fallback.
 

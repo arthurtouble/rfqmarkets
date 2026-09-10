@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AbiCoder } from "ethers";
-import { ChainlinkDataStreamsSource, CoinbaseMarketDataSource } from "./oracle.js";
+import { ChainlinkDataStreamsSource, CoinbaseMarketDataSource, PythHermesSource } from "./oracle.js";
 
 const feedId=`0x0003${"11".repeat(30)}`;
 function report(observedAt=1_800_000_000){
@@ -53,4 +53,22 @@ test("publishes upstream WebSocket changes to stream consumers",async()=>{
 test("falls back to Coinbase REST when the WebSocket snapshot is absent",async()=>{
   let calls=0;const source=new CoinbaseMarketDataSource({socketFactory:()=>({readyState:0,send:()=>{},close:()=>{},addEventListener:()=>{}}),fetchImpl:async url=>{calls++;assert.match(String(url),/ETH-USD\/ticker$/);return new Response(JSON.stringify({bid:"3999.10",ask:"4000.20"}),{status:200});}});
   const quote=await source.latest("ETH");assert.equal(calls,1);assert.equal(quote.snapshot.bid,3_999_100_000n);assert.equal(quote.snapshot.ask,4_000_200_000n);
+});
+
+test("authenticates, batches and encodes Pyth Core Hermes updates",async()=>{
+  const now=Math.floor(Date.now()/1_000),btc=`0x${"11".repeat(32)}`,eth=`0x${"22".repeat(32)}`;let calls=0,authorization="";
+  const source=new PythHermesSource({apiKey:"trial-secret",feedIds:{BTC:btc,ETH:eth},fetchImpl:async(_url,init)=>{calls++;authorization=new Headers(init?.headers).get("authorization")??"";return new Response(JSON.stringify({binary:{encoding:"hex",data:["abcd"]},parsed:[{id:btc.slice(2),price:{price:"10000000000000",conf:"1000000000",expo:-8,publish_time:now}},{id:eth.slice(2),price:{price:"300000000000",conf:"100000000",expo:-8,publish_time:now}}]}));}});
+  const [btcQuote,ethQuote]=await Promise.all([source.latest("BTC"),source.latest("ETH")]);assert.equal(calls,1);assert.equal(authorization,"Bearer trial-secret");assert.equal(btcQuote.snapshot.bid,99_990_000_000n);assert.equal(btcQuote.snapshot.ask,100_010_000_000n);assert.equal(ethQuote.snapshot.source,"pyth-core");
+  const [market,updates]=AbiCoder.defaultAbiCoder().decode(["uint8","bytes[]"],btcQuote.report);assert.equal(market,0n);assert.deepEqual([...updates],["0xabcd"]);
+});
+
+test("streams authenticated Pyth updates to subscribers",async()=>{
+  const now=Math.floor(Date.now()/1_000),btc=`0x${"55".repeat(32)}`,eth=`0x${"66".repeat(32)}`,body={binary:{encoding:"hex",data:["abcd"]},parsed:[{id:btc.slice(2),price:{price:"8000000000000",conf:"100000000",expo:-8,publish_time:now}},{id:eth.slice(2),price:{price:"250000000000",conf:"10000000",expo:-8,publish_time:now}}]};let authorization="";
+  const source=new PythHermesSource({apiKey:"trial-secret",feedIds:{BTC:btc,ETH:eth},fetchImpl:async(_url,init)=>{authorization=new Headers(init?.headers).get("authorization")??"";let controller:ReadableStreamDefaultController<Uint8Array>;const stream=new ReadableStream<Uint8Array>({start(value){controller=value;value.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(body)}\n\n`));}});init?.signal?.addEventListener("abort",()=>controller.close());return new Response(stream,{headers:{"content-type":"text/event-stream"}});}});
+  const changed=new Promise<string>(resolve=>source.subscribe(resolve));await source.start();assert.equal(await changed,"BTC");assert.equal(authorization,"Bearer trial-secret");assert.equal((await source.latest("ETH")).snapshot.source,"pyth-core");await source.close();
+});
+
+test("rejects stale or incomplete Pyth Hermes observations",async()=>{
+  const id=`0x${"33".repeat(32)}`,stale=Math.floor(Date.now()/1_000)-30,fetchImpl=async()=>new Response(JSON.stringify({binary:{encoding:"hex",data:["abcd"]},parsed:[{id,price:{price:"100000000",conf:"1",expo:-8,publish_time:stale}}]}));
+  const source=new PythHermesSource({apiKey:"trial-secret",feedIds:{BTC:id,ETH:`0x${"44".repeat(32)}`},fetchImpl});await assert.rejects(source.latest("BTC"),/observation rejected|feed missing/);
 });

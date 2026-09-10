@@ -14,6 +14,7 @@ export const clearingStateAbi = [
   "function policyVersion() view returns(uint64)",
   "function paused() view returns(bool)",
   "function resolutionRequired() view returns(bool)",
+  "function oracle() view returns(address)",
   "function refreshOracle(bytes) payable returns((uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil))",
 ] as const;
 

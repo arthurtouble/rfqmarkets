@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { DatabaseSync } from "node:sqlite";
-import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256 } from "ethers";
+import { AbiCoder, Contract, Interface, JsonRpcProvider, Wallet, getAddress, keccak256, toBeHex } from "ethers";
 import { z } from "zod";
 import { clearingApproverAbi } from "../../../packages/shared/src/abi.js";
 import { DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, recoverIntentSigner, type MakerApproval, type SigningDomain, type TradeIntent } from "../../../packages/shared/src/eip712.js";
@@ -19,7 +19,7 @@ const requestSchema=z.object({
   oracleAgeMs:z.number().nonnegative(),
 });
 
-export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; maxFutureSeconds?:number; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]};hedgeRisk?:{url:string;token:string;maxAgeMs?:number} }
+export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; maxFutureSeconds?:number; oracleMode?:"local"|"chainlink"|"pyth"; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]};hedgeRisk?:{url:string;token:string;maxAgeMs?:number} }
 
 export function buildApprover(options:ApproverOptions) {
   const app=Fastify({logger:false,bodyLimit:16_384}); const wallet=new Wallet(options.privateKey); const database=new DatabaseSync(options.databasePath);
@@ -57,12 +57,11 @@ export function buildApprover(options:ApproverOptions) {
     if(input.report!=="0x"){
       try {
         if(keccak256(input.report)!==approval.oracleReportHash)return reply.code(409).send({error:"oracle hash mismatch"});
-        if(options.dataStreams){const observation=decodeStreamsV3Envelope(input.report,options.dataStreams.feedIds[market],options.dataStreams.feedDecimals[market]);reportObservation={market:BigInt(market),bid:observation.bid,ask:observation.ask,observedAt:BigInt(observation.observedAt),validUntil:BigInt(observation.validUntil)};}
+        if(options.oracleMode==="pyth"){const [reportMarket]=AbiCoder.defaultAbiCoder().decode(["uint8","bytes[]"],input.report);if(reportMarket!==BigInt(market))throw new Error("Pyth market mismatch");}
+        else if(options.dataStreams){const observation=decodeStreamsV3Envelope(input.report,options.dataStreams.feedIds[market],options.dataStreams.feedDecimals[market]);reportObservation={market:BigInt(market),bid:observation.bid,ask:observation.ask,observedAt:BigInt(observation.observedAt),validUntil:BigInt(observation.validUntil)};}
         else [reportObservation]=AbiCoder.defaultAbiCoder().decode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],input.report);
-        const observation=reportObservation;if(!observation)throw new Error("missing oracle observation");
-        const nowSeconds=BigInt(Math.floor(now/1_000));
-        const wallTimeInvalid=!clearing&&(observation.observedAt>nowSeconds+BigInt(options.maxFutureSeconds??5)||nowSeconds>observation.validUntil||(observation.observedAt<=nowSeconds&&nowSeconds-observation.observedAt>8n));
-        if(observation.market!==BigInt(market)||observation.bid!==BigInt(input.quote.bid)||observation.ask!==BigInt(input.quote.ask)||observation.bid<=0n||observation.ask<observation.bid||wallTimeInvalid)return reply.code(409).send({error:"oracle report rejected"});
+        const observation=reportObservation;if(options.oracleMode!=="pyth"&&!observation)throw new Error("missing oracle observation");
+        if(observation){const nowSeconds=BigInt(Math.floor(now/1_000)),wallTimeInvalid=!clearing&&(observation.observedAt>nowSeconds+BigInt(options.maxFutureSeconds??5)||nowSeconds>observation.validUntil||(observation.observedAt<=nowSeconds&&nowSeconds-observation.observedAt>8n));if(observation.market!==BigInt(market)||observation.bid!==BigInt(input.quote.bid)||observation.ask!==BigInt(input.quote.ask)||observation.bid<=0n||observation.ask<observation.bid||wallTimeInvalid)return reply.code(409).send({error:"oracle report rejected"});}
       } catch{return reply.code(409).send({error:"oracle report rejected"});}
     }
     if(clearing&&provider){
@@ -79,12 +78,17 @@ export function buildApprover(options:ApproverOptions) {
         ]);
         if(secondaryProvider&&(!secondaryBlock||secondaryBlock.hash!==block?.hash))return reply.code(409).send({error:"rpc divergence"});
         if(!block||BigInt(epoch)!==approval.leaderEpoch||BigInt(setVersion)!==approval.signerSetVersion||BigInt(policy)!==approval.policyVersion||paused||resolution||!member)return reply.code(409).send({error:"independent chain policy rejected"});
+        if(options.oracleMode==="pyth"){
+          const oracleAddress=await clearing.oracle({blockTag:blockNumber}),adapterInterface=new Interface(["function updateFee(bytes) view returns(uint256)","function verify(bytes) payable returns((uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil))"]),adapter=new Contract(oracleAddress,adapterInterface,provider),fee=await adapter.updateFee(input.report,{blockTag:blockNumber});
+          const raw=await provider.send("eth_call",[{to:oracleAddress,from:domain.verifyingContract,data:adapterInterface.encodeFunctionData("verify",[input.report]),value:toBeHex(fee)},toBeHex(blockNumber)]),[value]=adapterInterface.decodeFunctionResult("verify",raw);reportObservation={market:BigInt(value.market),bid:BigInt(value.bid),ask:BigInt(value.ask),observedAt:BigInt(value.observedAt),validUntil:BigInt(value.validUntil)};
+          if(reportObservation.market!==BigInt(market)||reportObservation.bid!==BigInt(input.quote.bid)||reportObservation.ask!==BigInt(input.quote.ask))return reply.code(409).send({error:"oracle report rejected"});
+        }
         if(executionNotional>(BigInt(marketLimitWord)&((1n<<128n)-1n)))return reply.code(409).send({error:"market trade limit exceeded"});
         if(intent.deadline<=BigInt(block.timestamp)||approval.deadline<=BigInt(block.timestamp)||approval.deadline>BigInt(block.timestamp+31+(options.maxFutureSeconds??5)))return reply.code(409).send({error:"chain-time expiry rejected"});
         if(!accountSignature&&(!session||getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<approval.fee||BigInt(session.usedNotional)+notional>BigInt(session.maxCumulativeNotional)||notional>BigInt(session.maxTradeNotional)))return reply.code(409).send({error:"user authorization rejected"});
         const selected=market===0?btc:eth;if(!selected.enabled)return reply.code(409).send({error:"market disabled"});
         if(options.hedgeRisk){let risk:HedgeRiskSnapshot;try{const response=await fetch(options.hedgeRisk.url,{headers:{authorization:`Bearer ${options.hedgeRisk.token}`},signal:AbortSignal.timeout(500)});if(!response.ok)throw new Error();risk=await response.json() as HedgeRiskSnapshot;}catch{return reply.code(503).send({error:"hedge health unavailable"});}const reported=risk.markets[input.quote.market]?.mode??"reduce_only",mode=!risk.healthy||!risk.observedAtMs||now-risk.observedAtMs>(options.hedgeRisk.maxAgeMs??3_000)?"reduce_only":reported,admission=hedgeAdmission(mode,BigInt(selected.aggregateBase),intent.baseDelta,BigInt(marketLimitWord)&((1n<<128n)-1n));if(!admission.allowed)return reply.code(409).send({error:"hedge risk requires exposure reduction"});if(executionNotional>admission.maxTradeNotional)return reply.code(409).send({error:"guarded hedge limit exceeded"});}
-        if(reportObservation&&(reportObservation.observedAt>BigInt(block.timestamp)||BigInt(block.timestamp)>reportObservation.validUntil||BigInt(block.timestamp)-reportObservation.observedAt>8n))return reply.code(409).send({error:"chain-time oracle rejected"});
+        if(reportObservation&&(reportObservation.observedAt>BigInt(block.timestamp+(options.maxFutureSeconds??5))||BigInt(block.timestamp)>reportObservation.validUntil||(reportObservation.observedAt<=BigInt(block.timestamp)&&BigInt(block.timestamp)-reportObservation.observedAt>8n)))return reply.code(409).send({error:"chain-time oracle rejected"});
         const mark=(BigInt(input.quote.bid)+BigInt(input.quote.ask))/2n;
         const marketNotional=(state:typeof btc,currentMark?:bigint)=>BigInt(state.aggregateBase)*(currentMark??(BigInt(state.lastBid)+BigInt(state.lastAsk))/2n)/BASE;
         const exposure:Exposure={BTC:marketNotional(btc,market===0?mark:undefined),ETH:marketNotional(eth,market===1?mark:undefined)};

@@ -25,10 +25,12 @@ export function buildIndexer(options:IndexerOptions){
     const head=await provider.getBlockNumber();let row=db.prepare("SELECT number,hash FROM blocks ORDER BY number DESC LIMIT 1").get() as {number:number;hash:string}|undefined;
     let rebuilt=false;if(row){const canonical=await provider.getBlock(row.number);if(!canonical||canonical.hash!==row.hash){reset();row=undefined;rebuilt=true;}}
     const from=Math.max(options.startBlock??0,(row?.number??((options.startBlock??0)-1))+1);if(from>head){await advanceFinalized(head);return {accounts:new Set<string>(),reset:rebuilt};}
-    const logs=await provider.getLogs({address:options.clearingAddress,fromBlock:from,toBlock:head});const affected=new Map<string,{tx:string;block:number}>();
-    for(let number=from;number<=head;number++){const block=await provider.getBlock(number);if(block)db.prepare("INSERT OR REPLACE INTO blocks VALUES(?,?,?,?)").run(number,block.hash,block.parentHash,block.timestamp);}
-    for(const log of logs){let parsed;try{parsed=iface.parseLog(log);}catch{continue}if(!parsed)continue;const block=db.prepare("SELECT timestamp FROM blocks WHERE number=?").get(log.blockNumber) as {timestamp:number};const account=parsed.args.account?getAddress(parsed.args.account):null;const market=parsed.args.market===undefined?null:Number(parsed.args.market);const payload=JSON.stringify(parsed.args.toObject(),(_,value)=>typeof value==="bigint"?value.toString():value);
-      db.prepare("INSERT OR REPLACE INTO activity VALUES(?,?,?,?,?,?,?,?,?)").run(log.transactionHash,log.index,log.blockNumber,log.blockHash,block.timestamp,parsed.name,account,market,payload);if(account)affected.set(account,{tx:log.transactionHash,block:log.blockNumber});
+    // Public and managed RPCs commonly cap eth_getLogs ranges. Advance through
+    // bounded checkpoints and fetch headers only for blocks that carry events.
+    const to=Math.min(head,from+9_999),logs=await provider.getLogs({address:options.clearingAddress,fromBlock:from,toBlock:to}),affected=new Map<string,{tx:string;block:number}>(),numbers=[...new Set([...logs.map(log=>log.blockNumber),to])],headers=await Promise.all(numbers.map(number=>provider.getBlock(number))),timestamps=new Map<number,number>();
+    for(const block of headers)if(block){db.prepare("INSERT OR REPLACE INTO blocks VALUES(?,?,?,?)").run(block.number,block.hash,block.parentHash,block.timestamp);timestamps.set(block.number,block.timestamp);}
+    for(const log of logs){let parsed;try{parsed=iface.parseLog(log);}catch{continue}if(!parsed)continue;const timestamp=timestamps.get(log.blockNumber);if(timestamp===undefined)throw new Error(`missing block ${log.blockNumber}`);const account=parsed.args.account?getAddress(parsed.args.account):null;const market=parsed.args.market===undefined?null:Number(parsed.args.market);const payload=JSON.stringify(parsed.args.toObject(),(_,value)=>typeof value==="bigint"?value.toString():value);
+      db.prepare("INSERT OR REPLACE INTO activity VALUES(?,?,?,?,?,?,?,?,?)").run(log.transactionHash,log.index,log.blockNumber,log.blockHash,timestamp,parsed.name,account,market,payload);if(account)affected.set(account,{tx:log.transactionHash,block:log.blockNumber});
     }
     for(const [account,event] of affected)await updateAccount(account,event.block,event.tx,"accounts",liveRisk);
     await advanceFinalized(head);

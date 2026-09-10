@@ -19,7 +19,7 @@ Both Safes have three independent disposable owners and a 2-of-3 threshold. The 
 
 The clearing contract currently holds 15 USDC of maker backing, 5 USDC of insurance, and 10 USDC deposited for the disposable trader `0x1026b5f8CF4640613B625ECa70b295FfE36E663A`. These deliberately small testnet balances verify custody paths; they are not economic capitalization.
 
-The oracle adapter pins Pyth Core BTC/USD and ETH/USD feed IDs and fails closed. It cannot execute live trades until the API supplies authenticated Pyth update payloads, or the deployment is replaced with a credentialed Chainlink Data Streams adapter.
+The oracle adapter pins Pyth Core BTC/USD and ETH/USD feed IDs and fails closed. The quote API now consumes the authenticated upgraded Hermes endpoint over server-sent events, keeps the credential server-side, embeds the latest signed update bundle in each quote, and falls back to a coalesced authenticated REST fetch if its stream cache is absent. Approvers independently simulate the signed payload at the adapter boundary and the clearing contract verifies it again during settlement.
 
 ## Repeatable commands
 
@@ -37,8 +37,12 @@ npm run deploy:base-sepolia
 npm run verify:base-sepolia
 npm run fund:base-sepolia
 npm run bootstrap:base-sepolia-user
+npm run smoke:base-sepolia-pyth
+npm run smoke:base-sepolia-e2e
 ```
 
 The funding and bootstrap commands are idempotent and wait for expected RPC state after mined transactions. Verification checks bytecode, clearing roles, the exact oracle/feed configuration, all three approvers, both Safe owner sets and thresholds, the timelock delay and self-administration, and ProxyAdmin ownership.
 
-The Pyth and Chainlink data-access credentials are revocable service secrets rather than settlement authority. They belong only on the quote API. Approver and frontend processes must never receive them.
+`smoke:base-sepolia-pyth` submits fresh signed BTC and ETH updates through the deployed adapter. `smoke:base-sepolia-e2e` executes a 1 USDC signed RFQ with a real 2-of-3 approver quorum and sponsored Base Sepolia settlement. The Pyth and Chainlink data-access credentials are revocable service secrets rather than settlement authority. They belong only on the quote API. Approver and frontend processes never receive them.
+
+To run the complete testnet-backed service topology locally, source `base-sepolia.env` and run `npm run dev:testnet-services`. The default testnet runner uses PublicNode for approver reads and Base's public RPC as a cross-check. Set `RFQ_APPROVER_RPC_URLS` and `RFQ_APPROVER_SECONDARY_RPC_URLS` to comma-separated, independently operated endpoints before reliability or independence testing; public endpoints are rate-limited and do not constitute production infrastructure.

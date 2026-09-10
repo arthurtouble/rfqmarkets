@@ -10,6 +10,7 @@ export interface OracleSource {latest(market:OracleMarket):Promise<OracleQuote>;
 interface ReportStream {on(event:"report",listener:(report:Report)=>void):this;connect():Promise<void>;close():Promise<void>}
 interface LatestReportClient {getLatestReport(feedId:string):Promise<Report>;createStream?(feedIds:string[]):ReportStream}
 export interface ChainlinkSourceOptions {apiKey:string;userSecret:string;endpoint:string;wsEndpoint:string;feedIds:Record<OracleMarket,string>;feedDecimals:Record<OracleMarket,number>;timeoutMs?:number;client?:LatestReportClient}
+export interface PythHermesSourceOptions {apiKey:string;endpoint?:string;feedIds:Record<OracleMarket,string>;timeoutMs?:number;cacheMs?:number;reconnectMs?:number;fetchImpl?:typeof fetch}
 type SocketLike={readyState:number;send(data:string):void;close():void;addEventListener(type:"open"|"message"|"close"|"error",listener:(event:any)=>void):void};
 export interface CoinbaseSourceOptions {endpoint?:string;restEndpoint?:string;staleMs?:number;fetchImpl?:typeof fetch;socketFactory?:(url:string)=>SocketLike;reconnectMs?:number}
 
@@ -81,5 +82,68 @@ export class ChainlinkDataStreamsSource implements OracleSource{
     const active=this.inFlight[market];if(active)return active;
     const request=(async()=>{const quote=this.normalize(market,await this.client.getLatestReport(this.options.feedIds[market]));this.cached[market]=quote;return quote;})().finally(()=>{delete this.inFlight[market]});
     this.inFlight[market]=request;return request;
+  }
+}
+
+type HermesPrice={id:string;price:{price:string;conf:string;expo:number;publish_time:number}};
+type HermesResponse={binary?:{encoding?:string;data?:string[]};parsed?:HermesPrice[]};
+
+export class PythHermesSource implements OracleSource{
+  private cached:Partial<Record<OracleMarket,OracleQuote>>={};
+  private fetchedAtMs=0;
+  private inFlight?:Promise<void>;
+  private streamAbort?:AbortController;
+  private streamTask?:Promise<void>;
+  private stopped=true;
+  private listeners=new Set<OracleListener>();
+  private recentMove:Partial<Record<OracleMarket,{mid:bigint;bps:number}>>={};
+  constructor(private options:PythHermesSourceOptions){
+    const endpoint=options.endpoint??"https://pyth.dourolabs.app/hermes";
+    if(!endpoint.startsWith("https://"))throw new Error("Pyth Hermes endpoint must use TLS");
+    if(!options.apiKey)throw new Error("Pyth Hermes API key is required");
+    for(const feed of Object.values(options.feedIds))if(!/^0x[0-9a-fA-F]{64}$/.test(feed))throw new Error("invalid Pyth feed ID");
+  }
+  private scale(value:bigint,exponent:number,roundUp:boolean){
+    const scale=exponent+6;if(scale<-18||scale>18)throw new Error("unsupported Pyth exponent");
+    if(scale>=0)return value*10n**BigInt(scale);
+    const divisor=10n**BigInt(-scale);return roundUp?(value+divisor-1n)/divisor:value/divisor;
+  }
+  private accept(body:HermesResponse){
+    const raw=body.binary?.data;
+    if(body.binary?.encoding!=="hex"||!raw?.length||!body.parsed?.length)throw new Error("Pyth Hermes response was incomplete");
+    const updates=raw.map(value=>`0x${value.replace(/^0x/,"")}`),now=Math.floor(Date.now()/1_000),changed:OracleMarket[]=[];
+    for(const market of ["BTC","ETH"] as const){
+      const feed=body.parsed.find(item=>item.id.toLowerCase().replace(/^0x/,"")===this.options.feedIds[market].toLowerCase().replace(/^0x/,""));
+      if(!feed)continue;
+      if(!Number.isInteger(feed.price.expo)||!Number.isInteger(feed.price.publish_time))throw new Error(`Pyth ${market} feed invalid`);
+      const center=BigInt(feed.price.price),confidence=BigInt(feed.price.conf),observedAt=feed.price.publish_time;
+      if(center<=0n||confidence<0n||confidence>=center||observedAt>now+2||now-observedAt>10)throw new Error(`Pyth ${market} observation rejected`);
+      const bid=this.scale(center-confidence,feed.price.expo,false),ask=this.scale(center+confidence,feed.price.expo,true),mid=(bid+ask)/2n,prior=this.recentMove[market],move=prior&&prior.mid>0n?Number((mid>prior.mid?mid-prior.mid:prior.mid-mid)*10_000n/prior.mid):0,volatilityBps=Math.max(move,(prior?.bps??0)*.92);this.recentMove[market]={mid,bps:volatilityBps};
+      const validUntil=observedAt+15,marketId=market==="BTC"?0:1,report=AbiCoder.defaultAbiCoder().encode(["uint8","bytes[]"],[marketId,updates]);
+      this.cached[market]={snapshot:{market,bid,ask,observedAtMs:observedAt*1_000,source:"pyth-core",volatilityBps},report,validUntil};changed.push(market);
+    }
+    this.fetchedAtMs=Date.now();return changed;
+  }
+  private async refresh(){
+    const endpoint=(this.options.endpoint??"https://pyth.dourolabs.app/hermes").replace(/\/$/,"");
+    const url=new URL(`${endpoint}/v2/updates/price/latest`);for(const feed of Object.values(this.options.feedIds))url.searchParams.append("ids[]",feed);
+    const response=await (this.options.fetchImpl??fetch)(url,{headers:{authorization:`Bearer ${this.options.apiKey}`,accept:"application/json"},signal:AbortSignal.timeout(this.options.timeoutMs??2_500)});
+    if(!response.ok)throw new Error(`Pyth Hermes returned ${response.status}`);
+    const changed=this.accept(await response.json() as HermesResponse);if(changed.length!==2)throw new Error("Pyth Hermes response was incomplete");
+  }
+  private async stream(signal:AbortSignal){
+    const endpoint=(this.options.endpoint??"https://pyth.dourolabs.app/hermes").replace(/\/$/,"");const url=new URL(`${endpoint}/v2/updates/price/stream`);for(const feed of Object.values(this.options.feedIds))url.searchParams.append("ids[]",feed);url.searchParams.set("parsed","true");url.searchParams.set("encoding","hex");
+    const response=await (this.options.fetchImpl??fetch)(url,{headers:{authorization:`Bearer ${this.options.apiKey}`,accept:"text/event-stream"},signal});if(!response.ok||!response.body)throw new Error(`Pyth Hermes stream returned ${response.status}`);
+    const reader=response.body.getReader(),decoder=new TextDecoder();let buffer="";
+    while(!signal.aborted){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});for(;;){const boundary=buffer.indexOf("\n\n");if(boundary<0)break;const event=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);const data=event.split("\n").filter(line=>line.startsWith("data:")).map(line=>line.slice(5).trim()).join("\n");if(!data)continue;for(const market of this.accept(JSON.parse(data) as HermesResponse))for(const listener of this.listeners)listener(market);}}
+  }
+  async start(){if(this.streamTask)return;this.stopped=false;this.streamAbort=new AbortController();const signal=this.streamAbort.signal;this.streamTask=(async()=>{while(!this.stopped){try{await this.stream(signal);}catch{if(signal.aborted)break;}if(!this.stopped)await new Promise(resolve=>setTimeout(resolve,this.options.reconnectMs??1_000));}})().finally(()=>{this.streamTask=undefined;});}
+  subscribe(listener:OracleListener){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
+  async close(){this.stopped=true;this.streamAbort?.abort();this.streamAbort=undefined;await this.streamTask?.catch(()=>{});}
+  status(){const now=Date.now();return {source:"pyth-core",transport:this.streamTask?"authenticated-sse":"authenticated-rest",agesMs:{BTC:this.cached.BTC?now-this.cached.BTC.snapshot.observedAtMs:null,ETH:this.cached.ETH?now-this.cached.ETH.snapshot.observedAtMs:null}};}
+  async latest(market:OracleMarket){
+    const cached=this.cached[market],now=Date.now();if(cached&&now-this.fetchedAtMs<=(this.options.cacheMs??500)&&cached.validUntil*1_000>now)return cached;
+    if(!this.inFlight)this.inFlight=this.refresh().finally(()=>{this.inFlight=undefined;});await this.inFlight;
+    const value=this.cached[market];if(!value)throw new Error(`Pyth ${market} market data unavailable`);return value;
   }
 }
