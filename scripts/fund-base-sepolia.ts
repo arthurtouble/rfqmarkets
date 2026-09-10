@@ -6,7 +6,18 @@ import { loadDeploymentConfig } from "./deployment-config.js";
 const config=loadDeploymentConfig(process.env),deployment=JSON.parse(readFileSync(resolve(process.env.RFQ_BASE_SEPOLIA_DEPLOYMENT_FILE??".local-state/base-sepolia-deployment.json"),"utf8")) as {contracts:{clearingProxy:string}};
 const provider=new JsonRpcProvider(config.rpcUrl),signer=new Wallet(config.deployerKey,provider),token=new Contract(config.usdc,["function balanceOf(address) view returns(uint256)","function allowance(address,address) view returns(uint256)","function approve(address,uint256) returns(bool)"],signer),clearing=new Contract(deployment.contracts.clearingProxy,["function makerBacking() view returns(uint256)","function insuranceBalance() view returns(uint256)","function fundMaker(uint256)","function fundInsurance(uint256)"],signer);
 const makerTarget=parseUnits(process.env.RFQ_TESTNET_MAKER_USDC??"15",6),insuranceTarget=parseUnits(process.env.RFQ_TESTNET_INSURANCE_USDC??"5",6),maker=await clearing.makerBacking() as bigint,insurance=await clearing.insuranceBalance() as bigint,makerDelta=makerTarget>maker?makerTarget-maker:0n,insuranceDelta=insuranceTarget>insurance?insuranceTarget-insurance:0n,total=makerDelta+insuranceDelta,balance=await token.balanceOf(signer.address) as bigint;
-if(balance<total)throw new Error(`deployer needs ${total-balance} more USDC micro-units`);if(total>0n&&await token.allowance(signer.address,deployment.contracts.clearingProxy)<total)await (await token.approve(deployment.contracts.clearingProxy,total)).wait();if(makerDelta>0n)await (await clearing.fundMaker(makerDelta)).wait();if(insuranceDelta>0n)await (await clearing.fundInsurance(insuranceDelta)).wait();
+if(balance<total)throw new Error(`deployer needs ${total-balance} more USDC micro-units`);
+if(total>0n&&await token.allowance(signer.address,deployment.contracts.clearingProxy)<total){
+  await (await token.approve(deployment.contracts.clearingProxy,total)).wait();
+  let visible=false;
+  for(let attempt=0;attempt<20&&!visible;attempt++){
+    const freshToken=new Contract(config.usdc,["function allowance(address,address) view returns(uint256)"],new JsonRpcProvider(config.rpcUrl));
+    visible=BigInt(await freshToken.allowance(signer.address,deployment.contracts.clearingProxy))>=total;
+    if(!visible)await new Promise(resolve=>setTimeout(resolve,1_000));
+  }
+  if(!visible)throw new Error("USDC approval mined but was not observable after 20 seconds");
+}
+if(makerDelta>0n)await (await clearing.fundMaker(makerDelta)).wait();if(insuranceDelta>0n)await (await clearing.fundInsurance(insuranceDelta)).wait();
 
 let result:{makerBacking:bigint;insuranceBalance:bigint;deployerUsdc:bigint}|undefined;
 for(let attempt=0;attempt<20;attempt++){

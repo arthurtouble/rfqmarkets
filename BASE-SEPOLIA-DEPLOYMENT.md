@@ -60,6 +60,7 @@ npm run deploy:base-sepolia-iteration
 npm run upgrade:base-sepolia-iteration
 npm run verify:base-sepolia-iteration
 npm run fund:base-sepolia-iteration
+npm run bootstrap:base-sepolia-iteration-user
 npm run smoke:base-sepolia-iteration-pyth
 npm run smoke:base-sepolia-iteration-e2e
 npm run smoke:base-sepolia-iteration-hedge-e2e
