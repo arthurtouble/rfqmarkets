@@ -14,7 +14,8 @@ import { hedgeAdmission, type HedgeRiskSnapshot, type HedgeRiskSource } from "..
 import { LimitTriggerBook } from "./limit-book.js";
 import { ExpiryIndex, PendingExposureBook } from "./bounded-state.js";
 import { RuntimeMetrics } from "./metrics.js";
-import { FlowRiskTracker } from "./flow-risk.js";
+import { FlowRiskTracker, type FlowFill } from "./flow-risk.js";
+import { ShadowModelTelemetry } from "./shadow-model.js";
 
 export interface ApiOptions {
   prices?: Record<"BTC" | "ETH", PriceSnapshot>;
@@ -58,7 +59,8 @@ const YEAR=365n*24n*60n*60n,RATE=1_000_000_000_000n,DEFAULT_TRADE_LIMIT=1_000_00
 
 function abs(value:bigint){return value<0n?-value:value;}
 function decodeLimits(word:unknown){const value=BigInt(word as bigint);return {maxTradeNotional:value&((1n<<128n)-1n),maxMarketNotional:value>>128n};}
-function quoteSpread(snapshot:PriceSnapshot,riskMode:"normal"|"guarded"|"reduce_only"="normal",toxicityScoreBps=0){return adaptiveSpread({volatilityBps:snapshot.volatilityBps,riskMode,toxicityScoreBps});}
+function quoteSpread(snapshot:PriceSnapshot,riskMode:"normal"|"guarded"|"reduce_only"="normal",toxicityScoreBps=0,execution?:{estimatedCostBps:number;latencyMs:number;basisBps:number}){return adaptiveSpread({volatilityBps:snapshot.volatilityBps,riskMode,toxicityScoreBps,hedgeCostBps:execution?.estimatedCostBps,hedgeLatencyMs:execution?.latencyMs,venueBasisBps:execution?.basisBps});}
+function shadowQuoteSpread(snapshot:PriceSnapshot,riskMode:"normal"|"guarded"|"reduce_only",toxicityScoreBps:number,execution?:{estimatedCostBps:number;latencyMs:number;basisBps:number}){return adaptiveSpread({volatilityBps:(snapshot.volatilityBps??0)*1.25,riskMode,toxicityScoreBps,hedgeCostBps:execution?.estimatedCostBps,hedgeLatencyMs:execution?.latencyMs,venueBasisBps:execution?.basisBps});}
 function errorText(error:unknown){try{return `${String(error)} ${JSON.stringify(error)}`;}catch{return String(error);}}
 function staleOracleFailure(error:unknown){const text=errorText(error).toLowerCase();return text.includes("staleprice")||text.includes("0xd7815800")||text.includes("0x45805f5d");}
 
@@ -69,10 +71,12 @@ export function buildApi(options: ApiOptions = {}) {
   app.addHook("onRequest",async request=>{requestStarts.set(request,performance.now());});
   app.addHook("onResponse",async(request,reply)=>{const route=request.routeOptions.url,label=route?metricLabels[route]:undefined,started=requestStarts.get(request);if(label&&started!==undefined)runtimeMetrics.record(label,performance.now()-started,reply.statusCode);});
   app.register(cors, { origin:options.corsOrigin ?? "http://127.0.0.1:4173" });
-  const settled:Exposure = { BTC:0n, ETH:0n },flowRisk=new FlowRiskTracker();
+  const settled:Exposure = { BTC:0n, ETH:0n };
   const pending=new PendingExposureBook();
   const journal=options.journalPath?new DatabaseSync(options.journalPath):undefined;
-  journal?.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS commitments (quote_id TEXT PRIMARY KEY, market TEXT NOT NULL, delta TEXT NOT NULL, expires_ms INTEGER NOT NULL, status TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, approval_json TEXT, tx_hash TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS deposit_routes (route_id TEXT PRIMARY KEY, account TEXT NOT NULL, from_chain TEXT NOT NULL, from_token TEXT NOT NULL, source_amount TEXT NOT NULL, expected_usdc TEXT NOT NULL, minimum_usdc TEXT NOT NULL, deadline INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, destination_tx TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS resting_orders (order_id TEXT PRIMARY KEY, account TEXT NOT NULL, market TEXT NOT NULL, side TEXT NOT NULL, amount TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, status TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, tx_hash TEXT, last_error TEXT)");
+  journal?.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS commitments (quote_id TEXT PRIMARY KEY, market TEXT NOT NULL, delta TEXT NOT NULL, expires_ms INTEGER NOT NULL, status TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, approval_json TEXT, tx_hash TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS deposit_routes (route_id TEXT PRIMARY KEY, account TEXT NOT NULL, from_chain TEXT NOT NULL, from_token TEXT NOT NULL, source_amount TEXT NOT NULL, expected_usdc TEXT NOT NULL, minimum_usdc TEXT NOT NULL, deadline INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, destination_tx TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS resting_orders (order_id TEXT PRIMARY KEY, account TEXT NOT NULL, market TEXT NOT NULL, side TEXT NOT NULL, amount TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, status TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, tx_hash TEXT, last_error TEXT); CREATE TABLE IF NOT EXISTS flow_fills (fill_id TEXT PRIMARY KEY, market TEXT NOT NULL, side TEXT NOT NULL, price TEXT NOT NULL, notional TEXT NOT NULL, filled_ms INTEGER NOT NULL)");
+  const restoredFlow=(journal?.prepare("SELECT market,side,price,notional,filled_ms FROM flow_fills WHERE filled_ms>? ORDER BY filled_ms DESC LIMIT 512").all(Date.now()-240_000)??[]).reverse().map(row=>{const item=row as {market:"BTC"|"ETH";side:"buy"|"sell";price:string;notional:string;filled_ms:number};return{market:item.market,side:item.side,price:BigInt(item.price),notional:BigInt(item.notional),atMs:item.filled_ms} satisfies FlowFill;});
+  const flowRisk=new FlowRiskTracker(256,30_000,restoredFlow);
   for(const row of journal?.prepare("SELECT quote_id, market, delta, expires_ms FROM commitments WHERE status IN ('reserved','approved','submitted') AND expires_ms > ?").all(Date.now())??[]){const item=row as {quote_id:string;market:"BTC"|"ETH";delta:string;expires_ms:number};pending.add(item.quote_id,{market:item.market,delta:BigInt(item.delta),expiresAtMs:item.expires_ms});}
   const quotes = new Map<string,Quote>();
   const quoteExpiries=new ExpiryIndex(),preparedOrderExpiries=new ExpiryIndex();
@@ -110,7 +114,7 @@ export function buildApi(options: ApiOptions = {}) {
   let localAdvance:Promise<number>|undefined,lastLocalAdvanceAt=0,lastLocalTimestamp=0;
   let reservationTail=Promise.resolve();
   async function acquireReservationLock(){let release!:()=>void;const previous=reservationTail;reservationTail=new Promise<void>(resolve=>{release=resolve;});await previous;return release;}
-  let quoteSnapshotCache:{at:number;blockNumber:number;promise:Promise<{blockNumber:number;values:any[]}>}|undefined;
+  let quoteSnapshotCache:{at:number;blockNumber:number;promise:Promise<{blockNumber:number;values:any[]}>}|undefined;const shadowTelemetry=new ShadowModelTelemetry();
   let marketReadCache:{at:number;promise:Promise<any>}|undefined;
   let orderTimer:ReturnType<typeof setTimeout>|undefined,orderReconcileTimer:ReturnType<typeof setInterval>|undefined,checkingOrders=false,orderCheckQueued=false;
   type StreamClient={response:ServerResponse;writable:boolean};
@@ -200,9 +204,9 @@ export function buildApi(options: ApiOptions = {}) {
         const skewNotional=aggregateBase*mid/BASE;let fundingApr=skewNotional*RATE/limits.maxMarketNotional;if(fundingApr>RATE)fundingApr=RATE;if(fundingApr<-RATE)fundingApr=-RATE;
         const storedIndex=chain?BigInt(chain.fundingIndex):0n,fundingTime=chain?Number(chain.fundingTime):Math.floor(now/1_000),elapsed=BigInt(Math.min(7*24*60*60,Math.max(0,(block?.timestamp??Math.floor(now/1_000))-fundingTime)));
         const projectedFundingIndex=storedIndex+mid*fundingApr*elapsed/(RATE*YEAR);
-        result[name]={market:name,bid:snapshot.bid.toString(),ask:snapshot.ask.toString(),mid:mid.toString(),observedAtMs:snapshot.observedAtMs,source:snapshot.source??"configured",volatilityBps:snapshot.volatilityBps??0,baseSpreadBps:0,aggregateBase:aggregateBase.toString(),fundingApr:fundingApr.toString(),fundingIndex:storedIndex.toString(),projectedFundingIndex:projectedFundingIndex.toString(),fundingTime,lastPriceTime:chain?Number(chain.lastPriceTime):0,enabled:chain?Boolean(chain.enabled):true,maxTradeNotional:limits.maxTradeNotional.toString(),maxMarketNotional:limits.maxMarketNotional.toString()};
+        result[name]={market:name,bid:snapshot.bid.toString(),ask:snapshot.ask.toString(),mid:mid.toString(),observedAtMs:snapshot.observedAtMs,source:snapshot.source??"configured",volatilityBps:snapshot.volatilityBps??0,volatility:snapshot.volatility,baseSpreadBps:0,aggregateBase:aggregateBase.toString(),fundingApr:fundingApr.toString(),fundingIndex:storedIndex.toString(),projectedFundingIndex:projectedFundingIndex.toString(),fundingTime,lastPriceTime:chain?Number(chain.lastPriceTime):0,enabled:chain?Boolean(chain.enabled):true,maxTradeNotional:limits.maxTradeNotional.toString(),maxMarketNotional:limits.maxMarketNotional.toString()};
       }
-      const operational=await hedgeRisk();for(const name of ["BTC","ETH"] as const){const item=result[name] as Record<string,unknown>,mode=operational?.markets[name].mode??"normal",admission=hedgeAdmission(mode,settled[name],0n,BigInt(item.maxTradeNotional as string)),spread=quoteSpread(prices[name],mode,flowRisk.score(name,prices[name],now));item.riskMode=mode;item.baseSpreadBps=Number(spread.totalBps);item.spread=Object.fromEntries(Object.entries(spread).map(([key,value])=>[key,typeof value==="bigint"?value.toString():value]));item.operatingMaxTradeNotional=admission.maxTradeNotional.toString();item.canBuy=admission.canBuy;item.canSell=admission.canSell;}
+      const operational=await hedgeRisk();for(const name of ["BTC","ETH"] as const){const item=result[name] as Record<string,unknown>,venue=operational?.markets[name],mode=venue?.mode??"normal",admission=hedgeAdmission(mode,settled[name],0n,BigInt(item.maxTradeNotional as string)),spread=quoteSpread(prices[name],mode,flowRisk.score(name,prices[name],now),venue?.execution);item.riskMode=mode;item.baseSpreadBps=Number(spread.totalBps);item.spread=Object.fromEntries(Object.entries(spread).map(([key,value])=>[key,typeof value==="bigint"?value.toString():value]));item.operatingMaxTradeNotional=admission.maxTradeNotional.toString();item.canBuy=admission.canBuy;item.canSell=admission.canSell;}
       prune(now);const pendingEnvelope=pending.envelope();
       return {blockNumber,serverTimeMs:now,markets:result,pricing:{settled:{BTC:settled.BTC.toString(),ETH:settled.ETH.toString()},pending:pendingEnvelope,baseSpreadBps:2,feeBps:2,toleranceBps:8}};
     })();marketReadCache={at:now,promise};try{return await promise;}catch(error){marketReadCache=undefined;throw error;}
@@ -225,7 +229,7 @@ export function buildApi(options: ApiOptions = {}) {
       maxTradeNotional=decodeLimits(request.market==="BTC"?btcLimits:ethLimits).maxTradeNotional;
     }else {versions=await readProtocolVersions();if(options.oracleSource){oracleQuote=await settlementOracle(request.market);prices[request.market]=oracleQuote.snapshot;}else prices[request.market].observedAtMs=Date.now();}
     const operational=await hedgeRisk(),mode=operational?.markets[request.market].mode??"normal",quoteMid=(prices[request.market].bid+prices[request.market].ask)/2n,delta=exactBaseDelta===undefined?(request.side==="buy"?parseUsdc(request.amount):-parseUsdc(request.amount)):exactBaseDelta*quoteMid/BASE,admission=hedgeAdmission(mode,settled[request.market],delta,maxTradeNotional);if(!admission.allowed)throw new Error("hedging unavailable: only exposure-reducing trades are allowed");
-    const spread=quoteSpread(prices[request.market],mode,flowRisk.score(request.market,prices[request.market])),pricing:PricingParameters={maxNotional:admission.maxTradeNotional,baseSpreadBps:spread.totalBps,feeBps:2n,toleranceBps:8n,spread};
+    const toxicity=flowRisk.score(request.market,prices[request.market]),execution=operational?.markets[request.market].execution,spread=quoteSpread(prices[request.market],mode,toxicity,execution),shadow=shadowQuoteSpread(prices[request.market],mode,toxicity,execution);shadowTelemetry.observe(Number(spread.totalBps),Number(shadow.totalBps));const pricing:PricingParameters={maxNotional:admission.maxTradeNotional,baseSpreadBps:spread.totalBps,feeBps:2n,toleranceBps:8n,spread};
     const quote=constructQuote(request,{...prices[request.market]},settled,pending.exposure(),Date.now(),crypto.randomUUID(),pricing,exactBaseDelta);
     let oracleReport:{report:string;validUntil:number}|undefined;
     if(oracleQuote){
@@ -245,7 +249,7 @@ export function buildApi(options: ApiOptions = {}) {
     }finally{streamPublishing=false;if(streamPublishQueued){streamPublishQueued=false;scheduleStreamPublish();}}
   }
 
-  app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,marketData:options.oracleSource?.status?.()??{source:"configured"},streams:{connections:marketClients.size,eventsSent:streamSequence},firmQuotes:{active:quotes.size,capacity:options.maxActiveQuotes??50_000},orders:{active:activeOrderCount(),indexed:limitBook.size,capacity:options.maxRestingOrders??100_000},sender:sender?.status(),latency:runtimeMetrics.snapshot()}));
+  app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,marketData:options.oracleSource?.status?.()??{source:"configured"},quoteModel:{version:"adaptive-v1",restoredPaidFills:flowRisk.entries().length,markets:Object.fromEntries((["BTC","ETH"] as const).map(market=>[market,{toxicityScoreBps:flowRisk.score(market,prices[market]),volatility:prices[market].volatility??null}]))},shadowModel:shadowTelemetry.snapshot(),streams:{connections:marketClients.size,eventsSent:streamSequence},firmQuotes:{active:quotes.size,capacity:options.maxActiveQuotes??50_000},orders:{active:activeOrderCount(),indexed:limitBook.size,capacity:options.maxRestingOrders??100_000},sender:sender?.status(),latency:runtimeMetrics.snapshot()}));
   app.get("/v1/config",async()=>({chainId:`0x${domain.chainId.toString(16)}`,chainName:options.chain?.devFund?"RFQ Local":"Base",rpcUrl:options.publicRpcUrl,clearingAddress:domain.verifyingContract,tokenAddress:options.chain?.tokenAddress}));
   if(localDevMode&&options.chain?.devWallet)app.get("/v1/dev/wallet",async()=>({mode:"local-development",...options.chain!.devWallet}));
   app.get("/v1/markets",async(_request,reply)=>{try{return await readMarkets();}catch(error){return reply.code(503).send({error:error instanceof Error?error.message:"market data unavailable"});}});
@@ -417,7 +421,9 @@ export function buildApi(options: ApiOptions = {}) {
         transaction={hash:receipt.hash,blockNumber:receipt.blockNumber,collateral:collateral.toString(),position:{size:position.size.toString(),entryPrice:position.entryPrice.toString(),lastFundingIndex:position.lastFundingIndex.toString()}};
         journal?.prepare("UPDATE commitments SET status='included', updated_ms=? WHERE quote_id=?").run(Date.now(),quote.quoteId);
         if(pending.delete(quote.quoteId))settled[quote.market]+=quote.delta;
-        flowRisk.record(quote.market,{side:quote.side,price:quote.expectedPrice,notional:quote.notional,atMs:Date.now()});
+        const filledAt=Date.now();flowRisk.record(quote.market,{side:quote.side,price:quote.expectedPrice,notional:quote.notional,atMs:filledAt});
+        journal?.prepare("INSERT OR IGNORE INTO flow_fills VALUES (?,?,?,?,?,?)").run(quote.quoteId,quote.market,quote.side,quote.expectedPrice.toString(),quote.notional.toString(),filledAt);
+        journal?.prepare("DELETE FROM flow_fills WHERE filled_ms<?").run(filledAt-240_000);
         marketReadCache=undefined;scheduleStreamPublish();
       } catch(error){return reply.code(409).send({error:error instanceof Error?`chain submission failed: ${error.message}`:"chain submission failed"});}
     }

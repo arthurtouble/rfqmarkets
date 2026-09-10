@@ -55,6 +55,17 @@ test("venue rejection is journaled with its reason and fails quote admission clo
   await hedge.close();rmSync(directory,{recursive:true,force:true});
 });
 
+test("market-depth telemetry outage blocks new quote risk without blocking hedging",async()=>{
+  class BlindVenue implements HedgeVenue{
+    readonly mode="blind-book-test";positionBase=0n;orders=new Map<string,VenueResult>();
+    async position(){return this.positionBase;}async find(id:string){return this.orders.get(id)??null;}
+    async execution():Promise<never>{throw new Error("book unavailable");}
+    async submit(order:VenueOrder){this.positionBase+=order.baseDelta;const result:VenueResult={venueOrderId:"hedged",status:"filled",filledBase:order.baseDelta};this.orders.set(order.clientId,result);return result;}
+  }
+  const directory=mkdtempSync(join(tmpdir(),"rfq-blind-book-")),venue=new BlindVenue(),payload={blockNumber:82,markets:{BTC:{aggregateBase:"1000000000000000000",bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;
+  const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,venue,healthToken:"secret"});await hedge.ready();const status=(await hedge.inject({method:"GET",url:"/v1/status"})).json(),risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer secret"}})).json();assert(BigInt(status.positions.BTC)>0n,"hedging stopped behind market-data telemetry");assert.equal(risk.markets.BTC.mode,"reduce_only");await hedge.close();rmSync(directory,{recursive:true,force:true});
+});
+
 test("flattens venue exposure instead of leaving residual below its minimum order",async()=>{
   const directory=mkdtempSync(join(tmpdir(),"rfq-hedge-dust-")),payload={blockNumber:82,markets:{BTC:{aggregateBase:"110000000000000",bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;
   const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,bandUsdc:1_000_000n,maxOrderUsdc:25_000_000n,minOrderUsdc:10_000_000n});await hedge.ready();

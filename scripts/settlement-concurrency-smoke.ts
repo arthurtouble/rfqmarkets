@@ -9,6 +9,7 @@ const clearing=new Contract(deployment.clearingAddress,clearingArtifact.abi,prov
 const nonce=()=>BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString();
 async function post(path:string,body:unknown){const response=await fetch(`${api}${path}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}),payload=await response.json();return {response,payload};}
 
+const startingAggregate=[BigInt((await clearing.markets(0)).aggregateBase),BigInt((await clearing.markets(1)).aggregateBase)];
 const clients=Array.from({length:count},(_,index)=>({wallet:Wallet.createRandom(),market:index%2===0?"BTC":"ETH",side:index%4<2?"buy":"sell",amount:String(100+(index%5)*25),nonce:nonce()}));
 // Fund accounts before the latency-sensitive trade phase. Local auto-funding is
 // intentionally implemented as two extra sponsored transactions and would test
@@ -45,6 +46,6 @@ const closed=await Promise.all(accepted.map(async item=>{
   throw new Error(`close retries exhausted for ${item.wallet.address}`);
 }));
 for(const item of closed){assert.equal((await clearing.positionOf(item.wallet.address,item.market==="BTC"?0:1)).size,0n);assert.equal(await clearing.nonceUsed(item.wallet.address,item.closeNonce),true);}
-for(let market=0;market<2;market++)assert.equal((await clearing.markets(market)).aggregateBase,0n,`market ${market} did not return flat`);
+for(let market=0;market<2;market++)assert.equal(BigInt((await clearing.markets(market)).aggregateBase),startingAggregate[market],`market ${market} did not return to its starting exposure`);
 const internal=BigInt(await clearing.makerBacking())+BigInt(await clearing.insuranceBalance())+BigInt(await clearing.totalCustomerCollateral());assert.equal(await token.balanceOf(deployment.clearingAddress),internal,"custody buckets diverged after concurrent settlement and close");
 console.log(`Concurrent settlement passed: ${accepted.length}/${count} admitted and included in ${elapsed}ms; ${rejected.length} safely rejected; idempotent retry, parallel close, nonce, exposure, and custody checks passed`);
