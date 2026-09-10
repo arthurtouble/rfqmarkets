@@ -82,7 +82,7 @@ test("one unavailable approver still leaves quorum", async () => {
 test("leader startup restores recent paid-flow evidence from its durable journal",async()=>{
   const journalPath=join(directory,"flow-restart.sqlite"),empty=buildApi({journalPath});await empty.ready();await empty.close();
   const db=new DatabaseSync(journalPath),now=Date.now();db.prepare("INSERT INTO flow_fills(fill_id,market,side,price,notional,filled_ms) VALUES(?,?,?,?,?,?)").run("fill-1","BTC","buy","100000000000","250000000000",now);db.close();
-  const restarted=buildApi({journalPath});await restarted.ready();const health=(await restarted.inject({method:"GET",url:"/health"})).json();assert.equal(health.quoteModel.restoredPaidFills,1);await restarted.close();
+  const restarted=buildApi({journalPath,operationsToken:"ops"});await restarted.ready();assert.equal((await restarted.inject({method:"GET",url:"/internal/metrics"})).statusCode,401);const health=(await restarted.inject({method:"GET",url:"/internal/metrics",headers:{authorization:"Bearer ops"}})).json();assert.equal(health.quoteModel.restoredPaidFills,1);await restarted.close();
 });
 
 test("duplicate signed submissions share one approver quorum request",async()=>{
@@ -124,10 +124,10 @@ test("rejects a refreshed settlement price outside the signed protection",async(
 test("refreshes and re-approves automatically when the first proof lacks inclusion budget",async()=>{
   const now=Math.floor(Date.now()/1_000);let settlements=0;
   const observation=(validFor:number)=>({snapshot:{market:"BTC" as const,bid:99_990n*1_000_000n,ask:100_010n*1_000_000n,observedAtMs:Date.now()},report:AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[0,99_990n*1_000_000n,100_010n*1_000_000n,now,now+validFor]]),validUntil:now+validFor});
-  const target=buildApi({approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:routedFetch,minSettlementInclusionSeconds:8,oracleSource:{latest:async()=>observation(15),settlement:async()=>observation(++settlements===2?5:15)}});await target.ready();
+  const target=buildApi({approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:routedFetch,minSettlementInclusionSeconds:8,operationsToken:"ops",oracleSource:{latest:async()=>observation(15),settlement:async()=>observation(++settlements===2?5:15)}});await target.ready();
   const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json(),nonce="993",prepared=(await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}})).json(),userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),response=await target.inject({method:"POST",url:"/v1/approve",payload:{quoteId:quote.quoteId,account:user.address,nonce,userSignature}});
   assert.equal(response.statusCode,200,response.body);assert.equal(settlements,3,"approval did not replace the short-lived proof");
-  const health=(await target.inject({method:"GET",url:"/health"})).json();assert(health.latency.firmQuote.count>=1);assert(health.latency.tradeApproval.count>=1);assert(health.latency.tradeApproval.p95Ms>=0);await target.close();
+  const health=(await target.inject({method:"GET",url:"/internal/metrics",headers:{authorization:"Bearer ops"}})).json();assert(health.latency.firmQuote.count>=1);assert(health.latency.tradeApproval.count>=1);assert(health.latency.tradeApproval.p95Ms>=0);await target.close();
 });
 
 test("development funding cannot expose a wallet on a non-local chain",()=>{
@@ -155,7 +155,7 @@ test("hedge monitor failure fails firm quotes closed and exposes reduce-only mar
 
 test("firm quotes include measured hedge cost, latency, and venue basis",async()=>{
   const observedAtMs=Date.now(),hedgeRiskSource={latest:async()=>({observedAtMs,healthy:true,indexedBlock:50,markets:{BTC:{mode:"normal" as const,gapNotional:"0",bandUsdc:"1000000",execution:{estimatedCostBps:4,latencyMs:1_000,basisBps:3,depthUsdc:"50000000000",observedAtMs}},ETH:{mode:"normal" as const,gapNotional:"0",bandUsdc:"1000000"}}})};
-  const target=buildApi({hedgeRiskSource});await target.ready();const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json();assert(BigInt(quote.spread.hedgeBps)>=4n);assert.equal(quote.spread.basisBps,"3");const health=(await target.inject({method:"GET",url:"/health"})).json();assert.equal(health.shadowModel.count,1);await target.close();
+  const target=buildApi({hedgeRiskSource,operationsToken:"ops"});await target.ready();const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json();assert(BigInt(quote.spread.hedgeBps)>=4n);assert.equal(quote.spread.basisBps,"3");const health=(await target.inject({method:"GET",url:"/internal/metrics",headers:{authorization:"Bearer ops"}})).json();assert.equal(health.shadowModel.count,1);await target.close();
 });
 
 test("firm quote and unsigned order preparation have bounded admission",async()=>{
@@ -164,6 +164,16 @@ test("firm quote and unsigned order preparation have bounded admission",async()=
   const full=await bounded.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"101"}});assert.equal(full.statusCode,409);assert.match(full.body,/capacity/);
   const payload={account:user.address,market:"ETH",side:"buy",amount:"100",limitPrice:"2000",durationSeconds:3600,nonce:"991",reduceOnly:false};assert.equal((await bounded.inject({method:"POST",url:"/v1/orders/prepare",payload})).statusCode,200);
   const orderFull=await bounded.inject({method:"POST",url:"/v1/orders/prepare",payload:{...payload,nonce:"992"}});assert.equal(orderFull.statusCode,409);assert.match(orderFull.body,/capacity/);await bounded.close();
+});
+
+test("firm quote admission throttles one client without blocking another",async()=>{
+  const target=buildApi({trustedProxy:["127.0.0.1"],firmQuoteRatePerSecond:0.01,firmQuoteBurst:2,globalFirmQuoteRatePerSecond:1_000,globalFirmQuoteBurst:1_000});await target.ready();
+  const payload={market:"BTC",side:"buy",amount:"100"};
+  const first={"x-forwarded-for":"203.0.113.1"},second={"x-forwarded-for":"203.0.113.2"};
+  assert.equal((await target.inject({method:"POST",url:"/v1/quote",headers:first,payload})).statusCode,200);
+  assert.equal((await target.inject({method:"POST",url:"/v1/quote",headers:first,payload})).statusCode,200);
+  const limited=await target.inject({method:"POST",url:"/v1/orders/prepare",headers:first,payload:{account:user.address,market:"BTC",side:"buy",amount:"100",limitPrice:"90000",durationSeconds:3600,nonce:"123",reduceOnly:false}});assert.equal(limited.statusCode,429);assert.equal(limited.headers["retry-after"],"1");
+  assert.equal((await target.inject({method:"POST",url:"/v1/quote",headers:second,payload})).statusCode,200);await target.close();
 });
 
 test("a durable all-or-none limit order binds size, price, fee, nonce and expiry",async()=>{

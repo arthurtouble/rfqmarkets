@@ -300,6 +300,9 @@ contract RFQClearing is Initializable {
         if (market > 1) revert InvalidTrade();
         IPriceOracle.Observation memory observation = _verifyReport(report, market);
         _recordObservation(observation); _updateFunding(market, (observation.bid + observation.ask) / 2);
+        // Cross-margin solvency includes every open position. A keeper must
+        // refresh any other stale market before liquidation can price equity.
+        _requireFreshPositions(account);
         _settleAllFunding(account);
         (uint256 closed, uint256 mark) = _liquidationClose(account, market, observation);
         (uint256 penalty, uint256 reward) = _collectLiquidationPenalty(account, closed, mark);

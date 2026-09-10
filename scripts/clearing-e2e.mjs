@@ -243,11 +243,21 @@ const up = await observation(0, 119_990_000_000n, 120_010_000_000n);
 await (await clearing.connect(keeper).refreshOracle(up.report)).wait();
 await reject(clearing.connect(user).withdraw(1_500_000_000n), "positive unrealized PnL must not fund withdrawal margin");
 
-// Adverse price makes the account liquidatable; liquidation reduces absolute exposure.
-const down = await observation(0, 78_990_000_000n, 79_010_000_000n);
+// Give the cross-margin account a second position by reducing the existing ETH
+// maker exposure. Liquidation must never price that leg from a stale stored mark.
+await (await clearing.connect(user).deposit(1_000_000_000n)).wait();
+const userEthReport=await observation(1,3_999_000_000n,4_001_000_000n);
+const userEthOpen=await order({nonce:2n,delta:-10_000_000_000_000_000n,executionPrice:3_999_000_000n,limitPrice:3_990_000_000n,impactCharge:0n,report:userEthReport.report,market:1});
+await (await clearing.connect(relayer).executeTrade(userEthOpen.intent,userEthOpen.approval,userEthReport.report,userEthOpen.userSignature,userEthOpen.sigA,userEthOpen.sigB)).wait();
+await ethers.provider.send("evm_increaseTime",[16]);await ethers.provider.send("evm_mine",[]);
+
+// Adverse price makes the account liquidatable; all portfolio marks must first
+// be fresh, after which liquidation reduces absolute exposure.
+const down = await observation(0, 69_990_000_000n, 70_010_000_000n);
 await (await clearing.connect(keeper).refreshOracle(down.report)).wait();
 const unchangedMarket = await observation(1, 3_990_000_000n, 4_010_000_000n);
-await reject(clearing.connect(keeper).liquidate(user.address,1,unchangedMarket.report),"liquidation must target a non-empty position");
+await reject(clearing.connect(keeper).liquidate(user.address,0,down.report),"cross-market liquidation must reject a stale portfolio mark");
+await (await clearing.connect(keeper).refreshOracle(unchangedMarket.report)).wait();
 await (await clearing.connect(keeper).liquidate(user.address, 0, down.report)).wait();
 assert.equal((await clearing.positionOf(user.address, 0)).size, 187_425_000_000_000_000n);
 assert((await clearing.insuranceBalance()) > 150_000_000_000n);
