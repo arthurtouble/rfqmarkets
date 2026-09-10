@@ -32,8 +32,9 @@ const approvalTypes={MakerApproval:[
   {name:"intentHash",type:"bytes32"},{name:"executionPrice",type:"uint256"},{name:"impactCharge",type:"int256"},{name:"fee",type:"uint256"},{name:"oracleReportHash",type:"bytes32"},{name:"deadline",type:"uint64"},{name:"leaderEpoch",type:"uint64"},{name:"signerSetVersion",type:"uint64"},{name:"policyVersion",type:"uint64"},
 ]};
 const abs=value=>value<0n?-value:value,ceilDiv=(value,divisor)=>value/divisor+(value%divisor===0n?0n:1n);
-let seed=0x243f6a88,executed=0;
+let seed=Number(process.env.RFQ_STATEFUL_SEED??0x243f6a88),executed=0;
 const random=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return seed>>>0;};
+const steps=Number(process.env.RFQ_STATEFUL_STEPS??600);
 
 async function assertAccounting(){
   let collateral=0n;const sums=[0n,0n];
@@ -43,7 +44,13 @@ async function assertAccounting(){
   assert.equal(await token.balanceOf(await clearing.getAddress()),BigInt(await clearing.makerBacking())+BigInt(await clearing.insuranceBalance())+collateral,"internal accounting no longer matches token custody");
 }
 
-for(let step=0;step<120;step++){
+for(let step=0;step<steps;step++){
+  // Walk both markets through deterministic calm and volatile regimes. The wide
+  // collateral cushion keeps this a state-transition test rather than a solvency test.
+  for(let index=0;index<2;index++){
+    const mid=(prices[index].bid+prices[index].ask)/2n,shockBps=BigInt((random()%401)-200),nextMid=mid*(10_000n+shockBps)/10_000n;
+    prices[index]={bid:nextMid*9_999n/10_000n,ask:nextMid*10_001n/10_000n};
+  }
   const trader=traders[random()%traders.length],market=random()%2,price=prices[market],mid=(price.bid+price.ask)/2n;
   const unit=market===0?1_000_000_000_000_000n:25_000_000_000_000_000n;
   let delta=unit*BigInt(1+random()%5)*(random()%2===0?1n:-1n);
@@ -51,18 +58,26 @@ for(let step=0;step<120;step++){
   const max=unit*25n;if(abs(current+delta)>max)delta=current>0n?-unit:unit;
   const other=market===0?1:0;await (await clearing.refreshOracle(await report(other))).wait();const tradeReport=await report(market);
   const btc=await clearing.markets(0),eth=await clearing.markets(1);
-  const btcUsd=btc.aggregateBase*(btc.lastBid+btc.lastAsk)/2n/10n**18n,ethUsd=eth.aggregateBase*(eth.lastBid+eth.lastAsk)/2n/10n**18n,deltaUsd=delta*mid/10n**18n;
+  // executeTrade records the target market's new observation before evaluating
+  // cross-market impact, so the reference state must use that same observation.
+  const btcUsd=btc.aggregateBase*(prices[0].bid+prices[0].ask)/2n/10n**18n,ethUsd=eth.aggregateBase*(prices[1].bid+prices[1].ask)/2n/10n**18n,deltaUsd=delta*mid/10n**18n;
   const rawImpact=await risk.impactCost(btcUsd,ethUsd,market,deltaUsd),impact=rawImpact>0n?rawImpact:0n;
-  const premium=ceilDiv(impact*10n**18n,abs(delta)),executionPrice=delta>0n?price.ask+premium:price.bid-premium;
+  // One price quantum can be smaller than one USDC micro-unit of delivered
+  // impact. Round the premium until the contract's two-floor calculation meets
+  // the required charge exactly; this mirrors the production quoter's guarantee.
+  let premium=ceilDiv(impact*10n**18n,abs(delta)),executionPrice=delta>0n?price.ask+premium:price.bid-premium;
+  const delivered=()=>delta>0n?abs(delta)*executionPrice/10n**18n-abs(delta)*price.ask/10n**18n:abs(delta)*price.bid/10n**18n-abs(delta)*executionPrice/10n**18n;
+  while(delivered()<impact){premium+=ceilDiv(10n**18n,abs(delta));executionPrice=delta>0n?price.ask+premium:price.bid-premium;}
   const notional=abs(delta)*executionPrice/10n**18n,fee=ceilDiv(notional*2n,10_000n),block=await ethers.provider.getBlock("latest"),nonce=BigInt(step+1),deadline=BigInt(block.timestamp+60);
   const intent={account:trader.address,market,baseDelta:delta,limitPrice:delta>0n?executionPrice+executionPrice/1_000n:executionPrice-executionPrice/1_000n,maxFee:fee,nonce,deadline,reduceOnly:false};
   const userSignature=await trader.signTypedData(domain,intentTypes,intent),intentHash=ethers.TypedDataEncoder.hash(domain,intentTypes,intent);
   const approval={intentHash,executionPrice,impactCharge:impact,fee,oracleReportHash:ethers.keccak256(tradeReport),deadline,leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n};
   const sigA=await approverA.signTypedData(domain,approvalTypes,approval),sigB=await approverB.signTypedData(domain,approvalTypes,approval);
-  await (await clearing.connect(relayer).executeTrade(intent,approval,tradeReport,userSignature,sigA,sigB)).wait();executed++;
+  try{await (await clearing.connect(relayer).executeTrade(intent,approval,tradeReport,userSignature,sigA,sigB)).wait();}
+  catch(error){console.error({step,market,delta,current,btcUsd,ethUsd,deltaUsd,impact,delivered:delivered(),executionPrice,limitPrice:intent.limitPrice,notional});throw error;}executed++;
   assert.equal(await clearing.nonceUsed(trader.address,nonce),true,"successful trade did not consume nonce");
   if(step%17===0){let replayed=false;try{await (await clearing.connect(relayer).executeTrade(intent,approval,tradeReport,userSignature,sigA,sigB)).wait();replayed=true;}catch{}assert.equal(replayed,false,"trade replay succeeded");}
   await assertAccounting();
 }
 
-assert.equal(executed,120);console.log("Stateful clearing E2E passed: 120 deterministic multi-account/cross-market trades with replay, exposure and custody invariants");
+assert.equal(executed,steps);console.log(`Stateful clearing E2E passed: ${steps} deterministic multi-account/cross-market trades through price shocks with replay, exposure and custody invariants`);

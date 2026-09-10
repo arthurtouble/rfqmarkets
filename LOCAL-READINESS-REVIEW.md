@@ -43,7 +43,7 @@ Code modules can be separated without creating more servers. The frontend is spl
 | Governance | Deployed 2-of-3 Safes and 72-hour self-administered timelock on Base Sepolia | Selector review, delayed upgrade and emergency recovery drills. |
 | Availability | Expected-epoch council transition and live fencing drill | Production 2-of-3 council/Safe, warm-standby reconciliation, independent RPCs and process/network fault injection. |
 | Contract shape | 20,850-byte IR build behind a transparent proxy, with a 21,000-byte project gate and linked stateless risk/trade math | Verify the implementation, library and ProxyAdmin; repeat storage/upgrade validation for every release. |
-| Assurance | Internal deterministic tests, including 120 stateful cross-market trades | Broader invariant fuzzing, economic stress calibration and independent contract/infrastructure audits. |
+| Assurance | Internal deterministic tests, including 13,500 Solidity/reference comparisons and 600 shocked stateful cross-market trades per seed | Exhaustive invariant fuzzing, economic stress calibration and independent contract/infrastructure audits. |
 
 ## Readiness verdict
 
@@ -57,5 +57,5 @@ The local product is end-to-end enough to validate the interaction model: a user
 2. Provision independently operated paid RPC paths and test disagreement, throttling, process death, replacement and recovery against them.
 3. Fence and rotate the Hyperliquid agent, add event-driven fill monitoring with reconciliation fallback, and prove warm-standby single-writer promotion.
 4. Validate injected, mobile and smart-contract wallets, then exercise bridge/deposit failure and refund paths with the selected routing provider.
-5. Expand contract invariants, differential economic tests and high-frequency basis/depth replay; freeze launch parameters from measured results.
+5. Add targeted liquidation-race, adversarial ERC-1271 callback, funding catch-up and partial-resolution recovery invariants; expand high-frequency basis/depth replay and freeze launch parameters from measured results.
 6. Commission independent contract, economic and infrastructure/key-management audits, remediate findings, and rerun every affected gate before a capped canary.

@@ -5,7 +5,7 @@
   "scripts": {
     "compile:contracts": "node scripts/compile-contracts.mjs",
     "validate:upgrades": "npm run compile:contracts && openzeppelin-upgrades-core validate artifacts/build-info --contract RFQClearing --unsafeAllowLinkedLibraries",
-    "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/stateful-clearing-e2e.mjs",
+    "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/risk-differential.mjs && hardhat run --no-compile --network hardhatOp scripts/stateful-clearing-e2e.mjs",
     "test:python": "cd simulator && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -v",
     "test:services": "node --import tsx --test services/**/*.test.ts scripts/*.test.ts",
     "typecheck": "tsc",
@@ -50,6 +50,7 @@
     "smoke:failover": "node --import tsx scripts/leader-failover-smoke.ts",
     "smoke:approver-outage": "node --import tsx scripts/approver-outage-smoke.ts",
     "smoke:sender-replacement": "node --import tsx scripts/sender-replacement-smoke.ts",
+    "smoke:settlement-concurrency": "node --import tsx scripts/settlement-concurrency-smoke.ts",
     "smoke:quote-load": "node --import tsx scripts/quote-load-smoke.ts",
     "smoke:adversarial-load": "node --import tsx scripts/adversarial-load.ts",
     "smoke:limit-order": "node --import tsx scripts/limit-order-smoke.ts",

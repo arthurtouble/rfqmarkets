@@ -82,7 +82,9 @@ test("duplicate signed submissions share one approver quorum request",async()=>{
   let calls=0;const delayedFetch=(async(input:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1])=>{calls++;await new Promise(resolve=>setTimeout(resolve,20));return routedFetch(input,init);}) as typeof fetch;
   const target=buildApi({approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:delayedFetch});await target.ready();
   const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json(),nonce="424242",prepared=(await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}})).json(),userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),payload={quoteId:quote.quoteId,account:user.address,nonce,userSignature};
-  const [first,second]=await Promise.all([target.inject({method:"POST",url:"/v1/approve",payload}),target.inject({method:"POST",url:"/v1/approve",payload})]);assert.equal(first.statusCode,200,first.body);assert.equal(second.statusCode,200,second.body);assert.equal(calls,3,"duplicate submission multiplied signer work");await target.close();
+  const [first,second]=await Promise.all([target.inject({method:"POST",url:"/v1/approve",payload}),target.inject({method:"POST",url:"/v1/approve",payload})]);assert.equal(first.statusCode,200,first.body);assert.equal(second.statusCode,200,second.body);assert.equal(calls,3,"duplicate submission multiplied signer work");
+  const afterCompletion=await target.inject({method:"POST",url:"/v1/approve",payload});assert.equal(afterCompletion.statusCode,200,afterCompletion.body);assert.equal(afterCompletion.body,first.body);assert.equal(calls,3,"completed retry requested another quorum");
+  const mismatched=await target.inject({method:"POST",url:"/v1/approve",payload:{...payload,account:Wallet.createRandom().address}});assert.equal(mismatched.statusCode,409);await target.close();
 });
 
 test("real oracle source drives quotes and fails closed when unavailable",async()=>{

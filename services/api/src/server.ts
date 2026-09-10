@@ -80,6 +80,7 @@ export function buildApi(options: ApiOptions = {}) {
   const quoteVersions = new Map<string,ProtocolVersions>();
   const quoteBindings = new Map<string,{account:string;nonce:string}>();
   const preparedIntents=new Map<string,TradeIntent>();
+  const completedSubmissions=new Map<string,{account:string;nonce:string;userSignature:string;result:unknown;expiresAtMs:number}>();
   const restingOrders=new Map<string,RestingOrder>();
   const limitBook=new LimitTriggerBook();
   const deposits=new Map<string,DepositRoute>();
@@ -106,6 +107,8 @@ export function buildApi(options: ApiOptions = {}) {
   const localDevMode=Boolean(options.chain?.devFund&&domain.chainId===31_337n&&options.chain.rpcUrl&&["127.0.0.1","localhost","::1"].includes(new URL(options.chain.rpcUrl).hostname));
   if(options.chain?.devFund&&!localDevMode)throw new Error("development funding requires local chain 31337 on a loopback RPC");
   let localAdvance:Promise<number>|undefined,lastLocalAdvanceAt=0,lastLocalTimestamp=0;
+  let reservationTail=Promise.resolve();
+  async function acquireReservationLock(){let release!:()=>void;const previous=reservationTail;reservationTail=new Promise<void>(resolve=>{release=resolve;});await previous;return release;}
   let quoteSnapshotCache:{at:number;blockNumber:number;promise:Promise<{blockNumber:number;values:any[]}>}|undefined;
   let marketReadCache:{at:number;promise:Promise<any>}|undefined;
   let orderTimer:ReturnType<typeof setTimeout>|undefined,orderReconcileTimer:ReturnType<typeof setInterval>|undefined,checkingOrders=false,orderCheckQueued=false;
@@ -132,6 +135,7 @@ export function buildApi(options: ApiOptions = {}) {
   function prune(now=Date.now()) {
     pending.prune(now);
     for(const id of quoteExpiries.takeExpired(now)){quotes.delete(id);quoteReports.delete(id);quoteVersions.delete(id);quoteBindings.delete(id);preparedIntents.delete(id);}
+    for(const [id,item] of completedSubmissions)if(item.expiresAtMs<=now)completedSubmissions.delete(id);
     for(const id of preparedOrderExpiries.takeExpired(now)){const order=restingOrders.get(id);if(order?.status==="prepared")restingOrders.delete(id);}
   }
   function collectApprovals(digest:string,payload:unknown){
@@ -142,7 +146,11 @@ export function buildApi(options: ApiOptions = {}) {
       const result=await response.json() as {digest:string;signer:string;signature:string};
       if(result.digest!==digest||recoverAddress(digest,result.signature).toLowerCase()!==result.signer.toLowerCase())throw new Error("invalid approver response");
       return result;
-    })).finally(()=>approvalQuorums.delete(digest));approvalQuorums.set(digest,job);return job;
+    })).then(results=>{if(results.filter(item=>item.status==="fulfilled").length<2)approvalQuorums.delete(digest);return results;});
+    // Successful immutable approvals are safe to reuse for idempotent client
+    // retries. Bound the cache independently of active quote capacity.
+    if(approvalQuorums.size>=100_000)approvalQuorums.delete(approvalQuorums.keys().next().value!);
+    approvalQuorums.set(digest,job);return job;
   }
   const activeOrderCount=()=>{let count=0;for(const order of restingOrders.values())if(order.status==="prepared"||order.status==="open"||order.status==="executing")count++;return count;};
   function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string,reduceOnly=false):TradeIntent {
@@ -340,6 +348,7 @@ export function buildApi(options: ApiOptions = {}) {
   app.post("/v1/approve",async(request,reply)=>{
     const parsed=approvalRequestSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"invalid signed intent"});
+    const completed=completedSubmissions.get(parsed.data.quoteId);if(completed){if(completed.account.toLowerCase()===parsed.data.account.toLowerCase()&&completed.nonce===parsed.data.nonce&&completed.userSignature===parsed.data.userSignature)return completed.result;return reply.code(409).send({error:"quote already submitted"});}
     let quote=quotes.get(parsed.data.quoteId);
     let versions=quoteVersions.get(parsed.data.quoteId);
     if(!quote||!versions||quote.expiresAtMs<=Date.now())return reply.code(409).send({error:"quote expired"});
@@ -351,7 +360,12 @@ export function buildApi(options: ApiOptions = {}) {
     catch{return reply.code(401).send({error:"invalid user signature"});}
     const originalId=quote.quoteId,intentHash=hashIntent(domain,intent),minimumBudget=options.minSettlementInclusionSeconds??4;
     let approval!:MakerApproval,report="0x",selected!:Array<{digest:string;signer:string;signature:string}>,executionData:string|undefined,oracleFee=0n;
-    for(let attempt=0;attempt<2;attempt++){
+    // This short critical section is the sequencer: refresh against every prior
+    // reservation, obtain quorum, and publish this reservation atomically. It
+    // prevents parallel wallets from all receiving prices for the same initial
+    // inventory while leaving chain submission outside the lock.
+    const releaseReservation=await acquireReservationLock();
+    try{for(let attempt=0;attempt<2;attempt++){
       let reportData=quoteReports.get(originalId);
       if(options.oracleSource){
         try{
@@ -385,9 +399,10 @@ export function buildApi(options: ApiOptions = {}) {
       }
       break;
     }
-    journal?.prepare("INSERT INTO commitments VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, NULL, ?) ON CONFLICT(quote_id) DO UPDATE SET status='reserved', intent_json=excluded.intent_json, user_signature=excluded.user_signature, approval_json=excluded.approval_json, updated_ms=excluded.updated_ms").run(quote.quoteId,quote.market,quote.delta.toString(),Number(approval.deadline)*1_000,JSON.stringify(intentToWire(intent)),parsed.data.userSignature,JSON.stringify(approvalToWire(approval)),Date.now());
-    if(!pending.has(quote.quoteId)){pending.add(quote.quoteId,{market:quote.market,delta:quote.delta,expiresAtMs:Number(approval.deadline)*1_000});marketReadCache=undefined;scheduleStreamPublish();}
-    journal?.prepare("UPDATE commitments SET status='approved', updated_ms=? WHERE quote_id=?").run(Date.now(),quote.quoteId);
+      journal?.prepare("INSERT INTO commitments VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, NULL, ?) ON CONFLICT(quote_id) DO UPDATE SET status='reserved', intent_json=excluded.intent_json, user_signature=excluded.user_signature, approval_json=excluded.approval_json, updated_ms=excluded.updated_ms").run(quote.quoteId,quote.market,quote.delta.toString(),Number(approval.deadline)*1_000,JSON.stringify(intentToWire(intent)),parsed.data.userSignature,JSON.stringify(approvalToWire(approval)),Date.now());
+      if(!pending.has(quote.quoteId)){pending.add(quote.quoteId,{market:quote.market,delta:quote.delta,expiresAtMs:Number(approval.deadline)*1_000});marketReadCache=undefined;scheduleStreamPublish();}
+      journal?.prepare("UPDATE commitments SET status='approved', updated_ms=? WHERE quote_id=?").run(Date.now(),quote.quoteId);
+    }finally{releaseReservation();}
     let transaction:undefined|{hash:string;blockNumber:number;collateral:string;position:{size:string;entryPrice:string;lastFundingIndex:string}};
     if(clearing&&token&&provider&&options.chain&&sender){
       try {
@@ -403,7 +418,9 @@ export function buildApi(options: ApiOptions = {}) {
         if(pending.delete(quote.quoteId))settled[quote.market]+=quote.delta;marketReadCache=undefined;scheduleStreamPublish();
       } catch(error){return reply.code(409).send({error:error instanceof Error?`chain submission failed: ${error.message}`:"chain submission failed"});}
     }
-    return {domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),approvals:selected,quote:quoteToWire(quote),transaction};
+    const result={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),approvals:selected,quote:quoteToWire(quote),transaction};
+    if(completedSubmissions.size>=(options.maxActiveQuotes??50_000))completedSubmissions.delete(completedSubmissions.keys().next().value!);
+    completedSubmissions.set(quote.quoteId,{account:intent.account,nonce:intent.nonce.toString(),userSignature:parsed.data.userSignature,result,expiresAtMs:Date.now()+300_000});return result;
   });
   async function checkRestingOrders(){
     if(checkingOrders)return;checkingOrders=true;
