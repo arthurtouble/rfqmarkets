@@ -42,6 +42,19 @@ test("does not stack hedge slices while a venue order remains open",async()=>{
   await hedge.close();rmSync(directory,{recursive:true,force:true});
 });
 
+test("venue rejection is journaled with its reason and fails quote admission closed",async()=>{
+  class RejectingVenue implements HedgeVenue{
+    readonly mode="rejecting-test";
+    async position(){return 0n;}async find(){return null;}
+    async submit():Promise<VenueResult>{return {venueOrderId:"rejected-1",status:"rejected",filledBase:0n,reason:"insufficient margin"};}
+  }
+  const directory=mkdtempSync(join(tmpdir(),"rfq-rejected-")),payload={blockNumber:81,markets:{BTC:{aggregateBase:"1000000000000000000",bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;
+  const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,venue:new RejectingVenue(),healthToken:"risk-secret"});await hedge.ready();
+  const status=(await hedge.inject({method:"GET",url:"/v1/status"})).json(),risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer risk-secret"}})).json();
+  assert.equal(status.healthy,false);assert.match(status.error,/insufficient margin/);assert.equal(status.orders[0].status,"rejected");assert.equal(status.orders[0].reason,"insufficient margin");assert.equal(risk.markets.BTC.mode,"reduce_only");
+  await hedge.close();rmSync(directory,{recursive:true,force:true});
+});
+
 test("protected risk endpoint reports normal, guarded and reduce-only operating modes",async()=>{
   for(const [name,aggregateBase,expected] of [["normal","300000000000000000","normal"],["guarded","650000000000000000","guarded"],["reduce","1000000000000000000","reduce_only"]] as const){
     const directory=mkdtempSync(join(tmpdir(),`rfq-risk-${name}-`)),payload={blockNumber:90,markets:{BTC:{aggregateBase,bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;

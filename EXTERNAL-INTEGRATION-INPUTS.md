@@ -22,11 +22,11 @@ Do not put private credentials in tracked files. `npm run prepare:base-sepolia` 
 
 Switching to Chainlink requires deploying its adapter and a new clearing proxy or performing a reviewed governance upgrade that supports changing the oracle boundary. The current Pyth deployment must never accept unsigned spot prices as a fallback.
 
-## Needed for real Hyperliquid testnet hedging
+## Hyperliquid testnet hedging
 
-1. A Hyperliquid testnet master account or subaccount funded with testnet collateral.
-2. Approval of the generated `hyperliquidAgent` address as a named API/agent wallet for that account.
-3. The master or subaccount public address. The hedge service needs the agent private key, already stored locally, to sign actions; public account queries use the master/subaccount address.
+The account and named agent are configured and public authorization has been verified. The official Python SDK is pinned in `services/hedger/requirements.txt`; install it in the ignored local environment with `python3 -m venv .local-state/hyperliquid-venv` followed by `.local-state/hyperliquid-venv/bin/python -m pip install -r services/hedger/requirements.txt`. Run `npm run smoke:hyperliquid-testnet` after loading `base-sepolia.env`. Add `-- --exercise-signer` to send an intentionally nonmarketable, zero-fill IOC that verifies the signing path, or `-- --exercise-roundtrip` for a guarded 0.0002 BTC open-and-flatten testnet drill.
+
+The test account uses Hyperliquid unified-account mode. Its faucet USDC appears in the spot state while `activeAssetData` exposes the same capital to perpetual trading, so no Spot-to-Perps transfer is required. The hedge worker validates `availableToTrade` rather than relying on the classic clearinghouse account value. It needs no master key: public account queries use the master address, and the ignored generated agent private key signs order actions only.
 
 The agent must be dedicated to this project, revocable and unable to withdraw. If it is replaced, create a new agent address rather than reusing a deregistered one because Hyperliquid may prune old nonce state.
 

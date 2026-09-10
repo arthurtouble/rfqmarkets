@@ -1,0 +1,2 @@
+# Official Hyperliquid SDK; pin exactly so signing behavior is reproducible.
+hyperliquid-python-sdk==0.24.0
