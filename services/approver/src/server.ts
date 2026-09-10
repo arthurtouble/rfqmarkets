@@ -14,12 +14,12 @@ const requestSchema=z.object({
   intent:z.object({account:z.string(),market:z.number().int().min(0).max(1),baseDelta:signed,limitPrice:unsigned,maxFee:unsigned,nonce:unsigned,deadline:unsigned,reduceOnly:z.boolean()}),
   userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/),
   approval:z.object({intentHash:hex32,executionPrice:unsigned,impactCharge:signed,fee:unsigned,oracleReportHash:hex32,deadline:unsigned,leaderEpoch:unsigned,signerSetVersion:unsigned,policyVersion:unsigned}),
-  quote:z.object({quoteId:z.string().uuid(),market:z.enum(["BTC","ETH"]),side:z.enum(["buy","sell"]),amount:unsigned,baseDelta:signed,expectedPrice:unsigned,worstPrice:unsigned,fee:unsigned,impactCharge:signed,expiresAtMs:z.number().int(),observedAtMs:z.number().int(),bid:unsigned,ask:unsigned}),
+  quote:z.object({quoteId:z.string().uuid(),market:z.enum(["BTC","ETH"]),side:z.enum(["buy","sell"]),amount:unsigned,baseDelta:signed,expectedPrice:unsigned,worstPrice:unsigned,fee:unsigned,impactCharge:signed,spread:z.object({baseBps:unsigned,volatilityBps:unsigned,toxicityBps:unsigned,hedgeBps:unsigned,basisBps:unsigned,uncertaintyBps:unsigned,totalBps:unsigned,modelVersion:z.string()}).optional(),expiresAtMs:z.number().int(),observedAtMs:z.number().int(),bid:unsigned,ask:unsigned}),
   report:z.string().regex(/^0x[0-9a-fA-F]*$/),
   oracleAgeMs:z.number().nonnegative(),
 });
 
-export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; rpcBatchMaxCount?:number; maxFutureSeconds?:number; oracleMode?:"local"|"chainlink"|"pyth"; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]};hedgeRisk?:{url:string;token:string;maxAgeMs?:number} }
+export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedQuoteModelVersion?:string; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; rpcBatchMaxCount?:number; maxFutureSeconds?:number; oracleMode?:"local"|"chainlink"|"pyth"; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]};hedgeRisk?:{url:string;token:string;maxAgeMs?:number} }
 
 export function buildApprover(options:ApproverOptions) {
   const app=Fastify({logger:false,bodyLimit:16_384}); const wallet=new Wallet(options.privateKey); const database=new DatabaseSync(options.databasePath);
@@ -43,6 +43,14 @@ export function buildApprover(options:ApproverOptions) {
     const now=Date.now(),expiryMs=Number(approval.deadline)*1_000;
     if(!clearing&&(Number(intent.deadline)*1_000<=now||expiryMs<=now||expiryMs>now+(31+(options.maxFutureSeconds??5))*1_000))return reply.code(409).send({error:"invalid expiry"});
     if((options.expectedEpoch!==undefined&&approval.leaderEpoch!==BigInt(options.expectedEpoch))||(options.expectedPolicyVersion!==undefined&&approval.policyVersion!==BigInt(options.expectedPolicyVersion))||(options.expectedSignerSetVersion!==undefined&&approval.signerSetVersion!==BigInt(options.expectedSignerSetVersion)))return reply.code(409).send({error:"version mismatch"});
+    const spread=input.quote.spread;
+    if(options.expectedQuoteModelVersion&&(!spread||spread.modelVersion!==options.expectedQuoteModelVersion))return reply.code(409).send({error:"quote model mismatch"});
+    if(spread){
+      const components=[spread.baseBps,spread.volatilityBps,spread.toxicityBps,spread.hedgeBps,spread.basisBps,spread.uncertaintyBps].map(BigInt),total=BigInt(spread.totalBps),sum=components.reduce((value,item)=>value+item,0n);
+      if(total<1n||total>100n||total!==(sum>100n?100n:sum))return reply.code(409).send({error:"quote spread rejected"});
+      const notional=BigInt(input.quote.amount),impact=BigInt(input.quote.impactCharge)>0n?BigInt(input.quote.impactCharge):0n,spreadCharge=(notional*total+9_999n)/10_000n,anchor=input.intent.baseDelta.startsWith("-")?BigInt(input.quote.bid):BigInt(input.quote.ask),premium=(anchor*(spreadCharge+impact)+notional-1n)/notional,expected=input.intent.baseDelta.startsWith("-")?anchor-premium:anchor+premium;
+      if(expected!==BigInt(input.quote.expectedPrice))return reply.code(409).send({error:"quote spread price mismatch"});
+    }
     const market=input.quote.market==="BTC"?0:1;
     const priceOutsideLimit=(intent.baseDelta>0n&&approval.executionPrice>intent.limitPrice)||(intent.baseDelta<0n&&approval.executionPrice<intent.limitPrice);
     if(intent.market!==market||intent.baseDelta.toString()!==input.quote.baseDelta||intent.maxFee<approval.fee||priceOutsideLimit||approval.executionPrice.toString()!==input.quote.expectedPrice||approval.impactCharge.toString()!==input.quote.impactCharge||approval.fee.toString()!==input.quote.fee||approval.deadline>intent.deadline)return reply.code(409).send({error:"inconsistent envelope"});

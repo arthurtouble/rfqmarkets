@@ -251,3 +251,72 @@ tbody tr:hover { background: #141a25; }
 .depositToggle:hover,.compact-heading button:hover,.position-side button:hover,.open-orders button:hover { border-color:var(--line-strong); color:var(--text); background:#121a29; }
 .positive { color:var(--buy); }.negative { color:var(--sell); }
 .mono,.market-last strong,.market-stage dd,.account-health strong,.risk-grid strong,.position-metrics b,table { font-family:var(--font-mono); }
+
+/* Product terminal shell: hierarchy comes from rules, density, and type. */
+body { background:#060911; letter-spacing:-.005em; }
+main { padding:0; }
+main.wide .app-frame { width:100%; }
+.topbar {
+  position:sticky; top:0; z-index:10; height:58px; margin:0; padding:0 18px;
+  border-width:0 0 1px; background:#080c14f5; backdrop-filter:blur(16px);
+}
+.brand { gap:8px; min-width:208px; }
+.brand > span:last-child { line-height:1.05; }
+.brand strong { font-size:12px; letter-spacing:.14em; }
+.brand small { font-size:9px; letter-spacing:.035em; }
+.wordmark { color:#fff; font:700 15px/1 var(--font-mono); letter-spacing:-.06em; }
+.wordmark span { color:var(--brand); }
+.topbar nav { align-self:stretch; gap:0; margin-left:10px; }
+.topbar nav button { min-width:78px; padding:0 16px; border-bottom:2px solid transparent; font-size:12px; }
+.topbar nav button.active { border-color:var(--brand); background:#101727; }
+.network { display:flex; align-items:center; gap:7px; margin-left:auto; color:#8b96aa; font:500 10px/1 var(--font-mono); letter-spacing:.08em; }
+.network i { width:7px; height:7px; border-radius:50%; background:#1d7df2; box-shadow:0 0 0 3px #1d7df222; }
+.header-wallet { margin-left:16px; padding:9px 13px; }
+.trading-workspace { grid-template-columns:minmax(0,1fr) 372px; gap:0; max-width:1440px; min-height:calc(100vh - 58px); margin:auto; border-inline:1px solid var(--line); }
+.portfolio-panel,.trade-card { border-width:0; background:#090d16; }
+.portfolio-panel { border-right:1px solid var(--line); }
+.order-ticket { padding:18px 20px 28px; border:0; }
+.market-stage > header { grid-template-columns:minmax(220px,1fr) auto; padding:15px 18px 12px; }
+.market-identity { display:flex; align-items:center; gap:10px; }
+.market-identity > div { display:grid; gap:3px; }
+.market-identity select { padding:3px 25px 3px 0; background:transparent; font-size:17px; }
+.asset-icon { display:inline-grid; place-items:center; flex:none; width:26px; height:26px; border:1px solid currentColor; border-radius:50%; font:600 15px/1 var(--font-mono); }
+.asset-icon.btc { color:#ff9c2b; background:#2b1b09; }
+.asset-icon.eth { color:#899cff; background:#121a3b; font-size:11px; }
+.ticket-heading strong { display:flex; align-items:center; gap:8px; }
+.ticket-heading .asset-icon { width:20px; height:20px; font-size:11px; }
+.market-stage dl { grid-template-columns:repeat(5,minmax(0,1fr)); }
+.market-stage dl div { padding-left:13px; border-left:1px solid #202a3d; }
+.market-stage dl div:first-child { padding-left:0; border-left:0; }
+.price-chart { height:286px; }
+.account-health { padding:17px 18px; }
+.account-health strong { font-size:23px; }
+.risk-grid div { padding:12px 14px; }
+.position-list article { padding:13px 16px; }
+.order-types { margin-top:12px; }
+.trade-card > label { margin-top:18px; }
+.amount input { padding:11px 0; font:500 25px/1.2 var(--font-mono); }
+.sides { gap:1px; padding:1px; border:1px solid var(--line); background:var(--line); }
+.sides button { background:#0b101a; }
+.order-ticket dl { margin:18px 0 14px; padding:12px 0; border-block:1px solid #202a3d; }
+.order-ticket dl div { padding:0 2px; font-size:12px; }
+.submit { padding:14px; text-transform:uppercase; letter-spacing:.045em; }
+.depositToggle { margin-top:12px; padding:8px; border-color:#242d40; font-size:11px; }
+@media (max-width:900px) {
+  .trading-workspace { grid-template-columns:minmax(0,1fr) 340px; }
+  .market-stage dl { grid-template-columns:repeat(3,1fr); row-gap:10px; }
+  .market-stage dl div:nth-child(4) { padding-left:0; border-left:0; }
+}
+@media (max-width:700px) {
+  .topbar { height:54px; padding:0 10px; }
+  .brand { min-width:auto; }
+  .wordmark { font-size:14px; }
+  .network { display:none; }
+  .header-wallet { margin-left:5px; padding:8px; }
+  .trading-workspace { grid-template-columns:1fr; min-height:calc(100vh - 54px); border:0; }
+  .order-ticket,.portfolio-panel { grid-column:1; grid-row:auto; }
+  .portfolio-panel { border-right:0; }
+  .market-stage dl { grid-template-columns:repeat(2,1fr); }
+  .market-stage dl div,.market-stage dl div:nth-child(4) { padding-left:0; border-left:0; }
+  .price-chart { height:190px; }
+}

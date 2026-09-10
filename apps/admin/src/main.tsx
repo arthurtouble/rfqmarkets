@@ -5,7 +5,7 @@ import"@fontsource/ibm-plex-mono/500.css";
 import"./styles.css";
 type Market="BTC"|"ETH";
 type Risk={indexedBlock:number;accountCount:number;totalCollateral:string;markets:Record<Market,{longBase:string;shortBase:string;netBase:string;longAccounts:number;shortAccounts:number}>};
-type Hedge={mode:string;indexedBlock:number;healthy:boolean;error?:string;markets:Record<Market,{customerBase:string;venueBase:string;gapBase:string;gapNotional:string;bandUsdc:string;state:string}>;orders:Array<Record<string,string|number>>};
+type Hedge={mode:string;indexedBlock:number;observedAtMs:number;healthy:boolean;error?:string;markets:Record<Market,{customerBase:string;venueBase:string;gapBase:string;gapNotional:string;bandUsdc:string;state:string}>;orders:Array<Record<string,string|number>>};
 const INDEXER=import.meta.env.VITE_INDEXER_URL??"http://127.0.0.1:4300",HEDGER=import.meta.env.VITE_HEDGER_URL??"http://127.0.0.1:4400";
 const decimal=(value:string,decimals:number,digits=3)=>new Intl.NumberFormat("en-US",{maximumFractionDigits:digits}).format(Number(BigInt(value))/10**decimals);
 const usd=(value:string)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(Number(BigInt(value))/1e6);
