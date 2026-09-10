@@ -24,12 +24,14 @@ const funded=await post("/v1/deposit/execute",{routeId:deposit.payload.routeId,u
 const old=await prepare(),expected=BigInt(await clearing.leaderEpoch());
 await (await clearing.advanceLeaderEpoch(expected)).wait();
 assert.equal(BigInt(await clearing.leaderEpoch()),expected+1n);
-const fenced=await post("/v1/approve",{quoteId:old.quoteId,account:user.address,nonce:old.nonce,userSignature:old.signature});
-assert(!fenced.response.ok,"old-epoch quote approval unexpectedly survived promotion");
+const renewed=await post("/v1/approve",{quoteId:old.quoteId,account:user.address,nonce:old.nonce,userSignature:old.signature});
+assert(renewed.response.ok,JSON.stringify(renewed.payload));
+assert.equal(BigInt(renewed.payload.approval.leaderEpoch),expected+1n,"API reused an old-epoch maker approval");
+assert.match(renewed.payload.transaction?.hash??"",/^0x[0-9a-fA-F]{64}$/);
 
 const fresh=await prepare();
 assert.equal(fresh.prepared.intent.leaderEpoch,undefined,"operator epoch leaked into user authorization");
 const included=await post("/v1/approve",{quoteId:fresh.quoteId,account:user.address,nonce:fresh.nonce,userSignature:fresh.signature});
 assert(included.response.ok,JSON.stringify(included.payload));
 assert.match(included.payload.transaction?.hash??"",/^0x[0-9a-fA-F]{64}$/);
-console.log(`Leader failover smoke passed: epoch ${expected} fenced and epoch ${expected+1n} settled ${included.payload.transaction.hash}`);
+console.log(`Leader failover smoke passed: the original user authority received a fresh epoch ${expected+1n} quorum and settled ${renewed.payload.transaction.hash}; a new quote settled ${included.payload.transaction.hash}`);

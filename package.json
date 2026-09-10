@@ -57,6 +57,7 @@
     "smoke:sse-gateway": "node --import tsx scripts/sse-gateway-load.ts",
     "smoke:runtime-readiness": "node --import tsx scripts/runtime-readiness.ts",
     "soak:runtime": "node --import tsx scripts/runtime-soak.ts",
+    "soak:base-sepolia-iteration": "node --import tsx scripts/base-sepolia-soak.ts",
     "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin && npm run build:docs && npm run build:internal-docs && npm run build:design-system"
   },
   "devDependencies": {
