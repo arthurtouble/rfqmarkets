@@ -23,7 +23,9 @@ async function allActivity(){
 async function waitCaughtUp(){for(let attempt=0;attempt<100;attempt++){const health=await get("/health");if(health.response.ok&&(health.payload as {ok:boolean;lag:number}).ok&&(health.payload as {lag:number}).lag===0)return;await new Promise(resolve=>setTimeout(resolve,100));}throw new Error("indexer did not catch up");}
 async function waitForAccount(address:string){let result=await get(`/v1/account/${address}`);for(let attempt=0;attempt<100&&result.response.status===404;attempt++){await new Promise(resolve=>setTimeout(resolve,100));result=await get(`/v1/account/${address}`);}return result;}
 
-await waitCaughtUp();
+// Stabilize the finalized baseline. Otherwise unrelated events in the current
+// confirmation tail can finalize while the branch deposit is being tested.
+await mine(2);await waitCaughtUp();
 const baselineHashes=new Set((await allActivity()).map(item=>item.tx_hash));
 const baselineRiskRaw=(await get("/v1/risk?finalized=true")).payload as {accountCount:number;totalCollateral:string};const baselineRisk={accountCount:baselineRiskRaw.accountCount,totalCollateral:baselineRiskRaw.totalCollateral};
 const snapshot=await rpc("evm_snapshot") as string;
