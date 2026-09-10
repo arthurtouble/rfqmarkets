@@ -138,8 +138,11 @@ export function buildApi(options: ApiOptions = {}) {
   const activeOrderCount=()=>{let count=0;for(const order of restingOrders.values())if(order.status==="prepared"||order.status==="open"||order.status==="executing")count++;return count;};
   function makeIntent(quote:Quote,versions:ProtocolVersions,account:string,nonce:string,reduceOnly=false):TradeIntent {
     const prepared=preparedIntents.get(quote.quoteId);if(prepared)return prepared;
-    const reportExpiry=quoteReports.get(quote.quoteId)?.validUntil??versions.blockTimestamp+30,deadline=Math.min(versions.blockTimestamp+30,reportExpiry);
-    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee:quote.fee,nonce:BigInt(nonce),deadline:BigInt(deadline),reduceOnly };
+    // The user authorizes quantity, price protection, fee and a short execution
+    // interval. Oracle proof freshness is independent: a fresh proof is fetched
+    // after wallet signing and bound by the approvers immediately before submit.
+    const deadline=versions.blockTimestamp+30,protectedNotional=abs(quote.baseDelta)*quote.worstPrice/BASE,feeNotional=protectedNotional>quote.notional?protectedNotional:quote.notional,maxFee=(feeNotional*quote.fee+quote.notional-1n)/quote.notional;
+    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee,nonce:BigInt(nonce),deadline:BigInt(deadline),reduceOnly };
   }
   async function readProtocolVersions():Promise<ProtocolVersions>{
     if(!clearing||!provider)return {leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n,blockNumber:0,blockTimestamp:Math.floor(Date.now()/1_000)};
@@ -206,13 +209,15 @@ export function buildApi(options: ApiOptions = {}) {
     const operational=await hedgeRisk(),mode=operational?.markets[request.market].mode??"normal",quoteMid=(prices[request.market].bid+prices[request.market].ask)/2n,delta=exactBaseDelta===undefined?(request.side==="buy"?parseUsdc(request.amount):-parseUsdc(request.amount)):exactBaseDelta*quoteMid/BASE,admission=hedgeAdmission(mode,settled[request.market],delta,maxTradeNotional);if(!admission.allowed)throw new Error("hedging unavailable: only exposure-reducing trades are allowed");
     const pricing:PricingParameters={maxNotional:admission.maxTradeNotional,baseSpreadBps:adaptiveSpreadBps(prices[request.market]),feeBps:2n,toleranceBps:8n};
     const quote=constructQuote(request,{...prices[request.market]},settled,pending.exposure(),Date.now(),crypto.randomUUID(),pricing,exactBaseDelta);
+    let oracleReport:{report:string;validUntil:number}|undefined;
     if(oracleQuote){
       const localTimestamp=options.chain?.devFund?versions.blockTimestamp:undefined;
       const validUntil=localTimestamp===undefined?oracleQuote.validUntil:localTimestamp+60;
       const report=localTimestamp===undefined?oracleQuote.report:AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[request.market==="BTC"?0:1,quote.snapshot.bid,quote.snapshot.ask,localTimestamp,validUntil]]);
       quote.expiresAtMs=Math.min(quote.expiresAtMs,validUntil*1_000-4_000);if(quote.expiresAtMs<=Date.now())throw new Error("oracle report lacks inclusion time");if(persist)quoteReports.set(quote.quoteId,{report,validUntil});
+      oracleReport={report,validUntil};
     }
-    if(persist){quotes.set(quote.quoteId,quote);quoteVersions.set(quote.quoteId,versions);quoteExpiries.schedule(quote.quoteId,quote.expiresAtMs+60_000);}return {quote,versions};
+    if(persist){quotes.set(quote.quoteId,quote);quoteVersions.set(quote.quoteId,versions);quoteExpiries.schedule(quote.quoteId,quote.expiresAtMs+60_000);}return {quote,versions,oracleReport};
   }
 
   async function publishStreams(){
@@ -326,8 +331,8 @@ export function buildApi(options: ApiOptions = {}) {
   app.post("/v1/approve",async(request,reply)=>{
     const parsed=approvalRequestSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"invalid signed intent"});
-    const quote=quotes.get(parsed.data.quoteId);
-    const versions=quoteVersions.get(parsed.data.quoteId);
+    let quote=quotes.get(parsed.data.quoteId);
+    let versions=quoteVersions.get(parsed.data.quoteId);
     if(!quote||!versions||quote.expiresAtMs<=Date.now())return reply.code(409).send({error:"quote expired"});
     const binding=quoteBindings.get(quote.quoteId);
     let requestedAccount:string;try{requestedAccount=getAddress(parsed.data.account);}catch{return reply.code(400).send({error:"invalid account"});}
@@ -335,9 +340,18 @@ export function buildApi(options: ApiOptions = {}) {
     let intent:TradeIntent;
     try { intent=preparedIntents.get(quote.quoteId)!;if(!intent||intent.account!==requestedAccount||intent.nonce!==BigInt(parsed.data.nonce))throw new Error();let signer:string|undefined;try{signer=recoverIntentSigner(domain,intent,parsed.data.userSignature);}catch{}let accountAuthorized=signer===intent.account;if(!accountAuthorized&&provider&&await provider.getCode(intent.account)!=="0x"){const wallet=new Contract(intent.account,["function isValidSignature(bytes32,bytes) view returns(bytes4)"],provider);accountAuthorized=await wallet.isValidSignature(hashIntent(domain,intent),parsed.data.userSignature,{blockTag:versions.blockNumber}).then((value:string)=>value.toLowerCase()==="0x1626ba7e").catch(()=>false);}if(!accountAuthorized){if(!clearing||!signer)throw new Error();const session=await clearing.sessions(signer,{blockTag:versions.blockNumber});if(getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<intent.maxFee)throw new Error();} }
     catch{return reply.code(401).send({error:"invalid user signature"});}
-    prune();const reportExpiry=quoteReports.get(quote.quoteId)?.validUntil??versions.blockTimestamp+30,approvalDeadline=BigInt(Math.min(Number(intent.deadline),versions.blockTimestamp+30,reportExpiry));
+    let reportData=quoteReports.get(quote.quoteId);
+    if(options.oracleSource){
+      try{
+        const originalId=quote.quoteId,refreshed=await createQuote({market:quote.market,side:quote.side,amount:formatUsdc(quote.notional)},false,intent.baseDelta);
+        if((intent.baseDelta>0n&&refreshed.quote.expectedPrice>intent.limitPrice)||(intent.baseDelta<0n&&refreshed.quote.expectedPrice<intent.limitPrice)||refreshed.quote.fee>intent.maxFee)return reply.code(409).send({error:"price moved beyond signed protection"});
+        quote={...refreshed.quote,quoteId:originalId};versions=refreshed.versions;reportData=refreshed.oracleReport;
+      }catch(error){return reply.code(503).send({error:error instanceof Error?`fresh settlement price unavailable: ${error.message}`:"fresh settlement price unavailable"});}
+    }
+    prune();const reportExpiry=reportData?.validUntil??versions.blockTimestamp+30,approvalDeadline=BigInt(Math.min(Number(intent.deadline),versions.blockTimestamp+30,reportExpiry));
+    if(Number(approvalDeadline)<=versions.blockTimestamp)return reply.code(503).send({error:"fresh settlement proof lacks inclusion time"});
     const intentHash=hashIntent(domain,intent);
-    let report=quoteReports.get(quote.quoteId)?.report??"0x";
+    let report=reportData?.report??"0x";
     if(provider&&report==="0x"){
       const timestamp=options.chain?.devFund?await advanceLocalChainTime():Number(BigInt((await provider.send("eth_getBlockByNumber",["latest",false]) as {timestamp:string}).timestamp));
       report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[intent.market,quote.snapshot.bid,quote.snapshot.ask,BigInt(timestamp),BigInt(timestamp+60)]]);

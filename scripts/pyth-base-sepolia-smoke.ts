@@ -6,7 +6,7 @@ import { loadDeploymentConfig } from "./deployment-config.js";
 
 const config=loadDeploymentConfig(process.env);if(config.oracleMode!=="pyth")throw new Error("deployment is not configured for Pyth");
 const apiKey=process.env.PYTH_API_KEY;if(!apiKey)throw new Error("missing PYTH_API_KEY");
-const manifest=JSON.parse(readFileSync(resolve(".local-state/base-sepolia-deployment.json"),"utf8")) as {contracts:{clearingProxy:string;oracleAdapter:string}};
+const manifest=JSON.parse(readFileSync(resolve(process.env.RFQ_BASE_SEPOLIA_DEPLOYMENT_FILE??".local-state/base-sepolia-deployment.json"),"utf8")) as {contracts:{clearingProxy:string;oracleAdapter:string}};
 const artifact=JSON.parse(readFileSync(resolve("artifacts/RFQClearing.json"),"utf8")) as {abi:InterfaceAbi};
 const provider=new JsonRpcProvider(config.rpcUrl),signer=new Wallet(config.deployerKey,provider),clearing=new Contract(manifest.contracts.clearingProxy,artifact.abi,signer),adapter=new Contract(manifest.contracts.oracleAdapter,["function updateFee(bytes) view returns(uint256)"],provider);
 const source=new PythHermesSource({apiKey,feedIds:{BTC:config.feedIds[0],ETH:config.feedIds[1]},cacheMs:0,timeoutMs:5_000});

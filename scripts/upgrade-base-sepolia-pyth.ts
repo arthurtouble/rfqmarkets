@@ -13,7 +13,7 @@ type State={candidate:string;operationId:string;salt:string;scheduledTransaction
 const config=loadDeploymentConfig(process.env);if(config.oracleMode!=="pyth")throw new Error("deployment is not configured for Pyth");
 const identities=JSON.parse(readFileSync(resolve(".local-state/testnet-identities.json"),"utf8")) as Identities;
 const governance=JSON.parse(readFileSync(resolve(".local-state/base-sepolia-governance.json"),"utf8")) as Governance;
-const manifestPath=resolve(".local-state/base-sepolia-deployment.json"),statePath=resolve(".local-state/base-sepolia-pyth-upgrade.json");
+const manifestPath=resolve(process.env.RFQ_BASE_SEPOLIA_DEPLOYMENT_FILE??".local-state/base-sepolia-deployment.json"),statePath=resolve(".local-state/base-sepolia-pyth-upgrade.json");
 const manifest=JSON.parse(readFileSync(manifestPath,"utf8")) as Manifest,provider=new JsonRpcProvider(config.rpcUrl);
 if((await provider.getNetwork()).chainId!==84_532n)throw new Error("unexpected chain");
 

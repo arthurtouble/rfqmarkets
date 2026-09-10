@@ -3,7 +3,7 @@ import { after, before, test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Wallet } from "ethers";
+import { AbiCoder, Wallet, keccak256 } from "ethers";
 import { buildApprover } from "../../approver/src/server.js";
 import { buildApi } from "./server.js";
 
@@ -89,6 +89,27 @@ test("real oracle source drives quotes and fails closed when unavailable",async(
   const now=Math.floor(Date.now()/1_000),oracleApi=buildApi({oracleSource:{latest:async market=>({snapshot:{market,bid:market==="BTC"?89_990n*1_000_000n:2_990n*1_000_000n,ask:market==="BTC"?90_010n*1_000_000n:3_010n*1_000_000n,observedAtMs:Date.now()},report:"0x1234",validUntil:now+10})}});await oracleApi.ready();
   const response=await oracleApi.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}});assert.equal(response.statusCode,200,response.body);const quote=response.json();assert(BigInt(quote.expectedPrice)>89_990n*1_000_000n);assert(Number(quote.expiresAtMs)<=((now+10)*1_000));await oracleApi.close();
   const failed=buildApi({oracleSource:{latest:async()=>{throw new Error("feed unavailable")}}});await failed.ready();const unavailable=await failed.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}});assert.equal(unavailable.statusCode,503);await failed.close();
+});
+
+test("refreshes the authenticated settlement proof after wallet signing",async()=>{
+  const now=Math.floor(Date.now()/1_000);let settlements=0;
+  const observation=(bid:bigint,ask:bigint,reportTag:string)=>({snapshot:{market:"BTC" as const,bid,ask,observedAtMs:Date.now()},report:AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[0,bid,ask,now,now+15]]),validUntil:now+15,reportTag});
+  const target=buildApi({approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:routedFetch,oracleSource:{
+    latest:async()=>observation(99_990n*1_000_000n,100_010n*1_000_000n,"indicative"),
+    settlement:async()=>{settlements++;return settlements===1?observation(99_990n*1_000_000n,100_010n*1_000_000n,"initial"):observation(99_995n*1_000_000n,100_015n*1_000_000n,"refreshed");},
+  }});await target.ready();
+  const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json(),nonce="991",prepared=(await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}})).json();
+  assert(Number(prepared.intent.deadline)>now+10,"user intent must not inherit the first oracle proof expiry");
+  const userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),response=await target.inject({method:"POST",url:"/v1/approve",payload:{quoteId:quote.quoteId,account:user.address,nonce,userSignature}});assert.equal(response.statusCode,200,response.body);
+  const approved=response.json(),expectedReport=observation(99_995n*1_000_000n,100_015n*1_000_000n,"refreshed").report;assert.equal(settlements,2);assert.equal(approved.approval.oracleReportHash,keccak256(expectedReport));assert(BigInt(approved.quote.expectedPrice)>BigInt(quote.expectedPrice));await target.close();
+});
+
+test("rejects a refreshed settlement price outside the signed protection",async()=>{
+  const now=Math.floor(Date.now()/1_000);let settlements=0;const observation=(bid:bigint,ask:bigint)=>({snapshot:{market:"BTC" as const,bid,ask,observedAtMs:Date.now()},report:AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[0,bid,ask,now,now+15]]),validUntil:now+15}),target=buildApi({oracleSource:{
+    latest:async()=>observation(99_990n*1_000_000n,100_010n*1_000_000n),
+    settlement:async()=>{settlements++;return settlements===1?observation(99_990n*1_000_000n,100_010n*1_000_000n):observation(100_990n*1_000_000n,101_010n*1_000_000n);},
+  }});await target.ready();
+  const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json(),nonce="992",prepared=(await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}})).json(),userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),response=await target.inject({method:"POST",url:"/v1/approve",payload:{quoteId:quote.quoteId,account:user.address,nonce,userSignature}});assert.equal(response.statusCode,409,response.body);assert.match(response.json().error,/signed protection/);await target.close();
 });
 
 test("development funding cannot expose a wallet on a non-local chain",()=>{
