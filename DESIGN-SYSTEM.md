@@ -12,6 +12,12 @@ The shared tokens in `packages/design-system/tokens.css` define typography, surf
 6. Display numbers with tabular figures. Keep addresses, hashes and machine identifiers monospace.
 7. Public protocol data may show finalized aggregate exposure. Exact hedge state, venue orders, thresholds and failures remain private.
 8. Every loading, disconnected, guarded, reduce-only, rejected, pending, included and finalized state needs explicit text in addition to color.
+9. Put the wallet control in the persistent top-right application slot. Keep market selection beside the live market context and synchronize that selection with the order ticket.
+10. Charts are supporting context, not decoration. The launch chart is a lightweight line and area plot built from the same server-sent market stream that drives quotes, so the browser does not contact an exchange or oracle provider directly.
+
+## Typography and density
+
+The customer product uses a neutral system sans stack with tabular numerals and a separate monospace stack for machine identifiers. It avoids rounded display fonts, oversized headings and decorative gradients. The visual hierarchy comes from weight, spacing, borders and a small semantic palette. Controls use 8–14px radii; the dense trading canvas stays readable at 390px without turning every value into a separate card.
 
 The layout borrows the persistent market context and dense feedback of Hyperliquid, Variational's indicative-versus-firm distinction, dYdX's unified account workspace, and Synthetix's explicit margin and fee preview. It omits an order book, isolated leverage selector and broad conditional-order matrix until those concepts have native RFQ semantics and matching contract enforcement.
 
