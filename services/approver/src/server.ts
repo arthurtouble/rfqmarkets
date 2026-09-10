@@ -19,12 +19,14 @@ const requestSchema=z.object({
   oracleAgeMs:z.number().nonnegative(),
 });
 
-export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; maxFutureSeconds?:number; oracleMode?:"local"|"chainlink"|"pyth"; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]};hedgeRisk?:{url:string;token:string;maxAgeMs?:number} }
+export interface ApproverOptions { privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; rpcBatchMaxCount?:number; maxFutureSeconds?:number; oracleMode?:"local"|"chainlink"|"pyth"; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]};hedgeRisk?:{url:string;token:string;maxAgeMs?:number} }
 
 export function buildApprover(options:ApproverOptions) {
   const app=Fastify({logger:false,bodyLimit:16_384}); const wallet=new Wallet(options.privateKey); const database=new DatabaseSync(options.databasePath);
-  const provider=options.rpcUrl?new JsonRpcProvider(options.rpcUrl):undefined;
-  const secondaryProvider=options.secondaryRpcUrl?new JsonRpcProvider(options.secondaryRpcUrl):undefined;
+  // Some independent RPC providers reject JSON-RPC batches. Explicit single
+  // requests keep an approver compatible with those providers and preserve quorum.
+  const provider=options.rpcUrl?new JsonRpcProvider(options.rpcUrl,undefined,{batchMaxCount:options.rpcBatchMaxCount??1}):undefined;
+  const secondaryProvider=options.secondaryRpcUrl?new JsonRpcProvider(options.secondaryRpcUrl,undefined,{batchMaxCount:1}):undefined;
   const clearing=provider&&options.expectedVerifyingContract?new Contract(options.expectedVerifyingContract,clearingApproverAbi,provider):undefined;
   database.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS approvals (digest TEXT PRIMARY KEY, epoch INTEGER NOT NULL, expiry_ms INTEGER NOT NULL, signature TEXT NOT NULL, created_ms INTEGER NOT NULL)");
   app.get("/health",async()=>({ok:true,signer:wallet.address}));
@@ -81,7 +83,11 @@ export function buildApprover(options:ApproverOptions) {
         if(options.oracleMode==="pyth"){
           const oracleAddress=await clearing.oracle({blockTag:blockNumber}),adapterInterface=new Interface(["function updateFee(bytes) view returns(uint256)","function verify(bytes) payable returns((uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil))"]),adapter=new Contract(oracleAddress,adapterInterface,provider),fee=await adapter.updateFee(input.report,{blockTag:blockNumber});
           const raw=await provider.send("eth_call",[{to:oracleAddress,from:domain.verifyingContract,data:adapterInterface.encodeFunctionData("verify",[input.report]),value:toBeHex(fee)},toBeHex(blockNumber)]),[value]=adapterInterface.decodeFunctionResult("verify",raw);reportObservation={market:BigInt(value.market),bid:BigInt(value.bid),ask:BigInt(value.ask),observedAt:BigInt(value.observedAt),validUntil:BigInt(value.validUntil)};
-          if(reportObservation.market!==BigInt(market)||reportObservation.bid!==BigInt(input.quote.bid)||reportObservation.ask!==BigInt(input.quote.ask))return reply.code(409).send({error:"oracle report rejected"});
+          // Pyth updatePriceFeeds does not overwrite a newer on-chain update. The
+          // returned observation can therefore be newer than the signed quote's
+          // payload. Validate that actual observation below instead of rejecting
+          // a safe monotonic oracle update merely because its price differs.
+          if(reportObservation.market!==BigInt(market)||reportObservation.bid<=0n||reportObservation.ask<reportObservation.bid)return reply.code(409).send({error:"oracle report rejected"});
         }
         if(executionNotional>(BigInt(marketLimitWord)&((1n<<128n)-1n)))return reply.code(409).send({error:"market trade limit exceeded"});
         if(intent.deadline<=BigInt(block.timestamp)||approval.deadline<=BigInt(block.timestamp)||approval.deadline>BigInt(block.timestamp+31+(options.maxFutureSeconds??5)))return reply.code(409).send({error:"chain-time expiry rejected"});
@@ -89,11 +95,13 @@ export function buildApprover(options:ApproverOptions) {
         const selected=market===0?btc:eth;if(!selected.enabled)return reply.code(409).send({error:"market disabled"});
         if(options.hedgeRisk){let risk:HedgeRiskSnapshot;try{const response=await fetch(options.hedgeRisk.url,{headers:{authorization:`Bearer ${options.hedgeRisk.token}`},signal:AbortSignal.timeout(500)});if(!response.ok)throw new Error();risk=await response.json() as HedgeRiskSnapshot;}catch{return reply.code(503).send({error:"hedge health unavailable"});}const reported=risk.markets[input.quote.market]?.mode??"reduce_only",mode=!risk.healthy||!risk.observedAtMs||now-risk.observedAtMs>(options.hedgeRisk.maxAgeMs??3_000)?"reduce_only":reported,admission=hedgeAdmission(mode,BigInt(selected.aggregateBase),intent.baseDelta,BigInt(marketLimitWord)&((1n<<128n)-1n));if(!admission.allowed)return reply.code(409).send({error:"hedge risk requires exposure reduction"});if(executionNotional>admission.maxTradeNotional)return reply.code(409).send({error:"guarded hedge limit exceeded"});}
         if(reportObservation&&(reportObservation.observedAt>BigInt(block.timestamp+(options.maxFutureSeconds??5))||BigInt(block.timestamp)>reportObservation.validUntil||(reportObservation.observedAt<=BigInt(block.timestamp)&&BigInt(block.timestamp)-reportObservation.observedAt>8n)))return reply.code(409).send({error:"chain-time oracle rejected"});
-        const mark=(BigInt(input.quote.bid)+BigInt(input.quote.ask))/2n;
+        const safetyBid=reportObservation?.bid??BigInt(input.quote.bid),safetyAsk=reportObservation?.ask??BigInt(input.quote.ask),mark=(safetyBid+safetyAsk)/2n;
+        if((safetyAsk-safetyBid)*10_000n>mark*100n)return reply.code(409).send({error:"oracle width rejected"});
         const marketNotional=(state:typeof btc,currentMark?:bigint)=>BigInt(state.aggregateBase)*(currentMark??(BigInt(state.lastBid)+BigInt(state.lastAsk))/2n)/BASE;
         const exposure:Exposure={BTC:marketNotional(btc,market===0?mark:undefined),ETH:marketNotional(eth,market===1?mark:undefined)};
         const delta=BigInt(intent.baseDelta)*mark/BASE;
-        if(approval.impactCharge<impactCost(exposure,input.quote.market,delta))return reply.code(409).send({error:"independent impact check rejected"});
+        const absoluteBase=intent.baseDelta<0n?-intent.baseDelta:intent.baseDelta,deliveredImpact=intent.baseDelta>0n?absoluteBase*approval.executionPrice/BASE-absoluteBase*safetyAsk/BASE:absoluteBase*safetyBid/BASE-absoluteBase*approval.executionPrice/BASE;
+        if(approval.impactCharge<impactCost(exposure,input.quote.market,delta)||deliveredImpact<approval.impactCharge)return reply.code(409).send({error:"independent impact check rejected"});
       }catch(error){return reply.code(503).send({error:"independent chain read unavailable",detail:process.env.NODE_ENV==="test"?String(error):undefined});}
     }
     const digest=hashApproval(domain,approval); const existing=database.prepare("SELECT signature FROM approvals WHERE digest = ?").get(digest) as {signature:string}|undefined;

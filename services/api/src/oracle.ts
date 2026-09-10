@@ -10,7 +10,7 @@ export interface OracleSource {latest(market:OracleMarket):Promise<OracleQuote>;
 interface ReportStream {on(event:"report",listener:(report:Report)=>void):this;connect():Promise<void>;close():Promise<void>}
 interface LatestReportClient {getLatestReport(feedId:string):Promise<Report>;createStream?(feedIds:string[]):ReportStream}
 export interface ChainlinkSourceOptions {apiKey:string;userSecret:string;endpoint:string;wsEndpoint:string;feedIds:Record<OracleMarket,string>;feedDecimals:Record<OracleMarket,number>;timeoutMs?:number;client?:LatestReportClient}
-export interface PythHermesSourceOptions {apiKey:string;endpoint?:string;feedIds:Record<OracleMarket,string>;timeoutMs?:number;cacheMs?:number;reconnectMs?:number;fetchImpl?:typeof fetch}
+export interface PythHermesSourceOptions {apiKey:string;endpoint?:string;feedIds:Record<OracleMarket,string>;timeoutMs?:number;cacheMs?:number;reconnectMs?:number;maxObservationAgeSeconds?:number;fetchImpl?:typeof fetch}
 type SocketLike={readyState:number;send(data:string):void;close():void;addEventListener(type:"open"|"message"|"close"|"error",listener:(event:any)=>void):void};
 export interface CoinbaseSourceOptions {endpoint?:string;restEndpoint?:string;staleMs?:number;fetchImpl?:typeof fetch;socketFactory?:(url:string)=>SocketLike;reconnectMs?:number}
 
@@ -117,7 +117,7 @@ export class PythHermesSource implements OracleSource{
       if(!feed)continue;
       if(!Number.isInteger(feed.price.expo)||!Number.isInteger(feed.price.publish_time))throw new Error(`Pyth ${market} feed invalid`);
       const center=BigInt(feed.price.price),confidence=BigInt(feed.price.conf),observedAt=feed.price.publish_time;
-      if(center<=0n||confidence<0n||confidence>=center||observedAt>now+2||now-observedAt>10)throw new Error(`Pyth ${market} observation rejected`);
+      if(center<=0n||confidence<0n||confidence>=center||observedAt>now+2||now-observedAt>(this.options.maxObservationAgeSeconds??4))throw new Error(`Pyth ${market} observation rejected`);
       const bid=this.scale(center-confidence,feed.price.expo,false),ask=this.scale(center+confidence,feed.price.expo,true),mid=(bid+ask)/2n,prior=this.recentMove[market],move=prior&&prior.mid>0n?Number((mid>prior.mid?mid-prior.mid:prior.mid-mid)*10_000n/prior.mid):0,volatilityBps=Math.max(move,(prior?.bps??0)*.92);this.recentMove[market]={mid,bps:volatilityBps};
       const validUntil=observedAt+15,marketId=market==="BTC"?0:1,report=AbiCoder.defaultAbiCoder().encode(["uint8","bytes[]"],[marketId,updates]);
       this.cached[market]={snapshot:{market,bid,ask,observedAtMs:observedAt*1_000,source:"pyth-core",volatilityBps},report,validUntil};changed.push(market);

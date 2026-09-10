@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { JsonRpcProvider, Transaction, Wallet, keccak256, type TransactionRequest } from "ethers";
 
 export interface IncludedReceipt { hash:string; blockNumber:number; blockHash:string; status:1 }
-export interface SenderOptions { firstWaitMs?:number; replacementWaitMs?:number; pollMs?:number; maxReplacements?:number; bumpBps?:number }
+export interface SenderOptions { firstWaitMs?:number; replacementWaitMs?:number; pollMs?:number; maxReplacements?:number; bumpBps?:number; initialFeeBumpBps?:number; chainId?:bigint }
 interface StoredTransaction {operation_id:string;nonce:number;tx_hash:string;raw_tx:string;status:string;included_hash:string|null}
 
 export class DurableSender{
@@ -16,7 +16,10 @@ export class DurableSender{
     let attempt=Number((this.database?.prepare("SELECT max(attempt) value FROM sender_attempts WHERE operation_id=?").get(operationId) as {value:number|null}|undefined)?.value??0);
     if(stored){const included=await this.findIncluded(operationId);if(included){this.recordReceipt(operationId,included.receipt,included.raw);return included.receipt;}await this.broadcast(stored.raw_tx);}
     else {
-      const nonce=Number(BigInt(await this.provider.send("eth_getTransactionCount",[this.wallet.address,"pending"]))),populated=await this.wallet.populateTransaction({...request,from:this.wallet.address,nonce}),raw=await this.wallet.signTransaction(populated),hash=keccak256(raw);
+      const [nonceHex,fees]=await Promise.all([this.provider.send("eth_getTransactionCount",[this.wallet.address,"pending"]),this.options.chainId&&request.gasLimit!==undefined?this.provider.getFeeData():Promise.resolve(undefined)]),nonce=Number(BigInt(nonceHex));let populated:TransactionRequest;
+      if(this.options.chainId&&request.gasLimit!==undefined&&fees){populated={...request,nonce,chainId:this.options.chainId};if(request.maxFeePerGas===undefined&&request.gasPrice===undefined){const feeBump=(value:bigint)=>value*BigInt(10_000+(this.options.initialFeeBumpBps??0))/10_000n+1n;if(fees.maxFeePerGas!==null&&fees.maxPriorityFeePerGas!==null)populated={...populated,type:2,maxFeePerGas:feeBump(fees.maxFeePerGas),maxPriorityFeePerGas:feeBump(fees.maxPriorityFeePerGas)};else if(fees.gasPrice!==null)populated={...populated,type:0,gasPrice:feeBump(fees.gasPrice)};else throw new Error("fee data unavailable");}}
+      else populated=await this.wallet.populateTransaction({...request,from:this.wallet.address,nonce});
+      const raw=await this.wallet.signTransaction(populated),hash=keccak256(raw);
       stored={operation_id:operationId,nonce,tx_hash:hash,raw_tx:raw,status:"signed",included_hash:null};this.writeInitial(stored);await this.broadcast(raw);this.markSubmitted(operationId);
     }
     const maxReplacements=this.options.maxReplacements??1;

@@ -28,6 +28,7 @@
     "bootstrap:base-sepolia-user": "node --import tsx scripts/bootstrap-base-sepolia-user.ts",
     "smoke:base-sepolia-pyth": "node --import tsx scripts/pyth-base-sepolia-smoke.ts",
     "smoke:base-sepolia-e2e": "node --import tsx scripts/base-sepolia-e2e.ts",
+    "smoke:base-sepolia-hedge-e2e": "node --import tsx scripts/base-sepolia-hedge-e2e.ts",
     "smoke:hyperliquid-testnet": "node --import tsx scripts/hyperliquid-testnet-smoke.ts",
     "smoke:local": "node --import tsx scripts/live-smoke.ts",
     "smoke:reorg": "node --import tsx scripts/reorg-smoke.ts",

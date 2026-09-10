@@ -1,6 +1,6 @@
 # Local system readiness and simplification review
 
-Status date: 2026-09-09. The system is locally integrated for its principal happy path. It is suitable for product iteration, economic simulation and fault testing. It is not ready for real funds or a public testnet claim of production security.
+Status date: 2026-09-10. The system is locally integrated and its principal external testnet lifecycle has executed successfully. It is suitable for product iteration, economic simulation and fault testing. It is not ready for real funds or a claim of production security.
 
 ## What is real locally
 
@@ -10,7 +10,7 @@ Status date: 2026-09-09. The system is locally integrated for its principal happ
 - The sponsor signs and journals raw transactions before broadcasting. Restarts reconcile inclusion and avoid allocating the same nonce concurrently.
 - Each approver has a distinct key and durable log. Each independently checks the chain, exact intent, signer set, policy version, oracle observation and inventory-impact floor before signing.
 - The disposable indexer follows canonical block hashes, revalidates the tip after each sync pass, and provides account state, finalized aggregate risk, pseudonymous open positions and event history. A forced-fork drill proves orphaned state is removed. The client has separate Trade and Markets views; the private dashboard shows hedge state.
-- The hedge worker reads finalized exposure, applies an explicit no-trade band and records a stable client order identifier before using its local venue simulator. It reconciles partial and ambiguous fills, and an open order prevents another slice in that market. Restarting does not create a duplicate order. Its authenticated health snapshot now gates both API quoting and each approver: excessive gap halves size, while outage, stale state or severe gap permits only strict exposure reduction.
+- The hedge worker reads finalized exposure, applies an explicit no-trade band and records a stable client order identifier before using its local simulator or Hyperliquid testnet. It reconciles partial and ambiguous fills, and an open order prevents another slice in that market. Restarting does not create a duplicate order. Its authenticated health snapshot gates both API quoting and each approver: excessive gap halves size, while outage, stale state or severe gap permits only strict exposure reduction. Venue minimum size is included in the effective threshold, and a bounded recent finalized snapshot absorbs transient indexer jitter without masking venue failures.
 
 The public positions page does not create a new ledger. It reads the same rebuildable chain projection as account history. Addresses and positions are public and pseudonymous; the application should avoid adding identity, IP or session linkage to that data.
 
@@ -34,13 +34,13 @@ Code modules can be separated without creating more servers. The frontend is spl
 
 | Area | Current local substitute | Production gate |
 | --- | --- | --- |
-| Settlement chain | Hardhat OP-compatible node | Base Sepolia soak, then Base mainnet configuration and reorg/RPC drills. |
-| Collateral | Mock USDC and local EIP-3009 | Native Base USDC behavior and wallet compatibility tests. |
-| Oracle | Coinbase WebSocket for moving local BBO; mock verifier plus tested Chainlink Data Streams and Pyth Core adapters | Select and validate Chainlink or Pyth on Base Sepolia. Both current data acquisition paths require credentials; keep independent access credentials and fail closed. |
+| Settlement chain | Hardhat OP-compatible node plus deployed Base Sepolia topology | Sustained Base Sepolia soak, then Base mainnet configuration and reorg/RPC drills. |
+| Collateral | Mock local USDC plus native Base Sepolia USDC | Broader injected/mobile/smart-wallet compatibility and withdrawal drills. |
+| Oracle | Coinbase WebSocket locally; authenticated Pyth Hermes SSE/REST with signed on-chain updates on Base Sepolia; Chainlink adapter tests | Measure sustained Pyth availability and tail latency, provision independent reference inputs, and preserve fail-closed behavior. |
 | Wallet UX | Injected EIP-1193, limited local session mode, and pinned-block ERC-1271 verification | Provider-neutral wallet kit, mobile wallet tests and hardened session-secret storage. |
 | Cross-chain deposit | Signed local route simulator | LI.FI or Socket quote/execution adapter, allowance safety, destination verification, refunds and failure recovery. |
-| Hedging | Deterministic local venue adapter | Hyperliquid testnet agent wallet/subaccount, real order/fill reconciliation, rate limits and fenced failover. |
-| Governance | Contract roles | Deployed multisigs, 72-hour timelock, selector review and recovery drill. |
+| Hedging | Deterministic simulator plus real Hyperliquid testnet order/fill reconciliation | Credential fencing and rotation, WebSocket fill monitoring, rate-limit/venue-outage soak and warm-standby drill. |
+| Governance | Deployed 2-of-3 Safes and 72-hour self-administered timelock on Base Sepolia | Selector review, delayed upgrade and emergency recovery drills. |
 | Availability | Expected-epoch council transition and live fencing drill | Production 2-of-3 council/Safe, warm-standby reconciliation, independent RPCs and process/network fault injection. |
 | Contract shape | 20,850-byte IR build behind a transparent proxy, with a 21,000-byte project gate and linked stateless risk/trade math | Verify the implementation, library and ProxyAdmin; repeat storage/upgrade validation for every release. |
 | Assurance | Internal deterministic tests, including 120 stateful cross-market trades | Broader invariant fuzzing, economic stress calibration and independent contract/infrastructure audits. |
@@ -53,9 +53,9 @@ The local product is end-to-end enough to validate the interaction model: a user
 
 ## Next implementation sequence
 
-1. Obtain Chainlink Data Streams development credentials and wire real reports through the selected adapter on Base Sepolia. Measure report acquisition and approval latency.
-2. Deploy the Safe/timelock roles, implementation, adapter and proxy against native Base Sepolia USDC; verify every role and selector before funding synthetic test accounts.
-3. Repeat the socket, RPC disagreement, reorg, process-death, quote-quality and transaction-replacement drills against independent external RPC paths.
+1. Run repeated and sustained Base Sepolia/Pyth/Hyperliquid lifecycle soaks, recording quote, approval, inclusion, indexing and hedge tail latency.
+2. Provision independently operated paid RPC paths and test disagreement, throttling, process death, replacement and recovery against them.
+3. Fence and rotate the Hyperliquid agent, add event-driven fill monitoring with reconciliation fallback, and prove warm-standby single-writer promotion.
 4. Validate injected, mobile and smart-contract wallets, then exercise bridge/deposit failure and refund paths with the selected routing provider.
-5. Add a Hyperliquid testnet adapter using a dedicated revocable agent wallet and separately funded subaccount or vault. Keep its state and controls on the private operations surface.
-6. Run sustained load, hedge-basis and outage drills; freeze parameters; commission independent audits before any capped deployment.
+5. Expand contract invariants, differential economic tests and high-frequency basis/depth replay; freeze launch parameters from measured results.
+6. Commission independent contract, economic and infrastructure/key-management audits, remediate findings, and rerun every affected gate before a capped canary.

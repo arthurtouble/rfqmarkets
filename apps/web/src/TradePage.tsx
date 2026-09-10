@@ -147,13 +147,22 @@ export function TradePage() {
       setWithdrawStatus(`Withdrawn ${withdrawAmount} USDC · block ${result.transaction.blockNumber}`);await refreshAccount(connected.account);
     }catch(error){setWithdrawStatus(error instanceof Error?error.message:"Withdrawal unavailable");}
   }
+  async function closePosition(closeMarket:Market){
+    setStatus("Getting an exact close quote…");
+    try{
+      const connected=await wallet(),quote=await post("/v1/close/quote",{account:connected.account,market:closeMarket}),nonce=randomNonce();
+      const prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:connected.account,nonce,reduceOnly:true});
+      const userSignature=await signTyped(connected,prepared,"TradeIntent");setStatus("Requesting two approvals…");
+      const result=await post("/v1/approve",{quoteId:quote.quoteId,account:connected.account,nonce,userSignature});setStatus(`Closed ${closeMarket} in block ${result.transaction.blockNumber}`);await refreshAccount(connected.account);
+    }catch(error){setStatus(error instanceof Error?error.message:"Close unavailable");}
+  }
   async function emergencyClose(closeMarket:Market){
     setStatus("Waiting for emergency close signature…");
     try{
-      const connected=await wallet();const prepared=await post("/v1/close/prepare",{account:connected.account,market:closeMarket,nonce:randomNonce()});
+      const connected=await wallet(),prepared=await post("/v1/close/prepare",{account:connected.account,market:closeMarket,nonce:randomNonce()});
       const userSignature=await signTyped(connected,prepared,"CloseIntent");setStatus("Submitting conservative close…");
       const result=await post("/v1/close/execute",{intent:prepared.intent,userSignature});setStatus(`Closed ${closeMarket} in block ${result.transaction.blockNumber}`);await refreshAccount(connected.account);
-    }catch(error){setStatus(error instanceof Error?error.message:"Close unavailable");}
+    }catch(error){setStatus(error instanceof Error?error.message:"Emergency close unavailable");}
   }
   async function enableQuickTrading(){
     setStatus("Waiting for session approval…");
@@ -217,7 +226,7 @@ export function TradePage() {
         <div className="panel-heading compact-heading"><div><h2>Positions</h2><p>Cross margin · conservative exit marks</p></div><button onClick={()=>setShowWithdraw(value=>!value)}>{showWithdraw?"Close":"Withdraw"}</button></div>
         {showWithdraw&&<section className="depositPanel accountPanel"><label>Withdraw to connected wallet</label><div className="amount compact"><input aria-label="Withdrawal amount" inputMode="decimal" value={withdrawAmount} onChange={event=>setWithdrawAmount(event.target.value)}/><b>USDC</b></div><button className="route" onClick={withdraw}>Sign & withdraw</button><p className="status">{withdrawStatus}</p></section>}
         {paused&&(BigInt(shownAccount.positions.BTC.size)!==0n||BigInt(shownAccount.positions.ETH.size)!==0n)&&<section className="emergencyPanel"><strong>Trading paused</strong><span>Close at the verified directional oracle price.</span><div>{BigInt(shownAccount.positions.BTC.size)!==0n&&<button onClick={()=>emergencyClose("BTC")}>Close BTC</button>}{BigInt(shownAccount.positions.ETH.size)!==0n&&<button onClick={()=>emergencyClose("ETH")}>Close ETH</button>}</div></section>}
-        <div className="position-list">{(["BTC","ETH"] as Market[]).map(name=>{const position=shownAccount.positions[name],open=BigInt(position.size)!==0n;return <article key={name}><div className="position-title"><strong>{name}-PERP</strong><span className={BigInt(position.size)>=0n?"positive":"negative"}>{open?`${BigInt(position.size)>0n?"Long":"Short"} ${base((BigInt(position.size)<0n?-BigInt(position.size):BigInt(position.size)).toString())}`:"No position"}</span></div><div className="position-metrics"><span>Entry <b>{open?dollars(position.entryPrice):"—"}</b></span><span>Mark <b>{dollars(position.markPrice)}</b></span><span>Notional <b>{dollars(position.notional)}</b></span><span>uPnL <b className={BigInt(position.unrealizedPnl)>=0n?"positive":"negative"}>{signedDollars(position.unrealizedPnl)}</b></span><span>Funding <b className={BigInt(position.accruedFunding)>=0n?"positive":"negative"}>{signedDollars(position.accruedFunding)}</b></span><span>Est. liquidation <b>{open?dollars(position.estimatedLiquidationPrice??undefined):"—"}</b></span></div></article>})}</div></>}
+        <div className="position-list">{(["BTC","ETH"] as Market[]).map(name=>{const position=shownAccount.positions[name],open=BigInt(position.size)!==0n;return <article key={name}><div className="position-title"><strong>{name}-PERP</strong><div className="position-side"><span className={BigInt(position.size)>=0n?"positive":"negative"}>{open?`${BigInt(position.size)>0n?"Long":"Short"} ${base((BigInt(position.size)<0n?-BigInt(position.size):BigInt(position.size)).toString())}`:"No position"}</span>{open&&!paused&&<button onClick={()=>closePosition(name)}>Close</button>}</div></div><div className="position-metrics"><span>Entry <b>{open?dollars(position.entryPrice):"—"}</b></span><span>Mark <b>{dollars(position.markPrice)}</b></span><span>Notional <b>{dollars(position.notional)}</b></span><span>uPnL <b className={BigInt(position.unrealizedPnl)>=0n?"positive":"negative"}>{signedDollars(position.unrealizedPnl)}</b></span><span>Funding <b className={BigInt(position.accruedFunding)>=0n?"positive":"negative"}>{signedDollars(position.accruedFunding)}</b></span><span>Est. liquidation <b>{open?dollars(position.estimatedLiquidationPrice??undefined):"—"}</b></span></div></article>})}</div></>}
         {accountTab==="orders"&&<>
         <div className="panel-heading compact-heading"><div><h2>Orders</h2><p>Signed conditional orders and execution status</p></div><span>{orders.length} shown</span></div>
         <div className="open-orders">{orders.length?orders.slice(0,12).map(order=><div key={order.orderId}><span><b>{order.side==="buy"?"Buy":"Sell"} {order.market} · {inputDollars(order.amount)}</b><small>{dollars(order.limitPrice)} limit · {dollars(order.maxFee)} max fee</small></span><em>{order.status}</em>{(order.status==="open"||order.status==="executing")?<button onClick={()=>cancelOrder(order)}>Cancel</button>:<i />}</div>):<p className="empty-row">No orders for this account.</p>}</div></>}

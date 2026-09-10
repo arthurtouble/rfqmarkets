@@ -55,6 +55,20 @@ test("venue rejection is journaled with its reason and fails quote admission clo
   await hedge.close();rmSync(directory,{recursive:true,force:true});
 });
 
+test("flattens venue exposure instead of leaving residual below its minimum order",async()=>{
+  const directory=mkdtempSync(join(tmpdir(),"rfq-hedge-dust-")),payload={blockNumber:82,markets:{BTC:{aggregateBase:"110000000000000",bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;
+  const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,bandUsdc:1_000_000n,maxOrderUsdc:25_000_000n,minOrderUsdc:10_000_000n});await hedge.ready();
+  let status=(await hedge.inject({method:"GET",url:"/v1/status"})).json();assert(BigInt(status.positions.BTC)>0n,"opening hedge was not submitted");
+  payload.blockNumber++;payload.markets.BTC.aggregateBase="0";await hedge.inject({method:"POST",url:"/v1/tick"});status=(await hedge.inject({method:"GET",url:"/v1/status"})).json();assert.equal(status.positions.BTC,"0");assert.equal(status.orders.length,2);
+  await hedge.close();rmSync(directory,{recursive:true,force:true});
+});
+
+test("does not halt quoting for exposure smaller than the venue minimum order",async()=>{
+  const directory=mkdtempSync(join(tmpdir(),"rfq-minimum-risk-")),payload={blockNumber:83,markets:{BTC:{aggregateBase:"50000000000000",bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;
+  const app=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"min-risk.sqlite"),fetchImpl,bandUsdc:1_000_000n,minOrderUsdc:10_000_000n,healthToken:"secret",pollMs:60_000});await app.ready();
+  const risk=(await app.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer secret"}})).json();assert.equal(risk.markets.BTC.mode,"normal");assert.equal(risk.markets.BTC.bandUsdc,"1000000");await app.close();rmSync(directory,{recursive:true,force:true});
+});
+
 test("protected risk endpoint reports normal, guarded and reduce-only operating modes",async()=>{
   for(const [name,aggregateBase,expected] of [["normal","300000000000000000","normal"],["guarded","650000000000000000","guarded"],["reduce","1000000000000000000","reduce_only"]] as const){
     const directory=mkdtempSync(join(tmpdir(),`rfq-risk-${name}-`)),payload={blockNumber:90,markets:{BTC:{aggregateBase,bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;
@@ -67,4 +81,11 @@ test("protected risk endpoint reports normal, guarded and reduce-only operating 
 test("risk endpoint fails closed when finalized exposure cannot be read",async()=>{
   const directory=mkdtempSync(join(tmpdir(),"rfq-risk-failure-")),fetchImpl=(async()=>new Response("offline",{status:503})) as typeof fetch,hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,healthToken:"risk-secret"});await hedge.ready();
   const risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer risk-secret"}})).json();assert.equal(risk.healthy,false);assert.equal(risk.markets.BTC.mode,"reduce_only");await hedge.close();rmSync(directory,{recursive:true,force:true});
+});
+
+test("a recent finalized snapshot survives a transient indexer failure",async()=>{
+  const directory=mkdtempSync(join(tmpdir(),"rfq-risk-hysteresis-"));let online=true;const payload={blockNumber:91,markets:{BTC:{aggregateBase:"0",bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>online?new Response(JSON.stringify(payload),{status:200}):new Response("offline",{status:503})) as typeof fetch;
+  const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,healthToken:"risk-secret",riskStaleMs:10_000});await hedge.ready();online=false;await hedge.inject({method:"POST",url:"/v1/tick"});
+  const risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer risk-secret"}})).json();assert.equal(risk.healthy,true);assert.equal(risk.indexedBlock,91);assert.match((await hedge.inject({method:"GET",url:"/health"})).json().error,/indexer unavailable/);
+  await hedge.close();rmSync(directory,{recursive:true,force:true});
 });
