@@ -37,6 +37,7 @@
     "fund:base-sepolia": "node --import tsx scripts/fund-base-sepolia.ts",
     "fund:base-sepolia-iteration": "RFQ_BASE_SEPOLIA_DEPLOYMENT_FILE=.local-state/base-sepolia-iteration.json node --import tsx scripts/fund-base-sepolia.ts",
     "bootstrap:base-sepolia-user": "node --import tsx scripts/bootstrap-base-sepolia-user.ts",
+    "bootstrap:base-sepolia-iteration-user": "RFQ_BASE_SEPOLIA_DEPLOYMENT_FILE=.local-state/base-sepolia-iteration.json node --import tsx scripts/bootstrap-base-sepolia-user.ts",
     "smoke:base-sepolia-pyth": "node --import tsx scripts/pyth-base-sepolia-smoke.ts",
     "smoke:base-sepolia-e2e": "node --import tsx scripts/base-sepolia-e2e.ts",
     "smoke:base-sepolia-hedge-e2e": "node --import tsx scripts/base-sepolia-hedge-e2e.ts",
