@@ -6,7 +6,7 @@ import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256, par
 import { z } from "zod";
 import { clearingApiAbi } from "../../../packages/shared/src/abi.js";
 import { approvalToWire, cancelToWire, cancelTypes, closeToWire, closeTypes, depositToWire, depositTypes, DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, intentToWire, intentTypes, recoverCancelSigner, recoverCloseSigner, recoverDepositSigner, recoverIntentSigner, recoverSessionGrantSigner, recoverWithdrawalSigner, sessionGrantToWire, sessionGrantTypes, withdrawalToWire, withdrawalTypes, type CancelIntent, type CloseIntent, type DepositIntent, type MakerApproval, type SessionGrant, type SigningDomain, type TradeIntent, type WithdrawalIntent } from "../../../packages/shared/src/eip712.js";
-import { BASE, constructQuote, formatUsdc, marginRate, parseUsdc, quoteRequestSchema, type Exposure, type PriceSnapshot, type PricingParameters, type Quote } from "../../../packages/shared/src/policy.js";
+import { adaptiveSpread, BASE, constructQuote, formatUsdc, marginRate, parseUsdc, quoteRequestSchema, type Exposure, type PriceSnapshot, type PricingParameters, type Quote } from "../../../packages/shared/src/policy.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import { DurableSender } from "./sender.js";
 import type { OracleSource } from "./oracle.js";
@@ -14,6 +14,7 @@ import { hedgeAdmission, type HedgeRiskSnapshot, type HedgeRiskSource } from "..
 import { LimitTriggerBook } from "./limit-book.js";
 import { ExpiryIndex, PendingExposureBook } from "./bounded-state.js";
 import { RuntimeMetrics } from "./metrics.js";
+import { FlowRiskTracker } from "./flow-risk.js";
 
 export interface ApiOptions {
   prices?: Record<"BTC" | "ETH", PriceSnapshot>;
@@ -57,7 +58,7 @@ const YEAR=365n*24n*60n*60n,RATE=1_000_000_000_000n,DEFAULT_TRADE_LIMIT=1_000_00
 
 function abs(value:bigint){return value<0n?-value:value;}
 function decodeLimits(word:unknown){const value=BigInt(word as bigint);return {maxTradeNotional:value&((1n<<128n)-1n),maxMarketNotional:value>>128n};}
-function adaptiveSpreadBps(snapshot:PriceSnapshot){return BigInt(Math.min(50,Math.max(2,2+Math.ceil((snapshot.volatilityBps??0)/5))));}
+function quoteSpread(snapshot:PriceSnapshot,riskMode:"normal"|"guarded"|"reduce_only"="normal",toxicityScoreBps=0){return adaptiveSpread({volatilityBps:snapshot.volatilityBps,riskMode,toxicityScoreBps});}
 function errorText(error:unknown){try{return `${String(error)} ${JSON.stringify(error)}`;}catch{return String(error);}}
 function staleOracleFailure(error:unknown){const text=errorText(error).toLowerCase();return text.includes("staleprice")||text.includes("0xd7815800")||text.includes("0x45805f5d");}
 
@@ -68,7 +69,7 @@ export function buildApi(options: ApiOptions = {}) {
   app.addHook("onRequest",async request=>{requestStarts.set(request,performance.now());});
   app.addHook("onResponse",async(request,reply)=>{const route=request.routeOptions.url,label=route?metricLabels[route]:undefined,started=requestStarts.get(request);if(label&&started!==undefined)runtimeMetrics.record(label,performance.now()-started,reply.statusCode);});
   app.register(cors, { origin:options.corsOrigin ?? "http://127.0.0.1:4173" });
-  const settled:Exposure = { BTC:0n, ETH:0n };
+  const settled:Exposure = { BTC:0n, ETH:0n },flowRisk=new FlowRiskTracker();
   const pending=new PendingExposureBook();
   const journal=options.journalPath?new DatabaseSync(options.journalPath):undefined;
   journal?.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS commitments (quote_id TEXT PRIMARY KEY, market TEXT NOT NULL, delta TEXT NOT NULL, expires_ms INTEGER NOT NULL, status TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, approval_json TEXT, tx_hash TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS deposit_routes (route_id TEXT PRIMARY KEY, account TEXT NOT NULL, from_chain TEXT NOT NULL, from_token TEXT NOT NULL, source_amount TEXT NOT NULL, expected_usdc TEXT NOT NULL, minimum_usdc TEXT NOT NULL, deadline INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, destination_tx TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS resting_orders (order_id TEXT PRIMARY KEY, account TEXT NOT NULL, market TEXT NOT NULL, side TEXT NOT NULL, amount TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, status TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, tx_hash TEXT, last_error TEXT)");
@@ -199,9 +200,9 @@ export function buildApi(options: ApiOptions = {}) {
         const skewNotional=aggregateBase*mid/BASE;let fundingApr=skewNotional*RATE/limits.maxMarketNotional;if(fundingApr>RATE)fundingApr=RATE;if(fundingApr<-RATE)fundingApr=-RATE;
         const storedIndex=chain?BigInt(chain.fundingIndex):0n,fundingTime=chain?Number(chain.fundingTime):Math.floor(now/1_000),elapsed=BigInt(Math.min(7*24*60*60,Math.max(0,(block?.timestamp??Math.floor(now/1_000))-fundingTime)));
         const projectedFundingIndex=storedIndex+mid*fundingApr*elapsed/(RATE*YEAR);
-        result[name]={market:name,bid:snapshot.bid.toString(),ask:snapshot.ask.toString(),mid:mid.toString(),observedAtMs:snapshot.observedAtMs,source:snapshot.source??"configured",volatilityBps:snapshot.volatilityBps??0,baseSpreadBps:Number(adaptiveSpreadBps(snapshot)),aggregateBase:aggregateBase.toString(),fundingApr:fundingApr.toString(),fundingIndex:storedIndex.toString(),projectedFundingIndex:projectedFundingIndex.toString(),fundingTime,lastPriceTime:chain?Number(chain.lastPriceTime):0,enabled:chain?Boolean(chain.enabled):true,maxTradeNotional:limits.maxTradeNotional.toString(),maxMarketNotional:limits.maxMarketNotional.toString()};
+        result[name]={market:name,bid:snapshot.bid.toString(),ask:snapshot.ask.toString(),mid:mid.toString(),observedAtMs:snapshot.observedAtMs,source:snapshot.source??"configured",volatilityBps:snapshot.volatilityBps??0,baseSpreadBps:0,aggregateBase:aggregateBase.toString(),fundingApr:fundingApr.toString(),fundingIndex:storedIndex.toString(),projectedFundingIndex:projectedFundingIndex.toString(),fundingTime,lastPriceTime:chain?Number(chain.lastPriceTime):0,enabled:chain?Boolean(chain.enabled):true,maxTradeNotional:limits.maxTradeNotional.toString(),maxMarketNotional:limits.maxMarketNotional.toString()};
       }
-      const operational=await hedgeRisk();for(const name of ["BTC","ETH"] as const){const item=result[name] as Record<string,unknown>,mode=operational?.markets[name].mode??"normal",admission=hedgeAdmission(mode,settled[name],0n,BigInt(item.maxTradeNotional as string));item.riskMode=mode;item.operatingMaxTradeNotional=admission.maxTradeNotional.toString();item.canBuy=admission.canBuy;item.canSell=admission.canSell;}
+      const operational=await hedgeRisk();for(const name of ["BTC","ETH"] as const){const item=result[name] as Record<string,unknown>,mode=operational?.markets[name].mode??"normal",admission=hedgeAdmission(mode,settled[name],0n,BigInt(item.maxTradeNotional as string)),spread=quoteSpread(prices[name],mode,flowRisk.score(name,prices[name],now));item.riskMode=mode;item.baseSpreadBps=Number(spread.totalBps);item.spread=Object.fromEntries(Object.entries(spread).map(([key,value])=>[key,typeof value==="bigint"?value.toString():value]));item.operatingMaxTradeNotional=admission.maxTradeNotional.toString();item.canBuy=admission.canBuy;item.canSell=admission.canSell;}
       prune(now);const pendingEnvelope=pending.envelope();
       return {blockNumber,serverTimeMs:now,markets:result,pricing:{settled:{BTC:settled.BTC.toString(),ETH:settled.ETH.toString()},pending:pendingEnvelope,baseSpreadBps:2,feeBps:2,toleranceBps:8}};
     })();marketReadCache={at:now,promise};try{return await promise;}catch(error){marketReadCache=undefined;throw error;}
@@ -224,7 +225,7 @@ export function buildApi(options: ApiOptions = {}) {
       maxTradeNotional=decodeLimits(request.market==="BTC"?btcLimits:ethLimits).maxTradeNotional;
     }else {versions=await readProtocolVersions();if(options.oracleSource){oracleQuote=await settlementOracle(request.market);prices[request.market]=oracleQuote.snapshot;}else prices[request.market].observedAtMs=Date.now();}
     const operational=await hedgeRisk(),mode=operational?.markets[request.market].mode??"normal",quoteMid=(prices[request.market].bid+prices[request.market].ask)/2n,delta=exactBaseDelta===undefined?(request.side==="buy"?parseUsdc(request.amount):-parseUsdc(request.amount)):exactBaseDelta*quoteMid/BASE,admission=hedgeAdmission(mode,settled[request.market],delta,maxTradeNotional);if(!admission.allowed)throw new Error("hedging unavailable: only exposure-reducing trades are allowed");
-    const pricing:PricingParameters={maxNotional:admission.maxTradeNotional,baseSpreadBps:adaptiveSpreadBps(prices[request.market]),feeBps:2n,toleranceBps:8n};
+    const spread=quoteSpread(prices[request.market],mode,flowRisk.score(request.market,prices[request.market])),pricing:PricingParameters={maxNotional:admission.maxTradeNotional,baseSpreadBps:spread.totalBps,feeBps:2n,toleranceBps:8n,spread};
     const quote=constructQuote(request,{...prices[request.market]},settled,pending.exposure(),Date.now(),crypto.randomUUID(),pricing,exactBaseDelta);
     let oracleReport:{report:string;validUntil:number}|undefined;
     if(oracleQuote){
@@ -415,7 +416,9 @@ export function buildApi(options: ApiOptions = {}) {
         const collateral=await clearing.collateralOf(intent.account); const position=await clearing.positionOf(intent.account,intent.market);
         transaction={hash:receipt.hash,blockNumber:receipt.blockNumber,collateral:collateral.toString(),position:{size:position.size.toString(),entryPrice:position.entryPrice.toString(),lastFundingIndex:position.lastFundingIndex.toString()}};
         journal?.prepare("UPDATE commitments SET status='included', updated_ms=? WHERE quote_id=?").run(Date.now(),quote.quoteId);
-        if(pending.delete(quote.quoteId))settled[quote.market]+=quote.delta;marketReadCache=undefined;scheduleStreamPublish();
+        if(pending.delete(quote.quoteId))settled[quote.market]+=quote.delta;
+        flowRisk.record(quote.market,{side:quote.side,price:quote.expectedPrice,notional:quote.notional,atMs:Date.now()});
+        marketReadCache=undefined;scheduleStreamPublish();
       } catch(error){return reply.code(409).send({error:error instanceof Error?`chain submission failed: ${error.message}`:"chain submission failed"});}
     }
     const result={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),approvals:selected,quote:quoteToWire(quote),transaction};

@@ -48,14 +48,36 @@ class Metrics:
     ending_exposure: float = 0
     ending_residual: float = 0
     pnl: float = 0
+    toxic_fills: int = 0
+    adverse_selection: float = 0
+    max_drawdown: float = 0
+    average_spread_bps: float = 0
+    p95_spread_bps: float = 0
+
+
+def adaptive_spread_bps(volatility_bps: float, toxicity_score: float,
+                        hedge_latency_ms: float, hedge_cost_bps: float,
+                        venue_basis_bps: float, confidence_bps: float,
+                        risk_mode: str) -> float:
+    """Float mirror of adaptive-v1 for economic simulation, capped at 100 bps."""
+    volatility = min(40, max(0, volatility_bps) / 5)
+    toxicity = min(35, max(0, min(1, toxicity_score)) * 35)
+    mode = 4 if risk_mode == "guarded" else 12 if risk_mode == "reduce_only" else 0
+    hedge = min(30, max(0, hedge_cost_bps) + mode
+                + math.sqrt(max(0, hedge_latency_ms) / 1_000) * max(0, volatility_bps) / 25)
+    basis = min(25, abs(venue_basis_bps))
+    uncertainty = min(20, max(0, confidence_bps) / 2)
+    return min(100, math.ceil(2 + volatility + toxicity + hedge + basis + uncertainty))
 
 
 def run_regime(regime: Regime, seed: int = 1, max_trade: float = 1_000_000,
                max_market: float = 5_000_000, hedge_band: float = 100_000,
-               hedge_slice: float = 500_000) -> Metrics:
+               hedge_slice: float = 500_000, adaptive: bool = True) -> Metrics:
     rng = random.Random(seed)
     price, exposure, hedge_position = 100_000.0, 0.0, 0.0
     metrics = Metrics(regime=regime.name)
+    flow_score, equity_peak, running_pnl = 0.0, 0.0, 0.0
+    spreads = []
     sizes = (100, 1_000, 10_000, 50_000, 250_000, 1_000_000)
     for _ in range(regime.orders):
         shock_bps = regime.drift_bps + rng.gauss(0, regime.volatility_bps)
@@ -75,7 +97,13 @@ def run_regime(regime: Regime, seed: int = 1, max_trade: float = 1_000_000,
             metrics.capacity_rejections += 1
             continue
         inventory_bps = max(0.0, side * exposure / 1_000_000 * 10)
-        spread_bps = 2 + min(50, regime.volatility_bps * .15) + inventory_bps
+        hedge_latency_ms = 120 if regime.hedge_available else 10_000
+        hedge_cost_bps = 1.5 + regime.volatility_bps * .05
+        venue_basis_bps = abs(shock_bps) * .08
+        confidence_bps = .5 + regime.volatility_bps * .02
+        model_spread = adaptive_spread_bps(regime.volatility_bps, flow_score, hedge_latency_ms,
+                                           hedge_cost_bps, venue_basis_bps, confidence_bps, mode)
+        spread_bps = (model_spread if adaptive else 2 + min(50, regime.volatility_bps * .15)) + inventory_bps
         is_limit = rng.random() < .35
         limit_offset_bps = rng.choice((-20, -5, 0, 5, 20))
         marketable = not is_limit or (side > 0 and limit_offset_bps >= spread_bps) or (side < 0 and -limit_offset_bps >= spread_bps)
@@ -84,6 +112,14 @@ def run_regime(regime: Regime, seed: int = 1, max_trade: float = 1_000_000,
             continue
         exposure += side * amount
         metrics.fills += 1
+        if toxic:
+            metrics.toxic_fills += 1
+            markout = amount * abs(shock_bps) / 10_000
+            metrics.adverse_selection += markout
+            flow_score = min(1.0, flow_score * .92 + .08)
+        else:
+            flow_score *= .92
+        spreads.append(spread_bps)
         metrics.quote_revenue += amount * (spread_bps + 2) / 10_000
         metrics.max_abs_exposure = max(metrics.max_abs_exposure, abs(exposure))
         gap = exposure - hedge_position
@@ -91,11 +127,18 @@ def run_regime(regime: Regime, seed: int = 1, max_trade: float = 1_000_000,
             hedge = math.copysign(min(abs(gap) - hedge_band / 2, hedge_slice), gap)
             hedge_position += hedge
             metrics.hedge_turnover += abs(hedge)
-            metrics.hedge_cost += abs(hedge) * (1.5 + regime.volatility_bps * .05) / 10_000
+            metrics.hedge_cost += abs(hedge) * hedge_cost_bps / 10_000
         metrics.max_abs_residual = max(metrics.max_abs_residual, abs(exposure - hedge_position))
+        running_pnl = metrics.quote_revenue + metrics.mark_to_market - metrics.hedge_cost - metrics.adverse_selection
+        equity_peak = max(equity_peak, running_pnl)
+        metrics.max_drawdown = max(metrics.max_drawdown, equity_peak - running_pnl)
     metrics.ending_exposure = exposure
     metrics.ending_residual = exposure - hedge_position
-    metrics.pnl = metrics.quote_revenue + metrics.mark_to_market - metrics.hedge_cost
+    metrics.pnl = metrics.quote_revenue + metrics.mark_to_market - metrics.hedge_cost - metrics.adverse_selection
+    if spreads:
+        ordered = sorted(spreads)
+        metrics.average_spread_bps = sum(spreads) / len(spreads)
+        metrics.p95_spread_bps = ordered[min(len(ordered) - 1, math.ceil(len(ordered) * .95) - 1)]
     return metrics
 
 

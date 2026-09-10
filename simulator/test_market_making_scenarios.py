@@ -1,6 +1,6 @@
 import unittest
 
-from market_making_scenarios import REGIMES, run_regime
+from market_making_scenarios import REGIMES, adaptive_spread_bps, run_regime
 
 
 class ScaleScenarioTests(unittest.TestCase):
@@ -36,6 +36,23 @@ class ScaleScenarioTests(unittest.TestCase):
         self.assertEqual(result.fills, 0)
         self.assertEqual(result.capacity_rejections, result.requests)
         self.assertEqual(result.ending_exposure, 0)
+
+    def test_quote_model_widens_monotonically_and_remains_capped(self):
+        calm = adaptive_spread_bps(5, .05, 50, 1, .5, .5, "normal")
+        volatile = adaptive_spread_bps(80, .05, 50, 1, .5, .5, "normal")
+        toxic = adaptive_spread_bps(80, .9, 50, 1, .5, .5, "normal")
+        impaired = adaptive_spread_bps(80, .9, 5_000, 10, 20, 20, "guarded")
+        self.assertLess(calm, volatile)
+        self.assertLess(volatile, toxic)
+        self.assertLess(toxic, impaired)
+        self.assertEqual(adaptive_spread_bps(10_000, 1, 30_000, 100, 500, 500, "reduce_only"), 100)
+
+    def test_adaptive_model_charges_more_for_toxic_fills_than_calm_flow(self):
+        calm = run_regime(REGIMES[0], seed=31)
+        toxic = run_regime(next(item for item in REGIMES if item.name == "toxic_burst"), seed=31)
+        self.assertGreater(toxic.average_spread_bps, calm.average_spread_bps)
+        self.assertGreater(toxic.adverse_selection, calm.adverse_selection)
+        self.assertLessEqual(toxic.p95_spread_bps, 110)  # adaptive cap plus bounded inventory skew
 
 
 if __name__ == "__main__":
