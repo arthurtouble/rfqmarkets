@@ -1,5 +1,5 @@
 :root {
-  --font-ui: "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --ink-0: #080b16; --ink-1: #0d1222; --ink-2: #131a2d; --ink-3: #1c2740;
   --line: #27344f; --line-strong: #3a4a6b;

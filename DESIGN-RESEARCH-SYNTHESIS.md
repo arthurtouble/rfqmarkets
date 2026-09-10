@@ -1,6 +1,6 @@
 # RFQ Markets — design research synthesis
 
-Updated 2026-09-09. Primary protocol documentation, public source and selected market-making literature used for version 0.1. A documented mechanism is evidence of a design pattern, not proof that it is safe for this protocol or every deployment of the referenced system.
+Updated 2026-09-10. Primary protocol documentation, public source and selected market-making literature used for version 0.1. A documented mechanism is evidence of a design pattern, not proof that it is safe for this protocol or every deployment of the referenced system.
 
 | Source | Useful method | Adopted here | Deliberately not copied |
 | --- | --- | --- | --- |
@@ -33,6 +33,7 @@ Updated 2026-09-09. Primary protocol documentation, public source and selected m
 | Oracle diversity | Chainlink Data Streams and Pyth Core contract adapters are implemented; Coinbase WebSocket drives local moving prices. | Select one primary after live latency/failure testing and retain the other as a governance-switched outage path. Never blend unsigned exchange data into settlement. |
 | Portfolio/isolated and multi-collateral modes | Not implemented. | Defer. They add liquidation, valuation and UI states before the two-market USDC system has production evidence. |
 | Public transparency and export | Public positions/activity and account history exist through the rebuildable indexer. | Add bounded CSV export after pagination; do not introduce a second ledger. |
+| Trading workspace | A persistent market selector, live mid/bid/ask/funding strip, lightweight stream-derived chart, compact order ticket, cross-margin health, positions and histories share one responsive view. | Keep the chart informational and the order ticket dominant. Source persistent candles through the market-data gateway when time ranges are added; never expose upstream provider credentials or origins to browsers. |
 
 Hyperliquid's breadth of order controls and fast feedback, Variational's clear indicative/firm labeling, dYdX's indexed read fanout and liquidity tiers, and Synthetix's explicit margin/fee previews are the useful launch references. Validator consensus, delayed settlement, portfolio margin, multi-collateral and a long list of conditional orders solve different product problems and would enlarge the attack surface today.
 

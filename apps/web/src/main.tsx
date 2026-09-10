@@ -9,10 +9,11 @@ const initialView = (): View => new URLSearchParams(window.location.search).get(
 
 function App() {
   const [view, setView] = useState<View>(initialView);
+  const [account,setAccount]=useState<string|null>(null);
   const navigate = (next: View) => { setView(next); history.replaceState({}, "", next === "trade" ? location.pathname : `${location.pathname}?view=markets`); };
   return <main className="wide"><div className="app-frame">
-    <header className="topbar"><button className="brand" onClick={() => navigate("trade")}><span className="mark">R</span><span><strong>RFQ Markets</strong><small>Local prototype</small></span></button><nav aria-label="Main navigation"><button className={view === "trade" ? "active" : ""} onClick={() => navigate("trade")}>Trade</button><button className={view === "markets" ? "active" : ""} onClick={() => navigate("markets")}>Markets</button></nav></header>
-    {view === "trade" ? <TradePage /> : <MarketsPage />}
+    <header className="topbar"><button className="brand" onClick={() => navigate("trade")}><span className="mark">R</span><span><strong>RFQ</strong><small>Perpetual Markets</small></span></button><nav aria-label="Main navigation"><button className={view === "trade" ? "active" : ""} onClick={() => navigate("trade")}>Trade</button><button className={view === "markets" ? "active" : ""} onClick={() => navigate("markets")}>Market data</button></nav><button className="header-wallet" onClick={()=>{navigate("trade");requestAnimationFrame(()=>document.querySelector<HTMLButtonElement>(".trade-wallet")?.click());}}>{account?`${account.slice(0,6)}…${account.slice(-4)}`:"Connect"}</button></header>
+    {view === "trade" ? <TradePage onWalletChange={setAccount} /> : <MarketsPage />}
   </div></main>;
 }
 
