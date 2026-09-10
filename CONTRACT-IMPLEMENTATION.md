@@ -36,7 +36,7 @@ The contract recomputes impact from settled aggregate BTC/ETH inventory and requ
 
 The adapter follows Chainlink's published v3 fields and `verifier.verify(unverifiedReport, bytes(""))` subscription-billing pattern. Approvers require an observation no more than eight seconds old when signing; the contract permits up to fifteen seconds so a valid approval has bounded inclusion time. Production deployment must obtain and verify the current Base VerifierProxy, feed IDs, decimals and billing behavior; none are guessed in source.
 
-`contracts/oracle/PythCoreAdapter.sol` is a tested fallback with the same clearing interface. It accepts authenticated pull-update blobs, requires the exact on-chain update fee so excess ETH cannot be trapped, reads only configured feeds no older than fifteen seconds, and conservatively turns Pyth's confidence interval into bid and ask. Pyth's current Hermes service requires an API key, so this removes the Chainlink verifier dependency but does not remove every off-chain data-access credential. The adapter and Base Sepolia contract address still require live end-to-end validation before selection.
+`contracts/oracle/PythCoreAdapter.sol` accepts authenticated pull-update blobs, requires the exact on-chain verification fee so excess ETH cannot be trapped, parses only the configured feed inside a block-relative fifteen-second window, and conservatively turns Pyth's confidence interval into bid and ask. Parsing the signed payload directly keeps settlement independent of Pyth's shared stored-price cache. Pyth's current Hermes service requires an API key, so this removes the Chainlink verifier dependency but does not remove every off-chain data-access credential.
 
 ## Margin, liquidation and resolution
 

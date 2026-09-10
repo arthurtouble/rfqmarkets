@@ -32,6 +32,8 @@ The [hedging and operations design](HEDGING-OPERATIONS.md) defines separate venu
 
 Run the current local gate with `npm test`; run the fault report with `python3 -B simulator/fault_harness.py`.
 
+The executable product-system specimen lives at [`apps/design-system/index.html`](apps/design-system/index.html). Run `npm run dev:design-system` to review the typography, spacing, colors, controls, trading tables and interaction states that govern customer UI work.
+
 [The simplified design](SIMPLIFIED-DESIGN.md) supplies detailed API and recovery discussion. [The earlier system design](SYSTEM-DESIGN.md) retains financial background, with its superseded service layout clearly marked. The consolidated overview takes precedence where earlier documents differ.
 
 Supporting discussion:
