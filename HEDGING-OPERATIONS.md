@@ -45,9 +45,11 @@ The public application should expose only delayed or coarse aggregate protocol r
 Local endpoints:
 
 - Public/indexer risk: `http://127.0.0.1:4300/v1/risk`
-- Private hedge status: `http://127.0.0.1:4400/v1/status`
+- Private hedge status: `http://127.0.0.1:4400/v1/status` with `Authorization: Bearer $RFQ_HEDGE_OPS_TOKEN` outside the fixed loopback development profile
 - Authenticated quote-admission status: `http://127.0.0.1:4400/internal/risk`
 - Private dashboard: `http://127.0.0.1:4174`
+
+The status snapshot, status stream, manual tick and quote-admission snapshot all require the operations token whenever one is configured. The public `/health` route reports availability only. The local stack uses a fixed loopback-only development token so the Vite dashboard can exercise authenticated streaming; Base Sepolia and deployed environments should set a random `RFQ_HEDGE_OPS_TOKEN`. A production browser must reach these routes through an identity-aware private reverse proxy that injects the upstream credential. Never compile the upstream token into a public bundle.
 
 ## Chainlink Data Streams
 

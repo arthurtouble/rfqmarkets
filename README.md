@@ -16,7 +16,7 @@ The [local application guide](LOCAL-DEVELOPMENT.md) covers the Fastify API leade
 
 The [local readiness review](LOCAL-READINESS-REVIEW.md) states what is complete, what remains simulated, which boundaries should stay separate and the shortest safe path to a Base testnet pilot.
 
-The [whole-system audit](SYSTEM-AUDIT-2026-09-09.md) records the current independent assessment, hardening completed, remaining scale blockers and the boundary against unnecessary services.
+The [current whole-system audit](SYSTEM-AUDIT-2026-09-10.md) records the release-candidate assessment, fixes made, residual trust boundaries and the exact testnet/mainnet promotion gates. The [September 9 audit](SYSTEM-AUDIT-2026-09-09.md) remains as historical evidence.
 
 The [production release checklist](PRODUCTION-RELEASE-CHECKLIST.md) is the evidence-based promotion gate for an eventual capped Base mainnet canary.
 

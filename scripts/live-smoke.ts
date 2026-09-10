@@ -4,6 +4,7 @@ import { Wallet } from "ethers";
 const api=process.env.RFQ_API_URL??"http://127.0.0.1:4100";
 const indexer=process.env.RFQ_INDEXER_URL??"http://127.0.0.1:4300";
 const hedger=process.env.RFQ_HEDGER_URL??"http://127.0.0.1:4400";
+const hedgeToken=process.env.RFQ_HEDGE_OPS_TOKEN??"local-development-hedge-token";
 const rpc=process.env.RFQ_RPC_URL??"http://127.0.0.1:8545";
 const user=Wallet.createRandom();
 const post=async(path:string,body:unknown)=>{
@@ -46,5 +47,5 @@ let positions:{finality:string;items:Array<{account:string}>}|undefined;
 for(let attempt=0;attempt<20;attempt++){const response=await fetch(`${indexer}/v1/positions?finalized=true&limit=100`);assert(response.ok);positions=await response.json();if(positions?.items.some(item=>item.account.toLowerCase()===user.address.toLowerCase()))break;await new Promise(resolve=>setTimeout(resolve,250));}
 assert.equal(positions?.finality,"finalized");assert(positions.items.some(item=>item.account.toLowerCase()===user.address.toLowerCase()));
 const publicTradesResponse=await fetch(`${indexer}/v1/activity?kind=TradeExecuted&finalized=true&limit=100`);assert(publicTradesResponse.ok);const publicTrades=await publicTradesResponse.json();assert(publicTrades.items.every((item:{kind:string;finality:string})=>item.kind==="TradeExecuted"&&item.finality==="finalized"));
-const hedgeResponse=await fetch(`${hedger}/v1/tick`,{method:"POST"});assert(hedgeResponse.ok);
+const hedgeResponse=await fetch(`${hedger}/v1/tick`,{method:"POST",headers:{authorization:`Bearer ${hedgeToken}`}});assert(hedgeResponse.ok);
 console.log(`Live RFQ smoke passed: deposit, withdrawal, cancellation and scoped session; 2-of-3 popup-free fill ${approved.transaction.hash} at block ${approved.transaction.blockNumber}; public indexer and hedge reconciliation complete`);

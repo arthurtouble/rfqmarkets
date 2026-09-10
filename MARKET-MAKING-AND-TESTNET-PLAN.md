@@ -34,7 +34,7 @@ Build the next model version behind a shadow-mode flag. Every signal has a valid
 6. Inventory: settled contract exposure plus the conservative pending envelope. Correlated assets share the same portfolio potential.
 7. Funding: expected carry to the next hedge/rebalance horizon. Apply a bounded adjustment, never an unrestricted directional prediction.
 
-The API proposes the quote. Every approver independently reconstructs the same bounded inputs from its own feeds and rejects a proposal outside its allowed interval. Exact equality is unnecessary for noisy feeds; the contract still verifies the signed result, current policy version, oracle proof, limit price, fee, nonce, deadline, approver quorum, and portfolio-impact floor.
+The API proposes the quote. Every approver independently verifies the authenticated settlement observation, current chain state, signed intent, exact quote arithmetic, base/fee floor, portfolio-impact floor, market limits, hedge admission, measured venue-cost/basis floors and policy versions. The approvers validate the declared adaptive-spread components and model version, but the current implementation does not independently rebuild the leader's rolling volatility or paid-flow toxicity state. That is a maker-economics trust boundary: a compromised leader cannot bypass the user's limit, the contract impact floor, margin, market caps or oracle verification, but it could quote less volatility/toxicity spread than intended until monitoring or an approver stops it. Before mainnet, either replicate the signed model-input log to independent approvers or set approver-side conservative minimum envelopes for those components.
 
 ## Calibration and acceptance gates
 

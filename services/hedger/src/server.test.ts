@@ -50,7 +50,8 @@ test("venue rejection is journaled with its reason and fails quote admission clo
   }
   const directory=mkdtempSync(join(tmpdir(),"rfq-rejected-")),payload={blockNumber:81,markets:{BTC:{aggregateBase:"1000000000000000000",bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;
   const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,venue:new RejectingVenue(),healthToken:"risk-secret"});await hedge.ready();
-  const status=(await hedge.inject({method:"GET",url:"/v1/status"})).json(),risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer risk-secret"}})).json();
+  assert.equal((await hedge.inject({method:"GET",url:"/v1/status"})).statusCode,401);assert.equal((await hedge.inject({method:"POST",url:"/v1/tick"})).statusCode,401);
+  const status=(await hedge.inject({method:"GET",url:"/v1/status",headers:{authorization:"Bearer risk-secret"}})).json(),risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer risk-secret"}})).json();
   assert.equal(status.healthy,false);assert.match(status.error,/insufficient margin/);assert.equal(status.orders[0].status,"rejected");assert.equal(status.orders[0].reason,"insufficient margin");assert.equal(risk.markets.BTC.mode,"reduce_only");
   await hedge.close();rmSync(directory,{recursive:true,force:true});
 });
@@ -63,7 +64,7 @@ test("market-depth telemetry outage blocks new quote risk without blocking hedgi
     async submit(order:VenueOrder){this.positionBase+=order.baseDelta;const result:VenueResult={venueOrderId:"hedged",status:"filled",filledBase:order.baseDelta};this.orders.set(order.clientId,result);return result;}
   }
   const directory=mkdtempSync(join(tmpdir(),"rfq-blind-book-")),venue=new BlindVenue(),payload={blockNumber:82,markets:{BTC:{aggregateBase:"1000000000000000000",bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>new Response(JSON.stringify(payload),{status:200})) as typeof fetch;
-  const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,venue,healthToken:"secret"});await hedge.ready();const status=(await hedge.inject({method:"GET",url:"/v1/status"})).json(),risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer secret"}})).json();assert(BigInt(status.positions.BTC)>0n,"hedging stopped behind market-data telemetry");assert.equal(risk.markets.BTC.mode,"reduce_only");await hedge.close();rmSync(directory,{recursive:true,force:true});
+  const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,venue,healthToken:"secret"});await hedge.ready();const status=(await hedge.inject({method:"GET",url:"/v1/status",headers:{authorization:"Bearer secret"}})).json(),risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer secret"}})).json();assert(BigInt(status.positions.BTC)>0n,"hedging stopped behind market-data telemetry");assert.equal(risk.markets.BTC.mode,"reduce_only");await hedge.close();rmSync(directory,{recursive:true,force:true});
 });
 
 test("flattens venue exposure instead of leaving residual below its minimum order",async()=>{
@@ -96,7 +97,7 @@ test("risk endpoint fails closed when finalized exposure cannot be read",async()
 
 test("a recent finalized snapshot survives a transient indexer failure",async()=>{
   const directory=mkdtempSync(join(tmpdir(),"rfq-risk-hysteresis-"));let online=true;const payload={blockNumber:91,markets:{BTC:{aggregateBase:"0",bid:"99990000000",ask:"100010000000"},ETH:{aggregateBase:"0",bid:"0",ask:"0"}}},fetchImpl=(async()=>online?new Response(JSON.stringify(payload),{status:200}):new Response("offline",{status:503})) as typeof fetch;
-  const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,healthToken:"risk-secret",riskStaleMs:10_000});await hedge.ready();online=false;await hedge.inject({method:"POST",url:"/v1/tick"});
+  const hedge=buildHedger({indexerUrl:"http://indexer",databasePath:join(directory,"hedge.sqlite"),fetchImpl,pollMs:60_000,healthToken:"risk-secret",riskStaleMs:10_000});await hedge.ready();online=false;await hedge.inject({method:"POST",url:"/v1/tick",headers:{authorization:"Bearer risk-secret"}});
   const risk=(await hedge.inject({method:"GET",url:"/internal/risk",headers:{authorization:"Bearer risk-secret"}})).json();assert.equal(risk.healthy,true);assert.equal(risk.indexedBlock,91);assert.match((await hedge.inject({method:"GET",url:"/health"})).json().error,/indexer unavailable/);
   await hedge.close();rmSync(directory,{recursive:true,force:true});
 });

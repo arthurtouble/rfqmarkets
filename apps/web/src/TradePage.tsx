@@ -5,7 +5,7 @@ import { adaptiveSpread, constructQuote, marginRate } from "../../../packages/sh
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 
 const chains = { 1: "Ethereum", 42161: "Arbitrum", 10: "Optimism", 8453: "Base" } as const;
-type QuickSession={account:string;privateKey:string;validUntil:number};
+type QuickSession={account:string;sessionAddress:string;privateKey?:string;validUntil:number};
 type ConnectedWallet={account:string;provider?:WalletProvider;privateKey?:string};
 const signedDollars=(value?:string)=>value===undefined?"—":`${BigInt(value)>0n?"+":""}${dollars(value)}`;
 const ratio=(bps?:string|null)=>bps===null||bps===undefined?"—":`${(Number(bps)/100).toFixed(2)}%`;
@@ -60,6 +60,7 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
   const [localPrivateKey,setLocalPrivateKey]=useState<string|null>(null);
   const [accountTab,setAccountTab]=useState<"positions"|"orders"|"trades"|"activity">("positions");
   const [priceHistory,setPriceHistory]=useState<Record<Market,number[]>>({BTC:[],ETH:[]});
+  const [tradeBusy,setTradeBusy]=useState(false);
 
   async function requestQuote(signal?: AbortSignal) {
     const response = await fetch(`${API}/v1/quote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ market, side, amount }), signal });
@@ -94,6 +95,7 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
   useEffect(()=>{const timer=setInterval(()=>setClock(Date.now()),500);return()=>clearInterval(timer);},[]);
   useEffect(()=>{let stopped=false;fetch(`${API}/v1/dev/wallet`).then(response=>response.ok?response.json():null).then(value=>{if(stopped||!value?.account||!value?.privateKey)return;setLocalPrivateKey(value.privateKey);setAccount(value.account);void refreshAccount(value.account);}).catch(()=>{});return()=>{stopped=true;};},[]);
   useEffect(()=>{if(!account)return;const stream=new EventSource(`${INDEXER}/v1/updates/stream`);stream.addEventListener("indexed",event=>{try{const update=JSON.parse((event as MessageEvent).data) as {initial?:boolean;reset?:boolean;accounts?:string[]};if(update.initial||update.reset||update.accounts?.some(value=>value.toLowerCase()===account.toLowerCase()))void refreshAccount(account);}catch{}});return()=>stream.close();},[account]);
+  useEffect(()=>{const provider=(window as unknown as {ethereum?:WalletProvider}).ethereum;if(!provider?.on||localPrivateKey)return;const accountsChanged=(value:unknown)=>{const next=Array.isArray(value)&&typeof value[0]==="string"?value[0]:null;setAccount(next);setAccountState(null);setActivity([]);setOrders([]);setQuickSession(null);setStatus(next?"Wallet account changed":"Wallet disconnected");if(next)void refreshAccount(next);};const chainChanged=()=>{setAccountState(null);setQuickSession(null);setStatus("Wallet network changed · reconnect to continue");};provider.on("accountsChanged",accountsChanged);provider.on("chainChanged",chainChanged);return()=>{provider.removeListener?.("accountsChanged",accountsChanged);provider.removeListener?.("chainChanged",chainChanged);};},[localPrivateKey]);
 
   async function wallet(): Promise<ConnectedWallet> {
     if(account&&localPrivateKey)return {account,privateKey:localPrivateKey};
@@ -108,7 +110,7 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
       await ethereum.request({ method: "wallet_addEthereumChain", params: [{ chainId: config.chainId, chainName: config.chainName, rpcUrls: [config.rpcUrl], nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 } }] });
     }
     setAccount(accounts[0]);
-    try{const stored=sessionStorage.getItem(`rfq-session:${accounts[0].toLowerCase()}`);const parsed=stored?JSON.parse(stored) as QuickSession:null;setQuickSession(parsed&&parsed.validUntil>Date.now()?parsed:null);}catch{setQuickSession(null);}
+    try{const stored=sessionStorage.getItem(`rfq-session:${accounts[0].toLowerCase()}`);const parsed=stored?JSON.parse(stored) as QuickSession:null;setQuickSession(current=>current?.account.toLowerCase()===accounts[0].toLowerCase()&&current.validUntil>Date.now()?current:parsed&&parsed.validUntil>Date.now()&&/^0x[0-9a-fA-F]{40}$/.test(parsed.sessionAddress)?parsed:null);}catch{setQuickSession(null);}
     void refreshAccount(accounts[0]);
     return { provider: ethereum, account: accounts[0] };
   }
@@ -119,7 +121,7 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
     return provider.request({ method: "eth_signTypedData_v4", params: [connected.account, JSON.stringify(typedData)] }) as Promise<string>;
   }
   async function approve() {
-    if (!quote) return;
+    if (!quote||tradeBusy) return;setTradeBusy(true);
     setStatus("Waiting for wallet…");
     try {
       const connected = await wallet();
@@ -127,17 +129,18 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
       const nonce = randomNonce();
       const prepared = await post("/v1/prepare", { quoteId: current.quoteId, account: connected.account, nonce, reduceOnly });
       let userSignature:string;
-      if(quickSession&&quickSession.account.toLowerCase()===connected.account.toLowerCase()&&quickSession.validUntil>Date.now()&&Number(amount)<=2_500){setStatus("Signing with quick session…");const {SigningKey,TypedDataEncoder}=await import("ethers");const digest=TypedDataEncoder.hash(prepared.domain,prepared.types,prepared.intent);userSignature=new SigningKey(quickSession.privateKey).sign(digest).serialized;}
+      if(quickSession?.privateKey&&quickSession.account.toLowerCase()===connected.account.toLowerCase()&&quickSession.validUntil>Date.now()&&Number(amount)<=2_500){setStatus("Signing with quick session…");const {SigningKey,TypedDataEncoder}=await import("ethers");const digest=TypedDataEncoder.hash(prepared.domain,prepared.types,prepared.intent);userSignature=new SigningKey(quickSession.privateKey).sign(digest).serialized;}
       else userSignature = await signTyped(connected, prepared, "TradeIntent");
       setStatus("Requesting two approvals…");
       const result = await post("/v1/approve", { quoteId: current.quoteId, account: connected.account, nonce, userSignature });
       setStatus(result.transaction ? `Executed in block ${result.transaction.blockNumber} · ${result.transaction.hash.slice(0, 10)}…` : "Approved by 2 of 3");
       await refreshAccount(connected.account);
-    } catch (error) { setStatus(error instanceof Error ? error.message : "Unavailable"); }
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Unavailable"); }finally{setTradeBusy(false);}
   }
   async function placeLimit(){
+    if(tradeBusy)return;setTradeBusy(true);
     setStatus("Waiting for limit-order signature…");
-    try{const connected=await wallet(),nonce=randomNonce(),prepared=await post("/v1/orders/prepare",{account:connected.account,market,side,amount,limitPrice,durationSeconds:86_400,nonce,reduceOnly}),userSignature=await signTyped(connected,prepared,"TradeIntent");await post("/v1/orders",{orderId:prepared.orderId,userSignature});setStatus(`${side==="buy"?"Buy":"Sell"} limit open at ${dollars(prepared.intent.limitPrice)}`);await refreshAccount(connected.account);}catch(error){setStatus(error instanceof Error?error.message:"Limit order unavailable");}
+    try{const connected=await wallet(),nonce=randomNonce(),prepared=await post("/v1/orders/prepare",{account:connected.account,market,side,amount,limitPrice,durationSeconds:86_400,nonce,reduceOnly}),userSignature=await signTyped(connected,prepared,"TradeIntent");await post("/v1/orders",{orderId:prepared.orderId,userSignature});setStatus(`${side==="buy"?"Buy":"Sell"} limit open at ${dollars(prepared.intent.limitPrice)}`);await refreshAccount(connected.account);}catch(error){setStatus(error instanceof Error?error.message:"Limit order unavailable");}finally{setTradeBusy(false);}
   }
   async function cancelOrder(order:RestingOrder){
     setStatus("Waiting for cancellation signature…");try{const connected=await wallet(),prepared=await post(`/v1/orders/${order.orderId}/cancel/prepare`,{}),userSignature=await signTyped(connected,prepared,"CancelIntent"),result=await post(`/v1/orders/${order.orderId}/cancel`,{intent:prepared.intent,userSignature});setStatus(`Order cancelled in block ${result.transaction.blockNumber}`);await refreshAccount(connected.account);}catch(error){setStatus(error instanceof Error?error.message:"Cancellation unavailable");}
@@ -185,7 +188,7 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
     try{
       const connected=await wallet();const {computeAddress}=await import("ethers");const privateKey=`0x${[...crypto.getRandomValues(new Uint8Array(32))].map(value=>value.toString(16).padStart(2,"0")).join("")}`,sessionAddress=computeAddress(privateKey);const prepared=await post("/v1/session/prepare",{account:connected.account,session:sessionAddress,marketMask:3,maxTradeAmount:"2500",maxCumulativeAmount:"10000",maxFee:"5",durationSeconds:28_800,nonce:randomNonce()});
       const userSignature=await signTyped(connected,{...prepared,intent:prepared.grant},"SessionGrant");setStatus("Activating sponsored session…");
-      const result=await post("/v1/session/execute",{grant:prepared.grant,userSignature});const session={account:connected.account,privateKey,validUntil:Number(result.validUntil)*1_000};sessionStorage.setItem(`rfq-session:${connected.account.toLowerCase()}`,JSON.stringify(session));setQuickSession(session);setStatus("Quick trading active for 8 hours");
+      const result=await post("/v1/session/execute",{grant:prepared.grant,userSignature});const session={account:connected.account,sessionAddress,privateKey,validUntil:Number(result.validUntil)*1_000};sessionStorage.setItem(`rfq-session:${connected.account.toLowerCase()}`,JSON.stringify({account:session.account,sessionAddress,validUntil:session.validUntil}));setQuickSession(session);setStatus("Quick trading active in this tab for 8 hours");
     }catch(error){setStatus(error instanceof Error?error.message:"Session unavailable");}
   }
   async function disableQuickTrading(){
@@ -193,8 +196,8 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
     setStatus("Waiting for session revocation…");
     try{
       const connected=await wallet();
-      const {computeAddress}=await import("ethers");const config=await fetch(`${API}/v1/config`).then(response=>response.json());
-      const sessionAddress=computeAddress(quickSession.privateKey),data=`0x1fa5d6a4${sessionAddress.slice(2).padStart(64,"0")}`;
+      const config=await fetch(`${API}/v1/config`).then(response=>response.json());
+      const sessionAddress=quickSession.sessionAddress,data=`0x1fa5d6a4${sessionAddress.slice(2).padStart(64,"0")}`;
       let hash:string;
       if(connected.privateKey){const {JsonRpcProvider,Wallet}=await import("ethers");const transaction=await new Wallet(connected.privateKey,new JsonRpcProvider(config.rpcUrl)).sendTransaction({to:config.clearingAddress,data});hash=transaction.hash;await transaction.wait();sessionStorage.removeItem(`rfq-session:${connected.account.toLowerCase()}`);setQuickSession(null);setStatus("Quick trading revoked on-chain");return;}
       else {const provider=connected.provider;if(!provider)throw new Error("Wallet provider unavailable");hash=await provider.request({method:"eth_sendTransaction",params:[{from:connected.account,to:config.clearingAddress,data}]}) as string;}
@@ -227,7 +230,7 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
       <label className="order-option"><input type="checkbox" checked={reduceOnly} onChange={event=>setReduceOnly(event.target.checked)}/><span><b>Reduce only</b><small>Never increase or flip your position</small></span></label>
       <dl>{orderType==="market"?<><div><dt>Estimated price</dt><dd>{dollars(quote?.expectedPrice)}</dd></div><div><dt>Maximum fee</dt><dd>{dollars(quote?.fee)}</dd></div><div><dt>{side==="buy"?"Maximum":"Minimum"} accepted price</dt><dd>{dollars(quote?.worstPrice)}</dd></div></>:<><div><dt>Current maker {side==="buy"?"ask":"bid"}</dt><dd>{dollars(quote?.expectedPrice)}</dd></div><div><dt>Trigger</dt><dd className={limitMarketable?"positive":""}>{limitMarketable?"Marketable now":limitDistanceBps===null?"—":`${limitDistanceBps.toFixed(1)} bps away`}</dd></div><div><dt>Execution rule</dt><dd>{side==="buy"?"Ask ≤ limit":"Bid ≥ limit"}</dd></div><div><dt>Maximum fee</dt><dd>{dollars(quote?.fee)}</dd></div></>}</dl>
       <details className="price-details"><summary>Price details</summary><div><span>Oracle {side==="buy"?"ask":"bid"}<b>{dollars(side==="buy"?quote?.ask:quote?.bid)}</b></span><span>Adaptive spread<b>{quote?.spread?`${quote.spread.totalBps} bps`:"—"}</b></span><span>Inventory adjustment<b>{dollars(quote?.impactCharge)}</b></span><span>Price age<b>{quoteAge===null?"—":`${quoteAge} ms`}</b></span><span>Current maximum<b>{dollars(live?.operatingMaxTradeNotional)}</b></span></div></details>
-      <button className={`submit ${side}`} disabled={!quote} onClick={orderType==="market"?approve:placeLimit}>{orderType==="market"?(side === "buy" ? "Buy" : "Sell"):`Place ${side}`} {market}</button><p className="status"><i />{status}</p>
+      <button className={`submit ${side}`} disabled={!quote||tradeBusy} aria-busy={tradeBusy} onClick={orderType==="market"?approve:placeLimit}>{tradeBusy?"Submitting…":orderType==="market"?(side === "buy" ? "Buy" : "Sell"):`Place ${side}`} {tradeBusy?"":market}</button><p className="status" aria-live="polite"><i />{status}</p>
       <button className="depositToggle" onClick={() => setShowDeposit(value => !value)}>{showDeposit ? "Hide deposit" : "Deposit from any chain"}</button>
       {showDeposit && <section className="depositPanel"><div className="depositGrid"><label>From<select value={sourceChain} onChange={event => setSourceChain(Number(event.target.value) as keyof typeof chains)}>{Object.entries(chains).map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Asset<select value={sourceToken} onChange={event => setSourceToken(event.target.value as "ETH" | "USDC" | "USDT")}><option>ETH</option><option>USDC</option><option>USDT</option></select></label></div><label>Deposit amount</label><div className="amount compact"><input aria-label="Deposit amount" inputMode="decimal" value={depositAmount} onChange={event => setDepositAmount(event.target.value)} /><b>{sourceToken}</b></div><button className="route" onClick={deposit}>Route & deposit</button><p className="status">{depositStatus}</p></section>}
       <button className="wallet trade-wallet" onClick={() => wallet().catch(error => setStatus(error instanceof Error ? error.message : "Wallet unavailable"))}>{account ? `${account.slice(0, 6)}…${account.slice(-4)}` : "Connect wallet"}</button>
