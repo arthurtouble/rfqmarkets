@@ -21,6 +21,7 @@ async function allActivity(){
   return items;
 }
 async function waitCaughtUp(){for(let attempt=0;attempt<100;attempt++){const health=await get("/health");if(health.response.ok&&(health.payload as {ok:boolean;lag:number}).ok&&(health.payload as {lag:number}).lag===0)return;await new Promise(resolve=>setTimeout(resolve,100));}throw new Error("indexer did not catch up");}
+async function waitForAccount(address:string){let result=await get(`/v1/account/${address}`);for(let attempt=0;attempt<100&&result.response.status===404;attempt++){await new Promise(resolve=>setTimeout(resolve,100));result=await get(`/v1/account/${address}`);}return result;}
 
 await waitCaughtUp();
 const baselineHashes=new Set((await allActivity()).map(item=>item.tx_hash));
@@ -34,8 +35,9 @@ try{
   const receipt=await (await clearing.depositWithAuthorization(user.address,amount,latest.timestamp-60,latest.timestamp+600,nonce,27,zero,zero)).wait();assert(receipt);
   depositHash=receipt.hash;
   await mine(2);
+  await waitCaughtUp();
 
-  const indexed=await get(`/v1/account/${user.address}`);
+  const indexed=await waitForAccount(user.address);
   assert.equal(indexed.response.status,200,JSON.stringify(indexed.payload));
   assert.equal((indexed.payload as {collateral:string}).collateral,amount.toString());
   const branchActivity=await get(`/v1/account/${user.address}/activity`);
