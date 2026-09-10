@@ -6,7 +6,7 @@ import type { PriceSnapshot } from "../../../packages/shared/src/policy.js";
 export type OracleMarket="BTC"|"ETH";
 export interface OracleQuote {snapshot:PriceSnapshot;report:string;validUntil:number}
 export type OracleListener=(market:OracleMarket)=>void;
-export interface OracleSource {latest(market:OracleMarket):Promise<OracleQuote>;subscribe?(listener:OracleListener):()=>void;start?():Promise<void>;close?():Promise<void>;status?():unknown}
+export interface OracleSource {latest(market:OracleMarket):Promise<OracleQuote>;settlement?(market:OracleMarket):Promise<OracleQuote>;subscribe?(listener:OracleListener):()=>void;start?():Promise<void>;close?():Promise<void>;status?():unknown}
 interface ReportStream {on(event:"report",listener:(report:Report)=>void):this;connect():Promise<void>;close():Promise<void>}
 interface LatestReportClient {getLatestReport(feedId:string):Promise<Report>;createStream?(feedIds:string[]):ReportStream}
 export interface ChainlinkSourceOptions {apiKey:string;userSecret:string;endpoint:string;wsEndpoint:string;feedIds:Record<OracleMarket,string>;feedDecimals:Record<OracleMarket,number>;timeoutMs?:number;client?:LatestReportClient}
@@ -97,6 +97,7 @@ export class PythHermesSource implements OracleSource{
   private stopped=true;
   private listeners=new Set<OracleListener>();
   private recentMove:Partial<Record<OracleMarket,{mid:bigint;bps:number}>>={};
+  private settlementFetchedAtMs=0;
   constructor(private options:PythHermesSourceOptions){
     const endpoint=options.endpoint??"https://pyth.dourolabs.app/hermes";
     if(!endpoint.startsWith("https://"))throw new Error("Pyth Hermes endpoint must use TLS");
@@ -129,7 +130,7 @@ export class PythHermesSource implements OracleSource{
     const url=new URL(`${endpoint}/v2/updates/price/latest`);for(const feed of Object.values(this.options.feedIds))url.searchParams.append("ids[]",feed);
     const response=await (this.options.fetchImpl??fetch)(url,{headers:{authorization:`Bearer ${this.options.apiKey}`,accept:"application/json"},signal:AbortSignal.timeout(this.options.timeoutMs??2_500)});
     if(!response.ok)throw new Error(`Pyth Hermes returned ${response.status}`);
-    const changed=this.accept(await response.json() as HermesResponse);if(changed.length!==2)throw new Error("Pyth Hermes response was incomplete");
+    const changed=this.accept(await response.json() as HermesResponse);if(changed.length!==2)throw new Error("Pyth Hermes response was incomplete");this.settlementFetchedAtMs=Date.now();
   }
   private async stream(signal:AbortSignal){
     const endpoint=(this.options.endpoint??"https://pyth.dourolabs.app/hermes").replace(/\/$/,"");const url=new URL(`${endpoint}/v2/updates/price/stream`);for(const feed of Object.values(this.options.feedIds))url.searchParams.append("ids[]",feed);url.searchParams.set("parsed","true");url.searchParams.set("encoding","hex");
@@ -145,5 +146,11 @@ export class PythHermesSource implements OracleSource{
     const cached=this.cached[market],now=Date.now();if(cached&&now-this.fetchedAtMs<=(this.options.cacheMs??500)&&cached.validUntil*1_000>now)return cached;
     if(!this.inFlight)this.inFlight=this.refresh().finally(()=>{this.inFlight=undefined;});await this.inFlight;
     const value=this.cached[market];if(!value)throw new Error(`Pyth ${market} market data unavailable`);return value;
+  }
+  async settlement(market:OracleMarket){
+    // SSE may carry only the feed that changed. Settlement needs an atomic REST
+    // batch whose binary payload covers every parsed feed in the signed report.
+    if(Date.now()-this.settlementFetchedAtMs>100){if(!this.inFlight)this.inFlight=this.refresh().finally(()=>{this.inFlight=undefined;});await this.inFlight;}
+    const value=this.cached[market];if(!value)throw new Error(`Pyth ${market} settlement data unavailable`);return value;
   }
 }

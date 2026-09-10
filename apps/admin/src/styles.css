@@ -1,8 +1,53 @@
 @import "../../../packages/design-system/tokens.css";
-:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#ecf3f1;background:#07100f;font-synthesis:none}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% 0,#13322d 0,transparent 34%),#07100f}main{max-width:1180px;margin:auto;padding:42px 28px 64px}header{display:flex;justify-content:space-between;align-items:end;margin-bottom:28px}h1{font-size:34px;letter-spacing:-.04em;margin:7px 0 4px}header p,.eyebrow,small,.sectionTitle span{color:#7f9993}.eyebrow{font-size:11px;letter-spacing:.13em}.health{display:grid;grid-template-columns:auto auto;gap:3px 8px;padding:12px 16px;border:1px solid #33423f;border-radius:14px;color:#ff9b9b}.health i{width:8px;height:8px;margin-top:6px;border-radius:50%;background:currentColor}.health small{grid-column:2}.health.ok{color:#6fe2b0}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px}.summary article,.markets article,.orders{border:1px solid #243733;background:#0b1715d9;border-radius:18px}.summary article{display:grid;gap:7px;padding:19px}.summary span,.flow span,dt{font-size:12px;color:#7f9993}.summary strong{font-size:23px}.markets{display:grid;grid-template-columns:1fr 1fr;gap:14px}.markets article{padding:21px}.title,.flow,.sectionTitle{display:flex;justify-content:space-between}.title b{font-size:22px}.title span{font-size:11px;color:#6b827d;margin-left:5px}.title em{font-style:normal;font-size:11px;padding:6px 9px;border-radius:20px;background:#382027;color:#ff9eaa}.title em.within_band{background:#123429;color:#73e0b1}.flow{margin:28px 0 10px}.flow>div{display:grid;gap:5px}.flow .right{text-align:right}.flow strong{font-size:18px}.bar{height:6px;border-radius:9px;background:#6f3440;overflow:hidden}.bar i{display:block;height:100%;background:#52bd93}dl{display:grid;gap:10px;margin:24px 0 0}dl div{display:flex;justify-content:space-between}dd{margin:0;font-variant-numeric:tabular-nums}.orders{margin-top:14px;padding:21px;overflow:auto}.sectionTitle{align-items:center}.sectionTitle h2{font-size:17px;margin:0}.sectionTitle span{font-size:11px}.empty{margin-top:22px;padding:25px;text-align:center;color:#728b85;border:1px dashed #2c403b;border-radius:12px}table{width:100%;border-collapse:collapse;margin-top:18px;font-size:13px}th,td{text-align:left;padding:11px;border-bottom:1px solid #20322e}th{color:#769088;font-weight:500}.pill{color:#68dca9}footer{text-align:center;color:#60756f;font-size:11px;margin-top:22px}.alert{padding:12px;background:#3b2025;color:#ffb0b8;border-radius:10px;margin-bottom:14px}@media(max-width:760px){main{padding:25px 15px}header{align-items:start}.summary{grid-template-columns:1fr}.markets{grid-template-columns:1fr}.health{font-size:12px}h1{font-size:28px}}
 
-/* Operations theme: deliberately distinct from the customer trading surface. */
-:root{font-family:var(--font-ui);--ops:#5eead4;--ops-warn:#fbbf71}
-body{background:radial-gradient(circle at 12% 0,#12313a 0,transparent 34%),radial-gradient(circle at 92% 4%,#302819 0,transparent 25%),#070d11}
-.health.ok,.pill{color:var(--ops)}
-.title em.within_band{color:var(--ops);background:#12342f}
+:root { --ops: #00e6cf; --ops-surface: #063c38; }
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--text); background: #05090d; }
+main { max-width: 1180px; margin: auto; padding: 42px 28px 64px; }
+header { display: flex; justify-content: space-between; align-items: end; margin-bottom: 28px; }
+h1 { margin: 7px 0 4px; font-size: 34px; letter-spacing: -.04em; }
+header p, .eyebrow, small, .sectionTitle span { color: var(--text-dim); }
+.eyebrow { font: 500 11px/1 var(--font-mono); letter-spacing: .13em; }
+.health { display: grid; grid-template-columns: auto auto; gap: 3px 8px; padding: 12px 16px; color: var(--sell); border: 1px solid var(--line-strong); }
+.health i { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: currentColor; }
+.health small { grid-column: 2; }
+.health.ok, .pill { color: var(--ops); }
+.summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
+.summary article, .markets article, .orders { border: 1px solid var(--line); background: #090f16; }
+.summary article { display: grid; gap: 7px; padding: 19px; }
+.summary article:hover, .markets article:hover { border-color: #356760; }
+.summary span, .flow span, dt { color: var(--text-dim); font-size: 12px; }
+.summary strong { font-size: 23px; }
+.summary strong, .flow strong, dd, table { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.markets { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.markets article { padding: 21px; }
+.title, .flow, .sectionTitle { display: flex; justify-content: space-between; }
+.title b { font-size: 22px; }
+.title span { margin-left: 5px; color: var(--text-dim); font: 500 11px/1 var(--font-mono); }
+.title em { padding: 6px 9px; color: #ff9bb1; background: var(--sell-surface); font: normal 500 11px/1 var(--font-mono); }
+.title em.within_band { color: var(--ops); background: var(--ops-surface); }
+.flow { margin: 28px 0 10px; }
+.flow > div { display: grid; gap: 5px; }
+.flow .right { text-align: right; }
+.flow strong { font-size: 18px; }
+.bar { height: 6px; overflow: hidden; background: var(--sell); }
+.bar i { display: block; height: 100%; background: var(--ops); }
+dl { display: grid; gap: 10px; margin: 24px 0 0; }
+dl div { display: flex; justify-content: space-between; }
+dd { margin: 0; }
+.orders { margin-top: 14px; padding: 21px; overflow: auto; }
+.sectionTitle { align-items: center; }
+.sectionTitle h2 { margin: 0; font-size: 17px; }
+.empty { margin-top: 22px; padding: 25px; color: var(--text-dim); text-align: center; border: 1px dashed var(--line-strong); }
+table { width: 100%; margin-top: 18px; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 11px; text-align: left; border-bottom: 1px solid var(--line); }
+th { color: var(--text-dim); font-weight: 500; }
+footer { margin-top: 22px; color: var(--text-dim); font-size: 11px; text-align: center; }
+.alert { margin-bottom: 14px; padding: 12px; color: #ffb1c2; background: var(--sell-surface); border-left: 2px solid var(--sell); }
+@media (max-width: 760px) {
+  main { padding: 25px 15px; }
+  header { align-items: start; }
+  .summary, .markets { grid-template-columns: 1fr; }
+  .health { font-size: 12px; }
+  h1 { font-size: 28px; }
+}

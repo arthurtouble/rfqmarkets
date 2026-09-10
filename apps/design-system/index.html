@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="RFQ Markets product design system and component specimen." />
+    <title>RFQ Product System</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="masthead"><div><span class="kicker">RFQ MARKETS / PRODUCT SYSTEM</span><h1>Lean trading interface</h1><p>Version 0.2 · customer surfaces</p></div><span class="version">BASE / USDC</span></header>
+    <nav class="jump" aria-label="Specimen sections"><a href="#foundation">Foundation</a><a href="#type">Typography</a><a href="#controls">Controls</a><a href="#data">Trading data</a><a href="#states">States</a></nav>
+    <main>
+      <section id="foundation"><header><span>01</span><div><h2>Foundation</h2><p>Square geometry, dark neutral surfaces, saturated semantic actions.</p></div></header>
+        <div class="swatches">
+          <figure><i style="--swatch:#05070d"></i><figcaption>Canvas<code>#05070D</code></figcaption></figure>
+          <figure><i style="--swatch:#090d16"></i><figcaption>Surface<code>#090D16</code></figcaption></figure>
+          <figure><i style="--swatch:#26324a"></i><figcaption>Border<code>#26324A</code></figcaption></figure>
+          <figure><i style="--swatch:#7185ff"></i><figcaption>Selection<code>#7185FF</code></figcaption></figure>
+          <figure><i style="--swatch:#00e6b8"></i><figcaption>Buy / healthy<code>#00E6B8</code></figcaption></figure>
+          <figure><i style="--swatch:#ff3f69"></i><figcaption>Sell / danger<code>#FF3F69</code></figcaption></figure>
+          <figure><i style="--swatch:#ffc34d"></i><figcaption>Warning<code>#FFC34D</code></figcaption></figure>
+          <figure><i style="--swatch:#f7f9ff"></i><figcaption>Primary text<code>#F7F9FF</code></figcaption></figure>
+        </div>
+        <div class="spacing"><b>4</b><b>8</b><b>12</b><b>16</b><b>24</b><b>32</b><b>48</b></div><p class="rule">Spacing follows a 4px base. Component radius is zero. Status dots remain circular. Shadows do not communicate hierarchy.</p>
+      </section>
+
+      <section id="type"><header><span>02</span><div><h2>Typography</h2><p>IBM Plex Sans for interface copy; IBM Plex Mono for prices, quantities, addresses and hashes.</p></div></header>
+        <div class="type-grid"><div><span>DISPLAY / 40 / 600</span><h3 class="display">Perpetual markets</h3></div><div><span>TITLE / 24 / 600</span><h3 class="title">BTC-PERP</h3></div><div><span>PRICE / 30 / 600 MONO</span><strong class="price">$77,228.26</strong></div><div><span>BODY / 14 / 400</span><p>Review the current quote and signed price protection before submitting.</p></div><div><span>LABEL / 11 / 600</span><b class="label">AVAILABLE MARGIN</b></div><div><span>MACHINE / 12 / 500 MONO</span><code>0x1114…6782</code></div></div>
+      </section>
+
+      <section id="controls"><header><span>03</span><div><h2>Controls</h2><p>Every control has visible default, hover, focus, active and disabled behavior.</p></div></header>
+        <div class="component-grid"><article><h3>Actions</h3><div class="row"><button class="primary">Buy BTC</button><button class="danger">Sell BTC</button><button class="secondary">Withdraw</button><button disabled>Disabled</button></div></article>
+          <article><h3>Direction</h3><div class="segmented"><button class="active buy">Buy</button><button>Sell</button></div></article>
+          <article><h3>Inputs</h3><label>Amount <span>USDC</span><div class="input"><input value="1000" aria-label="Example amount" /><b>USDC</b></div></label><label>Market<select aria-label="Example market"><option>BTC-PERP</option><option>ETH-PERP</option></select></label></article>
+          <article><h3>Tabs</h3><div class="tabs"><button class="active">Positions</button><button>Open orders</button><button>History</button></div><label class="check"><input type="checkbox" checked /> Reduce only</label></article>
+        </div>
+      </section>
+
+      <section id="data"><header><span>04</span><div><h2>Trading data</h2><p>Numbers align, update in place and keep labels stable.</p></div></header>
+        <div class="ticker"><div><span>BTC-PERP</span><strong>$77,228.26</strong><small class="healthy">● STREAMING</small></div><dl><div><dt>ORACLE</dt><dd>$77,228.26</dd></div><div><dt>BID</dt><dd>$77,228.25</dd></div><div><dt>ASK</dt><dd>$77,228.26</dd></div><div><dt>FUNDING APR</dt><dd>0.11%</dd></div></dl></div>
+        <div class="table-wrap"><table><thead><tr><th>Market</th><th>Size</th><th>Entry</th><th>Mark</th><th>uPnL</th><th>Liquidation</th></tr></thead><tbody><tr><td>BTC-PERP</td><td class="healthy">+0.1250 BTC</td><td>$76,920.10</td><td>$77,228.26</td><td class="healthy">+$38.52</td><td>$61,204.88</td></tr><tr><td>ETH-PERP</td><td class="danger-text">−1.500 ETH</td><td>$2,451.20</td><td>$2,442.91</td><td class="healthy">+$12.44</td><td>$3,104.20</td></tr></tbody></table></div>
+      </section>
+
+      <section id="states"><header><span>05</span><div><h2>System states</h2><p>Text always accompanies color. Actionability is explicit.</p></div></header>
+        <div class="state-grid"><div class="notice good"><b>LIVE</b><span>Prices current · submission enabled</span></div><div class="notice warn"><b>GUARDED</b><span>Trade capacity temporarily reduced</span></div><div class="notice bad"><b>REDUCE ONLY</b><span>Only exposure-reducing orders accepted</span></div><div class="notice neutral"><b>PENDING</b><span>Transaction submitted · awaiting inclusion</span></div></div>
+      </section>
+    </main>
+    <footer>RFQ Markets design source of truth · update shared tokens and this specimen together.</footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

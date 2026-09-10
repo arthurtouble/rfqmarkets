@@ -1,6 +1,8 @@
 # Product design system
 
-The shared tokens in `packages/design-system/tokens.css` define typography, surfaces, borders and semantic states. Customer surfaces use midnight blue, periwinkle, aqua and coral. Private operations surfaces use graphite, cyan and amber so screenshots cannot be confused with the trading product.
+The executable specimen is [`apps/design-system/index.html`](apps/design-system/index.html). Run `npm run dev:design-system` and open `http://127.0.0.1:4177`. It renders the actual foundations, typography, spacing, controls, tabular trading data and system states used by the product. Shared values live in `packages/design-system/tokens.css`; changes to either file must update the other in the same review.
+
+Customer surfaces use near-black neutral layers, saturated periwinkle selection, aqua buy/healthy states and coral sell/danger states. Private operations surfaces use graphite, cyan and amber so screenshots cannot be confused with the trading product. IBM Plex Sans and IBM Plex Mono are bundled locally; no third-party font request is made at runtime.
 
 ## Product rules
 
@@ -17,7 +19,7 @@ The shared tokens in `packages/design-system/tokens.css` define typography, surf
 
 ## Typography and density
 
-The customer product uses a neutral system sans stack with tabular numerals and a separate monospace stack for machine identifiers. It avoids rounded display fonts, oversized headings and decorative gradients. The visual hierarchy comes from weight, spacing, borders and a small semantic palette. Controls use 8–14px radii; the dense trading canvas stays readable at 390px without turning every value into a separate card.
+The customer product uses IBM Plex Sans with IBM Plex Mono for prices, quantities and machine identifiers. It avoids rounded display fonts, oversized headings and decorative gradients. The visual hierarchy comes from weight, spacing, borders and a small semantic palette. Component corners are square; only status dots remain circular. The dense trading canvas stays readable at 390px without turning every value into a separate card.
 
 The layout borrows the persistent market context and dense feedback of Hyperliquid, Variational's indicative-versus-firm distinction, dYdX's unified account workspace, and Synthetix's explicit margin and fee preview. It omits an order book, isolated leverage selector and broad conditional-order matrix until those concepts have native RFQ semantics and matching contract enforcement.
 

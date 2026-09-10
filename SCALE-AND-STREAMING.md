@@ -62,3 +62,8 @@ Internal chain catch-up, hedge reconciliation and oracle REST recovery may use b
 ## Production gates
 
 The deterministic gateway harness exercises 100,000 in-memory clients, complete-frame replay, upstream reconnect and slow-reader eviction. `npm run smoke:sse-gateway` additionally exercises real HTTP connections and a 50% reconnect storm against the running stack. Before public testnet traffic, run it at the host's file-descriptor ceiling and add sustained source-burst and regional edge tests. Before mainnet, test peak filled-trade rate through firm quote, approvals, durable sender and Base inclusion, and exercise gateway loss without interrupting the leader or exposing approvers.
+## Bounded chart history
+
+The gateway samples the same normalized market frames it fans out and retains at most 1,800 observations per market in memory. `/v1/markets/history` seeds a newly opened chart without exposing upstream vendors or introducing a database. This cache is disposable presentation context: clearing and quoting never read it, and a restart may return an empty history until new frames arrive.
+
+The private hedge dashboard consumes the hedger status SSE stream and the indexer's existing update stream. It does not poll every browser once per second. The hedger itself still performs one bounded reconciliation tick against finalized exposure; that is operational work independent of dashboard viewers.

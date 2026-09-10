@@ -8,6 +8,7 @@ The RFQ clearing system is deployed on Base Sepolia (chain ID 84532) and can be 
 | Clearing implementation | [`0xB7Df1f1718e8E487D6673B912b99248C5f731B9F`](https://sepolia.basescan.org/address/0xB7Df1f1718e8E487D6673B912b99248C5f731B9F) |
 | Risk math library | [`0x0967d24F4c8BF63064Fd39EBf413b1073a5B8eB2`](https://sepolia.basescan.org/address/0x0967d24F4c8BF63064Fd39EBf413b1073a5B8eB2) |
 | Pyth adapter | [`0x8Ba3F42B417824b9550253573D75Dc4fe22dC5ec`](https://sepolia.basescan.org/address/0x8Ba3F42B417824b9550253573D75Dc4fe22dC5ec) |
+| Scheduled Pyth parse adapter | [`0x414a98e864984697e3e81b8844e5810c6D5DB9b2`](https://sepolia.basescan.org/address/0x414a98e864984697e3e81b8844e5810c6D5DB9b2) |
 | ProxyAdmin | [`0x28fda3da2507189e8c0d0b62d2bd2d2a339926ba`](https://sepolia.basescan.org/address/0x28fda3da2507189e8c0d0b62d2bd2d2a339926ba) |
 | Governance timelock | [`0x53324175fEC3F1C6d3eF48C946ce3a7A94FAC765`](https://sepolia.basescan.org/address/0x53324175fEC3F1C6d3eF48C946ce3a7A94FAC765) |
 | Governance Safe | [`0xA2C1b91a86FE748c75B17D4Df9C445c2eE315494`](https://sepolia.basescan.org/address/0xA2C1b91a86FE748c75B17D4Df9C445c2eE315494) |
@@ -20,6 +21,8 @@ Both Safes have three independent disposable owners and a 2-of-3 threshold. The 
 The clearing contract currently holds 25.00016 USDC of maker backing, 5.00004 USDC of insurance, and 9.9998 USDC deposited for the disposable trader `0x1026b5f8CF4640613B625ECa70b295FfE36E663A`. These deliberately small testnet balances verify custody paths; they are not economic capitalization.
 
 The oracle adapter pins Pyth Core BTC/USD and ETH/USD feed IDs and fails closed. The quote API now consumes the authenticated upgraded Hermes endpoint over server-sent events, keeps the credential server-side, embeds the latest signed update bundle in each quote, and falls back to a coalesced authenticated REST fetch if its stream cache is absent. Approvers independently simulate the signed payload at the adapter boundary and the clearing contract verifies it again during settlement.
+
+Firm quotes and signed closes acquire a coalesced complete REST batch for settlement while SSE continues to drive cheap indicative updates. A replacement adapter that directly parses the signed payload inside the block-time window is scheduled through operation `0xd0303c4c6d05c05d09c5e934b74ac5fca2f61b98d5dc6b0cf8ce8635b5d09b7f`; the enforced 72-hour timelock makes it executable after Unix timestamp `1789318714`. Run `npm run upgrade:base-sepolia-pyth` after that time to execute the already approved operation and update the local deployment manifest. Until then, the table's original adapter remains active.
 
 ## Repeatable commands
 

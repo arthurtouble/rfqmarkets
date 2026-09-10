@@ -1,0 +1,15 @@
+import assert from"node:assert/strict";
+
+const api=process.env.RFQ_API_URL??"http://127.0.0.1:4100",gateway=process.env.RFQ_GATEWAY_URL??"http://127.0.0.1:4500",indexer=process.env.RFQ_INDEXER_URL??"http://127.0.0.1:4300",hedger=process.env.RFQ_HEDGER_URL??"http://127.0.0.1:4400",approverBasePort=Number(process.env.RFQ_APPROVER_BASE_PORT??4201),expectedChain=process.env.RFQ_EXPECTED_CHAIN_ID;
+async function timed(url:string,init?:RequestInit){const started=performance.now(),response=await fetch(url,{...init,signal:AbortSignal.timeout(8_000)}),latencyMs=Math.round(performance.now()-started),payload=await response.json().catch(()=>({}));assert(response.ok,`${url} returned ${response.status}: ${JSON.stringify(payload)}`);return{payload,latencyMs};}
+const checks=await Promise.all([
+  timed(`${api}/health`),timed(`${gateway}/health`),timed(`${indexer}/health`),timed(`${hedger}/health`),
+  ...[0,1,2].map(index=>timed(`http://127.0.0.1:${approverBasePort+index}/health`))
+]);
+const [apiHealth,gatewayHealth,indexerHealth,hedgerHealth,...approvers]=checks;
+assert.equal((apiHealth.payload as {ok?:boolean}).ok,true,"API is not healthy");assert.equal((gatewayHealth.payload as {ok?:boolean}).ok,true,"gateway is not receiving current frames");assert.equal((indexerHealth.payload as {ok?:boolean}).ok,true,"indexer is not healthy");assert.equal((hedgerHealth.payload as {ok?:boolean}).ok,true,"hedger is not healthy");assert(approvers.every(item=>(item.payload as {ok?:boolean}).ok),"an approver is not healthy");
+const config=await timed(`${api}/v1/config`),chainId=String((config.payload as {chainId?:string}).chainId??"");if(expectedChain)assert.equal(BigInt(chainId),BigInt(expectedChain),"runtime chain mismatch");
+const quoteResults=await Promise.all(["BTC","ETH"].map(market=>timed(`${api}/v1/quote`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({market,side:"buy",amount:"100"})})));for(const result of quoteResults){const quote=result.payload as {quoteId?:string;expectedPrice?:string;expiresAtMs?:number};assert.match(quote.quoteId??"",/^[0-9a-f-]{36}$/i);assert(BigInt(quote.expectedPrice??0)>0n);assert((quote.expiresAtMs??0)>Date.now());}
+const histories=await Promise.all(["BTC","ETH"].map(market=>timed(`${gateway}/v1/markets/history?market=${market}&limit=120`)));assert(histories.every(item=>Array.isArray((item.payload as {points?:unknown[]}).points)),"history endpoint did not return points");
+const lag=Number((indexerHealth.payload as {lag?:number}).lag??0);assert(lag<=Number(process.env.RFQ_MAX_INDEXER_LAG??3),`indexer lag ${lag} exceeds readiness limit`);
+console.log(JSON.stringify({ready:true,chainId,services:{api:apiHealth.latencyMs,gateway:gatewayHealth.latencyMs,indexer:indexerHealth.latencyMs,hedger:hedgerHealth.latencyMs,approvers:approvers.map(item=>item.latencyMs)},quotes:{BTC:quoteResults[0].latencyMs,ETH:quoteResults[1].latencyMs},historyPoints:{BTC:(histories[0].payload as {points:unknown[]}).points.length,ETH:(histories[1].payload as {points:unknown[]}).points.length},indexerLag:lag},null,2));

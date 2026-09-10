@@ -68,6 +68,14 @@ test("streams authenticated Pyth updates to subscribers",async()=>{
   const changed=new Promise<string>(resolve=>source.subscribe(resolve));await source.start();assert.equal(await changed,"BTC");assert.equal(authorization,"Bearer trial-secret");assert.equal((await source.latest("ETH")).snapshot.source,"pyth-core");await source.close();
 });
 
+test("uses a complete REST batch for settlement after partial stream updates",async()=>{
+  const now=Math.floor(Date.now()/1_000),btc=`0x${"77".repeat(32)}`,eth=`0x${"88".repeat(32)}`;
+  const partial={binary:{encoding:"hex",data:["aaaa"]},parsed:[{id:btc.slice(2),price:{price:"8000000000000",conf:"100000000",expo:-8,publish_time:now}}]};
+  const batch={binary:{encoding:"hex",data:["bbbb"]},parsed:[{id:btc.slice(2),price:{price:"8000000000000",conf:"100000000",expo:-8,publish_time:now}},{id:eth.slice(2),price:{price:"250000000000",conf:"10000000",expo:-8,publish_time:now}}]};let restCalls=0;
+  const source=new PythHermesSource({apiKey:"trial-secret",feedIds:{BTC:btc,ETH:eth},fetchImpl:async(url,init)=>{if(String(url).includes("/stream")){let controller:ReadableStreamDefaultController<Uint8Array>;const stream=new ReadableStream<Uint8Array>({start(value){controller=value;value.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(partial)}\n\n`));}});init?.signal?.addEventListener("abort",()=>controller.close());return new Response(stream,{headers:{"content-type":"text/event-stream"}});}restCalls++;return new Response(JSON.stringify(batch));}});
+  const changed=new Promise<string>(resolve=>source.subscribe(resolve));await source.start();assert.equal(await changed,"BTC");const quote=await source.settlement("ETH");assert.equal(restCalls,1);const [,updates]=AbiCoder.defaultAbiCoder().decode(["uint8","bytes[]"],quote.report);assert.deepEqual([...updates],["0xbbbb"]);await source.close();
+});
+
 test("rejects stale or incomplete Pyth Hermes observations",async()=>{
   const id=`0x${"33".repeat(32)}`,stale=Math.floor(Date.now()/1_000)-30,fetchImpl=async()=>new Response(JSON.stringify({binary:{encoding:"hex",data:["abcd"]},parsed:[{id,price:{price:"100000000",conf:"1",expo:-8,publish_time:stale}}]}));
   const source=new PythHermesSource({apiKey:"trial-secret",feedIds:{BTC:id,ETH:`0x${"44".repeat(32)}`},fetchImpl});await assert.rejects(source.latest("BTC"),/observation rejected|feed missing/);
