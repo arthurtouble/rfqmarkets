@@ -125,6 +125,11 @@ test("development funding cannot expose a wallet on a non-local chain",()=>{
   assert.throws(()=>buildApi({chainId:8453n,chain:{rpcUrl:"https://mainnet.base.org",sponsorPrivateKey:Wallet.createRandom().privateKey,clearingAddress:"0x0000000000000000000000000000000000000001",tokenAddress:"0x0000000000000000000000000000000000000002",devFund:true,devWallet:{account:Wallet.createRandom().address,privateKey:Wallet.createRandom().privateKey}}}),/development funding requires local chain/);
 });
 
+test("public config never exposes the API's credentialed RPC transport",async()=>{
+  const target=buildApi({chainId:84532n,publicRpcUrl:"https://sepolia.base.org",chain:{rpcUrl:"https://provider.example/v3/private-token",sponsorPrivateKey:Wallet.createRandom().privateKey,clearingAddress:"0x0000000000000000000000000000000000000001",tokenAddress:"0x0000000000000000000000000000000000000002"}});await target.ready();
+  const config=(await target.inject({method:"GET",url:"/v1/config"})).json();assert.equal(config.rpcUrl,"https://sepolia.base.org");assert(!JSON.stringify(config).includes("private-token"));await target.close();
+});
+
 test("market snapshots expose bid, ask, mid and signed funding without a chain",async()=>{
   const marketApi=buildApi();await marketApi.ready();
   const response=await marketApi.inject({method:"GET",url:"/v1/markets"});assert.equal(response.statusCode,200,response.body);
