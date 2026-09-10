@@ -24,6 +24,8 @@ REGIMES = (
     Regime("calm", 3, 0, 0.05, 2_000),
     Regime("trend", 18, 1.5, 0.25, 2_000),
     Regime("high_volatility", 75, 0, 0.40, 2_000),
+    Regime("toxic_burst", 110, 6, 0.90, 1_500),
+    Regime("gap_up", 220, 30, 0.70, 750),
     Regime("crash", 140, -18, 0.65, 1_000),
     Regime("hedge_outage", 35, 0, 0.30, 1_000, False),
 )
@@ -36,6 +38,7 @@ class Metrics:
     fills: int = 0
     limit_misses: int = 0
     capacity_rejections: int = 0
+    risk_rejections: int = 0
     quote_revenue: float = 0
     mark_to_market: float = 0
     hedge_cost: float = 0
@@ -63,6 +66,11 @@ def run_regime(regime: Regime, seed: int = 1, max_trade: float = 1_000_000,
         side = 1 if (toxic and shock_bps > 0) or (not toxic and rng.random() < .5) else -1
         amount = float(rng.choice(sizes))
         metrics.requests += 1
+        gap = exposure - hedge_position
+        mode = "reduce_only" if not regime.hedge_available or abs(gap) > 2 * hedge_band else "guarded" if abs(gap) > hedge_band else "normal"
+        if (mode == "guarded" and amount > max_trade / 2) or (mode == "reduce_only" and abs(gap + side * amount) >= abs(gap)):
+            metrics.risk_rejections += 1
+            continue
         if amount > max_trade or abs(exposure + side * amount) > max_market:
             metrics.capacity_rejections += 1
             continue

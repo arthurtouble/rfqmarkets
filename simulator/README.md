@@ -11,6 +11,8 @@ python3 -B -m unittest discover -v
 
 Covered now: integer USDC/rate arithmetic; exact cumulative split invariance; cross-wallet reservations; conservative pending offsets; current-state stale-quote rejection; correlated impact; portfolio stress caps; distinct signer quorum; nonce/expiry replay; epoch failover; margin tiers; positive-uPnL restrictions; funding conservation; liquidation progress; loss waterfall; pro-rata resolution; oracle modes; historical replay parsing; and service-fault drills.
 
+`adversarial_scenarios.py` isolates Sybil order splitting, parallel reservation bursts, stale and divergent oracle inputs, volatility-sensitive latency, hedge outages and guarded capacity. `market_making_scenarios.py` runs the connected quote and hedge policy through calm, trend, high-volatility, toxic-burst, gap-up, crash and hedge-outage environments. Both are deterministic policy laboratories rather than profit forecasts; contract equivalence remains in the fixed-point and Solidity suites.
+
 `fixed_point.py` is the integer reference used to keep Python and Solidity units aligned. `state_machine.py` models admission through settlement and recovery. `fault_harness.py` drills one signer offline, one key compromised, API failure after quorum, sponsor depletion and ambiguous hedge acknowledgement.
 
 Historical data:

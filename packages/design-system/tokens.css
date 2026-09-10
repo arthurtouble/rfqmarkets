@@ -1,0 +1,18 @@
+:root {
+  --font-ui: "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --ink-0: #080b16; --ink-1: #0d1222; --ink-2: #131a2d; --ink-3: #1c2740;
+  --line: #27344f; --line-strong: #3a4a6b;
+  --text: #f4f6fb; --text-soft: #a3acc0; --text-dim: #707b93;
+  --brand: #8aa2ff; --brand-strong: #a9baff;
+  --buy: #37d4c0; --buy-surface: #0d302e;
+  --sell: #ff7085; --sell-surface: #351923;
+  --warn: #f2bd64; --danger: #ff6478;
+  --radius-sm: 8px; --radius-md: 14px; --radius-lg: 20px;
+  --shadow: 0 24px 70px rgba(0, 0, 0, .34);
+  color-scheme: dark; font-family: var(--font-ui); font-synthesis: none;
+}
+::selection { color: var(--ink-0); background: var(--brand); }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+button { transition: border-color .15s ease, background .15s ease, color .15s ease, transform .15s ease; }
+button:active { transform: translateY(1px); }

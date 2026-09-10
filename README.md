@@ -22,6 +22,8 @@ The [market lifecycle playbook](MARKET-LIFECYCLE-PLAYBOOK.md) defines the on-cha
 
 The [Base Sepolia deployment gate](BASE-SEPOLIA-DEPLOYMENT.md) defines the validated environment, deterministic oracle/proxy deployment, post-deployment assertions and external credentials still required before a testnet transaction.
 
+The UI now shares the tokens and semantic rules in [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md). Run `npm run dev:docs` for the public trading, margin, security and transparency guide on port 4175. Run `npm run dev:internal-docs` for the operations manual on port 4176. The internal site contains operational topology and launch gates and must be deployed only behind authenticated private access; its `noindex` tag is not an access control.
+
 The [indexer design](INDEXER-DESIGN.md) defines the chain-derived account/history schema, query surface, reorg behavior and current Ponder dependency gate.
 
 The [wallet and deposit design](WALLET-AND-DEPOSITS.md) defines the provider-neutral wallet boundary, signed cross-chain route intent, local route simulator and the production rule that only confirmed Base clearing state creates collateral.

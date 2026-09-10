@@ -11,6 +11,10 @@
     "typecheck": "tsc",
     "build:web": "vite build apps/web --outDir ../../dist/web --emptyOutDir",
     "build:admin": "vite build apps/admin --outDir ../../dist/admin --emptyOutDir",
+    "build:docs": "vite build apps/docs --outDir ../../dist/docs --emptyOutDir",
+    "build:internal-docs": "vite build apps/internal-docs --outDir ../../dist/internal-docs --emptyOutDir",
+    "dev:docs": "vite apps/docs --port 4175",
+    "dev:internal-docs": "vite apps/internal-docs --port 4176",
     "dev:services": "tsx scripts/local-stack.ts",
     "dev:testnet-services": "tsx scripts/base-sepolia-stack.ts",
     "dev:web": "vite apps/web",
@@ -40,7 +44,7 @@
     "smoke:limit-order": "node --import tsx scripts/limit-order-smoke.ts",
     "smoke:live-market": "node --import tsx scripts/live-market-data-smoke.ts",
     "smoke:sse-gateway": "node --import tsx scripts/sse-gateway-load.ts",
-    "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin"
+    "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin && npm run build:docs && npm run build:internal-docs"
   },
   "devDependencies": {
     "@fastify/cors": "11.3.0",
