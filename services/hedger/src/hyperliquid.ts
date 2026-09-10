@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { resolve } from "node:path";
 import type { HedgeMarket, HedgeVenue, VenueOrder, VenueResult } from "./server.js";
+import type { HedgeExecutionSignal } from "../../../packages/shared/src/hedge-risk.js";
 
 type RpcReply={id:number;ok:boolean;result?:unknown;error?:string};
 type Pending={resolve(value:unknown):void;reject(error:Error):void;timer:ReturnType<typeof setTimeout>};
@@ -75,6 +76,7 @@ export class HyperliquidVenue implements HedgeVenue{
 
   async verify(){return this.request("verify") as Promise<{accountAddress:string;agentAddress:string;agentName:string;validUntil:number;perpAccountValue:string;usablePerpUsdc:string;spotUsdc:string}>;}
   async position(market:HedgeMarket){const result=await this.request("position",{market}) as {base:string};return BigInt(result.base);}
+  async execution(market:HedgeMarket,referenceMid:bigint,notional:bigint){const result=await this.request("execution",{market,referenceMid:referenceMid.toString(),notional:notional.toString()}) as HedgeExecutionSignal;if(!Number.isFinite(result.estimatedCostBps)||result.estimatedCostBps<0||!Number.isFinite(result.latencyMs)||result.latencyMs<0||!Number.isFinite(result.basisBps)||!Number.isInteger(result.observedAtMs)||!/^\d+$/.test(result.depthUsdc))throw new Error("invalid Hyperliquid execution signal");return result;}
   async find(clientId:string){const result=await this.request("find",{clientId});return result===null?null:venueResult(result);}
   async submit(order:VenueOrder){return venueResult(await this.request("submit",{clientId:order.clientId,market:order.market,baseDelta:order.baseDelta.toString(),limitPrice:order.limitPrice.toString()}));}
   async close(){const child=this.child;if(!child){this.closed=true;return;}try{await this.request("close");}catch{}this.closed=true;if(child.exitCode===null)child.kill();this.child=undefined;}

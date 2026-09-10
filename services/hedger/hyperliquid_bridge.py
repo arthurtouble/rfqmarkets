@@ -105,6 +105,38 @@ def current_position(market: str) -> str:
     return position_cache["values"].get(market, "0")
 
 
+def execution(params):
+    market = params["market"]
+    reference = Decimal(params["referenceMid"]) / ONE_E6
+    target = Decimal(params["notional"]) / ONE_E6
+    started = time.monotonic()
+    book = info.l2_snapshot(market)
+    latency_ms = int((time.monotonic() - started) * 1000)
+    levels = book.get("levels", [[], []])
+    bid = Decimal(levels[0][0]["px"])
+    ask = Decimal(levels[1][0]["px"])
+    venue_mid = (bid + ask) / 2
+    def sweep(side, buying):
+        remaining, value_total, size_total = target, Decimal(0), Decimal(0)
+        for level in side:
+            price, size = Decimal(level["px"]), Decimal(level["sz"])
+            take = min(remaining, price * size)
+            value_total += take
+            size_total += take / price
+            remaining -= take
+            if remaining <= 0: break
+        if remaining > 0 or not size_total: return Decimal(500), target-remaining
+        average = value_total / size_total
+        cost = (average / venue_mid - 1) * 10_000 if buying else (1 - average / venue_mid) * 10_000
+        return max(Decimal(0), cost), target
+    buy_cost, buy_depth = sweep(levels[1], True)
+    sell_cost, sell_depth = sweep(levels[0], False)
+    estimated, depth = max(buy_cost, sell_cost), min(buy_depth, sell_depth)
+    return {"estimatedCostBps": float(estimated), "latencyMs": latency_ms,
+            "basisBps": float((venue_mid / reference - 1) * 10_000),
+            "depthUsdc": str(int(depth * ONE_E6)), "observedAtMs": int(time.time() * 1000)}
+
+
 def parse_order_status(client_id: str):
     response = info.query_order_by_cloid(ACCOUNT, cloid(client_id))
     if response.get("status") == "unknownOid":
@@ -180,6 +212,8 @@ def dispatch(method, params):
         return verify()
     if method == "position":
         return {"base": current_position(params["market"])}
+    if method == "execution":
+        return execution(params)
     if method == "find":
         return parse_order_status(params["clientId"])
     if method == "submit":

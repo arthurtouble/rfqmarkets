@@ -1,5 +1,6 @@
 export type HedgeRiskMode="normal"|"guarded"|"reduce_only";
-export type HedgeRiskSnapshot={observedAtMs:number;healthy:boolean;indexedBlock:number;markets:Record<"BTC"|"ETH",{mode:HedgeRiskMode;gapNotional:string;bandUsdc:string}>};
+export type HedgeExecutionSignal={estimatedCostBps:number;latencyMs:number;basisBps:number;depthUsdc:string;observedAtMs:number};
+export type HedgeRiskSnapshot={observedAtMs:number;healthy:boolean;indexedBlock:number;markets:Record<"BTC"|"ETH",{mode:HedgeRiskMode;gapNotional:string;bandUsdc:string;execution?:HedgeExecutionSignal}>};
 export interface HedgeRiskSource{latest():Promise<HedgeRiskSnapshot>}
 
 export type HedgeAdmission={allowed:boolean;maxTradeNotional:bigint;canBuy:boolean;canSell:boolean};

@@ -7,6 +7,7 @@
     "validate:upgrades": "npm run compile:contracts && openzeppelin-upgrades-core validate artifacts/build-info --contract RFQClearing --unsafeAllowLinkedLibraries",
     "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/risk-differential.mjs && hardhat run --no-compile --network hardhatOp scripts/stateful-clearing-e2e.mjs",
     "test:python": "cd simulator && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -v",
+    "calibrate:quotes": "cd simulator && python3 -B walk_forward_calibration.py",
     "test:services": "node --import tsx --test services/**/*.test.ts scripts/*.test.ts",
     "typecheck": "tsc",
     "build:web": "vite build apps/web --outDir ../../dist/web --emptyOutDir",

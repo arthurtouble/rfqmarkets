@@ -1,6 +1,6 @@
 # Market making and testnet hardening plan
 
-Status: adaptive-v1 foundation implemented; calibration and live venue inputs remain pre-production work.
+Status: adaptive-v1 foundation, live venue inputs, shadow telemetry, and a walk-forward calibration harness are implemented; paid-flow calibration and sustained testnet evidence remain pre-production work.
 
 ## Quote policy
 
@@ -27,7 +27,7 @@ Primary references:
 Build the next model version behind a shadow-mode flag. Every signal has a validity window, hard range, fallback, owner, and telemetry field.
 
 1. Reference price: Pyth signed bid/ask for settlement; independent Coinbase and venue feeds for detection and quoting context.
-2. Volatility: time-weighted EWMA at 1 s, 10 s, 1 min, and 5 min horizons. Sampling must account for irregular tick arrival and gaps.
+2. Volatility: time-weighted EWMA at 1 s, 10 s, and 1 min horizons plus a decaying jump signal. Sampling accounts for irregular tick arrival and gaps.
 3. Paid-flow toxicity: post-fill maker markout at 1 s, 5 s, 30 s, and 5 min. Only executed flow updates the score. Cap each fill's size weight so one trade cannot permanently poison the market.
 4. Hedge friction: executable venue spread, visible depth for the proposed hedge size, expected fees, recent slippage, rejection rate, and acknowledgement latency.
 5. Venue basis: robust median across healthy venues, with a separate dispersion measure. Never shift settlement truth to an exchange mid.
@@ -67,6 +67,14 @@ Release a model only if all hard invariants pass and its out-of-sample results i
 The customer terminal uses an exchange-standard arrangement: persistent market selector and ticker, large chart and account workspace, right-side order ticket, top-right wallet, and table-oriented positions/orders/history. Visual hierarchy comes from dividers and typography rather than card stacks. Advanced pricing details stay collapsed.
 
 The private operations surface remains a separate loopback/VPN application with no keys in the browser. Add quote-model component percentiles, markout curves, venue latency/slippage, residual exposure age, collateral headroom, alert acknowledgement, and a read-only event timeline. High-risk control actions stay in the governance/signing workflow rather than this dashboard.
+
+## Implemented evidence paths
+
+Paid-flow evidence is journaled and restored when the active API leader restarts. A warm standby must mount the same replicated journal or rebuild it from finalized indexed fills before it can become leader. The hedge worker samples Hyperliquid L2 depth, estimated buy-side sweep cost, venue-to-protocol basis, and request latency; these measurements travel through the authenticated hedge-risk endpoint and affect quotes.
+
+`adaptive-shadow-v2` runs without affecting execution and exposes aggregate comparison telemetry from `/health`. Export timestamped observations with `timestamp,volatility_bps,toxicity_bps,hedge_cost_bps,basis_bps,adverse_bps`, then run `npm run calibrate:quotes -- data.csv --output result.json`. The calibrator uses chronological train, validation, and untouched holdout windows and penalizes underquoting more heavily. Candle-only history is insufficient for paid-flow calibration.
+
+Run a checkpointed 72-hour testnet exercise with `RFQ_TESTNET_SOAK_HOURS=72 npm run soak:base-sepolia-iteration`. The runner records every lifecycle failure and exits nonzero if any cycle failed.
 
 ## External production gates
 

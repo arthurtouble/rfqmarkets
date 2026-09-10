@@ -1,12 +1,12 @@
 import type { Market, PriceSnapshot } from "../../../packages/shared/src/pricing.js";
 
-type Fill={side:"buy"|"sell";price:bigint;notional:bigint;atMs:number};
+export type FlowFill={market:Market;side:"buy"|"sell";price:bigint;notional:bigint;atMs:number};
 
 /** Market-wide post-trade markout estimator. Quote requests never enter this state. */
 export class FlowRiskTracker{
-  private fills:Record<Market,Fill[]>={BTC:[],ETH:[]};
-  constructor(private readonly capacity=256,private readonly halfLifeMs=30_000){}
-  record(market:Market,fill:Fill){const items=this.fills[market];items.push(fill);if(items.length>this.capacity)items.splice(0,items.length-this.capacity);}
+  private fills:Record<Market,Array<Omit<FlowFill,"market">>>={BTC:[],ETH:[]};
+  constructor(private readonly capacity=256,private readonly halfLifeMs=30_000,initial:FlowFill[]=[]){for(const fill of initial)this.record(fill.market,fill);}
+  record(market:Market,fill:Omit<FlowFill,"market">){const items=this.fills[market];items.push(fill);if(items.length>this.capacity)items.splice(0,items.length-this.capacity);}
   score(market:Market,snapshot:PriceSnapshot,nowMs=Date.now()){
     const mid=(snapshot.bid+snapshot.ask)/2n;if(mid<=0n)return 10_000;
     let weighted=0,total=0;
@@ -21,4 +21,5 @@ export class FlowRiskTracker{
     return total?Math.round(Math.min(1,weighted/total)*10_000):0;
   }
   size(market:Market){return this.fills[market].length;}
+  entries(){return (["BTC","ETH"] as Market[]).flatMap(market=>this.fills[market].map(fill=>({market,...fill})));}
 }

@@ -3,6 +3,7 @@ import { after, before, test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { AbiCoder, Wallet, keccak256 } from "ethers";
 import { buildApprover } from "../../approver/src/server.js";
 import { buildApi } from "./server.js";
@@ -78,6 +79,12 @@ test("one unavailable approver still leaves quorum", async () => {
   await degraded.close();
 });
 
+test("leader startup restores recent paid-flow evidence from its durable journal",async()=>{
+  const journalPath=join(directory,"flow-restart.sqlite"),empty=buildApi({journalPath});await empty.ready();await empty.close();
+  const db=new DatabaseSync(journalPath),now=Date.now();db.prepare("INSERT INTO flow_fills(fill_id,market,side,price,notional,filled_ms) VALUES(?,?,?,?,?,?)").run("fill-1","BTC","buy","100000000000","250000000000",now);db.close();
+  const restarted=buildApi({journalPath});await restarted.ready();const health=(await restarted.inject({method:"GET",url:"/health"})).json();assert.equal(health.quoteModel.restoredPaidFills,1);await restarted.close();
+});
+
 test("duplicate signed submissions share one approver quorum request",async()=>{
   let calls=0;const delayedFetch=(async(input:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1])=>{calls++;await new Promise(resolve=>setTimeout(resolve,20));return routedFetch(input,init);}) as typeof fetch;
   const target=buildApi({approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:delayedFetch});await target.ready();
@@ -144,6 +151,11 @@ test("hedge monitor failure fails firm quotes closed and exposes reduce-only mar
   const hedgeRiskSource={latest:async()=>{throw new Error("hedger offline")}},marketApi=buildApi({hedgeRiskSource});await marketApi.ready();
   const markets=(await marketApi.inject({method:"GET",url:"/v1/markets"})).json();assert.equal(markets.markets.BTC.riskMode,"reduce_only");assert.equal(markets.markets.BTC.canBuy,false);assert.equal(markets.markets.BTC.canSell,false);
   const quote=await marketApi.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}});assert.equal(quote.statusCode,503);assert.match(quote.body,/exposure-reducing/);await marketApi.close();
+});
+
+test("firm quotes include measured hedge cost, latency, and venue basis",async()=>{
+  const observedAtMs=Date.now(),hedgeRiskSource={latest:async()=>({observedAtMs,healthy:true,indexedBlock:50,markets:{BTC:{mode:"normal" as const,gapNotional:"0",bandUsdc:"1000000",execution:{estimatedCostBps:4,latencyMs:1_000,basisBps:3,depthUsdc:"50000000000",observedAtMs}},ETH:{mode:"normal" as const,gapNotional:"0",bandUsdc:"1000000"}}})};
+  const target=buildApi({hedgeRiskSource});await target.ready();const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json();assert(BigInt(quote.spread.hedgeBps)>=4n);assert.equal(quote.spread.basisBps,"3");const health=(await target.inject({method:"GET",url:"/health"})).json();assert.equal(health.shadowModel.count,1);await target.close();
 });
 
 test("firm quote and unsigned order preparation have bounded admission",async()=>{
