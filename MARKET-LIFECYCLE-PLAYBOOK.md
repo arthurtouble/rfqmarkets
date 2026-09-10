@@ -1,0 +1,42 @@
+# Market policy and lifecycle playbook
+
+Status: executable v1 procedure, 2026-09-09. V1 has two compiled market slots: BTC (0) and ETH (1). Enabling a slot is not permission to assign it a different asset. Adding a third asset requires a reviewed contract upgrade because the oracle mapping, correlation matrix, account loops, resolution observations, indexer schema, and UI types are deliberately fixed to two markets.
+
+## Source of truth
+
+Each market has one packed on-chain policy word. Its low 128 bits are maximum single-trade notional and its high 128 bits are maximum absolute aggregate customer notional, both in USDC 1e6 units. `marketLimitWord(market)` and `markets(market).enabled` are the canonical values. `setMarketPolicy(market, enabled, maxTradeNotional, maxMarketNotional)` changes all three atomically and increments `policyVersion`, invalidating every approval created under the old policy.
+
+The contract allows at most 1,000,000 USDC per trade and 5,000,000 USDC aggregate net notional per market. These are software ceilings, not recommended launch limits. The stress-capital check is independent and usually binds first. With 600,000 USDC maker backing and the current `stressLoss <= makerBacking / 4` rule, a one-sided 5,000,000 USDC book cannot be admitted. Multi-million risk testing therefore uses 10,000,000 mock maker USDC locally; it does not justify the same production capital ratio.
+
+The API reads market state, limits, `policyVersion`, signer version, and leader epoch at one pinned block. It sends the exact limit in the shared SSE frame and uses it for indication and firm construction. Each approver independently reads the same on-chain word at its own pinned block and rejects an oversized envelope. The contract checks it again during execution. Off-chain controls may always be tighter than the contract, for example volatility, hedge-liquidity, daily loss, pending-capacity, or guarded-mode limits.
+
+Production governance is the 72-hour timelock controlled by the cold multisig. It may enable a market or loosen a limit up to the compiled ceiling. The emergency council may disable a market or tighten its limits, but cannot enable or loosen. A later implementation should move the compiled ceilings into an immutable policy module before increasing the proxy bytecode again; the current implementation has only 170 bytes below the EVM runtime-size limit.
+
+## Change a limit
+
+1. Produce a policy proposal with current/new values, maker and insurance backing, normal and severe stress results, observed hedge depth/slippage, expected rejection rate, and rollback values.
+2. Replay recorded data and run calm, trend, high-volatility, crash, toxic-flow, hedge-outage, concurrent-wallet, and split-order scenarios. A larger numerical ceiling alone is not approval to use the capacity.
+3. For a loosening, queue the exact `setMarketPolicy` calldata in the timelock. Keep API operating limits at the old value during the delay.
+4. After execution, wait for finalized indexing and verify the event, policy word, enabled flag, and incremented `policyVersion` through two RPC providers.
+5. Restart or invalidate API/approver caches. Their pinned reads make stale approvals fail, but this step restores availability quickly.
+6. Raise the tighter off-chain operating limit in stages: shadow only, 10%, 25%, 50%, then target. At every step examine fill rate, markouts, stress headroom, hedge slippage, and failed settlements.
+7. Roll back by submitting a lower value. The emergency council can perform this immediately.
+
+## Disable or retire a market
+
+An emergency disable sets `enabled=false` and preserves positions and history. It blocks ordinary new execution. Continue verified funding settlement, cancellation, liquidation, and the documented paused-market exit path as applicable.
+
+For planned retirement: announce the reduce-only date; stop new risk off-chain; set the market to disabled through governance; keep oracle, indexer, UI, and hedge coverage until customer and hedge exposure reach zero; reconcile all funding and collateral; then remove the market from discovery. Never delete a market with open interest or reinterpret its numeric ID.
+
+## Add a market
+
+1. Allocate a new permanent market ID and define base units, collateral conversion, oracle feed ID, fallback, freshness/width rules, margin tiers, stress returns, correlations, funding scale, liquidation depth, hedge venue mapping, and resolution source.
+2. Extend the generalized risk matrix and prove it positive semidefinite. Test correlation breaks and the market's interaction with every existing pending envelope.
+3. Upgrade the clearing implementation through the timelock with the new slot disabled. Validate storage layout with open BTC/ETH positions.
+4. Add the feed to both independent approver configurations, the API discovery response, indexer schema, hedger, public dashboard, and client. None of those components may infer identity from a mutable ticker string.
+5. Run shadow quoting, testnet settlement, liquidation, oracle outage, indexer rebuild, API failover, hedge credential fencing, and global resolution.
+6. Fund backing and hedge margin before enabling. Enable with minimal caps, then follow the staged limit procedure.
+
+## Local commands
+
+`npm test` runs contract, service, fixed-point, scenario, upgrade, and web gates. `npm run smoke:adversarial-load` sends 10,000 concurrent firm-quote requests by default and verifies bounded 409 rejection after capacity. `python3 -B simulator/market_making_scenarios.py --seed 1` prints comparable regime metrics. Environment variables `RFQ_LOAD_REQUESTS`, `RFQ_LOAD_CAPACITY`, and `RFQ_LOAD_CONCURRENCY` scale the admission test.

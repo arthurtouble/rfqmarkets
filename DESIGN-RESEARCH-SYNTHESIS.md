@@ -1,0 +1,52 @@
+# RFQ Markets — design research synthesis
+
+Updated 2026-09-09. Primary protocol documentation, public source and selected market-making literature used for version 0.1. A documented mechanism is evidence of a design pattern, not proof that it is safe for this protocol or every deployment of the referenced system.
+
+| Source | Useful method | Adopted here | Deliberately not copied |
+| --- | --- | --- | --- |
+| Avellaneda–Stoikov, *High-frequency trading in a limit order book* | Inventory changes a dealer's reservation price; volatility and inventory affect quote placement. | Inventory-aware fair value, latency/volatility spread input and simulation-first calibration. | Brownian/Poisson assumptions as a production risk model; their model is not a leveraged clearinghouse. [Paper](https://www.researchgate.net/publication/24086205_High_Frequency_Trading_in_a_Limit_Order_Book) |
+| Convex cost-function literature | A trade can be charged as the difference of one potential before/after the trade, giving path-independent cumulative cost under fixed state/parameters. | `C(x+d)-C(x)` for split resistance and a positive-semidefinite multi-market candidate. | Prediction-market loss bounds or CFMM reserve claims, which do not directly apply to perpetual liabilities. [Chen & Vaughan](https://arxiv.org/abs/1003.0034) |
+| Synthetix Perps | Initial/final skew affects fill price; funding responds to imbalance. | Starting/ending inventory impact and skew funding principle. | Assuming funding eliminates exposure or copying deployment parameters. [Price impact](https://blog.synthetix.io/price-impact-function-synthetix-perps/) |
+| GMX | Impact from change in imbalance; caps on favorable impact; virtual inventory for correlated markets; layered OI/reserve/ADL protections. | Cross-market virtual exposure, cumulative impact, bounded credits and independent gross/stress caps. | Current market-specific zero-impact/capped settings and delayed rebate machinery. [Fees and price impact](https://docs.gmx.io/docs/trading/fees/), [protocol protections](https://docs.gmx.io/docs/providing-liquidity/#protocol-protections) |
+| Hyperliquid | Size-sensitive margin tiers; full/partial liquidation; backstop liquidation; ADL as last resort; robust mark/oracle separation. | Conservative size tiers, bounded partial liquidation and explicit terminal loss handling. | Validator consensus, extreme leverage, order-book liquidation and hidden automatic ADL. [Margin tiers](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/margin-tiers), [liquidations](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/liquidations), [ADL](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/auto-deleveraging) |
+| Variational Omni | Distinct index, mark, indicative and firm RFQ prices; executable-quote limit triggers; all-or-none launch fills; partial liquidation. | Separate price labels, size-specific indicative/firm path and an all-or-none conditional-order design. | Bilateral pool topology and a maker last-look that can override already-firm user expectations. [Prices](https://docs.variational.io/omni/trading/quoted-index-and-mark-prices), [orders](https://docs.variational.io/variational-protocol/key-concepts/market-vs.-limit-orders) |
+| Synthetix Perps V3 | First-class account reads for collateral, available margin, required margins, accrued PnL/funding and estimated order fees/fill. | Equivalent API read model derived from current contract views and authenticated prices. | Multi-collateral valuation and delayed settlement as launch requirements. [Perps V3 integration](https://docs.synthetix.io/developer-docs/for-perp-integrators/perps-v3) |
+| Drift | Initial/maintenance margin parameters, size IMF and limited positive unrealized-PnL credit for new risk; incentivized keepers. | No positive-uPnL credit for v1 opening/withdrawal, increasing size tiers and keeper reward funded by penalty. | Solana-specific execution and current protocol parameter values. [Margin](https://docs.drift.trade/protocol/trading/margin), [keeper incentives](https://docs.drift.trade/protocol/about-v3/keepers/keeper-incentives) |
+| dYdX Chain | Liquidation execution support, insurance and deleveraging when accounts become negative. | Explicit bankruptcy detection, insurance layer and non-first-come terminal resolution. | Random counterparty selection and protocol-specific order-book mechanics. [Loss mechanisms](https://help.dydx.trade/en/articles/166973-contract-loss-mechanisms-on-dydx-chain) |
+| Hashflow / 0x RFQ | Exact off-chain maker authorization bound to trader/order details, nonce, expiry and chain; registered maker signers. | Exact maker approval digest, short validity, signer versions and contract replay checks. | Treating maker signature as proof of fair value, or relying on one hot signer. [Hashflow API](https://docs.hashflow.com/hashflow/market-making/getting-started-api-v3), [0x orders](https://docs.0xprotocol.org/en/latest/basics/orders.html) |
+| CoW Protocol | User intent is distinct from solver settlement; contract enforces user price/expiry/signature constraints. | User market-with-protection intent and server-submitted execution. | Batch auctions and solver competition, which conflict with the simple immediate sole-maker path. [Settlement](https://docs.cow.fi/cow-protocol/reference/contracts/core/settlement) |
+| Chainlink Data Streams | Authenticated report identity, observation time, expiry, price, bid and ask. | Directional reference, explicit freshness and deterministic eligibility modes. | Equating report expiry with trading freshness or letting callers select historical reports. [Schema](https://docs.chain.link/data-streams/reference/report-schema-v3) |
+| Base Flashblocks | Pending-state calls/simulation and approximately 200 ms preconfirmation events. | Fast provisional UI and pre-submit simulation while retaining sealed/final reconciliation. | Calling a preconfirmation irreversible finality. [Overview](https://docs.base.org/base-chain/api-reference/flashblocks-api/flashblocks-api-overview) |
+| Circle FiatToken | EIP-2612 permits and EIP-3009 transfer authorization with relayed execution. | Exact, short-lived sponsored USDC deposit candidate after deployed-bytecode compatibility checks. | Unlimited approvals or assuming all smart wallets behave identically. [Token design](https://github.com/circlefin/stablecoin-evm/blob/master/doc/tokendesign.md) |
+| OpenZeppelin | Stable proxy pattern, role separation and delayed administration. | One stable clearing proxy, self-administered timelock, narrow emergency role and migration tests. | Unrestricted proxy admin or an emergency upgrade bypass. [Proxy pattern](https://docs.openzeppelin.com/upgrades-plugins/proxies), [access control](https://docs.openzeppelin.com/contracts/5.x/access-control) |
+
+## 2026 local parity review
+
+| Product capability | Local state | Decision |
+| --- | --- | --- |
+| Indicative versus firm, size-sensitive execution | Implemented. Shared streaming inputs drive free local indications; one firm request is made only on click and binds worst price. | Keep. This is the RFQ advantage over publishing one shallow top-of-book price. |
+| Cross margin, funding, tiered margin and partial liquidation | Implemented in contract, read API and UI. Positive unrealized PnL receives no opening-risk credit. | Keep conservative launch tiers and calibrate with the simulator before changing them. |
+| Reduce-only | Bound into EIP-712 and exposed for market and limit orders. | Keep as a first-class safety control. Add close-all and percentage shortcuts without changing settlement semantics. |
+| Resting limit orders | Durable, all-or-none, price-time trigger heaps followed by a fresh inventory-aware firm quote. | Keep for launch. Partial fill, TP/SL, scale and TWAP require separately signed quantity/trigger semantics and are deferred. |
+| Fast chain feedback | Standard Base settlement currently; credential-free preflight now probes the Flashblocks pending endpoint. | Add pending simulation and provisional transaction status on Base Sepolia, while the canonical indexer remains finalized truth. |
+| Market data fanout | Dedicated secret-free SSE gateway with complete-frame replay, reconnect and bounded slow readers. | Keep SSE for browsers and add the same versioned schema over WebSocket only when native/mobile demand justifies it. |
+| Oracle diversity | Chainlink Data Streams and Pyth Core contract adapters are implemented; Coinbase WebSocket drives local moving prices. | Select one primary after live latency/failure testing and retain the other as a governance-switched outage path. Never blend unsigned exchange data into settlement. |
+| Portfolio/isolated and multi-collateral modes | Not implemented. | Defer. They add liquidation, valuation and UI states before the two-market USDC system has production evidence. |
+| Public transparency and export | Public positions/activity and account history exist through the rebuildable indexer. | Add bounded CSV export after pagination; do not introduce a second ledger. |
+
+Hyperliquid's breadth of order controls and fast feedback, Variational's clear indicative/firm labeling, dYdX's indexed read fanout and liquidity tiers, and Synthetix's explicit margin/fee previews are the useful launch references. Validator consensus, delayed settlement, portfolio margin, multi-collateral and a long list of conditional orders solve different product problems and would enlarge the attack surface today.
+
+## Resulting design position
+
+The combined design does not claim decentralization from three operator signers. Base supplies transaction ordering; Chainlink supplies authenticated market observations; two-of-three approvers protect maker authorization; contracts enforce current financial state; the operator supplies capital and external hedging.
+
+The most important synthesis is layered rather than redundant:
+
+1. User limits protect the customer.
+2. Inventory-aware off-chain pricing protects quote quality.
+3. Independent approvers protect against one compromised quoter/signer.
+4. Current-state contract bounds protect against ordering, Sybil splitting and a malicious API.
+5. Margin, caps, insurance and terminal resolution protect solvency.
+6. Hedging reduces economic exposure but is never assumed to be Base collateral.
+
+No cited protocol proves our parameter choices. Version 0.1 values are hypotheses for executable testing.
