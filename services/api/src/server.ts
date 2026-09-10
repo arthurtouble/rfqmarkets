@@ -13,6 +13,7 @@ import type { OracleSource } from "./oracle.js";
 import { hedgeAdmission, type HedgeRiskSnapshot, type HedgeRiskSource } from "../../../packages/shared/src/hedge-risk.js";
 import { LimitTriggerBook } from "./limit-book.js";
 import { ExpiryIndex, PendingExposureBook } from "./bounded-state.js";
+import { RuntimeMetrics } from "./metrics.js";
 
 export interface ApiOptions {
   prices?: Record<"BTC" | "ETH", PriceSnapshot>;
@@ -29,6 +30,7 @@ export interface ApiOptions {
   hedgeRiskSource?:HedgeRiskSource;
   hedgeRiskMaxAgeMs?:number;
   approverTimeoutMs?:number;
+  minSettlementInclusionSeconds?:number;
 }
 
 const intentRequestSchema = z.object({ quoteId:z.string().uuid(), account:z.string(), nonce:z.string().regex(/^\d+$/), reduceOnly:z.boolean().default(false) });
@@ -58,6 +60,10 @@ function adaptiveSpreadBps(snapshot:PriceSnapshot){return BigInt(Math.min(50,Mat
 
 export function buildApi(options: ApiOptions = {}) {
   const app = Fastify({ logger:false, bodyLimit:16_384 });
+  const runtimeMetrics=new RuntimeMetrics(),requestStarts=new WeakMap<object,number>();
+  const metricLabels:Record<string,string>={"/v1/quote":"firmQuote","/v1/prepare":"intentPrepare","/v1/approve":"tradeApproval","/v1/close/quote":"closeQuote","/v1/account/:address":"accountRead","/v1/markets":"marketRead"};
+  app.addHook("onRequest",async request=>{requestStarts.set(request,performance.now());});
+  app.addHook("onResponse",async(request,reply)=>{const route=request.routeOptions.url,label=route?metricLabels[route]:undefined,started=requestStarts.get(request);if(label&&started!==undefined)runtimeMetrics.record(label,performance.now()-started,reply.statusCode);});
   app.register(cors, { origin:options.corsOrigin ?? "http://127.0.0.1:4173" });
   const settled:Exposure = { BTC:0n, ETH:0n };
   const pending=new PendingExposureBook();
@@ -227,7 +233,7 @@ export function buildApi(options: ApiOptions = {}) {
     }finally{streamPublishing=false;if(streamPublishQueued){streamPublishQueued=false;scheduleStreamPublish();}}
   }
 
-  app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,marketData:options.oracleSource?.status?.()??{source:"configured"},streams:{connections:marketClients.size,eventsSent:streamSequence},firmQuotes:{active:quotes.size,capacity:options.maxActiveQuotes??50_000},orders:{active:activeOrderCount(),indexed:limitBook.size,capacity:options.maxRestingOrders??100_000},sender:sender?.status()}));
+  app.get("/health",async()=>({ok:true,role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,marketData:options.oracleSource?.status?.()??{source:"configured"},streams:{connections:marketClients.size,eventsSent:streamSequence},firmQuotes:{active:quotes.size,capacity:options.maxActiveQuotes??50_000},orders:{active:activeOrderCount(),indexed:limitBook.size,capacity:options.maxRestingOrders??100_000},sender:sender?.status(),latency:runtimeMetrics.snapshot()}));
   app.get("/v1/config",async()=>({chainId:`0x${domain.chainId.toString(16)}`,chainName:options.chain?.devFund?"RFQ Local":"Base",rpcUrl:options.chain?.rpcUrl,clearingAddress:domain.verifyingContract,tokenAddress:options.chain?.tokenAddress}));
   if(localDevMode&&options.chain?.devWallet)app.get("/v1/dev/wallet",async()=>({mode:"local-development",...options.chain!.devWallet}));
   app.get("/v1/markets",async(_request,reply)=>{try{return await readMarkets();}catch(error){return reply.code(503).send({error:error instanceof Error?error.message:"market data unavailable"});}});
@@ -340,33 +346,36 @@ export function buildApi(options: ApiOptions = {}) {
     let intent:TradeIntent;
     try { intent=preparedIntents.get(quote.quoteId)!;if(!intent||intent.account!==requestedAccount||intent.nonce!==BigInt(parsed.data.nonce))throw new Error();let signer:string|undefined;try{signer=recoverIntentSigner(domain,intent,parsed.data.userSignature);}catch{}let accountAuthorized=signer===intent.account;if(!accountAuthorized&&provider&&await provider.getCode(intent.account)!=="0x"){const wallet=new Contract(intent.account,["function isValidSignature(bytes32,bytes) view returns(bytes4)"],provider);accountAuthorized=await wallet.isValidSignature(hashIntent(domain,intent),parsed.data.userSignature,{blockTag:versions.blockNumber}).then((value:string)=>value.toLowerCase()==="0x1626ba7e").catch(()=>false);}if(!accountAuthorized){if(!clearing||!signer)throw new Error();const session=await clearing.sessions(signer,{blockTag:versions.blockNumber});if(getAddress(session.account)!==intent.account||BigInt(session.validUntil)<intent.deadline||(Number(session.marketMask)&(1<<intent.market))===0||BigInt(session.maxFee)<intent.maxFee)throw new Error();} }
     catch{return reply.code(401).send({error:"invalid user signature"});}
-    let reportData=quoteReports.get(quote.quoteId);
-    if(options.oracleSource){
-      try{
-        const originalId=quote.quoteId,refreshed=await createQuote({market:quote.market,side:quote.side,amount:formatUsdc(quote.notional)},false,intent.baseDelta);
-        if((intent.baseDelta>0n&&refreshed.quote.expectedPrice>intent.limitPrice)||(intent.baseDelta<0n&&refreshed.quote.expectedPrice<intent.limitPrice)||refreshed.quote.fee>intent.maxFee)return reply.code(409).send({error:"price moved beyond signed protection"});
-        quote={...refreshed.quote,quoteId:originalId};versions=refreshed.versions;reportData=refreshed.oracleReport;
-      }catch(error){return reply.code(503).send({error:error instanceof Error?`fresh settlement price unavailable: ${error.message}`:"fresh settlement price unavailable"});}
+    const originalId=quote.quoteId,intentHash=hashIntent(domain,intent),minimumBudget=options.minSettlementInclusionSeconds??4;
+    let approval!:MakerApproval,report="0x",selected!:Array<{digest:string;signer:string;signature:string}>;
+    for(let attempt=0;attempt<2;attempt++){
+      let reportData=quoteReports.get(originalId);
+      if(options.oracleSource){
+        try{
+          const refreshed=await createQuote({market:quote.market,side:quote.side,amount:formatUsdc(quote.notional)},false,intent.baseDelta);
+          if((intent.baseDelta>0n&&refreshed.quote.expectedPrice>intent.limitPrice)||(intent.baseDelta<0n&&refreshed.quote.expectedPrice<intent.limitPrice)||refreshed.quote.fee>intent.maxFee)return reply.code(409).send({error:"price moved beyond signed protection"});
+          quote={...refreshed.quote,quoteId:originalId};versions=refreshed.versions;reportData=refreshed.oracleReport;
+        }catch(error){return reply.code(503).send({error:error instanceof Error?`fresh settlement price unavailable: ${error.message}`:"fresh settlement price unavailable"});}
+      }
+      prune();const reportExpiry=reportData?.validUntil??versions.blockTimestamp+30,approvalDeadline=BigInt(Math.min(Number(intent.deadline),versions.blockTimestamp+30,reportExpiry));
+      if(Number(approvalDeadline)<=versions.blockTimestamp)return reply.code(503).send({error:"fresh settlement proof lacks inclusion time",retriable:true});
+      report=reportData?.report??"0x";
+      if(provider&&report==="0x"){
+        const timestamp=options.chain?.devFund?await advanceLocalChainTime():Number(BigInt((await provider.send("eth_getBlockByNumber",["latest",false]) as {timestamp:string}).timestamp));
+        report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[intent.market,quote.snapshot.bid,quote.snapshot.ask,BigInt(timestamp),BigInt(timestamp+60)]]);
+      }
+      const oracleReportHash=report==="0x"?keccak256(toUtf8Bytes(JSON.stringify({market:quote.market,bid:quote.snapshot.bid.toString(),ask:quote.snapshot.ask.toString(),observedAtMs:quote.snapshot.observedAtMs}))):keccak256(report);
+      approval={intentHash,executionPrice:quote.expectedPrice,impactCharge:quote.impactCharge,fee:quote.fee,oracleReportHash,deadline:approvalDeadline,leaderEpoch:versions.leaderEpoch,signerSetVersion:versions.signerSetVersion,policyVersion:versions.policyVersion};
+      const digest=hashApproval(domain,approval),approverPayload={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),quote:quoteToWire(quote),report,oracleAgeMs:Date.now()-quote.snapshot.observedAtMs};
+      const responses=await collectApprovals(digest,approverPayload),approvals=responses.filter((item):item is PromiseFulfilledResult<{digest:string;signer:string;signature:string}>=>item.status==="fulfilled").map(item=>item.value),distinct=new Map(approvals.map(item=>[item.signer.toLowerCase(),item]));
+      if(distinct.size<2)return reply.code(503).send({error:"approver quorum unavailable",details:options.chain?.devFund||process.env.NODE_ENV==="test"?responses.filter(item=>item.status==="rejected").map(item=>String(item.reason)):undefined});
+      selected=[...distinct.values()].slice(0,2);
+      const currentChainTime=provider?await chainTimestamp():versions.blockTimestamp;
+      if(Number(approval.deadline)-currentChainTime>=minimumBudget)break;
+      if(attempt===1)return reply.code(503).send({error:"settlement proof lacks safe inclusion budget",retriable:true});
     }
-    prune();const reportExpiry=reportData?.validUntil??versions.blockTimestamp+30,approvalDeadline=BigInt(Math.min(Number(intent.deadline),versions.blockTimestamp+30,reportExpiry));
-    if(Number(approvalDeadline)<=versions.blockTimestamp)return reply.code(503).send({error:"fresh settlement proof lacks inclusion time"});
-    const intentHash=hashIntent(domain,intent);
-    let report=reportData?.report??"0x";
-    if(provider&&report==="0x"){
-      const timestamp=options.chain?.devFund?await advanceLocalChainTime():Number(BigInt((await provider.send("eth_getBlockByNumber",["latest",false]) as {timestamp:string}).timestamp));
-      report=AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[intent.market,quote.snapshot.bid,quote.snapshot.ask,BigInt(timestamp),BigInt(timestamp+60)]]);
-    }
-    const oracleReportHash=report==="0x"?keccak256(toUtf8Bytes(JSON.stringify({market:quote.market,bid:quote.snapshot.bid.toString(),ask:quote.snapshot.ask.toString(),observedAtMs:quote.snapshot.observedAtMs}))):keccak256(report);
-    const approval:MakerApproval={intentHash,executionPrice:quote.expectedPrice,impactCharge:quote.impactCharge,fee:quote.fee,oracleReportHash,deadline:approvalDeadline,leaderEpoch:versions.leaderEpoch,signerSetVersion:versions.signerSetVersion,policyVersion:versions.policyVersion};
-    const digest=hashApproval(domain,approval);
-    journal?.prepare("INSERT INTO commitments VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, NULL, ?) ON CONFLICT(quote_id) DO UPDATE SET status='reserved', intent_json=excluded.intent_json, user_signature=excluded.user_signature, approval_json=excluded.approval_json, updated_ms=excluded.updated_ms").run(quote.quoteId,quote.market,quote.delta.toString(),Number(approvalDeadline)*1_000,JSON.stringify(intentToWire(intent)),parsed.data.userSignature,JSON.stringify(approvalToWire(approval)),Date.now());
-    if(!pending.has(quote.quoteId)){pending.add(quote.quoteId,{market:quote.market,delta:quote.delta,expiresAtMs:Number(approvalDeadline)*1_000});marketReadCache=undefined;scheduleStreamPublish();}
-    const approverPayload={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),quote:quoteToWire(quote),report,oracleAgeMs:Date.now()-quote.snapshot.observedAtMs};
-    const responses=await collectApprovals(digest,approverPayload);
-    const approvals=responses.filter((item):item is PromiseFulfilledResult<{digest:string;signer:string;signature:string}>=>item.status==="fulfilled").map(item=>item.value);
-    const distinct=new Map(approvals.map(item=>[item.signer.toLowerCase(),item]));
-    if(distinct.size<2)return reply.code(503).send({error:"approver quorum unavailable",details:options.chain?.devFund||process.env.NODE_ENV==="test"?responses.filter(item=>item.status==="rejected").map(item=>String(item.reason)):undefined});
-    const selected=[...distinct.values()].slice(0,2);
+    journal?.prepare("INSERT INTO commitments VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, NULL, ?) ON CONFLICT(quote_id) DO UPDATE SET status='reserved', intent_json=excluded.intent_json, user_signature=excluded.user_signature, approval_json=excluded.approval_json, updated_ms=excluded.updated_ms").run(quote.quoteId,quote.market,quote.delta.toString(),Number(approval.deadline)*1_000,JSON.stringify(intentToWire(intent)),parsed.data.userSignature,JSON.stringify(approvalToWire(approval)),Date.now());
+    if(!pending.has(quote.quoteId)){pending.add(quote.quoteId,{market:quote.market,delta:quote.delta,expiresAtMs:Number(approval.deadline)*1_000});marketReadCache=undefined;scheduleStreamPublish();}
     journal?.prepare("UPDATE commitments SET status='approved', updated_ms=? WHERE quote_id=?").run(Date.now(),quote.quoteId);
     let transaction:undefined|{hash:string;blockNumber:number;collateral:string;position:{size:string;entryPrice:string;lastFundingIndex:string}};
     if(clearing&&token&&provider&&options.chain&&sender){

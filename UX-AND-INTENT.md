@@ -25,7 +25,7 @@ The client calculates the default adverse-price bound from the displayed quote a
 
 The numerical 8/50 bps bounds are initial BTC/ETH test parameters, not proven production values. The browser applies the smaller of the policy result and the user's saved maximum. The API cannot widen it. If the market moves beyond it, the trade expires/rejects and the UI offers the new price; it never silently changes the user's limit.
 
-Default user-intent lifetime is 15 seconds. Maker approvals are exact-fill authorizations with a 3-second maximum lifetime and an oracle-observation age limit specified by the oracle mode. The API may obtain a fresh approval within the original user intent without another prompt. It may not extend the 15 seconds or change the user's economic bounds.
+Default user-intent lifetime is 30 seconds. Maker approvals are exact-fill authorizations bounded by the shorter of the user deadline and the authenticated oracle report lifetime, with an oracle-observation age limit specified by the oracle mode. The API may obtain a fresh report and quorum within the original user intent without another prompt. It may not extend the 30 seconds or change the user's economic bounds.
 
 The API does not return reusable maker approvals to the browser in the normal flow. It submits an approved bundle immediately. Anyone may technically submit a valid bundle if it escapes, so correctness still depends on contract nonces, expiry and current-state checks.
 
@@ -40,7 +40,7 @@ The client constructs and signs:
 | exact size | Amount input, normalized to contract units |
 | limit price | Live quote plus automatic/saved protection |
 | maximum total fee | Displayed fee plus no hidden increment; explicit cap |
-| deadline | Current time plus the selected 15-second default |
+| deadline | Current chain time plus the selected 30-second default |
 | nonce | Contract/account nonce read through the live state service |
 | reduce-only | Position context or advanced user selection |
 | partial-fill policy | `none` in v1 |

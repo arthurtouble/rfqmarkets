@@ -112,6 +112,15 @@ test("rejects a refreshed settlement price outside the signed protection",async(
   const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json(),nonce="992",prepared=(await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}})).json(),userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),response=await target.inject({method:"POST",url:"/v1/approve",payload:{quoteId:quote.quoteId,account:user.address,nonce,userSignature}});assert.equal(response.statusCode,409,response.body);assert.match(response.json().error,/signed protection/);await target.close();
 });
 
+test("refreshes and re-approves automatically when the first proof lacks inclusion budget",async()=>{
+  const now=Math.floor(Date.now()/1_000);let settlements=0;
+  const observation=(validFor:number)=>({snapshot:{market:"BTC" as const,bid:99_990n*1_000_000n,ask:100_010n*1_000_000n,observedAtMs:Date.now()},report:AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[0,99_990n*1_000_000n,100_010n*1_000_000n,now,now+validFor]]),validUntil:now+validFor});
+  const target=buildApi({approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:routedFetch,minSettlementInclusionSeconds:8,oracleSource:{latest:async()=>observation(15),settlement:async()=>observation(++settlements===2?5:15)}});await target.ready();
+  const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json(),nonce="993",prepared=(await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}})).json(),userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),response=await target.inject({method:"POST",url:"/v1/approve",payload:{quoteId:quote.quoteId,account:user.address,nonce,userSignature}});
+  assert.equal(response.statusCode,200,response.body);assert.equal(settlements,3,"approval did not replace the short-lived proof");
+  const health=(await target.inject({method:"GET",url:"/health"})).json();assert(health.latency.firmQuote.count>=1);assert(health.latency.tradeApproval.count>=1);assert(health.latency.tradeApproval.p95Ms>=0);await target.close();
+});
+
 test("development funding cannot expose a wallet on a non-local chain",()=>{
   assert.throws(()=>buildApi({chainId:8453n,chain:{rpcUrl:"https://mainnet.base.org",sponsorPrivateKey:Wallet.createRandom().privateKey,clearingAddress:"0x0000000000000000000000000000000000000001",tokenAddress:"0x0000000000000000000000000000000000000002",devFund:true,devWallet:{account:Wallet.createRandom().address,privateKey:Wallet.createRandom().privateKey}}}),/development funding requires local chain/);
 });

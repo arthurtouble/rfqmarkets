@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
-import { Wallet } from "ethers";
+import { Contract, JsonRpcProvider, Wallet } from "ethers";
 
 type Identity={address:string;privateKey:string};
 type Account={positions:{ETH:{size:string}}};
@@ -24,6 +24,18 @@ async function json(url:string,init?:RequestInit){const response=await fetch(url
 async function post(path:string,body:Record<string,unknown>){return json(`${api}${path}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});}
 async function waitFor<T>(label:string,read:()=>Promise<T>,accept:(value:T)=>boolean,timeoutMs=180_000){const end=Date.now()+timeoutMs;let last:T|undefined;while(Date.now()<end){if(child.exitCode!==null)throw new Error(`stack exited ${child.exitCode}: ${output.slice(-2_000)}`);try{last=await read();if(accept(last))return last;}catch{}await sleep(1_000);}throw new Error(`${label} timed out; last=${JSON.stringify(last)}; stack=${output.slice(-2_000)}`);}
 const nonce=()=>BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString();
+const floorDiv=(value:bigint,divisor:bigint)=>value/divisor-(value<0n&&value%divisor!==0n?1n:0n);
+const stressLoss=(btc:bigint,eth:bigint)=>[floorDiv(btc*20n+eth*25n,100n),floorDiv(-btc*20n-eth*25n,100n),floorDiv(btc*15n-eth*20n,100n),floorDiv(-btc*15n+eth*20n,100n),floorDiv(btc*40n+eth*50n,100n),floorDiv(-btc*40n-eth*50n,100n)].reduce((best,value)=>value>best?value:best,0n);
+async function makerCapitalPreflight(baseDelta:bigint,executionPrice:bigint){
+  const deployment=JSON.parse(readFileSync(resolve(process.env.RFQ_BASE_SEPOLIA_DEPLOYMENT_FILE??".local-state/base-sepolia-deployment.json"),"utf8")) as {contracts:{clearingProxy:string}};
+  let lastError:unknown;
+  for(const rpcUrl of [independentSecondary,fastPrimary])try{
+    const provider=new JsonRpcProvider(rpcUrl,undefined,{batchMaxCount:1}),clearing=new Contract(deployment.contracts.clearingProxy,["function makerBacking() view returns(uint256)","function markets(uint256) view returns(int256 aggregateBase,int256 fundingIndex,uint64 fundingTime,uint64 lastPriceTime,uint256 lastBid,uint256 lastAsk,bool enabled)"],provider),[makerBacking,btc,eth]=await Promise.all([clearing.makerBacking(),clearing.markets(0),clearing.markets(1)]),notional=(state:any)=>BigInt(state.aggregateBase)*(BigInt(state.lastBid)+BigInt(state.lastAsk))/2n/10n**18n,btcNotional=notional(btc),ethNotional=notional(eth)+baseDelta*executionPrice/10n**18n,required=stressLoss(btcNotional,ethNotional)*4n;
+    assert(BigInt(makerBacking)>=required,`maker backing preflight failed: ${makerBacking} < ${required} micro-USDC required by the post-trade stress portfolio`);
+    return {makerBacking:String(makerBacking),requiredBacking:required.toString(),postTradeExposure:{BTC:btcNotional.toString(),ETH:ethNotional.toString()}};
+  }catch(error){lastError=error;}
+  throw new Error(`maker capital preflight unavailable on both independent RPCs: ${String(lastError)}`);
+}
 async function closeEth(){const quote=await waitFor("fresh close quote",()=>post("/v1/close/quote",{account:wallet.address,market:"ETH"}),value=>Date.now()-Number(value.observedAtMs)<=4_500,30_000),closeNonce=nonce(),prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:wallet.address,nonce:closeNonce,reduceOnly:true}),signature=await wallet.signTypedData(prepared.domain,prepared.types,prepared.intent);return post("/v1/approve",{quoteId:quote.quoteId,account:wallet.address,nonce:closeNonce,reduceOnly:true,userSignature:signature});}
 async function waitFlat(){await waitFor("finalized customer and venue flatten",()=>json(hedger+"/v1/status") as Promise<HedgeStatus>,status=>status.healthy&&status.markets.ETH.customerBase==="0"&&status.positions.ETH==="0");}
 async function stop(process:ChildProcess){if(process.exitCode!==null)return;process.kill("SIGTERM");await Promise.race([new Promise<void>(resolve=>process.once("exit",()=>resolve())),sleep(8_000).then(()=>{if(process.exitCode===null)process.kill("SIGKILL");})]);}
@@ -36,7 +48,7 @@ try{
   if(initial.positions.ETH.size!=="0")await closeEth();
   if(initial.positions.ETH.size!=="0"||initialHedge.positions.ETH!=="0")await waitFlat();
 
-  const started=Date.now(),quote=await waitFor("fresh firm quote",()=>post("/v1/quote",{market:"ETH",side:"buy",amount:"11.5"}),value=>Date.now()-Number(value.observedAtMs)<=4_500,30_000);console.log(JSON.stringify({quoteObservedAtMs:Number(quote.observedAtMs),quoteAgeMs:Date.now()-Number(quote.observedAtMs)}));const tradeNonce=nonce(),prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:wallet.address,nonce:tradeNonce}),signature=await wallet.signTypedData(prepared.domain,prepared.types,prepared.intent),approvalStarted=Date.now();let execution;try{execution=await post("/v1/approve",{quoteId:quote.quoteId,account:wallet.address,nonce:tradeNonce,userSignature:signature});}catch(error){console.log(JSON.stringify({approvalFailureAfterMs:Date.now()-approvalStarted}));throw error;}console.log(JSON.stringify({approvalToInclusionMs:Date.now()-approvalStarted}));
+  const started=Date.now(),quote=await waitFor("fresh firm quote",()=>post("/v1/quote",{market:"ETH",side:"buy",amount:"11.5"}),value=>Date.now()-Number(value.observedAtMs)<=4_500,30_000);console.log(JSON.stringify({quoteObservedAtMs:Number(quote.observedAtMs),quoteAgeMs:Date.now()-Number(quote.observedAtMs)}));const tradeNonce=nonce(),prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:wallet.address,nonce:tradeNonce}),capital=await makerCapitalPreflight(BigInt(prepared.intent.baseDelta),BigInt(quote.expectedPrice));console.log(JSON.stringify({makerCapitalPreflight:capital}));const signature=await wallet.signTypedData(prepared.domain,prepared.types,prepared.intent),approvalStarted=Date.now();let execution;try{execution=await post("/v1/approve",{quoteId:quote.quoteId,account:wallet.address,nonce:tradeNonce,userSignature:signature});}catch(error){console.log(JSON.stringify({approvalFailureAfterMs:Date.now()-approvalStarted}));throw error;}console.log(JSON.stringify({approvalToInclusionMs:Date.now()-approvalStarted}));
   assert.match(execution.transaction.hash,/^0x[0-9a-f]{64}$/i);
   const opened=await waitFor("finalized customer exposure and venue hedge",()=>json(hedger+"/v1/status") as Promise<HedgeStatus>,status=>status.healthy&&BigInt(status.markets.ETH.customerBase)>0n&&BigInt(status.positions.ETH)>0n);
   const openingOrders=opened.orders.filter(order=>order.market==="ETH"&&order.status==="filled"&&BigInt(order.base_delta)>0n&&order.reason===null);
