@@ -24,6 +24,14 @@ The oracle adapter pins Pyth Core BTC/USD and ETH/USD feed IDs and fails closed.
 
 Firm quotes and signed closes acquire a coalesced complete REST batch for settlement while SSE continues to drive cheap indicative updates. A replacement adapter that directly parses the signed payload inside the block-time window is scheduled through operation `0xd0303c4c6d05c05d09c5e934b74ac5fca2f61b98d5dc6b0cf8ce8635b5d09b7f`; the enforced 72-hour timelock makes it executable after Unix timestamp `1789318714`. Run `npm run upgrade:base-sepolia-pyth` after that time to execute the already approved operation and update the local deployment manifest. Until then, the table's original adapter remains active.
 
+The fifteen-second Pyth window is a maximum observation age at block inclusion, not an execution delay. The API refreshes the authenticated settlement proof and reprices the exact signed base quantity after the wallet returns the user's signature. The signed limit price and maximum fee remain authoritative, so a refreshed price can improve or remain inside the user's protection but cannot make the fill worse than the user authorized. Approvers require the observation to be no more than eight seconds old when signing, reserving the remaining window for Base submission and inclusion.
+
+## Rapid-iteration profile
+
+Feature development uses a separate disposable Base Sepolia proxy at [`0x35eDDFfF04296dae1564f4C33518C57C87b91D90`](https://sepolia.basescan.org/address/0x35eDDFfF04296dae1564f4C33518C57C87b91D90). Its Pyth adapter at [`0x0d8B76cc87B8289A74021E33E13C9F97Aa2e1873`](https://sepolia.basescan.org/address/0x0d8B76cc87B8289A74021E33E13C9F97Aa2e1873) uses direct bounded parsing now. A disposable deployer owns this profile's governance and ProxyAdmin, allowing immediate policy changes and storage-compatible upgrades while features are changing. It is never a production authority model. The governed stack above remains intact as the Safe, timelock, emergency-role and delayed-upgrade rehearsal.
+
+The iteration manifest is `.local-state/base-sepolia-iteration.json`. `npm run deploy:base-sepolia-iteration` creates the profile; `npm run upgrade:base-sepolia-iteration` runs contract compilation and OpenZeppelin storage-layout validation before immediately upgrading the stable proxy; `npm run verify:base-sepolia-iteration` verifies its code, ownership, roles, feeds and versions. The immediate upgrade path passed on-chain in transaction [`0xb42d…95d1`](https://sepolia.basescan.org/tx/0xb42dfe25f50bc17670bfad0b7c6406005af263f38a63962059aba88b884795d1). Oracle-only validation also passed for both Pyth feeds. End-to-end custody tests require 20 native test USDC at the disposable deployer; the official Circle faucet is the current source.
+
 ## Repeatable commands
 
 `npm run prepare:base-sepolia` creates disposable identities and a mode-0600 ignored `base-sepolia.env`. Secret material and deployment manifests remain under ignored local paths.
@@ -43,6 +51,18 @@ npm run bootstrap:base-sepolia-user
 npm run smoke:base-sepolia-pyth
 npm run smoke:base-sepolia-e2e
 npm run smoke:base-sepolia-hedge-e2e
+```
+
+For rapid iteration, use the corresponding commands without waiting for governance delay:
+
+```bash
+npm run deploy:base-sepolia-iteration
+npm run upgrade:base-sepolia-iteration
+npm run verify:base-sepolia-iteration
+npm run fund:base-sepolia-iteration
+npm run smoke:base-sepolia-iteration-pyth
+npm run smoke:base-sepolia-iteration-e2e
+npm run smoke:base-sepolia-iteration-hedge-e2e
 ```
 
 The funding and bootstrap commands are idempotent and wait for expected RPC state after mined transactions. Verification checks bytecode, clearing roles, the exact oracle/feed configuration, all three approvers, both Safe owner sets and thresholds, the timelock delay and self-administration, and ProxyAdmin ownership.

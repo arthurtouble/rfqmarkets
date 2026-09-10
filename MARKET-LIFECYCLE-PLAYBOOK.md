@@ -10,7 +10,7 @@ The contract allows at most 1,000,000 USDC per trade and 5,000,000 USDC aggregat
 
 The API reads market state, limits, `policyVersion`, signer version, and leader epoch at one pinned block. It sends the exact limit in the shared SSE frame and uses it for indication and firm construction. Each approver independently reads the same on-chain word at its own pinned block and rejects an oversized envelope. The contract checks it again during execution. Off-chain controls may always be tighter than the contract, for example volatility, hedge-liquidity, daily loss, pending-capacity, or guarded-mode limits.
 
-Production governance is the 72-hour timelock controlled by the cold multisig. It may enable a market or loosen a limit up to the compiled ceiling. The emergency council may disable a market or tighten its limits, but cannot enable or loosen. A later implementation should move the compiled ceilings into an immutable policy module before increasing the proxy bytecode again; the current implementation has only 170 bytes below the EVM runtime-size limit.
+Production governance is the 72-hour timelock controlled by the cold multisig. It may enable a market or loosen a limit up to the compiled ceiling. The emergency council may disable a market or tighten its limits, but cannot enable or loosen. The rapid-iteration Base Sepolia profile uses disposable direct governance so feature work is not gated by this delay. The implementation is currently 20,850 bytes, 3,726 bytes below the EVM runtime-size limit, and the repository enforces a tighter 21,000-byte project gate. Risk and portfolio math remain in the linked stateless library so future clearing changes must fit the same reviewability budget.
 
 ## Change a limit
 
