@@ -24,6 +24,8 @@ The [market lifecycle playbook](MARKET-LIFECYCLE-PLAYBOOK.md) defines the on-cha
 
 The [Base Sepolia deployment gate](BASE-SEPOLIA-DEPLOYMENT.md) defines the validated environment, deterministic oracle/proxy deployment, post-deployment assertions and external credentials still required before a testnet transaction.
 
+The [Cloudflare deployment plan](CLOUDFLARE-DEPLOYMENT.md) defines the test-stage edge topology, security boundaries, GitHub delivery flow, environments, rollback procedure and the few account-level inputs still needed. Checked-in Wrangler configurations package the customer UI and both documentation sites as Workers static assets; deployment remains gated until Cloudflare credentials and the repository environment switch are configured.
+
 The UI now shares the tokens and semantic rules in [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md). Run `npm run dev:docs` for the public trading, margin, security and transparency guide on port 4175. Run `npm run dev:internal-docs` for the operations manual on port 4176. The internal site contains operational topology and launch gates and must be deployed only behind authenticated private access; its `noindex` tag is not an access control.
 
 The [indexer design](INDEXER-DESIGN.md) defines the chain-derived account/history schema, query surface, reorg behavior and current Ponder dependency gate.

@@ -33,9 +33,10 @@ class FlowCalibrationLabTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/"tape.csv"
             self.assertFalse(capture_integrity(str(path))["summaryPresent"])
-            Path(f"{path}.summary.json").write_text('{"errors":[],"sequenceGaps":{"coinbase":"0","binance":"0"}}')
+            Path(f"{path}.summary.json").write_text('{"completed":true,"errors":[],"sequenceGaps":{"coinbase":"0","binance":"0"}}')
             self.assertTrue(all(capture_integrity(str(path)).values()))
-            Path(f"{path}.summary.json").write_text('{"errors":["coinbase:transport"],"sequenceGaps":{"coinbase":"2","binance":"0"}}')
+            Path(f"{path}.summary.json").write_text('{"completed":false,"errors":["coinbase:transport"],"sequenceGaps":{"coinbase":"2","binance":"0"}}')
+            self.assertFalse(capture_integrity(str(path))["captureCompleted"])
             self.assertFalse(capture_integrity(str(path))["noReportedTransportErrors"])
             self.assertFalse(capture_integrity(str(path))["noReportedSequenceGaps"])
 

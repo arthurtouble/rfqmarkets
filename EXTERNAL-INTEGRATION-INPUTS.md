@@ -36,6 +36,17 @@ The agent must be dedicated to this project, revocable and unable to withdraw. I
 - A LI.FI API key for production-scale limits. Basic SDK/API integration is public; the key is optional and must remain server-side if used.
 - Production RPC, edge, monitoring and hosting accounts. Base Sepolia can begin on public endpoints, while independent RPC credentials are required before availability/security claims.
 
+## Cloudflare test-stage delivery
+
+The static deployment configurations and GitHub workflows are checked in and pass local Wrangler packaging. Connecting the account requires:
+
+1. A Cloudflare account with Workers enabled. The free plan is sufficient for the three static sites; deploying the existing long-running Node and Python services through Cloudflare Containers requires a paid Workers plan.
+2. Local authorization through `npx wrangler login`, or a scoped API token supplied through the local environment. Never paste that token into source or documentation.
+3. The desired `workers.dev` subdomains or delegated test domains. The private internal manual must have a Cloudflare Access application and an allowed identity group before it is deployed.
+4. GitHub environment secrets named `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, plus the repository or environment variable `CLOUDFLARE_DEPLOY_ENABLED=true` when automatic deployment should start.
+
+Use a narrowly scoped deployment token for the target account. Do not reuse the dashboard global API key. See `CLOUDFLARE-DEPLOYMENT.md` for topology, staged rollout, rollback and the reason approvers remain on an independently administered trust boundary for production.
+
 ## Mainnet-only ceremony
 
 Mainnet requires newly generated hardware-backed or Safe-controlled identities, a governance Safe and timelock, an independent emergency Safe, separately provisioned approver keys, sponsor/refill limits, and a separately capitalized hedge account. None of the local or testnet keys qualify.

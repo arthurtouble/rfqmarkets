@@ -1,0 +1,10 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "rfq-markets-internal-docs-testnet",
+  "compatibility_date": "2026-09-11",
+  "assets": {
+    "directory": "../../../dist/internal-docs",
+    "not_found_handling": "single-page-application"
+  },
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}
