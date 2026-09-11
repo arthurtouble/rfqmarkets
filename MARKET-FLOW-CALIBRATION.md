@@ -46,7 +46,7 @@ npm run calibrate:market-flow -- ../.local-state/market-flow/day-01.csv \
   --observations ../.local-state/calibration/day-01-observations.csv
 ```
 
-The capturer reconnects with bounded exponential backoff, writes in bounded batches, and reports per-venue counts, sequence gaps, and transport failures. It refuses to overwrite or append to a nonempty tape so one integrity summary always describes exactly one immutable capture. Rotate files daily and hash each source file before archiving it. A production recorder should backfill Coinbase gaps from its product-trades REST endpoint and retain a second raw journal; this first version deliberately fails qualification instead of guessing across a gap.
+The capturer reconnects with bounded exponential backoff, writes in bounded batches, and reports atomic progress snapshots, per-venue counts, sequence gaps, transport failures, actual duration, and whether it reached its requested end. `SIGINT` and `SIGTERM` flush the tape and produce a failed-completion summary. It refuses to overwrite or append to a nonempty tape so one integrity summary always describes exactly one immutable capture. Rotate files daily and hash each source file before archiving it. A production recorder should backfill Coinbase gaps from its product-trades REST endpoint and retain a second raw journal; this first version deliberately fails qualification instead of guessing across a gap.
 
 The generated HTML report sits beside the JSON output. For the default path:
 

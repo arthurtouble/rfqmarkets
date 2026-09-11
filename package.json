@@ -88,9 +88,11 @@
     "tsx": "4.23.13",
     "typescript": "7.0.2",
     "vite": "8.2.2",
+    "wrangler": "^4.131.0",
     "zod": "3.25.76"
   },
   "overrides": {
+    "adm-zip": "0.6.1",
     "tmp": "0.2.7"
   },
   "dependencies": {

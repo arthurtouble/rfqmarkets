@@ -74,12 +74,12 @@ def build_observations(rows:list[Trade],horizons_ms:tuple[int,...],mixtures:tupl
 
 def capture_integrity(path:str)->dict:
     summary_path=f"{path}.summary.json"
-    if not os.path.exists(summary_path):return {"summaryPresent":False,"noReportedTransportErrors":False,"noReportedSequenceGaps":False}
+    if not os.path.exists(summary_path):return {"summaryPresent":False,"captureCompleted":False,"noReportedTransportErrors":False,"noReportedSequenceGaps":False}
     try:
         with open(summary_path) as handle:summary=json.load(handle)
         errors=summary.get("errors",[]);gaps=summary.get("sequenceGaps",{})
-        return {"summaryPresent":True,"noReportedTransportErrors":isinstance(errors,list) and not errors,"noReportedSequenceGaps":all(int(gaps.get(venue,-1))==0 for venue in ("coinbase","binance"))}
-    except (OSError,ValueError,TypeError):return {"summaryPresent":False,"noReportedTransportErrors":False,"noReportedSequenceGaps":False}
+        return {"summaryPresent":True,"captureCompleted":summary.get("completed") is True,"noReportedTransportErrors":isinstance(errors,list) and not errors,"noReportedSequenceGaps":all(int(gaps.get(venue,-1))==0 for venue in ("coinbase","binance"))}
+    except (OSError,ValueError,TypeError):return {"summaryPresent":False,"captureCompleted":False,"noReportedTransportErrors":False,"noReportedSequenceGaps":False}
 
 def write_report(result:dict,output:str,metadata:dict):
     encoded=json.dumps({"metadata":metadata,"calibration":result},indent=2);os.makedirs(os.path.dirname(output) or ".",exist_ok=True)
@@ -100,7 +100,7 @@ def main():
     with open(args.tape,"rb") as handle:source_hash=hashlib.sha256(handle.read()).hexdigest()
     venues=sorted(set(row.venue for row in trades));markets=sorted(set(row.market for row in trades));duration=max(row.timestamp_ms for row in trades)-min(row.timestamp_ms for row in trades)
     integrity=capture_integrity(args.tape);metadata={"source":os.path.abspath(args.tape),"sourceSha256":source_hash,"trades":len(trades),"observations":len(observations),"durationMs":duration,"venues":venues,"markets":markets,"horizonsMs":horizons,"toxicMixtures":mixtures,"seed":args.seed,"captureIntegrity":integrity,"method":"250ms normalized trade buckets; causal EWMA volatility and trailing flow imbalance; forward adverse markouts"}
-    result=calibrate(observations);data_gates={"durationAtLeast24h":duration>=86_400_000,"includesFiveMinuteMarkout":max(horizons)>=300_000,"atLeastTwoVenues":len(venues)>=2,"bothMarkets":markets==["BTC","ETH"],"atLeastTenThousandTrades":len(trades)>=10_000,"captureSummaryPresent":integrity["summaryPresent"],"noReportedTransportErrors":integrity["noReportedTransportErrors"],"noReportedSequenceGaps":integrity["noReportedSequenceGaps"]};result["statisticalEligibleForShadow"]=result["eligibleForShadow"];result["dataGates"]=data_gates;result["eligibleForShadow"]=result["eligibleForShadow"] and all(data_gates.values())
+    result=calibrate(observations);data_gates={"durationAtLeast24h":duration>=86_400_000,"includesFiveMinuteMarkout":max(horizons)>=300_000,"atLeastTwoVenues":len(venues)>=2,"bothMarkets":markets==["BTC","ETH"],"atLeastTenThousandTrades":len(trades)>=10_000,"captureSummaryPresent":integrity["summaryPresent"],"captureCompleted":integrity["captureCompleted"],"noReportedTransportErrors":integrity["noReportedTransportErrors"],"noReportedSequenceGaps":integrity["noReportedSequenceGaps"]};result["statisticalEligibleForShadow"]=result["eligibleForShadow"];result["dataGates"]=data_gates;result["eligibleForShadow"]=result["eligibleForShadow"] and all(data_gates.values())
     write_report(result,args.output,metadata);print(json.dumps({"output":os.path.abspath(args.output),"html":os.path.abspath(os.path.splitext(args.output)[0]+".html"),"observations":len(observations),"eligibleForShadow":result["eligibleForShadow"]},indent=2))
 
 if __name__=="__main__":main()
