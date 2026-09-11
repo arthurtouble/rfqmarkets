@@ -1,6 +1,6 @@
 # Market making and testnet hardening plan
 
-Status: adaptive-v1 foundation, live venue inputs, shadow telemetry, and a walk-forward calibration harness are implemented; paid-flow calibration and sustained testnet evidence remain pre-production work.
+Status: adaptive-v1 foundation, live venue inputs, shadow telemetry, normalized Coinbase/Binance flow capture, multi-regime causal feature construction, and purged walk-forward calibration are implemented; paid-flow calibration and sustained testnet evidence remain pre-production work.
 
 ## Quote policy
 
@@ -72,7 +72,9 @@ The private operations surface remains a separate loopback/VPN application with 
 
 Paid-flow evidence is journaled and restored when the active API leader restarts. A warm standby must mount the same replicated journal or rebuild it from finalized indexed fills before it can become leader. The hedge worker samples Hyperliquid L2 depth, estimated buy-side sweep cost, venue-to-protocol basis, and request latency; these measurements travel through the authenticated hedge-risk endpoint and affect quotes.
 
-`adaptive-shadow-v2` runs without affecting execution and exposes aggregate comparison telemetry from `/health`. Export timestamped observations with `timestamp,volatility_bps,toxicity_bps,hedge_cost_bps,basis_bps,adverse_bps`, then run `npm run calibrate:quotes -- data.csv --output result.json`. The calibrator uses chronological train, validation, and untouched holdout windows and penalizes underquoting more heavily. Candle-only history is insufficient for paid-flow calibration.
+`adaptive-shadow-v2` runs without affecting execution and exposes aggregate comparison telemetry through the authenticated operations endpoint. Export timestamped observations with `timestamp,volatility_bps,toxicity_bps,hedge_cost_bps,basis_bps,adverse_bps,label_end_timestamp,regime`, then run `npm run calibrate:quotes -- data.csv --output result.json`. The calibrator purges labels crossing chronological train/validation boundaries, selects against the worst validation regime, and leaves holdout untouched. Candle-only history is insufficient for paid-flow calibration.
+
+`npm run capture:market-flow` now records public Coinbase and Binance BTC/ETH trades and BBOs into a normalized append-only CSV. `npm run calibrate:market-flow` converts that tape into causal features and 1-second, 5-second, 30-second and 5-minute markouts under explicit 5%, 25%, 50% and 90% toxicity mixtures, then generates hashed JSON and private HTML evidence. A short live two-venue capture passed end to end, but correctly failed the 24-hour, 10,000-trade and five-minute-label data gates. See `MARKET-FLOW-CALIBRATION.md`.
 
 Run a checkpointed 72-hour testnet exercise with `RFQ_TESTNET_SOAK_HOURS=72 npm run soak:base-sepolia-iteration`. The runner records every lifecycle failure and exits nonzero if any cycle failed.
 
