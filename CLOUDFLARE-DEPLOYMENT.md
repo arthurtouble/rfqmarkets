@@ -1,16 +1,26 @@
 # Cloudflare testnet deployment
 
-Status: the deployment design and static-site CI are source controlled. The public testnet shell and public documentation are deployed to the RFQ Markets Cloudflare account. Service ports remain intentionally unavailable until the edge/API runtime is deployed. This is a testnet hosting profile, not the final production trust layout.
+Status: the deployment design and CI are source controlled. The public testnet terminal and public documentation are deployed to the RFQ Markets Cloudflare account. The terminal now runs behind a fail-closed edge Worker: static and SPA routes are served normally, reserved service routes return structured `503` responses until private bindings exist, and `/edge/health` reports binding readiness without claiming the trading runtime is healthy. This is a testnet hosting profile, not the final production trust layout.
 
 ## Current testnet surfaces
 
 | Surface | URL | Status |
 | --- | --- | --- |
-| Trading terminal | `https://rfq-markets-testnet.rfq-markets.workers.dev` | Static shell deployed with same-origin service routes; trading remains disabled until API, indexer and market-stream routes are live. |
+| Trading terminal | `https://rfq-markets-testnet.rfq-markets.workers.dev` | Deployed behind the edge Worker with same-origin service routes; trading remains disabled until API, indexer and market-stream bindings are live. |
 | Public documentation | `https://rfq-markets-docs-testnet.rfq-markets.workers.dev` | Deployed and usable. |
 | Internal manuals | Local port 4176 only | Deliberately withheld until Cloudflare Access is configured and verified deny-by-default. |
 
 Both public surfaces send CSP, HSTS, frame-denial, MIME-sniffing, referrer and permissions-policy headers. Hashed assets use immutable caching; HTML revalidates. `npm run validate:cloudflare-static` rejects production bundles containing the local service ports and rejects missing security-header files.
+
+The edge boundary is covered by `npm run test:cloudflare-edge`. It has explicit routing tests for the API, indexer and market gateway; preserves request bodies and correlation identifiers; contains upstream exceptions; and proves missing runtime bindings cannot fall through to an HTML `200` response.
+
+## Current account blocker
+
+The RFQ Markets account currently uses Workers Free. Cloudflare's Containers API rejects application creation for this account, and the dashboard identifies Containers as a Workers Paid feature. The public edge and static sites can run on Free, but the existing long-running Fastify services, native SQLite users and Python Hyperliquid bridge cannot be deployed there.
+
+Upgrade the RFQ Markets account to Workers Paid before the service stage. The dashboard currently quotes `$5/month + usage`. This is an account billing action and must be completed by the account owner. After activation, verify entitlement with the Containers applications endpoint before creating images or secrets.
+
+Do not use a Cloudflare Tunnel to the laptop as a substitute. It would preserve a hidden origin but would not make the system independent of this machine.
 
 ## Decision
 
@@ -29,7 +39,7 @@ Cloudflare is useful now for public ingress, static applications, streaming fano
 | Market-flow recorder | Durable Object connection manager, Queue, R2 shards and Workflow | Immutable R2 objects and manifests | Independent redundant collectors |
 | Calibration | Workflow-triggered research job or CI artifact initially | Versioned reports in private R2 | Dedicated research runtime |
 
-Ordinary Workers are request-scoped and are not a drop-in host for the existing Fastify processes, SQLite journals or Python Hyperliquid bridge. Containers can run the existing runtime on the Workers Paid plan, but their local disk cannot be the sole journal. The first Cloudflare service work therefore starts with static surfaces and a new edge boundary; stateful services move only after their journals use explicit durable bindings.
+Ordinary Workers are request-scoped and are not a drop-in host for the existing Fastify processes, SQLite journals or Python Hyperliquid bridge. Containers can run the existing runtime on the Workers Paid plan, but their local disk cannot be the sole journal. The stateful services therefore move only after their journals use explicit durable bindings. A container image or process restart must be recoverable from Base plus the durable journal; an ephemeral container filesystem is only a cache.
 
 ## Target request path
 

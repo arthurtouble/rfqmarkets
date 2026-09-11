@@ -40,7 +40,7 @@ The agent must be dedicated to this project, revocable and unable to withdraw. I
 
 The static deployment configurations and GitHub workflows are checked in and pass local Wrangler packaging. Connecting the account requires:
 
-1. A Cloudflare account with Workers enabled. The free plan is sufficient for the three static sites; deploying the existing long-running Node and Python services through Cloudflare Containers requires a paid Workers plan.
+1. Upgrade the RFQ Markets account from Workers Free to Workers Paid. The public terminal and docs are live, and the fail-closed edge Worker is live, but Cloudflare's Containers API currently rejects application creation because Containers require Paid. The plan page is `https://dash.cloudflare.com/61b4bdb0dd89929a5cb3c67f4faed364/workers/plans`.
 2. Local authorization through `npx wrangler login`, or a scoped API token supplied through the local environment. Never paste that token into source or documentation.
 3. The desired `workers.dev` subdomains or delegated test domains. The private internal manual must have a Cloudflare Access application and an allowed identity group before it is deployed.
 4. A GitHub environment secret named `CLOUDFLARE_API_TOKEN`, a non-secret variable named `CLOUDFLARE_ACCOUNT_ID`, and the repository or environment variable `CLOUDFLARE_DEPLOY_ENABLED=true` when automatic deployment should start.
