@@ -1,6 +1,16 @@
 # Cloudflare testnet deployment
 
-Status: deployment design and static-site CI are source controlled. Account resources and service ports are intentionally pending Cloudflare authorization. This is a testnet hosting profile, not the final production trust layout.
+Status: the deployment design and static-site CI are source controlled. The public testnet shell and public documentation are deployed to the RFQ Markets Cloudflare account. Service ports remain intentionally unavailable until the edge/API runtime is deployed. This is a testnet hosting profile, not the final production trust layout.
+
+## Current testnet surfaces
+
+| Surface | URL | Status |
+| --- | --- | --- |
+| Trading terminal | `https://rfq-markets-testnet.rfq-markets.workers.dev` | Static shell deployed with same-origin service routes; trading remains disabled until API, indexer and market-stream routes are live. |
+| Public documentation | `https://rfq-markets-docs-testnet.rfq-markets.workers.dev` | Deployed and usable. |
+| Internal manuals | Local port 4176 only | Deliberately withheld until Cloudflare Access is configured and verified deny-by-default. |
+
+Both public surfaces send CSP, HSTS, frame-denial, MIME-sniffing, referrer and permissions-policy headers. Hashed assets use immutable caching; HTML revalidates. `npm run validate:cloudflare-static` rejects production bundles containing the local service ports and rejects missing security-header files.
 
 ## Decision
 
@@ -56,10 +66,10 @@ Never share bindings, buckets, databases, queues, service names or secrets betwe
 
 `.github/workflows/ci.yml` runs the complete repository validation on pull requests and pushes to `main`. `.github/workflows/deploy-cloudflare.yml` deploys only the public trading and documentation assets after CI succeeds. Deployment remains disabled until the GitHub environment variable `CLOUDFLARE_DEPLOY_ENABLED` is set to `true`.
 
-Required GitHub testnet environment secrets:
+Required GitHub testnet environment configuration:
 
 - `CLOUDFLARE_API_TOKEN`: narrowly scoped to edit Workers Scripts for the selected account. Do not use a global API key.
-- `CLOUDFLARE_ACCOUNT_ID`: selected account identifier.
+- `CLOUDFLARE_ACCOUNT_ID`: non-secret variable containing the selected account identifier.
 
 The internal manuals and hedge dashboard are excluded from automatic deployment until a Cloudflare Access application and deny-by-default policy are verified. API keys, wallet keys, approver keys, sponsor keys and hedge keys never enter GitHub build logs or static Vite variables.
 

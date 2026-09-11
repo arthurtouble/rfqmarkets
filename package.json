@@ -17,6 +17,7 @@
     "build:docs": "vite build apps/docs --outDir ../../dist/docs --emptyOutDir",
     "build:internal-docs": "vite build apps/internal-docs --outDir ../../dist/internal-docs --emptyOutDir",
     "build:design-system": "vite build apps/design-system --outDir ../../dist/design-system --emptyOutDir",
+    "validate:cloudflare-static": "node scripts/validate-cloudflare-static.mjs",
     "dev:docs": "vite apps/docs --port 4175",
     "dev:internal-docs": "vite apps/internal-docs --port 4176",
     "dev:design-system": "vite apps/design-system --port 4177",
@@ -62,7 +63,7 @@
     "smoke:runtime-readiness": "node --import tsx scripts/runtime-readiness.ts",
     "soak:runtime": "node --import tsx scripts/runtime-soak.ts",
     "soak:base-sepolia-iteration": "node --import tsx scripts/base-sepolia-soak.ts",
-    "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin && npm run build:docs && npm run build:internal-docs && npm run build:design-system"
+    "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run typecheck && npm run build:web && npm run build:admin && npm run build:docs && npm run build:internal-docs && npm run build:design-system && npm run validate:cloudflare-static"
   },
   "devDependencies": {
     "@fastify/cors": "11.3.0",
