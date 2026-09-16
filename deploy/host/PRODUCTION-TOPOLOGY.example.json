@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "services": [
+    {"role":"api-active","hostId":"api-a","provider":"provider-a","region":"region-a","privateIngress":true,"persistentVolume":true,"failureDomain":"api-a"},
+    {"role":"api-standby","hostId":"api-b","provider":"provider-b","region":"region-b","privateIngress":true,"persistentVolume":true,"failureDomain":"api-b"},
+    {"role":"approver","hostId":"approver-a","provider":"provider-a","region":"region-a","privateIngress":true,"persistentVolume":true,"failureDomain":"approver-a"},
+    {"role":"approver","hostId":"approver-b","provider":"provider-b","region":"region-b","privateIngress":true,"persistentVolume":true,"failureDomain":"approver-b"},
+    {"role":"approver","hostId":"approver-c","provider":"provider-c","region":"region-c","privateIngress":true,"persistentVolume":true,"failureDomain":"approver-c"},
+    {"role":"keeper","hostId":"keeper-a","provider":"provider-c","region":"region-c","privateIngress":true,"persistentVolume":true,"failureDomain":"keeper-a"},
+    {"role":"indexer","hostId":"indexer-a","provider":"provider-a","region":"region-a","privateIngress":true,"persistentVolume":true,"failureDomain":"indexer-a"},
+    {"role":"hedger","hostId":"hedger-a","provider":"provider-b","region":"region-b","privateIngress":true,"persistentVolume":true,"failureDomain":"hedger-a"},
+    {"role":"gateway","hostId":"gateway-a","provider":"provider-a","region":"region-a","privateIngress":false,"persistentVolume":false,"failureDomain":"gateway-a"}
+  ],
+  "rpcProviders": [{"name":"replace-rpc-a","url":"https://rpc-a.example"},{"name":"replace-rpc-b","url":"https://rpc-b.example"}],
+  "edge": {"provider":"cloudflare","authenticatedOrigins":true,"directExitSeparateOrigin":true},
+  "backup": {"provider":"replace-archive","encrypted":true,"immutableRetentionDays":90,"restoreHostId":"clean-restore-host"},
+  "monitoring": {"provider":"replace-monitoring","independentFromRuntime":true,"pagerConfigured":true}
+}

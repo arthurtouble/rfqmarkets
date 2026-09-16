@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {GrossReservationBook,type GrossReservation} from '../packages/shared/src/gross-reservations.js';
 import {initializeGrossJournal,persistGross,restoreGross,finalizeGross,bindGrossContext} from '../packages/shared/src/gross-reservation-journal.js';
 import {finalizedClock} from '../packages/shared/src/finalized-clock.js';
-const BASE=10n**18n,word=(gross:bigint,side=gross)=>gross|(side<<128n),item=(baseDelta:bigint,reduceOnly=false,deadline=100):GrossReservation=>({market:0,baseDelta,reduceOnly,deadline});
+const BASE=10n**18n,word=(gross:bigint,side=gross)=>gross|(side<<128n),item=(baseDelta:bigint,reduceOnly=false,deadline=100,makerDebit=0n):GrossReservation=>({market:0,baseDelta,reduceOnly,deadline,makerDebit});
 const books=()=>[{longBase:0n,shortBase:0n,limits:word(20_000_000_000n),ready:true},{longBase:0n,shortBase:0n,limits:word(20_000_000_000n),ready:true}] as const;
 test('opposing approvals reserve gross independently; retries bind inputs and never double count',()=>{
  const book=new GrossReservationBook(),state=books(),asks:[bigint,bigint]=[100_000_000_000n,4_000_000_000n];
@@ -18,6 +18,10 @@ test('escaped approvals reserve every net/stress execution subset and maker floo
  const baseBooks=[{longBase:0n,shortBase:0n,limits:word(100_000_000n),ready:true},{longBase:0n,shortBase:0n,limits:word(100_000_000n),ready:true}] as [ReturnType<typeof books>[number],ReturnType<typeof books>[number]],asks:[bigint,bigint]=[100_000_000n,4_000_000n],netLimits:[bigint,bigint]=[word(15_000_000n),word(15_000_000n)];
  const netBook=new GrossReservationBook(),risk={net:[0n,0n] as [bigint,bigint],netLimits,backing:1_000_000_000n,floor:100_000_000n};assert(netBook.admit('one',item(BASE/10n),baseBooks,asks,1,risk));netBook.reserve('one',item(BASE/10n));assert.equal(netBook.admit('two',item(BASE/10n),baseBooks,asks,1,risk),false,'a subset can exceed the net cap');assert(netBook.admit('opposite',item(-BASE/10n),baseBooks,asks,1,risk),'opposing optionality remains inside both net extremes');
  const stressBook=new GrossReservationBook(),wide={...risk,netLimits:[word(1_000_000_000n),word(1_000_000_000n)] as [bigint,bigint],backing:20_000_000n,floor:10_000_000n};assert(stressBook.admit('one',item(BASE/10n),baseBooks,asks,1,wide));stressBook.reserve('one',item(BASE/10n));assert.equal(stressBook.admit('two',item(BASE/10n),baseBooks,asks,1,wide),false,'a subset can exceed maker stress capacity');assert.equal(new GrossReservationBook().admit('floor',item(BASE/100n),baseBooks,asks,1,{...wide,backing:9_999_999n}),false);
+});
+test('escaped approvals reserve maker debit even when reduce-only reserves no gross',()=>{
+ const state=books(),asks:[bigint,bigint]=[100_000_000_000n,4_000_000_000n],risk={net:[0n,0n] as [bigint,bigint],netLimits:[word(1_000_000_000n),word(1_000_000_000n)] as [bigint,bigint],backing:500_000_000n,floor:100_000_000n},book=new GrossReservationBook();
+ assert(book.admit('first',item(BASE/100n,true,100,250_000_000n),[...state],asks,1,risk));book.reserve('first',item(BASE/100n,true,100,250_000_000n));assert.equal(book.bounds()[0].shortBase,0n);assert.equal(book.capitalDebit(),250_000_000n);assert.equal(book.admit('second',item(BASE/100n,false,100,200_000_001n),[...state],asks,1,risk),false);
 });
 test('expiry requires finalized time strictly past deadline, persists across restart and rejects stale snapshots',()=>{
  const db=new DatabaseSync(':memory:');initializeGrossJournal(db);let book=new GrossReservationBook();persistGross(db,'escaped',item(BASE/10n));book.reserve('escaped',item(BASE/10n));

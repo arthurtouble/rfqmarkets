@@ -7,8 +7,10 @@ Status date: 2026-09-16. This is the promotion record for a capped Base mainnet 
 - [ ] Tag one reviewed commit and record the source, lockfile, Solidity compiler, build-info and frontend hashes.
 - [ ] Run `npm test`; require every contract, upgrade, simulator, service, type and frontend gate to pass from a clean checkout.
 - [ ] Run the production dependency audit; require `npm audit --omit=dev` to report zero findings. Review development-only findings separately. Build the pinned Linux amd64 host image, record its immutable registry digest, and run `npm run evidence:supply-chain -- EVIDENCE_JSON sha256:IMAGE_DIGEST`; release evidence version 2 binds that digest and the complete npm/Python component inventory to the candidate.
+- [ ] Dispatch `Release host image` from the frozen `main` commit. Retain the BuildKit provenance, SPDX SBOM, high-severity vulnerability result, keyless Sigstore signature/attestation, supply-chain evidence and checksum artifact. Verify the signature against this repository workflow identity before promotion.
 - [ ] Verify implementation bytecode remains below the 21,000-byte project gate and repeat OpenZeppelin storage validation.
 - [ ] Verify the deployed implementation, linked libraries, proxy, ProxyAdmin, oracle adapter, USDC, Safe and timelock addresses from two independent RPCs and the explorer.
+- [ ] Validate the completed provider file with `npm run validate:production-topology -- PRODUCTION-TOPOLOGY.json`, and validate the frozen mainnet manifest with `npm run prepare:mainnet-plan -- MAINNET-MANIFEST.json UNSIGNED-PLAN.json`. Confirm the plan still says `executionAuthorized: false` before the final ceremony.
 
 ## Economic and protocol gates
 
@@ -17,6 +19,7 @@ Status date: 2026-09-16. This is the promotion record for a capped Base mainnet 
 - [ ] Run at least one upgrade and rollback rehearsal with funded accounts and open BTC/ETH positions; confirm custody, nonces, sessions, positions and claims retain exact storage values.
 - [ ] Exercise funding catch-up, partial and full liquidation, deficit waterfall, resolution sampling, pro-rata claims and post-resolution recovery.
 - [ ] Obtain independent Solidity and economic reviews and close every critical/high issue before promotion.
+- [ ] Record explicit reviewer acceptance of the 2-of-3 availability boundary: conflicting certificates from a compromised intersecting signer may exist, while canonical clearing admits only the safe subset.
 
 ## External integration gates
 
@@ -25,7 +28,7 @@ Status date: 2026-09-16. This is the promotion record for a capped Base mainnet 
 - [ ] Test RPC throttling, divergent heads, delayed receipts, nonce replacement, sponsor depletion and API death after durable signing and after broadcast.
 - [ ] Fence the Hyperliquid agent to the dedicated account, cap available venue capital, rotate it, restore it on a clean host and prove a standby cannot become a second writer.
 - [ ] Validate injected desktop, WalletConnect/mobile and ERC-1271 wallets. Validate quick-session limits, revocation, expiration and browser-secret loss.
-- [ ] Select and audit the LI.FI or Socket route adapter. Test allowance scope, destination USDC identity, minimum output, timeout, refund, source reorg and destination failure before enabling cross-chain deposits.
+- [x] Keep cross-chain deposits disabled for the capped launch. Any later route adapter requires a separate audit covering allowance scope, destination USDC identity, minimum output, timeout, refund and reorg/failure behavior.
 
 ## Infrastructure and operations gates
 
@@ -36,6 +39,7 @@ Status date: 2026-09-16. This is the promotion record for a capped Base mainnet 
 - [ ] Verify `/v1/config`, health, errors, logs and browser bundles contain no oracle, RPC, signer, hedge or transport credential; configure a separate browser-safe `RFQ_PUBLIC_RPC_URL`.
 - [ ] Put the hedge dashboard and internal documentation behind identity-aware private access. Keep trading credentials out of both browser and dashboard processes.
 - [ ] Alert on oracle age, proof-budget refreshes/failures, approval disagreement, quorum loss, signed-to-inclusion latency, sender ambiguity, gas runway, indexer lag/reorg, hedge gap, venue rejection and capital headroom.
+- [ ] Feed a production snapshot to `npm run check:operations-alerts -- SNAPSHOT.json`; deliver every emitted page to the independent paging route and rehearse the matching procedure in `deploy/operations/INCIDENT-RUNBOOK.md`.
 - [ ] Restore API, approver, sender, indexer and hedge journals from encrypted backups on clean hosts. Record recovery time and reconcile every chain/venue operation.
 - [ ] Assign incident owners and run pause, approver compromise, oracle failure, RPC partition, venue outage, frontend compromise and resolution drills.
 

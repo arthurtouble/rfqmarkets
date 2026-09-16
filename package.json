@@ -68,7 +68,10 @@
     "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run test:cloudflare-edge && npm run typecheck && npm run build:web && npm run build:exit && npm run build:admin && npm run build:docs && npm run build:internal-docs && npm run build:design-system && npm run validate:cloudflare-static",
     "build:exit": "vite build apps/exit --outDir ../../dist/exit --emptyOutDir",
     "release:check": "node --import tsx scripts/check-release.ts",
-    "evidence:supply-chain": "node --import tsx scripts/supply-chain-evidence.ts"
+    "evidence:supply-chain": "node --import tsx scripts/supply-chain-evidence.ts",
+    "prepare:mainnet-plan": "node --import tsx scripts/mainnet-manifest.ts",
+    "check:operations-alerts": "node --import tsx scripts/operations-alerts.ts",
+    "validate:production-topology": "node --import tsx scripts/production-topology.ts"
   },
   "devDependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",
