@@ -392,3 +392,23 @@ th { color:var(--text-dim); }
 tbody tr:hover { background:var(--surface-muted); }
 .side-pill { border-radius:999px; background:var(--surface-muted); }
 @media(max-width:700px){.topbar .theme-toggle{margin-left:2px}.theme-toggle{width:31px;height:31px}.header-wallet{margin-left:2px}.portfolio-panel,.trade-card{border-radius:0}}
+
+/* Streamlined trading flow. */
+.order-ticket{padding:20px 20px 22px}
+.ticket-heading{margin:0 0 8px}.ticket-heading>strong{display:flex;align-items:center;gap:9px;font-size:15px}.ticket-heading>span{border-radius:999px;padding:4px 8px}
+.order-types{gap:22px;margin:8px 0 0}.order-types button{padding-bottom:8px}
+.trade-card>label{margin:16px 2px 7px}
+.amount{padding-inline:12px}.amount input{padding:10px 0;font-size:24px}
+.sides{margin-top:10px}.sides button{padding:9px}
+.trade-card>label.order-option{display:inline-flex;justify-content:flex-start;width:auto;gap:8px;margin:12px 2px 0;color:var(--text-soft);font-size:12px}.order-option input{width:14px;height:14px}.order-option b{font-weight:600}
+.quote-summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin:14px 0 10px;padding:12px 0;border-block:1px solid var(--line)}
+.quote-summary div{display:grid;gap:5px;padding:0 10px;border-right:1px solid var(--line)}.quote-summary div:first-child{padding-left:2px}.quote-summary div:last-child{border-right:0;padding-right:2px}.quote-summary dt{font-size:10px;line-height:1.2}.quote-summary dd{font-size:12px;line-height:1.25;white-space:nowrap}
+.price-details{margin:0 0 10px;border-top:0}.price-details summary{padding:7px 2px;color:var(--text-dim);font-size:11px}
+.submit{padding:13px}.status{margin:10px 0 0}.status:empty{display:none}
+.ticket-secondary{display:flex;justify-content:center;gap:18px;margin-top:10px}.ticket-secondary .depositToggle{width:auto;margin:0;padding:5px 0;border:0;color:var(--text-dim);background:transparent;font-size:11px}.ticket-secondary .depositToggle:hover{color:var(--text);background:transparent}.ticket-secondary .quickToggle.active{color:var(--buy);background:transparent}
+.depositPanel{margin-top:10px}
+.risk-grid{grid-template-columns:repeat(4,1fr)}.risk-grid div{padding:11px 13px}
+.compact-heading{padding:12px 16px}.compact-heading h2{font-size:14px}.compact-heading p{font-size:11px}
+.position-title{margin-bottom:9px}.position-metrics{gap:8px}
+@media(max-width:900px){.risk-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){.order-ticket{padding:16px 20px 20px}.quote-summary{margin-top:13px}.ticket-secondary{margin-top:8px}.account-health{padding:15px 18px}.risk-grid div{padding:10px 14px}}
