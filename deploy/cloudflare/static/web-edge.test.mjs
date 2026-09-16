@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { handleRequest, serviceForPath } from "./web-edge.mjs";
+const limiter={limit:async()=>({success:true})},edge={PUBLIC_READ_LIMIT:limiter,PUBLIC_WRITE_LIMIT:limiter,GLOBAL_READ_LIMIT:limiter,GLOBAL_WRITE_LIMIT:limiter},request=(url,init={})=>new Request(url,{...init,headers:{'cf-connecting-ip':'192.0.2.1',...(init.headers??{})}});
 
 test("routes public reads to the indexer and market streams to the gateway", () => {
   assert.equal(serviceForPath("/v1/risk"), "INDEXER");
@@ -15,7 +16,8 @@ test("routes public reads to the indexer and market streams to the gateway", () 
 });
 
 test("fails closed with machine-readable 503 when a runtime binding is absent", async () => {
-  const response = await handleRequest(new Request("https://example.test/v1/quote",{method:"POST"}), {
+  const response = await handleRequest(request("https://example.test/v1/quote",{method:"POST"}), {
+    ...edge,
     ASSETS: { fetch: () => new Response("asset") },
   });
   assert.equal(response.status, 503);
@@ -26,11 +28,12 @@ test("fails closed with machine-readable 503 when a runtime binding is absent", 
 
 test("forwards methods, bodies, and request correlation to a private service", async () => {
   let received;
-  const response = await handleRequest(new Request("https://example.test/v1/quote", {
+  const response = await handleRequest(request("https://example.test/v1/quote", {
     method: "POST",
     headers: { "content-type": "application/json", "cf-ray": "ray-123" },
     body: JSON.stringify({ market: "BTC" }),
   }), {
+    ...edge,
     API: { fetch: async (request) => {
       received = request;
       return new Response("ok", { status: 201 });
@@ -44,7 +47,8 @@ test("forwards methods, bodies, and request correlation to a private service", a
 });
 
 test("contains upstream failures and still serves non-service assets", async () => {
-  const failed = await handleRequest(new Request("https://example.test/v1/risk"), {
+  const failed = await handleRequest(request("https://example.test/v1/risk"), {
+    ...edge,
     INDEXER: { fetch: async () => { throw new Error("offline"); } },
     ASSETS: { fetch: () => new Response("asset") },
   });
@@ -71,5 +75,5 @@ test("reports edge readiness separately from runtime readiness", async () => {
 
 test('denies private, unknown and wrong-method routes before origin or assets',async()=>{
  const env={API:{fetch(){throw new Error('origin reached')}},ASSETS:{fetch(){throw new Error('assets reached')}}};
- for(const [path,method] of [['/v1/dev/wallet','GET'],['/v1/unknown','POST'],['/internal/metrics','GET'],['/v1/risk/secret','GET'],['/v1/risk','POST'],['/v1/quote','GET']])assert.equal((await handleRequest(new Request(`https://example.test${path}`,{method}),env)).status,404);
+  for(const [path,method] of [['/v1/dev/wallet','GET'],['/v1/unknown','POST'],['/internal/metrics','GET'],['/v1/risk/secret','GET'],['/v1/risk','POST'],['/v1/quote','GET']])assert.equal((await handleRequest(request(`https://example.test${path}`,{method}),env)).status,404);
 });

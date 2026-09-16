@@ -23,7 +23,7 @@ const trade=async(user,delta,market=0,reduceOnly=false)=>{
  return (await clearing.executeTrade(intent,approval,proof,await user.signTypedData(domain,types,intent),await a.signTypedData(domain,approvalTypes,approval),await b.signTypedData(domain,approvalTypes,approval))).wait();
 };
 const configure=async(gross,side)=>{await (await clearing.pause()).wait();await (await clearing.setExposurePolicy(0,gross,side)).wait();await (await clearing.unpause()).wait();};
-await refresh();await assert.rejects(trade(long,BASE/10n),'opening below maker capital floor must fail');
+await refresh();await assert.rejects(clearing.connect(third).declareResolution(),'an empty underfunded deployment must not be griefable');await assert.rejects(trade(long,BASE/10n),'opening below maker capital floor must fail');
 await (await clearing.connect(maker).fundMaker(1_000_000n)).wait();await configure(25_000_000_000n,20_000_000_000n);await refresh();
 await trade(long,BASE/10n);await trade(short,-BASE/10n);
 assert.equal((await clearing.markets(0)).aggregateBase,0n);let book=await clearing.exposureState(0);assert.equal(book.longBase,BASE/10n);assert.equal(book.shortBase,BASE/10n);
@@ -41,7 +41,8 @@ await (await clearing.setMarketPolicy(0,false,100_000_000n,1_000_000_000n)).wait
 assert.equal((await clearing.exposureState(0)).longBase,BASE/20n,'reduction above tightened net/trade caps must remain available');
 await assert.rejects(trade(third,BASE/1000n),'disabled market must reject new exposure');
 await trade(long,-BASE/20n,0,true);assert.equal((await clearing.exposureState(0)).longBase,0n);assert.equal((await clearing.exposureState(0)).shortBase,0n);
-await (await clearing.setMarketPolicy(0,true,1_000_000_000_000n,5_000_000_000_000n)).wait();await configure(50_000_000_000n,20_000_000_000n);await refresh();await trade(long,BASE/10n);
+await (await clearing.setMarketPolicy(0,true,1_000_000_000_000n,5_000_000_000_000n)).wait();await configure(50_000_000_000n,20_000_000_000n);await refresh();await trade(long,BASE/10n);await trade(short,-BASE/100n);
 prices[0]=150_000_000_000n;await refresh();await trade(long,-BASE/10n,0,true);
 assert((await clearing.makerBacking())<100_000_000_000n);await assert.rejects(trade(third,BASE/100n),'realized maker losses must enforce capital floor on later opening');
-console.log('Exposure E2E passed: capital floor, opposing gross, independent sides, stale gross marks, tightened/disabled reductions and realized-loss floor');
+await (await clearing.connect(third).declareResolution()).wait();assert.equal(await clearing.resolutionRequired(),true,'objective undercapitalization must permit permissionless incident entry');
+console.log('Exposure E2E passed: capital floor, opposing gross, independent sides, stale gross marks, reductions and permissionless incident entry');

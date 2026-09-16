@@ -14,6 +14,11 @@ test('opposing approvals reserve gross independently; retries bind inputs and ne
  assert.equal(book.admit('close',item(-BASE/10n,true),[...state],asks,1),true,'signed reduceOnly must retain capacity for safe exits');
  book.reserve('close',item(-BASE/10n,true));assert.equal(book.bounds()[0].shortBase,BASE/10n);
 });
+test('escaped approvals reserve every net/stress execution subset and maker floor',()=>{
+ const baseBooks=[{longBase:0n,shortBase:0n,limits:word(100_000_000n),ready:true},{longBase:0n,shortBase:0n,limits:word(100_000_000n),ready:true}] as [ReturnType<typeof books>[number],ReturnType<typeof books>[number]],asks:[bigint,bigint]=[100_000_000n,4_000_000n],netLimits:[bigint,bigint]=[word(15_000_000n),word(15_000_000n)];
+ const netBook=new GrossReservationBook(),risk={net:[0n,0n] as [bigint,bigint],netLimits,backing:1_000_000_000n,floor:100_000_000n};assert(netBook.admit('one',item(BASE/10n),baseBooks,asks,1,risk));netBook.reserve('one',item(BASE/10n));assert.equal(netBook.admit('two',item(BASE/10n),baseBooks,asks,1,risk),false,'a subset can exceed the net cap');assert(netBook.admit('opposite',item(-BASE/10n),baseBooks,asks,1,risk),'opposing optionality remains inside both net extremes');
+ const stressBook=new GrossReservationBook(),wide={...risk,netLimits:[word(1_000_000_000n),word(1_000_000_000n)] as [bigint,bigint],backing:20_000_000n,floor:10_000_000n};assert(stressBook.admit('one',item(BASE/10n),baseBooks,asks,1,wide));stressBook.reserve('one',item(BASE/10n));assert.equal(stressBook.admit('two',item(BASE/10n),baseBooks,asks,1,wide),false,'a subset can exceed maker stress capacity');assert.equal(new GrossReservationBook().admit('floor',item(BASE/100n),baseBooks,asks,1,{...wide,backing:9_999_999n}),false);
+});
 test('expiry requires finalized time strictly past deadline, persists across restart and rejects stale snapshots',()=>{
  const db=new DatabaseSync(':memory:');initializeGrossJournal(db);let book=new GrossReservationBook();persistGross(db,'escaped',item(BASE/10n));book.reserve('escaped',item(BASE/10n));
  // Inclusion does not delete capacity. Restart reconstructs the signed risk.
@@ -28,6 +33,11 @@ test('journal transaction failure cannot leave an escaped reservation partially 
  db.exec('BEGIN IMMEDIATE');try{persistGross(db,'lost',item(BASE/10n));db.prepare('INSERT INTO signatures VALUES(?)').run('lost');assert.fail('expected trigger failure');}catch{db.exec('ROLLBACK');}
  assert.equal(db.prepare('SELECT COUNT(*) count FROM gross_reservations').get()!.count,0);
  persistGross(db,'bound',item(BASE/10n));assert.throws(()=>persistGross(db,'bound',item(-BASE/10n)),/mismatch/);assert.throws(()=>persistGross(db,'corrupt',{...item(BASE/10n),reduceOnly:'false'} as never),/invalid/);db.close();
+});
+test('failed finalized archival keeps durable and in-memory capacity reserved',()=>{
+ const db=new DatabaseSync(':memory:');initializeGrossJournal(db);const book=new GrossReservationBook();persistGross(db,'escaped',item(BASE/10n));book.reserve('escaped',item(BASE/10n));
+ assert.throws(()=>finalizeGross(db,book,1,101,undefined,()=>{throw new Error('injected archive failure');}),/injected/);assert.equal(book.size,1);assert.equal(book.bounds()[0].longBase,BASE/10n);assert.equal(db.prepare('SELECT COUNT(*) count FROM gross_reservations').get()!.count,1);assert.equal(db.prepare('SELECT COUNT(*) count FROM gross_clock').get()!.count,0);
+ finalizeGross(db,book,1,101);assert.equal(book.size,0);assert.equal(db.prepare('SELECT COUNT(*) count FROM gross_reservations').get()!.count,0);db.close();
 });
 test('directional reservation envelope bounds execution subsets and account orderings including reduce-only intents',()=>{
  let seed=0x12345678;const rand=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return seed>>>0;},abs=(v:bigint)=>v<0n?-v:v;

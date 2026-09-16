@@ -399,8 +399,10 @@ contract RFQClearing is Initializable {
         emit SessionRevoked(msg.sender, session);
     }
 
-    function declareResolution() external onlyGovernance {
-        if (!paused) revert InvalidTrade();
+    /// @notice Governance may resolve a paused market; anyone may prove objective maker undercapitalization.
+    function declareResolution() external {
+        if (msg.sender == governance) { if (!paused) revert InvalidTrade(); }
+        else if (!RFQRiskMath.makerIncident(_exposure, markets, makerBacking, baseRiskCapitalTarget)) revert Insolvent();
         _startResolution();
     }
 

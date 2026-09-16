@@ -19,6 +19,7 @@ export const clearingStateAbi = [
   "function resolutionRequired() view returns(bool)",
   "function oracle() view returns(address)",
   "function refreshOracle(bytes) payable returns((uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil))",
+  "function declareResolution()",
 ] as const;
 
 export const clearingApiAbi = [

@@ -5,23 +5,14 @@ import {exposureAdmission,isPositionReduction,type ExposureMarket,type ExposureB
 import Fastify from "fastify";
 import { DatabaseSync } from "node:sqlite";
 import { AbiCoder, Contract, Interface, JsonRpcProvider, Wallet, getAddress, keccak256, toBeHex } from "ethers";
-import { z } from "zod";
 import { clearingApproverAbi } from "../../../packages/shared/src/abi.js";
 import { DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, recoverIntentSigner, type MakerApproval, type SigningDomain, type TradeIntent } from "../../../packages/shared/src/eip712.js";
 import { BASE, impactCost, type Exposure } from "../../../packages/shared/src/policy.js";
 import { decodeStreamsV3Envelope } from "../../../packages/shared/src/streams.js";
 import { hedgeAdmission, type HedgeRiskSnapshot } from "../../../packages/shared/src/hedge-risk.js";
+import {approverPayloadSchema} from "../../../packages/shared/src/approver-payload.js";
 
-const unsigned=z.string().regex(/^\d+$/); const signed=z.string().regex(/^-?\d+$/); const hex32=z.string().regex(/^0x[0-9a-fA-F]{64}$/);
-export const requestSchema=z.object({
-  domain:z.object({name:z.string(),version:z.string(),chainId:unsigned,verifyingContract:z.string()}),
-  intent:z.object({account:z.string(),market:z.number().int().min(0).max(1),baseDelta:signed,limitPrice:unsigned,maxFee:unsigned,nonce:unsigned,deadline:unsigned,reduceOnly:z.boolean()}),
-  userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/),
-  approval:z.object({intentHash:hex32,executionPrice:unsigned,impactCharge:signed,fee:unsigned,oracleReportHash:hex32,deadline:unsigned,leaderEpoch:unsigned,signerSetVersion:unsigned,policyVersion:unsigned}),
-  quote:z.object({quoteId:z.string().uuid(),market:z.enum(["BTC","ETH"]),side:z.enum(["buy","sell"]),amount:unsigned,baseDelta:signed,expectedPrice:unsigned,worstPrice:unsigned,fee:unsigned,impactCharge:signed,spread:z.object({baseBps:unsigned,volatilityBps:unsigned,toxicityBps:unsigned,hedgeBps:unsigned,basisBps:unsigned,uncertaintyBps:unsigned,totalBps:unsigned,modelVersion:z.string()}).optional(),expiresAtMs:z.number().int(),observedAtMs:z.number().int(),bid:unsigned,ask:unsigned}),
-  report:z.string().regex(/^0x[0-9a-fA-F]*$/),
-  oracleAgeMs:z.number().nonnegative(),
-});
+export const requestSchema=approverPayloadSchema;
 
 export interface ApproverOptions { provider?:JsonRpcProvider;privateKey:string; transportToken:string; databasePath:string; expectedEpoch?:number; expectedPolicyVersion?:number; expectedSignerSetVersion?:number; expectedQuoteModelVersion?:string; expectedChainId?:bigint; expectedVerifyingContract?:string; rpcUrl?:string; secondaryRpcUrl?:string; rpcBatchMaxCount?:number; maxFutureSeconds?:number; oracleMode?:"local"|"chainlink"|"pyth"; dataStreams?:{feedIds:[string,string];feedDecimals:[number,number]};hedgeRisk?:{url:string;token:string;maxAgeMs?:number} }
 
@@ -32,7 +23,7 @@ export function buildApprover(options:ApproverOptions) {
   const provider=options.provider??(options.rpcUrl?new JsonRpcProvider(options.rpcUrl,undefined,{batchMaxCount:options.rpcBatchMaxCount??1}):undefined);
   const secondaryProvider=options.secondaryRpcUrl?new JsonRpcProvider(options.secondaryRpcUrl,undefined,{batchMaxCount:1}):undefined;
   const clearing=provider&&options.expectedVerifyingContract?new Contract(options.expectedVerifyingContract,clearingApproverAbi,provider):undefined;
-  database.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS approvals (digest TEXT PRIMARY KEY, epoch INTEGER NOT NULL, expiry_ms INTEGER NOT NULL, signature TEXT NOT NULL, created_ms INTEGER NOT NULL)");
+  database.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS approvals (digest TEXT PRIMARY KEY, epoch INTEGER NOT NULL, expiry_ms INTEGER NOT NULL, signature TEXT NOT NULL, created_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS archived_approvals(digest TEXT PRIMARY KEY,epoch INTEGER NOT NULL,expiry_ms INTEGER NOT NULL,signature TEXT NOT NULL,created_ms INTEGER NOT NULL,payload TEXT,archived_ms INTEGER NOT NULL)");
   if(!(database.prepare("PRAGMA table_info(approvals)").all() as Array<{name:string}>).some(row=>row.name==="payload"))database.exec("ALTER TABLE approvals ADD COLUMN payload TEXT");
   const grossReservations=new GrossReservationBook();initializeGrossJournal(database);
   if(provider&&(!options.expectedChainId||!options.expectedVerifyingContract))throw new Error("Independent chain signing requires a pinned chain and clearing address");
@@ -40,6 +31,7 @@ export function buildApprover(options:ApproverOptions) {
   migrateGross(database,"approver-v1",()=>{for(const row of database.prepare("SELECT payload FROM approvals WHERE payload IS NOT NULL").all()){const payload=requestSchema.parse(JSON.parse(String(row.payload)));persistGross(database,payload.approval.intentHash.toLowerCase(),{market:payload.intent.market as 0|1,baseDelta:BigInt(payload.intent.baseDelta),reduceOnly:payload.intent.reduceOnly,deadline:Number(payload.approval.deadline)});}});restoreGross(database,grossReservations);
   const incompleteExpiry=Number((database.prepare("SELECT MAX(expiry_ms) expiry FROM approvals WHERE payload IS NULL").get() as {expiry:number|null}).expiry??-1);
   const incompleteLegacy=()=>incompleteExpiry>=grossReservations.finalizedTimestamp*1000;
+  const archiveExpiredApprovals=(finalizedTimestamp:number)=>{const rows=database.prepare("SELECT digest FROM approvals WHERE expiry_ms<? ORDER BY expiry_ms,digest LIMIT 1024").all(finalizedTimestamp*1000) as Array<{digest:string}>,archivedMs=Date.now(),move=database.prepare("INSERT OR IGNORE INTO archived_approvals SELECT *,? FROM approvals WHERE digest=?"),remove=database.prepare("DELETE FROM approvals WHERE digest=?");for(const row of rows){move.run(archivedMs,row.digest);remove.run(row.digest);}};
   app.get("/internal/recovery",async(request,reply)=>{if(request.headers.authorization!==`Bearer ${options.transportToken}`)return reply.code(401).send({error:"unauthorized"});const now=Date.now(),cutoff=grossReservations.finalizedTimestamp*1000;return {signer:wallet.address,exportedAtMs:now,finalizedBlock:grossReservations.finalizedBlock,finalizedTimestamp:grossReservations.finalizedTimestamp,grossReservations:database.prepare("SELECT * FROM gross_reservations ORDER BY deadline,id").all(),approvals:database.prepare("SELECT digest,epoch,expiry_ms,signature,payload FROM approvals WHERE expiry_ms>=? ORDER BY created_ms").all(cutoff),incomplete:database.prepare("SELECT count(*) count FROM approvals WHERE expiry_ms>=? AND payload IS NULL").get(cutoff)};});
   app.get("/health",async()=>({ok:!incompleteLegacy(),signer:wallet.address}));
   app.post("/approve",async(request,reply)=>{
@@ -86,7 +78,7 @@ export function buildApprover(options:ApproverOptions) {
         if(observation){const nowSeconds=BigInt(Math.floor(now/1_000)),wallTimeInvalid=!clearing&&(observation.observedAt>nowSeconds+BigInt(options.maxFutureSeconds??5)||nowSeconds>observation.validUntil||(observation.observedAt<=nowSeconds&&nowSeconds-observation.observedAt>8n));if(observation.market!==BigInt(market)||observation.bid!==BigInt(input.quote.bid)||observation.ask!==BigInt(input.quote.ask)||observation.bid<=0n||observation.ask<observation.bid||wallTimeInvalid)return reply.code(409).send({error:"oracle report rejected"});}
       } catch{return reply.code(409).send({error:"oracle report rejected"});}
     }
-    let grossContext:{books:[ExposureBook,ExposureBook];asks:[bigint,bigint];block:number}|undefined;
+    let grossContext:{books:[ExposureBook,ExposureBook];asks:[bigint,bigint];block:number;risk:{net:[bigint,bigint];netLimits:[bigint,bigint];backing:bigint;floor:bigint}}|undefined;
     if(clearing&&provider){
       try{
         const [network,secondaryNetwork]=await Promise.all([provider.getNetwork(),secondaryProvider?.getNetwork()]);if(network.chainId!==domain.chainId||(secondaryNetwork&&secondaryNetwork.chainId!==domain.chainId))return reply.code(409).send({error:"rpc chain mismatch"});
@@ -129,10 +121,10 @@ export function buildApprover(options:ApproverOptions) {
         if(!admission.allowed)return reply.code(409).send({error:"independent exposure check rejected",reason:admission.reason});
         if(intent.reduceOnly&&!admission.reduction)return reply.code(409).send({error:"reduce-only intent does not reduce position"});
         const clock=await finalizedClock(provider,blockNumber,block.timestamp,secondaryProvider);
-        if(clock&&clock.block>=grossReservations.finalizedBlock&&clock.timestamp>=grossReservations.finalizedTimestamp)finalizeGross(database,grossReservations,clock.block,clock.timestamp,clock.hash);
+        if(clock&&clock.block>=grossReservations.finalizedBlock&&clock.timestamp>=grossReservations.finalizedTimestamp)finalizeGross(database,grossReservations,clock.block,clock.timestamp,clock.hash,()=>archiveExpiredApprovals(clock.timestamp));
         const priorGross=grossReservations.bounds(approval.intentHash.toLowerCase()),other=1-market,otherState=other===0?btc:eth;
         if(priorGross[other].longBase+priorGross[other].shortBase>0n&&(Number(otherState.lastPriceTime)===0||block.timestamp-Number(otherState.lastPriceTime)>15))return reply.code(409).send({error:"outstanding gross risk requires fresh cross-market price"});
-        grossContext={books:[riskBook(btcBook),riskBook(ethBook)],asks:market===0?[safetyAsk,BigInt(eth.lastAsk)]:[BigInt(btc.lastAsk),safetyAsk],block:blockNumber};
+        grossContext={books:[riskBook(btcBook),riskBook(ethBook)],asks:market===0?[safetyAsk,BigInt(eth.lastAsk)]:[BigInt(btc.lastAsk),safetyAsk],block:blockNumber,risk:{net:[marketNotional(btc,market===0?mark:undefined),marketNotional(eth,market===1?mark:undefined)],netLimits:market===0?[BigInt(marketLimitWord),BigInt(otherLimits)]:[BigInt(otherLimits),BigInt(marketLimitWord)],backing:BigInt(backing),floor:BigInt(floor)}};
         const delta=BigInt(intent.baseDelta)*mark/BASE;
         const absoluteBase=intent.baseDelta<0n?-intent.baseDelta:intent.baseDelta,deliveredImpact=intent.baseDelta>0n?absoluteBase*approval.executionPrice/BASE-absoluteBase*safetyAsk/BASE:absoluteBase*safetyBid/BASE-absoluteBase*approval.executionPrice/BASE;
         if(approval.impactCharge<impactCost(exposure,input.quote.market,delta)||deliveredImpact<approval.impactCharge)return reply.code(409).send({error:"independent impact check rejected"});
@@ -140,8 +132,8 @@ export function buildApprover(options:ApproverOptions) {
     }
     const grossId=approval.intentHash.toLowerCase(),grossItem:GrossReservation={market:intent.market as 0|1,baseDelta:intent.baseDelta,reduceOnly:intent.reduceOnly,deadline:Number(approval.deadline)};
     // No await between journal admission, signature creation and durable commit.
-    if(grossContext){if(!grossReservations.admit(grossId,grossItem,grossContext.books,grossContext.asks,grossContext.block))return reply.code(409).send({error:"independent outstanding gross capacity exceeded"});}
-    else finalizeGross(database,grossReservations,Math.floor(Date.now()/1000),Math.floor(Date.now()/1000));
+    if(grossContext){if(!grossReservations.admit(grossId,grossItem,grossContext.books,grossContext.asks,grossContext.block,grossContext.risk))return reply.code(409).send({error:"independent outstanding gross, net, stress or capital capacity exceeded"});}
+    else {const timestamp=Math.floor(Date.now()/1000);finalizeGross(database,grossReservations,timestamp,timestamp,undefined,()=>archiveExpiredApprovals(timestamp));}
     if(incompleteLegacy())return reply.code(503).send({error:"legacy approval recovery is incomplete"});
     if(!grossReservations.get(grossId)&&grossReservations.size>=50_000)return reply.code(503).send({error:"gross reservation capacity reached"});
     const digest=hashApproval(domain,approval); const existing=database.prepare("SELECT signature FROM approvals WHERE digest = ?").get(digest) as {signature:string}|undefined;
