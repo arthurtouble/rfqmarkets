@@ -66,7 +66,7 @@ export function buildApprover(options:ApproverOptions) {
     const notional=BigInt(input.quote.amount),requiredFee=(notional*2n+9_999n)/10_000n,observedAge=now-input.quote.observedAtMs,mid=(BigInt(input.quote.bid)+BigInt(input.quote.ask))/2n;
     const signedBaseMagnitude=intent.baseDelta<0n?-intent.baseDelta:intent.baseDelta,baseMagnitude=notional*BASE/mid,baseRounding=signedBaseMagnitude>baseMagnitude?signedBaseMagnitude-baseMagnitude:baseMagnitude-signedBaseMagnitude,executionNotional=signedBaseMagnitude*approval.executionPrice/BASE,positiveImpact=approval.impactCharge>0n?approval.impactCharge:0n,minimumCharge=(notional*2n+9_999n)/10_000n+positiveImpact,anchor=intent.baseDelta>0n?BigInt(input.quote.ask):BigInt(input.quote.bid),minimumPremium=(anchor*minimumCharge+notional-1n)/notional;
     const underpriced=intent.baseDelta>0n?approval.executionPrice<anchor+minimumPremium:approval.executionPrice>anchor-minimumPremium;
-    if(observedAge<0||observedAge>8_000||baseRounding*mid/BASE>1n||(!clearing&&notional>1_000_000n*1_000_000n)||approval.fee<requiredFee||underpriced)return reply.code(409).send({error:"policy rejected"});
+    if(observedAge<-(options.maxFutureSeconds??5)*1_000||observedAge>8_000||baseRounding*mid/BASE>1n||(!clearing&&notional>1_000_000n*1_000_000n)||approval.fee<requiredFee||underpriced)return reply.code(409).send({error:"policy rejected"});
     let reportObservation:{market:bigint;bid:bigint;ask:bigint;observedAt:bigint;validUntil:bigint}|undefined;
     if(input.report!=="0x"){
       try {
