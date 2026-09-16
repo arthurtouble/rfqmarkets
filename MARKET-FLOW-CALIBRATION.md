@@ -67,3 +67,11 @@ Open `http://127.0.0.1:4180/latest.html`. Keep this dashboard private because fu
 7. Assign a new model and policy version, run the full economic/fault suite and a sustained testnet soak, then activate under capped limits.
 
 The most useful next quantitative addition is an RFQ response model fitted from our own data: probability of signing as a function of market, side, size, quoted spread, price movement during signing, wallet latency, and rejection history. Until that exists, optimizing quoted spread for “profit” would use an invented demand curve and produce false precision.
+
+## Exact active-formula replay
+
+The current-model baseline now uses adaptive-v1's individual component ceilings and caps, including risk-mode and latency costs, basis and confidence. Optional observation columns hedge_latency_ms, confidence_bps and risk_mode preserve these inputs when available; public-tape observations use explicitly absent/default operational inputs and remain research-only. Candidate grid weights use the same bounded, rounded component structure and require a new reviewed model/policy before activation. Previous unrounded reports do not validate the active formula.
+
+`python3 simulator/live_quote_replay.py < private-inputs.json` independently replays an array of complete quote inputs: request (market/side/amount), snapshot (bid/ask), settled BTC/ETH notional, pending market/delta records, spreadInputs and optional exactBaseDelta. Integer outputs include base/notional, four-corner pending impact, execution/worst price and fee. The service test suite checks 1,002 spread and 1,000 complete quote vectors against the TypeScript implementation. Input quantities are raw micro-USDC/base18 units represented as strings. This is formula parity, not captured production fill or hedge qualification.
+
+Every capture integrity flag now participates in the shadow eligibility gate, including full requested duration, tape checksum and actual row counts. Corrupt/nonfinite normalized rows fail loading. The recorder bounds retained error messages while keeping the full error count; any error still fails qualification.

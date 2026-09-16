@@ -3,6 +3,9 @@ export const clearingStateAbi = [
   "function nonceUsed(address,uint256) view returns(bool)",
   "function positionOf(address,uint8) view returns(int256 size,uint256 entryPrice,int256 lastFundingIndex)",
   "function markets(uint256) view returns(int256 aggregateBase,int256 fundingIndex,uint64 fundingTime,uint64 lastPriceTime,uint256 lastBid,uint256 lastAsk,bool enabled)",
+  "function exposureState(uint8) view returns(uint256 longBase,uint256 shortBase,uint256 limits,uint256 cursor,bool ready)",
+  "function makerBacking() view returns(uint256)",
+  "function baseRiskCapitalTarget() view returns(uint256)",
   "function marketLimitWord(uint8) view returns(uint256)",
   "function maintenanceEquity(address) view returns(int256)",
   "function openingEquity(address) view returns(int256)",
@@ -20,6 +23,10 @@ export const clearingStateAbi = [
 
 export const clearingApiAbi = [
   ...clearingStateAbi,
+  "function isApprover(address) view returns(bool)",
+  "event Withdrawn(address indexed account,uint256 amount)",
+  "event TradeExecuted(bytes32 indexed intentHash,address indexed account,uint8 market,int256 baseDelta,uint256 price,uint256 fee)",
+  "event PositionClosed(address indexed account,uint8 indexed market,int256 baseDelta,uint256 price)",
   "function executeTrade((address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,bool reduceOnly),(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion),bytes,bytes,bytes,bytes) payable",
   "function depositWithAuthorization(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)",
   "function withdrawWithSignature(address,address,uint256,uint256,uint64,bytes)",

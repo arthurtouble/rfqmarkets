@@ -22,7 +22,7 @@ const reject = async (promise, label) => {
 const token = await deploy("MockUSDC");
 const oracle = await deploy("MockPriceOracle");
 const riskMath = await deploy("RFQRiskMath");
-libraryAddresses.RFQRiskMath = await riskMath.getAddress();
+libraryAddresses.RFQRiskMath = await riskMath.getAddress();const signatureVerifier=await deploy("RFQSignatureVerifier");libraryAddresses.RFQSignatureVerifier=await signatureVerifier.getAddress();
 
 // The linked math module is independently testable across increase, reduction, flip and funding edges.
 let transition = await riskMath.positionTransition(1_000_000_000_000_000_000n, 100_000_000n, 500_000_000_000_000_000n, 110_000_000n);
@@ -38,7 +38,8 @@ const unchangedFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 
 assert.deepEqual([...unchangedFunding], [123n, 1_000n]);
 const weekFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 100_000_000n, 0n, 1_000n, 1_000n + 7n * 86_400n, 1_000_000_000n);
 const cappedFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 100_000_000n, 0n, 1_000n, 1_000n + 8n * 86_400n, 1_000_000_000n);
-assert.deepEqual([...cappedFunding], [...weekFunding]);
+assert.equal(cappedFunding.nextFundingTime,1_000n + 8n * 86_400n);
+assert(cappedFunding.nextIndex > weekFunding.nextIndex);
 
 // Chainlink v3 adapter verifies the configured feed and normalizes 8 decimals to USDC's 6.
 const streamsVerifier = await deploy("MockStreamsVerifier");
@@ -292,6 +293,9 @@ const closeReport = await observation(0, 78_990_000_000n, 79_010_000_000n);
 await (await upgraded.connect(relayer).closePositionWithSignature(user.address, 0, closeIntent.nonce, closeIntent.deadline, closeReport.report, closeSignature)).wait();
 assert.equal((await upgraded.positionOf(user.address, 0)).size, 0n);
 await (await upgraded.connect(governance).declareResolution()).wait();
+const frozenReport = await observation(0, 78_990_000_000n, 79_010_000_000n);
+await assert.rejects(upgraded.connect(keeper).refreshOracle(frozenReport.report));
+await assert.rejects(upgraded.connect(keeper).liquidate(user.address, 0, frozenReport.report));
 const preBurnBalance = await token.balanceOf(await upgraded.getAddress());
 await (await token.burn(await upgraded.getAddress(), preBurnBalance - 2_000_000_000n)).wait();
 for (let sample = 0; sample < 3; sample++) {

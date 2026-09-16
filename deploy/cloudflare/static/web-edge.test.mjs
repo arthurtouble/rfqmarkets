@@ -15,7 +15,7 @@ test("routes public reads to the indexer and market streams to the gateway", () 
 });
 
 test("fails closed with machine-readable 503 when a runtime binding is absent", async () => {
-  const response = await handleRequest(new Request("https://example.test/v1/quote"), {
+  const response = await handleRequest(new Request("https://example.test/v1/quote",{method:"POST"}), {
     ASSETS: { fetch: () => new Response("asset") },
   });
   assert.equal(response.status, 503);
@@ -67,4 +67,9 @@ test("reports edge readiness separately from runtime readiness", async () => {
     edge: "ready",
     runtime: { api: true, indexer: false, marketGateway: false },
   });
+});
+
+test('denies private, unknown and wrong-method routes before origin or assets',async()=>{
+ const env={API:{fetch(){throw new Error('origin reached')}},ASSETS:{fetch(){throw new Error('assets reached')}}};
+ for(const [path,method] of [['/v1/dev/wallet','GET'],['/v1/unknown','POST'],['/internal/metrics','GET'],['/v1/risk/secret','GET'],['/v1/risk','POST'],['/v1/quote','GET']])assert.equal((await handleRequest(new Request(`https://example.test${path}`,{method}),env)).status,404);
 });

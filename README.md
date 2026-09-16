@@ -2,6 +2,8 @@
 
 Architecture, executable economic models, a complete local clearing-system prototype and disposable Base Sepolia deployments. The rapid testnet profile has executed authenticated Pyth RFQs and a fully reconciled Hyperliquid testnet hedge lifecycle. No production or Base mainnet deployment exists.
 
+The [September 15 repository context and production review](REPO-CONTEXT-AND-PRODUCTION-REVIEW-2026-09-15.md) maps the executable system, records fresh validation, identifies implementation and operational gaps, and defines the ordered path from hosted testnet to a capped mainnet canary.
+
 Start with [the consolidated current architecture and status](CURRENT-ARCHITECTURE.md), covering every component, integrated attack defenses, proposed hosting and validation gates. The topology and version 0.1 economic/recovery specification are ready for modeling and prototyping; they are not yet validated for production capital.
 
 The [economic and resolution specification](ECONOMIC-SPECIFICATION.md) now supplies a complete version 0.1 candidate for capital allocation, quoting, margin, funding, oracle modes, liquidation, insolvency, hedging, governance and recovery. Its values remain simulation inputs until they pass the documented launch gates.
@@ -50,3 +52,5 @@ Supporting discussion:
 - [RFQ protocol research](RFQ-PROTOCOL-RESEARCH.md): existing exchange patterns and two-of-three authorization.
 - [Authorization and upgrades](AUTHORIZATION-AND-UPGRADES.md): design alternatives and governance tradeoffs.
 - [Initial architecture review](ARCHITECTURE.md): critique of the original brainstorming notes; superseded where the consolidated design differs.
+
+Implementation status and remaining work: [Production implementation plan](PRODUCTION-IMPLEMENTATION-PLAN.md).

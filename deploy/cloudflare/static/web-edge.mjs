@@ -1,19 +1,24 @@
-const INDEXER_ROUTES = [
-  /^\/health$/,
-  /^\/v1\/(?:activity|positions|protocol|risk)(?:\/|$)/,
-  /^\/v1\/updates\/stream$/,
+const ADDRESS = "0x[0-9a-fA-F]{40}";
+const READS = [
+  [new RegExp(`^/v1/account/${ADDRESS}/activity$`), "INDEXER"],
+  [/^\/health$/, "INDEXER"],
+  [/^\/v1\/(activity|positions|protocol|risk|updates\/stream)$/, "INDEXER"],
+  [/^\/v1\/markets\/(stream|history)$/, "MARKET_GATEWAY"],
+  [/^\/v1\/(config|markets)$/, "API"],
+  [new RegExp(`^/v1/(account|orders)/${ADDRESS}$`), "API"],
 ];
-
-const MARKET_GATEWAY_ROUTES = [
-  /^\/v1\/markets\/stream$/,
-  /^\/v1\/markets\/history(?:\/|$)/,
+const WRITES = [
+  /^\/v1\/(quote|prepare|approve|orders)$/,
+  /^\/v1\/(withdraw|session)\/(prepare|execute)$/,
+  /^\/v1\/nonce\/cancel\/(prepare|execute)$/,
+  /^\/v1\/close\/(prepare|execute|quote)$/,
+  /^\/v1\/orders\/prepare$/,
+  /^\/v1\/orders\/[A-Za-z0-9_-]{1,128}\/cancel(?:\/prepare)?$/,
 ];
-
-export function serviceForPath(pathname) {
-  const path = pathname.split("?", 1)[0];
-  if (MARKET_GATEWAY_ROUTES.some((pattern) => pattern.test(path))) return "MARKET_GATEWAY";
-  if (INDEXER_ROUTES.some((pattern) => pattern.test(path))) return "INDEXER";
-  if (path.startsWith("/v1/")) return "API";
+export function serviceForPath(pathname, method) {
+  const path=pathname.split("?",1)[0];
+  if(!method || method === "GET" || method === "OPTIONS")for(const [pattern,service] of READS)if(pattern.test(path))return service;
+  if(!method || method === "POST" || method === "OPTIONS")if(WRITES.some(pattern=>pattern.test(path)))return "API";
   return null;
 }
 
@@ -47,7 +52,7 @@ export async function handleRequest(request, env) {
     });
   }
 
-  const serviceName = serviceForPath(url.pathname);
+  const serviceName = serviceForPath(url.pathname,request.method);
   if (serviceName) {
     const id = requestId(request);
     const service = env[serviceName];
@@ -72,6 +77,8 @@ export async function handleRequest(request, env) {
     }
   }
 
+  if(url.pathname.startsWith("/v1/")||url.pathname.startsWith("/internal/")||url.pathname==="/approve")return json({error:"route_not_allowed"},404);
+  if(request.method!=="GET"&&request.method!=="HEAD")return json({error:"method_not_allowed"},405);
   return env.ASSETS.fetch(request);
 }
 

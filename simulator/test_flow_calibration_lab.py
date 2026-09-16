@@ -1,8 +1,21 @@
 import csv,tempfile,unittest
 from pathlib import Path
-from flow_calibration_lab import Trade,bucket_tape,build_observations,capture_integrity,load_tape
+from flow_calibration_lab import Trade,bucket_tape,build_observations,capture_integrity,load_tape,qualification_gates
 
 class FlowCalibrationLabTests(unittest.TestCase):
+    def test_every_capture_integrity_boundary_blocks_qualification(self):
+        rows=[Trade(i*10000,"coinbase" if i%2 else "binance","BTC" if i%2 else "ETH",str(i),100.,1.,"buy") for i in range(10001)]
+        integrity={name:True for name in ("summaryPresent","captureCompleted","noReportedTransportErrors","noReportedSequenceGaps","fullRequestedDuration","tapeChecksumMatches","countsMatchTape")}
+        self.assertTrue(all(qualification_gates(rows,(300000,),integrity).values()))
+        for name in integrity:
+            self.assertFalse(all(qualification_gates(rows,(300000,),{**integrity,name:False}).values()),name)
+
+    def test_loader_rejects_nonfinite_prices_instead_of_silently_dropping_corrupt_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"tape.csv"
+            path.write_text("timestamp_ms,venue,market,trade_id,price,size_base,taker_side\n1,coinbase,BTC,1,inf,1,buy\n")
+            with self.assertRaisesRegex(ValueError,"invalid normalized"):load_tape(str(path))
+
     def tape(self):
         rows=[]
         for index in range(600):
@@ -33,8 +46,14 @@ class FlowCalibrationLabTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/"tape.csv"
             self.assertFalse(capture_integrity(str(path))["summaryPresent"])
-            Path(f"{path}.summary.json").write_text('{"completed":true,"errors":[],"sequenceGaps":{"coinbase":"0","binance":"0"}}')
+            import hashlib,json
+            path.write_text("venue\ncoinbase\nbinance\n")
+            summary={"completed":True,"errors":[],"errorCount":0,"sequenceGaps":{"coinbase":"0","binance":"0"},"counts":{"coinbase":1,"binance":1},"requestedDurationSeconds":300,"durationSeconds":300,"tapeSha256":hashlib.sha256(path.read_bytes()).hexdigest()}
+            Path(f"{path}.summary.json").write_text(json.dumps(summary))
             self.assertTrue(all(capture_integrity(str(path)).values()))
+            path.write_text("venue\ncoinbase\n")
+            self.assertFalse(capture_integrity(str(path))["tapeChecksumMatches"])
+            self.assertFalse(capture_integrity(str(path))["countsMatchTape"])
             Path(f"{path}.summary.json").write_text('{"completed":false,"errors":["coinbase:transport"],"sequenceGaps":{"coinbase":"2","binance":"0"}}')
             self.assertFalse(capture_integrity(str(path))["captureCompleted"])
             self.assertFalse(capture_integrity(str(path))["noReportedTransportErrors"])

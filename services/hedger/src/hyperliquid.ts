@@ -1,3 +1,4 @@
+import {childEnvironment} from "../../../packages/shared/src/process-environment.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { resolve } from "node:path";
 import type { HedgeMarket, HedgeVenue, VenueOrder, VenueResult } from "./server.js";
@@ -58,7 +59,7 @@ export class HyperliquidVenue implements HedgeVenue{
   private start(){
     if(this.closed)throw new Error("Hyperliquid venue is closed");
     if(this.child&&this.child.exitCode===null)return this.child;
-    const child=spawn(this.pythonPath,[this.bridgePath],{stdio:["pipe","pipe","pipe"],env:{...process.env,PYTHONUNBUFFERED:"1",RFQ_HYPERLIQUID_API_URL:this.apiUrl,RFQ_HYPERLIQUID_ACCOUNT_ADDRESS:this.options.accountAddress,RFQ_HYPERLIQUID_AGENT_KEY:this.options.agentPrivateKey,RFQ_HYPERLIQUID_AGENT_NAME:this.options.agentName??"",RFQ_HYPERLIQUID_MIN_PERP_USDC:this.options.minimumPerpUsdc??"0"}});
+    const child=spawn(this.pythonPath,[this.bridgePath],{stdio:["pipe","pipe","pipe"],env:childEnvironment({PYTHONUNBUFFERED:"1",RFQ_HYPERLIQUID_API_URL:this.apiUrl,RFQ_HYPERLIQUID_ACCOUNT_ADDRESS:this.options.accountAddress,RFQ_HYPERLIQUID_AGENT_KEY:this.options.agentPrivateKey,RFQ_HYPERLIQUID_AGENT_NAME:this.options.agentName??"",RFQ_HYPERLIQUID_MIN_PERP_USDC:this.options.minimumPerpUsdc??"0"})});
     this.child=child;this.stdout="";let stderr="";
     child.stdout.setEncoding("utf8");child.stderr.setEncoding("utf8");
     child.stderr.on("data",chunk=>{stderr=(stderr+String(chunk)).slice(-2_000)});

@@ -1,0 +1,16 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "rfq-markets-runtime-testnet",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-09-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "containers": [{
+    "class_name": "RFQRuntimeContainer",
+    "image": "../../../Dockerfile.cloudflare",
+    "max_instances": 1,
+    "instance_type": "basic"
+  }],
+  "durable_objects": {"bindings": [{"name": "RFQ_RUNTIME", "class_name": "RFQRuntimeContainer"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["RFQRuntimeContainer"]}],
+  "observability": {"enabled": true, "head_sampling_rate": 1}
+}

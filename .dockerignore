@@ -1,0 +1,12 @@
+.git
+.github
+.local-state
+artifacts
+cache
+dist
+node_modules
+output
+*.log
+.env
+.env.*
+*.env

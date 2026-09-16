@@ -5,7 +5,7 @@
   "scripts": {
     "compile:contracts": "node scripts/compile-contracts.mjs",
     "validate:upgrades": "npm run compile:contracts && openzeppelin-upgrades-core validate artifacts/build-info --contract RFQClearing --unsafeAllowLinkedLibraries",
-    "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/risk-differential.mjs && hardhat run --no-compile --network hardhatOp scripts/stateful-clearing-e2e.mjs",
+    "test:contracts": "npm run compile:contracts && hardhat run --no-compile --network hardhatOp scripts/contract-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/clearing-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/bankruptcy-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/exposure-e2e.mjs && hardhat run --no-compile --network hardhatOp scripts/risk-differential.mjs && hardhat run --no-compile --network hardhatOp scripts/stateful-clearing-e2e.mjs && node --import tsx scripts/api-settlement-e2e.mjs && node --import tsx scripts/gross-reservation-e2e.mjs && node --import tsx scripts/keeper-e2e.mjs && node --import tsx scripts/account-response-e2e.mjs",
     "test:python": "cd simulator && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -v",
     "calibrate:quotes": "cd simulator && python3 -B walk_forward_calibration.py",
     "capture:market-flow": "node --import tsx scripts/capture-market-flow.ts",
@@ -18,12 +18,13 @@
     "build:internal-docs": "vite build apps/internal-docs --outDir ../../dist/internal-docs --emptyOutDir",
     "build:design-system": "vite build apps/design-system --outDir ../../dist/design-system --emptyOutDir",
     "validate:cloudflare-static": "node scripts/validate-cloudflare-static.mjs",
-    "test:cloudflare-edge": "node --test deploy/cloudflare/static/*.test.mjs",
+    "test:cloudflare-edge": "node --test deploy/cloudflare/static/*.test.mjs deploy/cloudflare/runtime/*.test.mjs",
     "dev:docs": "vite apps/docs --port 4175",
     "dev:internal-docs": "vite apps/internal-docs --port 4176",
     "dev:design-system": "vite apps/design-system --port 4177",
     "dev:services": "tsx scripts/local-stack.ts",
     "dev:testnet-services": "tsx scripts/base-sepolia-stack.ts",
+    "prepare:cloudflare-runtime": "node --import tsx scripts/prepare-cloudflare-runtime.ts",
     "dev:web": "vite apps/web",
     "dev:admin": "vite apps/admin",
     "dev:chain": "hardhat --verbosity 0 node --network hardhatOp --hostname 127.0.0.1 --port 8545",
@@ -64,10 +65,11 @@
     "smoke:runtime-readiness": "node --import tsx scripts/runtime-readiness.ts",
     "soak:runtime": "node --import tsx scripts/runtime-soak.ts",
     "soak:base-sepolia-iteration": "node --import tsx scripts/base-sepolia-soak.ts",
-    "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run test:cloudflare-edge && npm run typecheck && npm run build:web && npm run build:admin && npm run build:docs && npm run build:internal-docs && npm run build:design-system && npm run validate:cloudflare-static"
+    "test": "npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run test:cloudflare-edge && npm run typecheck && npm run build:web && npm run build:exit && npm run build:admin && npm run build:docs && npm run build:internal-docs && npm run build:design-system && npm run validate:cloudflare-static",
+    "build:exit": "vite build apps/exit --outDir ../../dist/exit --emptyOutDir",
+    "release:check": "node --import tsx scripts/check-release.ts"
   },
   "devDependencies": {
-    "@fastify/cors": "11.3.0",
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@nomicfoundation/hardhat-ethers": "4.0.15",
@@ -80,24 +82,26 @@
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.1.1",
     "chai": "6.2.2",
-    "ethers": "6.17.0",
-    "fastify": "5.12.3",
     "hardhat": "3.16.0",
     "mocha": "12.0.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "solc": "0.8.34",
-    "tsx": "4.23.13",
     "typescript": "7.0.2",
     "vite": "8.2.2",
-    "wrangler": "^4.131.0",
-    "zod": "3.25.76"
+    "wrangler": "^4.131.0"
   },
   "overrides": {
     "adm-zip": "0.6.1",
     "tmp": "0.2.7"
   },
   "dependencies": {
-    "@chainlink/data-streams-sdk": "1.2.1"
+    "@chainlink/data-streams-sdk": "1.2.1",
+    "@cloudflare/containers": "^0.3.7",
+    "@fastify/cors": "11.3.0",
+    "ethers": "6.17.0",
+    "fastify": "5.12.3",
+    "tsx": "4.23.13",
+    "zod": "3.25.76"
   }
 }

@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { AbiCoder, Wallet, keccak256 } from "ethers";
 import { buildApprover } from "../../approver/src/server.js";
 import { buildApi } from "./server.js";
+import {importApproverRecovery} from '../../../scripts/approver-recovery.js';
 
 const directory = mkdtempSync(join(tmpdir(), "rfq-services-"));
 const chainId=31_337n;
@@ -94,10 +95,57 @@ test("duplicate signed submissions share one approver quorum request",async()=>{
   const mismatched=await target.inject({method:"POST",url:"/v1/approve",payload:{...payload,account:Wallet.createRandom().address}});assert.equal(mismatched.statusCode,409);await target.close();
 });
 
+test('fenced signer recovery repairs missing payloads only with bound signatures and rolls back journal failures',async()=>{
+  const key=Wallet.createRandom(),path=join(directory,'repair-approver.sqlite'),signer=buildApprover({privateKey:key.privateKey,transportToken:'repair',databasePath:path,expectedChainId:chainId,expectedVerifyingContract:verifyingContract});await signer.ready();
+  const target=buildApi({approvers:[{url:'http://repair',token:'repair'},...apps.slice(1).map((_,i)=>({url:`http://approver-${i+1}`,token:`transport-${i+1}`}))],fetchImpl:(async(input,init)=>{if(new URL(String(input)).hostname!=='repair')return routedFetch(input,init);const response=await signer.inject({method:'POST',url:'/approve',headers:{authorization:'Bearer repair','content-type':'application/json'},payload:String(init?.body)});return new Response(response.body,{status:response.statusCode});}) as typeof fetch});await target.ready();
+  try{const quote=(await target.inject({method:'POST',url:'/v1/quote',payload:{market:'ETH',side:'buy',amount:'100'}})).json();const result=await approveQuote(target,quote);assert.equal(result.statusCode,200,result.body);
+    const exported=(await signer.inject({url:'/internal/recovery',headers:{authorization:'Bearer repair'}})).json();assert.equal(exported.approvals.length,1);await signer.close();
+    const db=new DatabaseSync(path),expected={chainId,proxy:verifyingContract,signer:key.address};try{
+      db.exec('UPDATE approvals SET payload=NULL');
+      const forged=structuredClone(exported);const payload=JSON.parse(forged.approvals[0].payload);payload.approval.executionPrice='1';forged.approvals[0].payload=JSON.stringify(payload);
+      assert.throws(()=>importApproverRecovery(db,forged,expected),/binding/);assert.equal(db.prepare('SELECT payload FROM approvals').get()!.payload,null);
+      assert.throws(()=>importApproverRecovery(db,exported,{...expected,chainId:8453n}),/context/);
+      db.exec("CREATE TRIGGER fail_recovery BEFORE INSERT ON gross_reservations BEGIN SELECT RAISE(ABORT,'disk failure'); END");assert.throws(()=>importApproverRecovery(db,exported,expected),/disk failure/);assert.equal(db.prepare('SELECT payload FROM approvals').get()!.payload,null);db.exec('DROP TRIGGER fail_recovery');
+      assert.deepEqual(importApproverRecovery(db,exported,expected),{imported:1,incompleteExport:0,incompleteJournal:0});assert.equal(importApproverRecovery(db,exported,expected).imported,1);assert.equal((db.prepare('SELECT COUNT(*) count FROM gross_reservations').get()!).count,1);
+    }finally{db.close();}
+  }finally{await target.close();await signer.close();}
+});
+
+test("a stalled quorum does not hold admission for another wallet and retained reservations remain priced",async()=>{
+  let release!:()=>void,entered!:()=>void;
+  const stalled=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+  const target=buildApi({operationsToken:'lock-test',approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:(async(input,init)=>{const payload=JSON.parse(String(init?.body));if(payload.intent.nonce==='70701'){entered();await stalled;}return routedFetch(input,init);}) as typeof fetch});
+  await target.ready();
+  const prepare=async(nonce:string,signer:typeof user)=>{const quote=(await target.inject({method:'POST',url:'/v1/quote',payload:{market:'BTC',side:'buy',amount:'100'}})).json(),prepared=(await target.inject({method:'POST',url:'/v1/prepare',payload:{quoteId:quote.quoteId,account:signer.address,nonce}})).json();return {quote,payload:{quoteId:quote.quoteId,account:signer.address,nonce,userSignature:await signer.signTypedData(prepared.domain,prepared.types,prepared.intent)}};};
+  try{
+    const first=await prepare('70701',user),pending=target.inject({method:'POST',url:'/v1/approve',payload:first.payload});await started;
+    const other=await prepare('70702',Wallet.createRandom());assert(BigInt(other.quote.expectedPrice)>BigInt(first.quote.expectedPrice));
+    const second=await Promise.race([target.inject({method:'POST',url:'/v1/approve',payload:other.payload}),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('admission held by stalled quorum')),1000))]);assert.equal(second.statusCode,200,second.body);
+    const metrics=(await target.inject({url:'/internal/metrics',headers:{authorization:'Bearer lock-test'}})).json();assert.equal(metrics.grossReservations.active,2);
+    release();const result=await pending;assert.equal(result.statusCode,200,result.body);
+  }finally{release();await target.close();}
+});
+
 test("real oracle source drives quotes and fails closed when unavailable",async()=>{
   const now=Math.floor(Date.now()/1_000),oracleApi=buildApi({oracleSource:{latest:async market=>({snapshot:{market,bid:market==="BTC"?89_990n*1_000_000n:2_990n*1_000_000n,ask:market==="BTC"?90_010n*1_000_000n:3_010n*1_000_000n,observedAtMs:Date.now()},report:"0x1234",validUntil:now+10})}});await oracleApi.ready();
   const response=await oracleApi.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}});assert.equal(response.statusCode,200,response.body);const quote=response.json();assert(BigInt(quote.expectedPrice)>89_990n*1_000_000n);assert(Number(quote.expiresAtMs)<=((now+10)*1_000));await oracleApi.close();
   const failed=buildApi({oracleSource:{latest:async()=>{throw new Error("feed unavailable")}}});await failed.ready();const unavailable=await failed.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}});assert.equal(unavailable.statusCode,503);await failed.close();
+});
+
+test('public quotes and market reads omit oracle transport credentials',async()=>{
+ const secret='https://oracle/private-token Bearer signer-token signed-body',target=buildApi({oracleSource:{latest:async()=>{throw new Error(secret);}}});await target.ready();
+ try{for(const request of [{method:'GET' as const,url:'/v1/markets'},{method:'POST' as const,url:'/v1/quote',payload:{market:'BTC',side:'buy',amount:'100'}}]){const response=await target.inject(request);assert.equal(response.statusCode,503);for(const canary of ['private-token','signer-token','signed-body'])assert(!response.body.includes(canary));}}finally{await target.close();}
+});
+
+test('origin budgets cover reads and invalid write attempts while forwarding headers cannot invent clients',async()=>{
+ const target=buildApi({publicReadBurst:1,publicWriteBurst:1});await target.ready();
+ try{
+  assert.equal((await target.inject('/v1/config')).statusCode,200);
+  assert.equal((await target.inject({url:'/v1/config',headers:{'x-forwarded-for':'198.51.100.20'}})).statusCode,429);
+  assert.equal((await target.inject({method:'POST',url:'/v1/withdraw/prepare',payload:{}})).statusCode,400);
+  assert.equal((await target.inject({method:'POST',url:'/v1/session/execute',headers:{'x-forwarded-for':'198.51.100.21'},payload:{}})).statusCode,429);
+  assert.equal((await target.inject('/health')).statusCode,200);
+ }finally{await target.close();}
 });
 
 test("refreshes the authenticated settlement proof after wallet signing",async()=>{
@@ -124,7 +172,7 @@ test("rejects a refreshed settlement price outside the signed protection",async(
 test("refreshes and re-approves automatically when the first proof lacks inclusion budget",async()=>{
   const now=Math.floor(Date.now()/1_000);let settlements=0;
   const observation=(validFor:number)=>({snapshot:{market:"BTC" as const,bid:99_990n*1_000_000n,ask:100_010n*1_000_000n,observedAtMs:Date.now()},report:AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[0,99_990n*1_000_000n,100_010n*1_000_000n,now,now+validFor]]),validUntil:now+validFor});
-  const target=buildApi({approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:routedFetch,minSettlementInclusionSeconds:8,operationsToken:"ops",oracleSource:{latest:async()=>observation(15),settlement:async()=>observation(++settlements===2?5:15)}});await target.ready();
+  const target=buildApi({approvers:apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`})),fetchImpl:routedFetch,minSettlementInclusionSeconds:8,operationsToken:"ops",oracleSource:{latest:async()=>observation(15),settlement:async()=>observation(++settlements===2?6:15)}});await target.ready();
   const quote=(await target.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"100"}})).json(),nonce="993",prepared=(await target.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:quote.quoteId,account:user.address,nonce}})).json(),userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),response=await target.inject({method:"POST",url:"/v1/approve",payload:{quoteId:quote.quoteId,account:user.address,nonce,userSignature}});
   assert.equal(response.statusCode,200,response.body);assert.equal(settlements,3,"approval did not replace the short-lived proof");
   const health=(await target.inject({method:"GET",url:"/internal/metrics",headers:{authorization:"Bearer ops"}})).json();assert(health.latency.firmQuote.count>=1);assert(health.latency.tradeApproval.count>=1);assert(health.latency.tradeApproval.p95Ms>=0);await target.close();

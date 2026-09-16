@@ -1,3 +1,4 @@
+import {childEnvironment} from "../packages/shared/src/process-environment.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -26,7 +27,7 @@ const hedgeRiskUrl="http://127.0.0.1:4400/internal/risk",hedgeRiskSource=new Htt
 const waitForHealth=async(url:string,child:ChildProcess)=>{for(let attempt=0;attempt<50;attempt++){if(child.exitCode!==null)throw new Error(`approver exited with ${child.exitCode}`);try{if((await fetch(`${url}/health`,{signal:AbortSignal.timeout(200)})).ok)return;}catch{}await new Promise(resolve=>setTimeout(resolve,100));}throw new Error(`approver did not become ready at ${url}`);};
 for (let index=0; index<3; index++) {
   const token=`local-transport-${index}-${crypto.randomUUID()}`,port=4201+index,url=`http://127.0.0.1:${port}`;
-  const child=spawn(process.execPath,["--import","tsx",resolve("scripts/approver-process.ts")],{stdio:["ignore","inherit","inherit"],env:{...process.env,RFQ_APPROVER_KEY:deployment.approvers[index].privateKey,RFQ_APPROVER_TOKEN:token,RFQ_APPROVER_DB:resolve(state,`approver-${index}.sqlite`),RFQ_CHAIN_ID:chainId.toString(),RFQ_CLEARING_ADDRESS:verifyingContract,RFQ_RPC_URL:deployment.rpcUrl,RFQ_SECONDARY_RPC_URL:deployment.rpcUrl,RFQ_APPROVER_PORT:String(port),RFQ_MAX_FUTURE_SECONDS:"30",RFQ_HEDGE_RISK_URL:hedgeRiskUrl,RFQ_HEDGE_RISK_TOKEN:hedgeHealthToken}});
+  const child=spawn(process.execPath,["--import","tsx",resolve("scripts/approver-process.ts")],{stdio:["ignore","inherit","inherit"],env:childEnvironment({RFQ_APPROVER_KEY:deployment.approvers[index].privateKey,RFQ_APPROVER_TOKEN:token,RFQ_APPROVER_DB:resolve(state,`approver-${index}.sqlite`),RFQ_CHAIN_ID:chainId.toString(),RFQ_CLEARING_ADDRESS:verifyingContract,RFQ_RPC_URL:deployment.rpcUrl,RFQ_SECONDARY_RPC_URL:deployment.rpcUrl,RFQ_APPROVER_PORT:String(port),RFQ_MAX_FUTURE_SECONDS:"30",RFQ_HEDGE_RISK_URL:hedgeRiskUrl,RFQ_HEDGE_RISK_TOKEN:hedgeHealthToken})});
   await waitForHealth(url,child);writeFileSync(resolve(state,`approver-${index}.pid`),String(child.pid));approverProcesses.push(child);approverConfigs.push({url,token});
 }
 const oracleSource=new CoinbaseMarketDataSource();

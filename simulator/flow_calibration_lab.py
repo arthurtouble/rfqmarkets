@@ -17,8 +17,10 @@ def load_tape(path:str)->list[Trade]:
             if key in seen:continue
             seen.add(key)
             try:item=Trade(int(row["timestamp_ms"]),row["venue"],row["market"],row["trade_id"],float(row["price"]),float(row["size_base"]),row["taker_side"],float(row["bid"]) if row.get("bid") else None,float(row["ask"]) if row.get("ask") else None)
-            except (KeyError,ValueError):continue
-            if item.market in ("BTC","ETH") and item.venue and item.price>0 and item.size_base>0 and item.taker_side in ("buy","sell") and (item.bid is None or item.ask is None or item.bid<=item.ask):rows.append(item)
+            except (KeyError,ValueError) as error:raise ValueError("invalid normalized capture row") from error
+            valid_book=(item.bid is None and item.ask is None) or (item.bid is not None and item.ask is not None and math.isfinite(item.bid) and math.isfinite(item.ask) and 0<item.bid<=item.ask)
+            if item.market not in ("BTC","ETH") or item.venue not in ("coinbase","binance") or not item.trade_id or item.timestamp_ms<0 or not math.isfinite(item.price) or not math.isfinite(item.size_base) or item.price<=0 or item.size_base<=0 or item.taker_side not in ("buy","sell") or not valid_book:raise ValueError("invalid normalized capture row")
+            rows.append(item)
     rows.sort(key=lambda item:(item.timestamp_ms,item.venue,item.trade_id))
     if len(rows)<50:raise ValueError("flow lab requires at least 50 valid normalized trades")
     return rows
@@ -73,13 +75,30 @@ def build_observations(rows:list[Trade],horizons_ms:tuple[int,...],mixtures:tupl
     return observations
 
 def capture_integrity(path:str)->dict:
-    summary_path=f"{path}.summary.json"
-    if not os.path.exists(summary_path):return {"summaryPresent":False,"captureCompleted":False,"noReportedTransportErrors":False,"noReportedSequenceGaps":False}
+    gates={name:False for name in ("summaryPresent","captureCompleted","noReportedTransportErrors","noReportedSequenceGaps","fullRequestedDuration","tapeChecksumMatches","countsMatchTape")}
     try:
-        with open(summary_path) as handle:summary=json.load(handle)
-        errors=summary.get("errors",[]);gaps=summary.get("sequenceGaps",{})
-        return {"summaryPresent":True,"captureCompleted":summary.get("completed") is True,"noReportedTransportErrors":isinstance(errors,list) and not errors,"noReportedSequenceGaps":all(int(gaps.get(venue,-1))==0 for venue in ("coinbase","binance"))}
-    except (OSError,ValueError,TypeError):return {"summaryPresent":False,"captureCompleted":False,"noReportedTransportErrors":False,"noReportedSequenceGaps":False}
+        with open(f"{path}.summary.json") as handle:summary=json.load(handle)
+        gates["summaryPresent"]=True
+        errors=summary.get("errors");gaps=summary.get("sequenceGaps",{})
+        gates["captureCompleted"]=summary.get("completed") is True
+        gates["noReportedTransportErrors"]=isinstance(errors,list) and not errors and summary.get("errorCount")==0
+        gates["noReportedSequenceGaps"]=all(int(gaps.get(venue,-1))==0 for venue in ("coinbase","binance"))
+        requested=float(summary.get("requestedDurationSeconds",0));duration=float(summary.get("durationSeconds",0))
+        gates["fullRequestedDuration"]=math.isfinite(requested) and math.isfinite(duration) and requested>0 and duration>=requested
+        with open(path,"rb") as handle:gates["tapeChecksumMatches"]=hashlib.sha256(handle.read()).hexdigest()==summary.get("tapeSha256")
+        with open(path) as handle:
+            counts={"coinbase":0,"binance":0}
+            for row in csv.DictReader(handle):
+                if row.get("venue") not in counts:return gates
+                counts[row["venue"]]+=1
+        gates["countsMatchTape"]=counts==summary.get("counts") and all(counts[venue]>0 for venue in ("coinbase","binance"))
+    except (OSError,ValueError,TypeError,KeyError):pass
+    return gates
+
+def qualification_gates(trades,horizons,integrity):
+    venues=set(row.venue for row in trades);markets=set(row.market for row in trades)
+    duration=max(row.timestamp_ms for row in trades)-min(row.timestamp_ms for row in trades)
+    return {"durationAtLeast24h":duration>=86400000,"includesFiveMinuteMarkout":max(horizons)>=300000,"atLeastTwoVenues":len(venues)>=2,"bothMarkets":markets=={"BTC","ETH"},"atLeastTenThousandTrades":len(trades)>=10000,**{f"capture_{name}":integrity.get(name) is True for name in ("summaryPresent","captureCompleted","noReportedTransportErrors","noReportedSequenceGaps","fullRequestedDuration","tapeChecksumMatches","countsMatchTape")}}
 
 def write_report(result:dict,output:str,metadata:dict):
     encoded=json.dumps({"metadata":metadata,"calibration":result},indent=2);os.makedirs(os.path.dirname(output) or ".",exist_ok=True)
@@ -100,7 +119,7 @@ def main():
     with open(args.tape,"rb") as handle:source_hash=hashlib.sha256(handle.read()).hexdigest()
     venues=sorted(set(row.venue for row in trades));markets=sorted(set(row.market for row in trades));duration=max(row.timestamp_ms for row in trades)-min(row.timestamp_ms for row in trades)
     integrity=capture_integrity(args.tape);metadata={"source":os.path.abspath(args.tape),"sourceSha256":source_hash,"trades":len(trades),"observations":len(observations),"durationMs":duration,"venues":venues,"markets":markets,"horizonsMs":horizons,"toxicMixtures":mixtures,"seed":args.seed,"captureIntegrity":integrity,"method":"250ms normalized trade buckets; causal EWMA volatility and trailing flow imbalance; forward adverse markouts"}
-    result=calibrate(observations);data_gates={"durationAtLeast24h":duration>=86_400_000,"includesFiveMinuteMarkout":max(horizons)>=300_000,"atLeastTwoVenues":len(venues)>=2,"bothMarkets":markets==["BTC","ETH"],"atLeastTenThousandTrades":len(trades)>=10_000,"captureSummaryPresent":integrity["summaryPresent"],"captureCompleted":integrity["captureCompleted"],"noReportedTransportErrors":integrity["noReportedTransportErrors"],"noReportedSequenceGaps":integrity["noReportedSequenceGaps"]};result["statisticalEligibleForShadow"]=result["eligibleForShadow"];result["dataGates"]=data_gates;result["eligibleForShadow"]=result["eligibleForShadow"] and all(data_gates.values())
+    result=calibrate(observations);data_gates=qualification_gates(trades,horizons,integrity);result["statisticalEligibleForShadow"]=result["eligibleForShadow"];result["dataGates"]=data_gates;result["eligibleForShadow"]=result["eligibleForShadow"] and all(data_gates.values())
     write_report(result,args.output,metadata);print(json.dumps({"output":os.path.abspath(args.output),"html":os.path.abspath(os.path.splitext(args.output)[0]+".html"),"observations":len(observations),"eligibleForShadow":result["eligibleForShadow"]},indent=2))
 
 if __name__=="__main__":main()

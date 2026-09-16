@@ -3,11 +3,10 @@ pragma solidity 0.8.34;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./interfaces/IPriceOracle.sol";
 import "./libraries/RFQRiskMath.sol";
+import "./libraries/RFQSignatureVerifier.sol";
 
 interface IERC3009 {
     function receiveWithAuthorization(
@@ -18,6 +17,7 @@ interface IERC3009 {
 
 /// @notice First executable clearing prototype. It is deliberately capped at BTC/ETH.
 /// @custom:oz-upgrades
+/// @custom:oz-upgrades-from RFQClearingBaseline
 contract RFQClearing is Initializable {
     using SafeERC20 for IERC20;
 
@@ -117,6 +117,7 @@ contract RFQClearing is Initializable {
     mapping(address => Session) public sessions;
     // First append-only extension; future implementations must add storage after this field.
     mapping(uint8 => uint256) public marketLimitWord;
+    RFQRiskMath.ExposureControls private _exposure;
 
     event Deposited(address indexed account, uint256 amount);
     event Withdrawn(address indexed account, uint256 amount);
@@ -158,15 +159,16 @@ contract RFQClearing is Initializable {
         marketLimitWord[0] = initialLimits; marketLimitWord[1] = initialLimits;
         markets[0].fundingTime = uint64(block.timestamp); markets[1].fundingTime = uint64(block.timestamp);
         _setApprovers(approvers_);
+        RFQRiskMath.initializeExposure(_exposure);
     }
 
     modifier onlyGovernance() { if (msg.sender != governance) revert Unauthorized(); _; }
     modifier onlyEmergencyOrGovernance() { if (msg.sender != governance && msg.sender != emergencyCouncil) revert Unauthorized(); _; }
-    modifier nonReentrant() { if (_entered != 1) revert Unauthorized(); _entered = 2; _; _entered = 1; }
+    modifier nonReentrant() { _enter(); _; _entered = 1; }
+    function _enter() private { if (_entered != 1) revert Unauthorized(); _entered = 2; }
 
     function _hashTypedDataV4(bytes32 structHash) private view returns (bytes32) {
-        bytes32 separator = keccak256(abi.encode(DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this)));
-        return keccak256(abi.encodePacked("\x19\x01", separator, structHash));
+        return RFQSignatureVerifier.hashTypedData(structHash);
     }
 
     function collateralOf(address account) external view returns (int256) { return _accounts[account].collateral; }
@@ -207,6 +209,7 @@ contract RFQClearing is Initializable {
     }
 
     function refreshOracle(bytes calldata report) external payable nonReentrant returns (IPriceOracle.Observation memory observation) {
+        if (resolutionRequired) revert InvalidTrade();
         observation = _verifyReport(report, type(uint8).max);
         _recordObservation(observation);
         _updateFunding(observation.market, (observation.bid + observation.ask) / 2);
@@ -233,9 +236,8 @@ contract RFQClearing is Initializable {
     /// @notice Gas-sponsored nonce cancellation authorized by the account owner.
     function cancelNonceWithSignature(address account, uint256 nonce, uint64 deadline, bytes calldata signature) external {
         bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(CANCEL_TYPEHASH, account, nonce, deadline)));
-        if (block.timestamp > deadline || account == address(0) || nonceUsed[account][nonce]) revert Replay();
-        if (!SignatureChecker.isValidSignatureNowCalldata(account, digest, signature)) revert InvalidSignature();
-        _cancelNonce(account, nonce);
+        _consumeUserAuthorization(account, nonce, deadline, digest, signature);
+        emit NonceCancelled(account, nonce);
     }
 
     /// @notice Conservative owner exit while trading is paused but before global resolution.
@@ -256,11 +258,12 @@ contract RFQClearing is Initializable {
         TradeIntent calldata intent, MakerApproval calldata approval, bytes calldata report,
         bytes calldata userSignature, bytes calldata makerSignatureOne, bytes calldata makerSignatureTwo
     ) external payable nonReentrant {
-        if (paused || resolutionRequired || intent.market > 1 || !markets[intent.market].enabled || intent.baseDelta == 0) revert InvalidTrade();
+        if (paused || resolutionRequired || intent.market > 1 || intent.baseDelta == 0) revert InvalidTrade();
         IPriceOracle.Observation memory observation = _verifyReport(report, intent.market);
         _recordObservation(observation);
         _updateFunding(intent.market, (observation.bid + observation.ask) / 2);
         _settleFunding(intent.account, intent.market);
+        if (resolutionRequired) return;
         (bytes32 intentHash, address sessionSigner) = _validateIntent(intent, approval, userSignature);
         _validateApproval(approval, makerSignatureOne, makerSignatureTwo);
         if (approval.oracleReportHash != keccak256(report)) revert OracleInvalid();
@@ -269,59 +272,64 @@ contract RFQClearing is Initializable {
     }
 
     function _applyAuthorizedTrade(TradeIntent calldata intent, MakerApproval calldata approval, bytes32 intentHash, address sessionSigner, uint256 notional) private {
+        RFQRiskMath.checkExposureTrade(_exposure, markets, marketLimitWord, _accounts[intent.account].positions[intent.market], intent, approval.executionPrice, makerBacking, baseRiskCapitalTarget);
+        _applyPosition(intent.account, intent.market, intent.baseDelta, approval.executionPrice);
+        if (resolutionRequired) return;
         nonceUsed[intent.account][intent.nonce] = true;
         if (sessionSigner != address(0)) sessions[sessionSigner].usedNotional += uint128(notional);
-        _applyPosition(intent.account, intent.market, intent.baseDelta, approval.executionPrice);
         _chargeFee(intent.account, approval.fee);
-        _enforceAggregateRisk();
+
         if (_accounts[intent.account].collateral < 0 || openingEquity(intent.account) < int256(initialMargin(intent.account))) revert Margin();
         emit TradeExecuted(intentHash, intent.account, intent.market, intent.baseDelta, approval.executionPrice, approval.fee);
     }
 
-    function _validateEconomics(TradeIntent calldata intent, MakerApproval calldata approval, IPriceOracle.Observation memory observation, address sessionSigner) private view returns (uint256 notional) {
-        int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE);
-        int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE);
-        int256 required; int256 deliveredImpact; bool reduces;
-        (notional, required, deliveredImpact, reduces) = RFQRiskMath.tradeAssessment(
-            btc, eth, _accounts[intent.account].positions[intent.market].size, intent.market,
-            intent.baseDelta, approval.executionPrice, observation.bid, observation.ask
-        );
-        if (notional > _tradeLimit(intent.market)) revert InvalidTrade();
-        if (sessionSigner != address(0)) {
-            Session storage session = sessions[sessionSigner];
-            if (notional > session.maxTradeNotional || uint256(session.usedNotional) + notional > session.maxCumulativeNotional) revert Unauthorized();
-        }
-        if (intent.reduceOnly && !reduces) revert InvalidTrade();
-        if (approval.impactCharge < required) revert InvalidTrade();
-        if (deliveredImpact < approval.impactCharge) revert InvalidTrade();
+    function _validateEconomics(TradeIntent calldata intent, MakerApproval calldata approval, IPriceOracle.Observation memory observation, address sessionSigner) private view returns (uint256) {
+        return RFQRiskMath.validateEconomics(_accounts[intent.account], markets, sessions, marketLimitWord, intent, approval, observation, sessionSigner);
     }
 
     function liquidate(address account, uint8 market, bytes calldata report) external payable nonReentrant {
-        if (market > 1) revert InvalidTrade();
+        if (resolutionRequired || market > 1) revert InvalidTrade();
         IPriceOracle.Observation memory observation = _verifyReport(report, market);
         _recordObservation(observation); _updateFunding(market, (observation.bid + observation.ask) / 2);
         // Cross-margin solvency includes every open position. A keeper must
         // refresh any other stale market before liquidation can price equity.
         _requireFreshPositions(account);
+        _updateAllFunding();
         _settleAllFunding(account);
-        (uint256 closed, uint256 mark) = _liquidationClose(account, market, observation);
-        (uint256 penalty, uint256 reward) = _collectLiquidationPenalty(account, closed, mark);
-        if (reward != 0) usdc.safeTransfer(msg.sender, reward);
+        if (resolutionRequired) return;
+        int256 equity = maintenanceEquity(account);
+        if (equity >= int256(maintenanceMargin(account))) revert Margin();
+        if (_accounts[account].positions[market].size == 0) revert InvalidTrade();
+        uint256 closed; uint256 mark; uint256 closedNotional;
+        if (equity <= 0) {
+            closed = _abs(_accounts[account].positions[market].size);
+            mark = _accounts[account].positions[market].size > 0 ? observation.bid : observation.ask;
+            closedNotional = _closePortfolio(account);
+        } else {
+            Position storage position = _accounts[account].positions[market];
+            mark = position.size > 0 ? observation.bid : observation.ask;
+            closed = RFQRiskMath.liquidationClose(position.size, mark, equity);
+            _applyPosition(account, market, position.size > 0 ? -int256(closed) : int256(closed), mark);
+            if (resolutionRequired) return;
+            closedNotional = closed * mark / BASE;
+            // Never erase negative collateral while an unrealized offset remains.
+            if (_accounts[account].collateral < 0) closedNotional += _closePortfolio(account);
+        }
+        if (resolutionRequired) return;
+        (uint256 penalty, uint256 reward) = _collectLiquidationPenalty(account, closedNotional, BASE);
         (uint256 insuranceUsed, uint256 makerUsed, uint256 unresolved) = _absorbDeficit(account);
         if (unresolved != 0) _startResolution();
+        if (reward != 0) usdc.safeTransfer(msg.sender, reward);
         emit Liquidated(account, market, closed, penalty, reward);
         emit DeficitAbsorbed(account, insuranceUsed, makerUsed, unresolved);
     }
 
-    function _liquidationClose(address account, uint8 market, IPriceOracle.Observation memory observation) private returns (uint256 closed, uint256 mark) {
-        int256 equity = maintenanceEquity(account);
-        if (equity >= int256(maintenanceMargin(account))) revert Margin();
-        Position storage position = _accounts[account].positions[market];
-        if (position.size == 0) revert InvalidTrade();
-        mark = position.size > 0 ? observation.bid : observation.ask;
-        closed = RFQRiskMath.liquidationClose(position.size, mark, equity);
-        int256 delta = position.size > 0 ? -int256(closed) : int256(closed);
-        _applyPosition(account, market, delta, mark);
+    /// @dev Net both legs before transferring PnL: intermediate maker debits
+    /// cannot depend on which market a keeper selected for bankruptcy.
+    function _closePortfolio(address account) private returns (uint256 closedNotional) {
+        int256 pnl; (pnl, closedNotional) = RFQRiskMath.closeAssessment(_accounts[account], markets);
+        if (!_transferPnl(account, pnl)) return 0;
+        RFQRiskMath.clearPortfolio(_accounts[account], markets, _exposure, account);
     }
 
     function _collectLiquidationPenalty(address account, uint256 closed, uint256 mark) private returns (uint256 penalty, uint256 reward) {
@@ -331,26 +339,30 @@ contract RFQClearing is Initializable {
         insuranceBalance += penalty - reward;
     }
 
-    function maintenanceEquity(address account) public view returns (int256) { return _equity(account, true); }
-    function openingEquity(address account) public view returns (int256) {
-        int256 value = _accounts[account].collateral;
-        for (uint8 i; i < 2; ++i) { int256 pnl = _unrealized(account, i); if (pnl < 0) value += pnl; }
-        return value;
-    }
-    function initialMargin(address account) public view returns (uint256 total) {
-        for (uint8 i; i < 2; ++i) { uint256 n = _positionNotional(account, i); uint256 rate = RFQRiskMath.marginRate(n, true); if (rate == type(uint256).max) revert Margin(); total += n * rate / 10_000; }
-    }
-    function maintenanceMargin(address account) public view returns (uint256 total) {
-        for (uint8 i; i < 2; ++i) { uint256 n = _positionNotional(account, i); uint256 rate = RFQRiskMath.marginRate(n, false); if (rate == type(uint256).max) revert Margin(); total += n * rate / 10_000; }
-    }
+    function maintenanceEquity(address account) public view returns (int256) { return RFQRiskMath.accountEquity(_accounts[account], markets, true); }
+    function openingEquity(address account) public view returns (int256) { return RFQRiskMath.accountEquity(_accounts[account], markets, false); }
+    function initialMargin(address account) public view returns (uint256) { return RFQRiskMath.accountMargin(_accounts[account], markets, true); }
+    function maintenanceMargin(address account) public view returns (uint256) { return RFQRiskMath.accountMargin(_accounts[account], markets, false); }
 
+    function setExposurePolicy(uint8 market, uint128 grossLimit, uint128 sideLimit) external onlyGovernance {
+        if (!paused || resolutionRequired) revert InvalidTrade();
+        RFQRiskMath.setExposurePolicy(_exposure, market, grossLimit, sideLimit); ++policyVersion;
+    }
+    function migrateExposure(uint256 maxAccounts) external {
+        if (!paused || resolutionRequired) revert InvalidTrade();
+        RFQRiskMath.migrateExposure(_exposure, _accountList, _accounts, maxAccounts);
+    }
+    function exposureState(uint8 market) external view returns (uint256 longBase, uint256 shortBase, uint256 limits, uint256 cursor, bool ready) {
+        if (market > 1) revert InvalidTrade();
+        return (_exposure.longBase[market], _exposure.shortBase[market], _exposure.limits[market], _exposure.cursor, _exposure.ready);
+    }
     function pause() external onlyEmergencyOrGovernance { paused = true; ++leaderEpoch; emit EpochAdvanced(leaderEpoch); }
-    function unpause() external onlyGovernance { if (resolutionRequired) revert Insolvent(); paused = false; }
+    function unpause() external onlyGovernance { if (resolutionRequired || !_exposure.ready) revert Insolvent(); paused = false; }
     function advanceLeaderEpoch(uint64 expectedEpoch) external onlyEmergencyOrGovernance {
         if (expectedEpoch != leaderEpoch) revert Stale(); ++leaderEpoch; emit EpochAdvanced(leaderEpoch);
     }
     function rotateApprovers(address[3] calldata next) external onlyGovernance { _setApprovers(next); ++signerSetVersion; ++leaderEpoch; emit EpochAdvanced(leaderEpoch); }
-    function setOracle(address next) external onlyGovernance { if (next == address(0)) revert Unauthorized(); oracle = IPriceOracle(next); ++policyVersion; }
+    function setOracle(address next) external onlyGovernance { if (resolutionRequired || next == address(0)) revert Unauthorized(); oracle = IPriceOracle(next); ++policyVersion; }
     function setMarketPolicy(uint8 market, bool enabled, uint128 maxTradeNotional, uint128 maxMarketNotional) external onlyEmergencyOrGovernance {
         if (market > 1 || maxTradeNotional == 0 || maxTradeNotional > maxMarketNotional || maxTradeNotional > ABSOLUTE_MAX_TRADE_NOTIONAL || maxMarketNotional > ABSOLUTE_MAX_MARKET_NOTIONAL) revert InvalidTrade();
         if (msg.sender != governance && (enabled || maxTradeNotional > _tradeLimit(market) || maxMarketNotional > _marketLimit(market))) revert Unauthorized();
@@ -364,8 +376,7 @@ contract RFQClearing is Initializable {
         if (resolutionRequired || recipient == address(0) || amount == 0 || amount > makerBacking) revert InvalidTrade();
         uint256 remaining = makerBacking - amount;
         if (remaining < baseRiskCapitalTarget) revert Margin();
-        int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE);
-        int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE);
+        (int256 btc, int256 eth) = RFQRiskMath.portfolioExposure(markets);
         if (RFQRiskMath.stressLoss(btc, eth) > remaining / 4) revert Margin();
         makerBacking = remaining;
         usdc.safeTransfer(recipient, amount);
@@ -417,18 +428,8 @@ contract RFQClearing is Initializable {
     /// @notice Permissionless bounded crystallization; no account can jump the queue.
     function processResolution(uint256 maxAccounts) external {
         if (!resolutionPricesReady || resolutionFinalized || maxAccounts == 0) revert InvalidTrade();
-        uint256 end = resolutionCursor + maxAccounts;
-        if (end > _accountList.length) end = _accountList.length;
-        for (uint256 i = resolutionCursor; i < end; ++i) {
-            address account = _accountList[i];
-            int256 equity = _resolutionEquity(account);
-            uint256 claim = equity > 0 ? uint256(equity) : 0;
-            resolutionClaim[account] = claim;
-            totalResolutionClaims += claim;
-            _accounts[account].collateral = 0;
-            delete _accounts[account].positions[0];
-            delete _accounts[account].positions[1];
-        }
+        (uint256 end, uint256 claims) = RFQRiskMath.processResolutionAccounts(_accounts, _accountList, markets, resolutionPrice, resolutionClaim, resolutionCursor, maxAccounts);
+        totalResolutionClaims += claims;
         resolutionCursor = end;
         if (end == _accountList.length) {
             resolutionFinalized = true;
@@ -436,6 +437,7 @@ contract RFQClearing is Initializable {
             totalCustomerCollateral = 0;
             makerBacking = 0;
             insuranceBalance = 0;
+            _exposure.longBase[0] = 0; _exposure.longBase[1] = 0; _exposure.shortBase[0] = 0; _exposure.shortBase[1] = 0;
             markets[0].aggregateBase = 0;
             markets[1].aggregateBase = 0;
             emit ResolutionFinalized(totalResolutionClaims, resolutionAssets);
@@ -464,7 +466,7 @@ contract RFQClearing is Initializable {
         address account, uint256 nonce, uint64 deadline, bytes32 digest, bytes calldata signature
     ) private {
         if (block.timestamp > deadline || account == address(0) || nonceUsed[account][nonce]) revert Replay();
-        if (!SignatureChecker.isValidSignatureNowCalldata(account, digest, signature)) revert InvalidSignature();
+        if (!RFQSignatureVerifier.validOwnerSignature(account, digest, signature)) revert InvalidSignature();
         nonceUsed[account][nonce] = true;
     }
 
@@ -477,7 +479,9 @@ contract RFQClearing is Initializable {
     function _withdraw(address account, address recipient, uint256 amount) private {
         if (resolutionRequired || recipient == address(0) || amount == 0) revert InvalidTrade();
         _requireFreshPositions(account);
+        _updateAllFunding();
         _settleAllFunding(account);
+        if (resolutionRequired) return;
         _changeCollateral(account, -int256(amount));
         if (_accounts[account].collateral < 0 || openingEquity(account) < int256(initialMargin(account))) revert Margin();
         usdc.safeTransfer(recipient, amount);
@@ -490,15 +494,23 @@ contract RFQClearing is Initializable {
         _recordObservation(observation);
         _updateFunding(market, (observation.bid + observation.ask) / 2);
         _settleFunding(account, market);
+        if (resolutionRequired) return;
         int256 size = _accounts[account].positions[market].size;
         if (size == 0) revert InvalidTrade();
         uint256 price = size > 0 ? observation.bid : observation.ask;
         _applyPosition(account, market, -size, price);
+        if (resolutionRequired) return;
+        if (_accounts[account].positions[0].size == 0 && _accounts[account].positions[1].size == 0) {
+            (uint256 insuranceUsed, uint256 makerUsed, uint256 unresolved) = _absorbDeficit(account);
+            if (unresolved != 0) _startResolution();
+            emit DeficitAbsorbed(account, insuranceUsed, makerUsed, unresolved);
+        }
         emit PositionClosed(account, market, -size, price);
     }
 
     function _startResolution() private {
         if (!resolutionRequired) {
+            _updateAllFunding();
             resolutionRequired = true; paused = true; resolutionTriggerTime = uint64(block.timestamp); ++leaderEpoch;
             emit EpochAdvanced(leaderEpoch); emit ResolutionStarted(resolutionTriggerTime);
         }
@@ -518,50 +530,51 @@ contract RFQClearing is Initializable {
         for (uint8 i; i < 2; ++i) if (_accounts[account].positions[i].size != 0 && block.timestamp - markets[i].lastPriceTime > MAX_ORACLE_AGE) revert Stale();
     }
     function _validateIntent(TradeIntent calldata intent, MakerApproval calldata approval, bytes calldata signature) private view returns (bytes32 digest, address sessionSigner) {
-        if (block.timestamp > intent.deadline || block.timestamp > approval.deadline || approval.leaderEpoch != leaderEpoch || approval.policyVersion != policyVersion || approval.signerSetVersion != signerSetVersion) revert Stale();
-        if (nonceUsed[intent.account][intent.nonce] || intent.account == address(0) || approval.fee > intent.maxFee) revert Replay();
-        if ((intent.baseDelta > 0 && approval.executionPrice > intent.limitPrice) || (intent.baseDelta < 0 && approval.executionPrice < intent.limitPrice)) revert InvalidTrade();
-        bytes32 structHash = keccak256(abi.encode(INTENT_TYPEHASH, intent.account, intent.market, intent.baseDelta, intent.limitPrice, intent.maxFee, intent.nonce, intent.deadline, intent.reduceOnly));
-        digest = _hashTypedDataV4(structHash);
-        if (approval.intentHash != digest) revert InvalidSignature();
-        if (SignatureChecker.isValidSignatureNowCalldata(intent.account, digest, signature)) return (digest, address(0));
-        sessionSigner = ECDSA.recoverCalldata(digest, signature);
-        Session storage session = sessions[sessionSigner];
-        if (session.account != intent.account || block.timestamp > session.validUntil || intent.deadline > session.validUntil || session.marketMask & uint8(1 << intent.market) == 0 || approval.fee > session.maxFee) revert Unauthorized();
+        return RFQSignatureVerifier.validateIntent(intent, approval, signature, nonceUsed, sessions, [leaderEpoch, signerSetVersion, policyVersion]);
     }
     function _validateApproval(MakerApproval calldata approval, bytes calldata one, bytes calldata two) private view {
-        bytes32 structHash = keccak256(abi.encode(APPROVAL_TYPEHASH, approval.intentHash, approval.executionPrice, approval.impactCharge, approval.fee, approval.oracleReportHash, approval.deadline, approval.leaderEpoch, approval.signerSetVersion, approval.policyVersion));
-        bytes32 digest = _hashTypedDataV4(structHash); address a = ECDSA.recoverCalldata(digest, one); address b = ECDSA.recoverCalldata(digest, two);
-        if (a == b || !isApprover[a] || !isApprover[b]) revert InvalidSignature();
+        RFQSignatureVerifier.validateApproval(approval, one, two, isApprover);
     }
     function _setApprovers(address[3] calldata next) private {
-        for (uint256 i; i < 3; ++i) isApprover[approvers[i]] = false;
-        for (uint256 i; i < 3; ++i) { if (next[i] == address(0) || isApprover[next[i]]) revert InvalidSignature(); approvers[i] = next[i]; isApprover[next[i]] = true; }
+        RFQRiskMath.setApprovers(approvers, isApprover, next);
     }
     function _setSession(
         address account, address session, uint8 marketMask, uint128 maxTradeNotional,
         uint128 maxCumulativeNotional, uint128 maxFee, uint64 validUntil
     ) private {
-        if (account == address(0) || session == address(0) || session == account || marketMask == 0 || marketMask > 3 || maxTradeNotional == 0 || maxTradeNotional > maxCumulativeNotional || maxFee == 0 || validUntil <= block.timestamp || validUntil > block.timestamp + MAX_SESSION_DURATION) revert InvalidTrade();
+        RFQRiskMath.validateSessionConfiguration(account, session, marketMask, maxTradeNotional, maxCumulativeNotional, maxFee, validUntil);
         sessions[session] = Session(account, validUntil, marketMask, maxTradeNotional, maxCumulativeNotional, 0, maxFee);
         emit SessionGranted(account, session, validUntil, maxCumulativeNotional);
     }
+    function _updateAllFunding() private { for (uint8 i; i < 2; ++i) _updateFunding(i, (markets[i].lastBid + markets[i].lastAsk) / 2); }
     function _updateFunding(uint8 marketId, uint256 mark) private {
         Market storage market = markets[marketId];
         (market.fundingIndex, market.fundingTime) = RFQRiskMath.fundingStep(
             market.aggregateBase, mark, market.fundingIndex, market.fundingTime, uint64(block.timestamp), _marketLimit(marketId)
         );
     }
-    function _settleAllFunding(address account) private { for (uint8 i; i < 2; ++i) _settleFunding(account, i); }
+    function _settleAllFunding(address account) private {
+        (int256[2] memory payments, int256 total) = RFQRiskMath.fundingPayments(_accounts[account], markets);
+        if (!_transferPnl(account, -total)) return;
+        RFQRiskMath.recordFunding(_accounts[account], markets, payments, account);
+    }
     function _settleFunding(address account, uint8 marketId) private {
-        Position storage p = _accounts[account].positions[marketId]; int256 change = markets[marketId].fundingIndex - p.lastFundingIndex;
-        if (change != 0 && p.size != 0) { int256 payment = p.size * change / int256(BASE); _changeCollateral(account, -payment); _changeMaker(payment); emit FundingSettled(account, marketId, payment); }
+        Position storage p = _accounts[account].positions[marketId];
+        int256 payment = p.size * (markets[marketId].fundingIndex - p.lastFundingIndex) / int256(BASE);
+        if (!_transferPnl(account, -payment)) return;
         p.lastFundingIndex = markets[marketId].fundingIndex;
+        if (payment != 0) emit FundingSettled(account, marketId, payment);
+    }
+    function _transferPnl(address account, int256 pnl) private returns (bool) {
+        if (pnl > 0 && uint256(pnl) > makerBacking) { _startResolution(); return false; }
+        if (pnl != 0) { _changeCollateral(account, pnl); if (pnl > 0) makerBacking -= uint256(pnl); else makerBacking += uint256(-pnl); }
+        return true;
     }
     function _applyPosition(address account, uint8 marketId, int256 delta, uint256 price) private {
         Position storage p = _accounts[account].positions[marketId];
         (int256 next, uint256 entry, int256 pnl) = RFQRiskMath.positionTransition(p.size, p.entryPrice, delta, price);
-        if (pnl != 0) { _changeCollateral(account, pnl); _changeMaker(-pnl); }
+        if (!_transferPnl(account, pnl)) return;
+        RFQRiskMath.updateExposure(_exposure, account, marketId, p.size, next);
         p.size = next; p.entryPrice = entry; p.lastFundingIndex = markets[marketId].fundingIndex; markets[marketId].aggregateBase += delta;
     }
     function _chargeFee(address account, uint256 fee) private {
@@ -571,42 +584,20 @@ contract RFQClearing is Initializable {
     }
     function _changeCollateral(address account, int256 delta) private { _accounts[account].collateral += delta; totalCustomerCollateral += delta; }
     function _pullExact(address from, uint256 amount) private {
-        uint256 beforeBalance = usdc.balanceOf(address(this));
-        usdc.safeTransferFrom(from, address(this), amount);
-        if (usdc.balanceOf(address(this)) - beforeBalance != amount) revert InvalidTrade();
+        RFQRiskMath.pullExact(usdc, from, amount);
     }
     function _creditDeposit(address account, uint256 amount) private {
         if (!accountRegistered[account]) { if (amount < 10e6) revert InvalidTrade(); accountRegistered[account] = true; _accountList.push(account); }
         _changeCollateral(account, int256(amount));
     }
-    function _changeMaker(int256 delta) private { if (delta >= 0) makerBacking += uint256(delta); else { uint256 debit = uint256(-delta); if (debit > makerBacking) revert Insolvent(); makerBacking -= debit; } }
     function _absorbDeficit(address account) private returns (uint256 insuranceUsed, uint256 makerUsed, uint256 unresolved) {
-        int256 value = _accounts[account].collateral; if (value >= 0) return (0, 0, 0); uint256 deficit = uint256(-value);
-        _changeCollateral(account, int256(deficit)); insuranceUsed = deficit < insuranceBalance ? deficit : insuranceBalance; insuranceBalance -= insuranceUsed; deficit -= insuranceUsed;
-        makerUsed = deficit < makerBacking ? deficit : makerBacking; makerBacking -= makerUsed; deficit -= makerUsed; unresolved = deficit;
+        uint256 debt; (debt, insuranceUsed, makerUsed, unresolved) = RFQRiskMath.deficitAssessment(_accounts[account], insuranceBalance, makerBacking);
+        if (debt != 0) { _changeCollateral(account, int256(debt)); insuranceBalance -= insuranceUsed; makerBacking -= makerUsed; }
     }
-    function _equity(address account, bool includePositive) private view returns (int256 value) {
-        value = _accounts[account].collateral; for (uint8 i; i < 2; ++i) { int256 pnl = _unrealized(account, i); if (includePositive || pnl < 0) value += pnl; }
-    }
-    function _unrealized(address account, uint8 marketId) private view returns (int256) {
-        Position storage p = _accounts[account].positions[marketId]; if (p.size == 0) return 0;
-        uint256 mark = p.size > 0 ? markets[marketId].lastBid : markets[marketId].lastAsk;
-        return RFQRiskMath.positionPnl(p.size, p.entryPrice, mark);
-    }
-    function _positionNotional(address account, uint8 marketId) private view returns (uint256) {
-        Position storage p = _accounts[account].positions[marketId]; return _abs(p.size) * markets[marketId].lastAsk / BASE;
-    }
-    function _enforceAggregateRisk() private view {
-        int256 btc = markets[0].aggregateBase * int256(_mid(0)) / int256(BASE); int256 eth = markets[1].aggregateBase * int256(_mid(1)) / int256(BASE);
-        if (_abs(btc) > _marketLimit(0) || _abs(eth) > _marketLimit(1) || RFQRiskMath.stressLoss(btc, eth) > makerBacking / 4) revert Margin();
-    }
-    function _mid(uint8 market) private view returns (uint256) { Market storage m=markets[market]; if (m.aggregateBase != 0 && (m.lastPriceTime == 0 || block.timestamp-m.lastPriceTime>MAX_ORACLE_AGE)) revert Stale(); return (m.lastBid+m.lastAsk)/2; }
+
     function _tradeLimit(uint8 market) private view returns (uint256) { return uint128(marketLimitWord[market]); }
     function _marketLimit(uint8 market) private view returns (uint256) { return marketLimitWord[market] >> 128; }
     function _abs(int256 value) private pure returns (uint256) { return uint256(value < 0 ? -value : value); }
-    function _median3(uint256 a,uint256 b,uint256 c) private pure returns(uint256){if(a>b)(a,b)=(b,a);if(b>c)(b,c)=(c,b);if(a>b)(a,b)=(b,a);return b;}
-    function _resolutionEquity(address account) private view returns (int256 value) {
-        Account storage a = _accounts[account]; value = a.collateral;
-        for (uint8 i; i < 2; ++i) { Position storage p=a.positions[i]; value += RFQRiskMath.positionPnl(p.size, p.entryPrice, resolutionPrice[i]); }
-    }
+    function _median3(uint256 a,uint256 b,uint256 c) private pure returns(uint256){return RFQRiskMath.median3(a,b,c);}
+    function _resolutionEquity(address account) private view returns (int256) { return RFQRiskMath.resolutionEquity(_accounts[account], markets, resolutionPrice); }
 }
