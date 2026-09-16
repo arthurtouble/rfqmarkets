@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync,readdirSync,existsSync,realpathSync} from 'node:fs';
 import {resolve,relative} from 'node:path';
 export interface CandidateArtifact {path:string;sha256:string}
-const roots=['contracts','services','packages','scripts','apps','deploy','simulator'];
+const roots=['.github','contracts','services','packages','scripts','apps','deploy','simulator'];
 const rootFiles=['package.json','package-lock.json','hardhat.config.js','tsconfig.json','Dockerfile.host','Dockerfile.cloudflare','.dockerignore','.npmrc'];
 export function candidatePaths(root=process.cwd()){
  const paths:string[]=[];

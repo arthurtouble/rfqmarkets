@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {exposureAdmission,isPositionReduction,makerStress,type ExposureMarket,type ExposureBook} from '../packages/shared/src/exposure-admission.js';
+import {exposureAdmission,isPositionReduction,makerStress,pendingMakerDebit,type ExposureMarket,type ExposureBook} from '../packages/shared/src/exposure-admission.js';
 const BASE=10n**18n,word=(gross:bigint,side=gross)=>gross|(side<<128n),max=5_000_000_000_000n;
 function fixture(){const btc:ExposureMarket={aggregateBase:0n,fundingIndex:0n,fundingTime:100n,lastPriceTime:100n,lastBid:100_000_000_000n,lastAsk:100_000_000_000n,enabled:true},eth={...btc,lastBid:4_000_000_000n,lastAsk:4_000_000_000n};const books:[ExposureBook,ExposureBook]=[{longBase:BASE/10n,shortBase:BASE/10n,limits:word(25_000_000_000n,20_000_000_000n),ready:true},{longBase:0n,shortBase:0n,limits:word(max),ready:true}];return {markets:[btc,eth] as [ExposureMarket,ExposureMarket],books,netLimits:[word(max),word(max)] as [bigint,bigint],market:0 as 0|1,position:{size:0n,entryPrice:0n,lastFundingIndex:0n},delta:BASE/10n,executionPrice:100_000_000_000n,timestamp:100n,backing:100_000_000_000n,floor:100_000_000_000n};}
 test('independent exposure model rejects netting bypasses, stale gross and incomplete migration',()=>{
@@ -23,4 +23,11 @@ test('capital floor includes funding and realized PnL rather than fee-funded pro
 });
 test('stress scenarios preserve separate-leg floor rounding for negative quantities',()=>{
  assert.equal(makerStress(1n,-1n),0n);assert.equal(makerStress(101n,-1n),39n);assert.equal(makerStress(-101n,1n),39n);
+});
+test('pending maker debit bounds realized PnL and funding across seeded positions',()=>{
+ let seed=0x51f15e;const rand=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return seed>>>0;},abs=(value:bigint)=>value<0n?-value:value,YEAR=365n*86400n,RATE=10n**12n;
+ for(let i=0;i<10_000;i++){
+  const timestamp=1_000n+BigInt(rand()%10_000),price=(1_000n+BigInt(rand()%100_000))*1_000_000n,entry=(1n+BigInt(rand()%200_000))*1_000_000n,size=BigInt(rand()%1_000_000)*10n**12n*(rand()%2?1n:-1n),delta=BigInt(rand()%1_000_000+1)*10n**12n*(rand()%2?1n:-1n),aggregate=BigInt(rand()%2_000_000)*10n**12n*(rand()%2?1n:-1n),cap=5_000_000_000_000n,fundingTime=timestamp-BigInt(rand()%1000),lastIndex=BigInt(rand()%1_000_000)*(rand()%2?1n:-1n),market:ExposureMarket={aggregateBase:aggregate,fundingIndex:lastIndex,fundingTime,lastPriceTime:timestamp,lastBid:price,lastAsk:price,enabled:true},position={size,entryPrice:entry,lastFundingIndex:lastIndex-BigInt(rand()%1_000_000)*(rand()%2?1n:-1n)},deadline=timestamp+BigInt(rand()%31);
+  let apr=aggregate*price/BASE*RATE/cap;apr=apr>RATE?RATE:apr< -RATE?-RATE:apr;const change=price*abs(apr)*(timestamp-fundingTime)/(RATE*YEAR),index=lastIndex+(apr<0n?-change:change),payment=size*(index-position.lastFundingIndex)/BASE,closed=size!==0n&&(size>0n)!==(delta>0n)?(abs(delta)<abs(size)?abs(delta):abs(size)):0n,pnl=size>0n?closed*price/BASE-closed*entry/BASE:closed*entry/BASE-closed*price/BASE,actual=(payment<0n?-payment:0n)+(pnl>0n?pnl:0n),reserved=pendingMakerDebit({position,market,delta,executionPrice:price,timestamp,deadline,netLimit:cap<<128n});assert(reserved>=actual,`capital envelope ${i}`);
+ }
 });

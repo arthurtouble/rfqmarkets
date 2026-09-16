@@ -6,6 +6,21 @@ export interface ExposureBook {longBase:bigint;shortBase:bigint;limits:bigint;re
 export function isPositionReduction(previous:bigint,delta:bigint){const next=previous+delta;return abs(next)<abs(previous)&&(next===0n||(next>0n)===(previous>0n));}
 const floor100=(value:bigint)=>value/100n-(value<0n&&value%100n!==0n?1n:0n);
 export function makerStress(btc:bigint,eth:bigint){let result=0n;for(const [b,e] of [[20n,25n],[-20n,-25n],[15n,-20n],[-15n,20n],[40n,50n],[-40n,-50n]]){const loss=floor100(btc*b)+floor100(eth*e);if(loss>result)result=loss;}return result;}
+/**
+ * Order-independent upper envelope for maker cash that one escaped approval can
+ * consume. The execution and current-entry notionals bound realized PnL; a
+ * full-APR deadline charge covers the existing position and the approval's
+ * full delta while the certificate remains executable.
+ */
+export function pendingMakerDebit(input:{position:{size:bigint;entryPrice:bigint;lastFundingIndex:bigint};market:ExposureMarket;delta:bigint;executionPrice:bigint;timestamp:bigint;deadline:bigint;netLimit:bigint}){
+ const {position,market,delta,executionPrice,timestamp,deadline,netLimit}=input,mid=(market.lastBid+market.lastAsk)/2n,cap=netLimit>>128n;
+ if(cap===0n||market.fundingTime>timestamp||deadline<timestamp)throw new Error('invalid capital reservation policy');
+ let apr=market.aggregateBase*mid/BASE*RATE/cap;apr=apr>RATE?RATE:apr< -RATE?-RATE:apr;
+ const change=mid*abs(apr)*(timestamp-market.fundingTime)/(RATE*YEAR),index=market.fundingIndex+(apr<0n?-change:change),payment=position.size*(index-position.lastFundingIndex)/BASE;
+ const currentFundingDebit=payment<0n?-payment:0n,quantity=abs(delta),executionNotional=quantity*executionPrice/BASE,entryNotional=quantity*position.entryPrice/BASE,existingNotional=abs(position.size)*mid/BASE;
+ const seconds=deadline-timestamp,futureFunding=((existingNotional+executionNotional)*seconds+YEAR-1n)/YEAR;
+ return currentFundingDebit+executionNotional+entryNotional+futureFunding;
+}
 /** Independent integer model of selected-market funding, realized PnL and canonical exposure bounds. */
 export function exposureAdmission(input:{markets:[ExposureMarket,ExposureMarket];books:[ExposureBook,ExposureBook];netLimits:[bigint,bigint];market:0|1;position:{size:bigint;entryPrice:bigint;lastFundingIndex:bigint};delta:bigint;executionPrice:bigint;timestamp:bigint;backing:bigint;floor:bigint}){
  const {markets,books,netLimits,market,position,delta,executionPrice,timestamp,floor}=input,previous=position.size,next=previous+delta,reduction=isPositionReduction(previous,delta);

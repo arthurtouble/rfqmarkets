@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "thresholds": {
+    "oracleAgeMs": 8000,
+    "indexerLagBlocks": 12,
+    "keeperAgeMs": 30000,
+    "approvalP95Ms": 4000,
+    "hedgeGapMultiplierBps": 20000,
+    "makerHeadroomBps": 2000,
+    "gasRunwayHours": 24,
+    "backupAgeMs": 86400000
+  }
+}
