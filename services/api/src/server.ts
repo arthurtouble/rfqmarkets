@@ -27,6 +27,7 @@ import { RuntimeMetrics } from "./metrics.js";
 import { FlowRiskTracker, type FlowFill } from "./flow-risk.js";
 import { ShadowModelTelemetry } from "./shadow-model.js";
 import { QuoteAdmission } from "./admission.js";
+import { partialCloseDelta } from "./close-size.js";
 
 import {validOwnerSignature} from "./owner-signature.js";
 import {archiveApiCommitments,initializeApiRecoveryJournal,restoreApiCommitments,type RecoveredCommitment} from "./recovery.js";
@@ -75,7 +76,7 @@ const withdrawalExecuteSchema=signedActionSchema.extend({intent:z.object({accoun
 const cancelExecuteSchema=signedActionSchema.extend({intent:z.object({account:z.string(),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
 const closePrepareSchema=actionBaseSchema.extend({market:z.enum(["BTC","ETH"])});
 const closeExecuteSchema=signedActionSchema.extend({intent:z.object({account:z.string(),market:z.number().int().min(0).max(1),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
-const closeQuoteSchema=z.object({account:z.string(),market:z.enum(["BTC","ETH"])});
+const closeQuoteSchema=z.object({account:z.string(),market:z.enum(["BTC","ETH"]),percentageBps:z.number().int().min(1).max(10_000).default(10_000)});
 const sessionPrepareSchema=actionBaseSchema.extend({session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxCumulativeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxFee:z.string().regex(/^\d+(\.\d{1,6})?$/),durationSeconds:z.number().int().min(300).max(2_592_000)});
 const sessionExecuteSchema=signedActionSchema.extend({grant:z.object({account:z.string(),session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeNotional:z.string().regex(/^\d+$/),maxCumulativeNotional:z.string().regex(/^\d+$/),maxFee:z.string().regex(/^\d+$/),validUntil:z.string().regex(/^\d+$/),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
 const orderPrepareSchema=z.object({account:z.string(),market:z.enum(["BTC","ETH"]),side:z.enum(["buy","sell"]),amount:z.string().regex(/^\d+(\.\d{1,6})?$/),limitPrice:z.string().regex(/^\d+(\.\d{1,6})?$/),durationSeconds:z.number().int().min(300).max(2_592_000),nonce:z.string().regex(/^\d+$/),reduceOnly:z.boolean().default(false)});
@@ -382,7 +383,7 @@ export function buildApi(options: ApiOptions = {}) {
     if(!parsed.success)return reply.code(400).send({error:"invalid quote request"});
     try {return quoteToWire((await createQuote(parsed.data)).quote);} catch(error){return reply.code(options.oracleSource||options.hedgeRiskSource?503:409).send({error:publicError(error,"quote rejected")});}
   });
-  app.post("/v1/close/quote",async(request,reply)=>{if(!admitQuoteWork(request,reply))return;const parsed=closeQuoteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid close quote request"});if(!clearing)return reply.code(503).send({error:"chain unavailable"});try{const account=getAddress(parsed.data.account),marketIndex=parsed.data.market==="BTC"?0:1,position=await clearing.positionOf(account,marketIndex),size=BigInt(position.size);if(size===0n)return reply.code(409).send({error:"position is already closed"});const side=size>0n?"sell":"buy",quote=(await createQuote({market:parsed.data.market,side,amount:"1"},true,-size,account)).quote;forcedReduceOnly.add(quote.quoteId);return quoteToWire(quote);}catch(error){return reply.code(503).send({error:publicError(error,"close quote rejected")});}});
+  app.post("/v1/close/quote",async(request,reply)=>{if(!admitQuoteWork(request,reply))return;const parsed=closeQuoteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid close quote request"});if(!clearing)return reply.code(503).send({error:"chain unavailable"});try{const account=getAddress(parsed.data.account),marketIndex=parsed.data.market==="BTC"?0:1,position=await clearing.positionOf(account,marketIndex),size=BigInt(position.size),baseDelta=partialCloseDelta(size,parsed.data.percentageBps);const side=size>0n?"sell":"buy",quote=(await createQuote({market:parsed.data.market,side,amount:"1"},true,baseDelta,account)).quote;forcedReduceOnly.add(quote.quoteId);return quoteToWire(quote);}catch(error){return reply.code(409).send({error:publicError(error,"close quote rejected")});}});
   app.post("/v1/prepare",async(request,reply)=>{
     const parsed=intentRequestSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"invalid intent request"});
