@@ -19,6 +19,9 @@ class Observation:
     adverse_bps: float
     label_end_timestamp: int = 0
     regime: str = "observed"
+    hedge_latency_ms: float = 0
+    confidence_bps: float = 0
+    risk_mode: str = "normal"
 
 CURRENT_WEIGHTS=(.2,.0035,1.,1.)
 GRID=tuple(itertools.product((.1,.2,.3,.4),(.00175,.0035,.00525),(.75,1.,1.25),(.5,1.,1.5)))
@@ -28,13 +31,23 @@ def load(path: str) -> list[Observation]:
         rows=[]
         for row in csv.DictReader(handle):
             timestamp=int(row["timestamp"])
-            rows.append(Observation(timestamp,*[float(row[name]) for name in ("volatility_bps","toxicity_bps","hedge_cost_bps","basis_bps","adverse_bps")],int(row.get("label_end_timestamp") or timestamp),row.get("regime") or "observed"))
+            rows.append(Observation(timestamp,*[float(row[name]) for name in ("volatility_bps","toxicity_bps","hedge_cost_bps","basis_bps","adverse_bps")],int(row.get("label_end_timestamp") or timestamp),row.get("regime") or "observed",float(row.get("hedge_latency_ms") or 0),float(row.get("confidence_bps") or 0),row.get("risk_mode") or "normal"))
     rows.sort(key=lambda row: row.timestamp)
     if len(rows)<30: raise ValueError("calibration requires at least 30 chronological observations")
     return rows
 
 def spread(row: Observation, weights: tuple[float,float,float,float]) -> float:
-    return min(100.0,2.0+row.volatility_bps*weights[0]+row.toxicity_bps*weights[1]+row.hedge_cost_bps*weights[2]+abs(row.basis_bps)*weights[3])
+    def bounded(value, low, high): return min(high,max(low,value if math.isfinite(value) else 0))
+    vol=bounded(row.volatility_bps,0,2000)
+    toxicity=bounded(row.toxicity_bps,0,10000)
+    hedge=bounded(row.hedge_cost_bps,0,50)
+    latency=bounded(row.hedge_latency_ms,0,30000)
+    mode=4 if row.risk_mode=="guarded" else 12 if row.risk_mode=="reduce_only" else 0
+    # Preserve active JS operation order, including ceil per component.
+    volatility=vol/5 if weights==CURRENT_WEIGHTS else vol*weights[0]
+    toxic=toxicity*35/10000 if weights==CURRENT_WEIGHTS else toxicity*weights[1]
+    components=[2,math.ceil(min(40,volatility)),math.ceil(min(35,toxic)),math.ceil(min(30,hedge*weights[2]+mode+math.sqrt(latency/1000)*vol/25)),math.ceil(min(25,abs(bounded(row.basis_bps,-500,500))*weights[3])),math.ceil(min(20,bounded(row.confidence_bps,0,500)/2))]
+    return min(100,sum(components))
 
 def loss(rows: list[Observation], weights: tuple[float,float,float,float]) -> float:
     errors=[spread(row,weights)-row.adverse_bps for row in rows]
@@ -65,7 +78,7 @@ def calibrate(rows: list[Observation]):
     train,validation,holdout,boundaries=partition(rows)
     finalists=sorted(GRID,key=lambda weights:(loss(train,weights),weights))[:24]
     weights=min(finalists,key=lambda value:(worst_regime_loss(validation,value),loss(validation,value),value))
-    result={"status":"research-only","weights":{"volatility":weights[0],"toxicity":weights[1],"hedgeCost":weights[2],"basis":weights[3]},"boundaries":boundaries,"train":metrics(train,weights),"validation":metrics(validation,weights),"holdout":metrics(holdout,weights),"currentHoldout":metrics(holdout,CURRENT_WEIGHTS)}
+    result={"status":"research-only","activeSpreadModel":"adaptive-v1","rounding":"ceil-per-component","candidateSpreadModel":"bounded-rounded-research-weights","weights":{"volatility":weights[0],"toxicity":weights[1],"hedgeCost":weights[2],"basis":weights[3]},"boundaries":boundaries,"train":metrics(train,weights),"validation":metrics(validation,weights),"holdout":metrics(holdout,weights),"currentHoldout":metrics(holdout,CURRENT_WEIGHTS)}
     result["holdoutByRegime"]={regime:metrics([row for row in holdout if row.regime==regime],weights) for regime in sorted(set(row.regime for row in holdout))}
     result["eligibleForShadow"]=result["holdout"]["underquoteRate"]<=.05 and result["holdout"]["objective"]<=result["currentHoldout"]["objective"]
     return result

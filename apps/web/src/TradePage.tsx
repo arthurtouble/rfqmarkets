@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { API, INDEXER, MARKET_STREAM, base, dollars } from "./config.js";
 import type { AccountState, Market, MarketSnapshot, Quote, RestingOrder, Side, TradeActivity, WalletProvider } from "./types.js";
 import { adaptiveSpread, constructQuote, marginRate } from "../../../packages/shared/src/pricing.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 
-const chains = { 1: "Ethereum", 42161: "Arbitrum", 10: "Optimism", 8453: "Base" } as const;
+import {openingPnl,positionPnl} from "../../../packages/shared/src/account-risk.js";
+
 type QuickSession={account:string;sessionAddress:string;privateKey?:string;validUntil:number};
 type ConnectedWallet={account:string;provider?:WalletProvider;privateKey?:string};
 const signedDollars=(value?:string)=>value===undefined?"—":`${BigInt(value)>0n?"+":""}${dollars(value)}`;
@@ -20,9 +21,9 @@ const spreadFromWire=(value:MarketSnapshot["markets"][Market])=>value.spread?{
   totalBps:BigInt(value.spread.totalBps),
 }:adaptiveSpread({volatilityBps:value.volatilityBps,riskMode:value.riskMode});
 function markAccount(state:AccountState,snapshot:MarketSnapshot|null):AccountState{
-  if(!snapshot)return state;let unrealized=0n,funding=0n,gross=0n,initial=0n,maintenance=0n;const positions={...state.positions};
-  for(const market of ["BTC","ETH"] as Market[]){const position=state.positions[market],size=BigInt(position.size),live=snapshot.markets[market],mark=size>=0n?BigInt(live.bid):BigInt(live.ask),notional=abs(size)*BigInt(live.ask)/10n**18n,pnl=size>0n?abs(size)*(mark-BigInt(position.entryPrice))/10n**18n:size<0n?abs(size)*(BigInt(position.entryPrice)-mark)/10n**18n:0n,accrued=-size*(BigInt(live.projectedFundingIndex)-BigInt(position.lastFundingIndex))/10n**18n;unrealized+=pnl;funding+=accrued;gross+=notional;initial+=notional*marginRate(notional,true)/10_000n;maintenance+=notional*marginRate(notional,false)/10_000n;positions[market]={...position,markPrice:mark.toString(),notional:notional.toString(),unrealizedPnl:pnl.toString(),accruedFunding:accrued.toString()};}
-  const collateral=BigInt(state.collateral),equity=collateral+unrealized+funding,openingEquity=collateral+funding+(unrealized<0n?unrealized:0n);return {...state,blockNumber:snapshot.blockNumber,positions,unrealizedPnl:unrealized.toString(),accruedFunding:funding.toString(),grossNotional:gross.toString(),equity:equity.toString(),openingEquity:openingEquity.toString(),initialMargin:initial.toString(),maintenanceMargin:maintenance.toString(),availableMargin:(openingEquity-initial).toString(),maintenanceBuffer:(equity-maintenance).toString(),marginRatioBps:equity>0n?(maintenance*10_000n/equity).toString():null,effectiveLeverageBps:equity>0n?(gross*10_000n/equity).toString():null,liquidatable:equity<maintenance};
+  if(!snapshot)return state;let unrealized=0n,negativePnl=0n,funding=0n,gross=0n,initial=0n,maintenance=0n;const positions={...state.positions};
+  for(const market of ["BTC","ETH"] as Market[]){const position=state.positions[market],size=BigInt(position.size),live=snapshot.markets[market],mark=size>=0n?BigInt(live.bid):BigInt(live.ask),notional=abs(size)*BigInt(live.ask)/10n**18n,pnl=positionPnl(size,BigInt(position.entryPrice),mark),accrued=-size*(BigInt(live.projectedFundingIndex)-BigInt(position.lastFundingIndex))/10n**18n;unrealized+=pnl;negativePnl+=openingPnl([pnl]);funding+=accrued;gross+=notional;initial+=notional*marginRate(notional,true)/10_000n;maintenance+=notional*marginRate(notional,false)/10_000n;positions[market]={...position,markPrice:mark.toString(),notional:notional.toString(),unrealizedPnl:pnl.toString(),accruedFunding:accrued.toString()};}
+  const collateral=BigInt(state.collateral),equity=collateral+unrealized+funding,openingEquity=collateral+funding+negativePnl;return {...state,blockNumber:snapshot.blockNumber,positions,unrealizedPnl:unrealized.toString(),accruedFunding:funding.toString(),grossNotional:gross.toString(),equity:equity.toString(),openingEquity:openingEquity.toString(),initialMargin:initial.toString(),maintenanceMargin:maintenance.toString(),availableMargin:(openingEquity-initial).toString(),maintenanceBuffer:(equity-maintenance).toString(),marginRatioBps:equity>0n?(maintenance*10_000n/equity).toString():null,effectiveLeverageBps:equity>0n?(gross*10_000n/equity).toString():null,liquidatable:equity<maintenance};
 }
 
 function PriceChart({values}:{values:number[]}){
@@ -48,10 +49,8 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
   const [reduceOnly,setReduceOnly]=useState(false);
   const [limitPrice,setLimitPrice]=useState("95000");
   const [showDeposit, setShowDeposit] = useState(false);
-  const [sourceChain, setSourceChain] = useState<keyof typeof chains>(1);
-  const [sourceToken, setSourceToken] = useState<"ETH" | "USDC" | "USDT">("ETH");
   const [depositAmount, setDepositAmount] = useState("1");
-  const [depositStatus, setDepositStatus] = useState("Local route simulator");
+  const [depositStatus, setDepositStatus] = useState("Deposit native USDC on the settlement chain");
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("100");
   const [withdrawStatus, setWithdrawStatus] = useState("Withdrawal gas is sponsored");
@@ -73,15 +72,21 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
     if (!response.ok) throw new Error(result.error ?? "Request failed");
     return result;
   }
+  const accountReadGeneration=useRef(0),activeWalletAccount=useRef<string|null>(null);
+  useEffect(()=>()=>{accountReadGeneration.current++;activeWalletAccount.current=null;},[]);
   async function refreshAccount(address: string) {
+    const generation=++accountReadGeneration.current;
     const protocolRequest=fetch(`${INDEXER}/v1/protocol`).then(response=>response.ok?response.json():null).catch(()=>null);
     const activityRequest=fetch(`${INDEXER}/v1/account/${address}/activity?limit=30`).then(response=>response.ok?response.json():null).catch(()=>null);
     const ordersRequest=fetch(`${API}/v1/orders/${address}`).then(response=>response.ok?response.json():null).catch(()=>null);
     const response = await fetch(`${API}/v1/account/${address}`);
-    if (response.ok) setAccountState(await response.json());
-    const protocol=await protocolRequest;if(protocol)setPaused(Boolean(protocol.paused));
-    const history=await activityRequest;if(history)setActivity(history.items);
-    const orderHistory=await ordersRequest;if(orderHistory)setOrders(orderHistory.items);
+    const state=response.ok?await response.json():null;
+    const [protocol,history,orderHistory]=await Promise.all([protocolRequest,activityRequest,ordersRequest]);
+    if(generation!==accountReadGeneration.current||activeWalletAccount.current?.toLowerCase()!==address.toLowerCase())return;
+    if(state)setAccountState(state);
+    if(protocol)setPaused(Boolean(protocol.paused));
+    if(history)setActivity(history.items);
+    if(orderHistory)setOrders(orderHistory.items);
   }
   const randomNonce=()=>BigInt(`0x${[...crypto.getRandomValues(new Uint8Array(32))].map(value => value.toString(16).padStart(2, "0")).join("")}`).toString();
   useEffect(() => {
@@ -93,9 +98,9 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
   useEffect(()=>{let active=true;for(const name of ["BTC","ETH"] as Market[])fetch(`${MARKET_STREAM}/v1/markets/history?market=${name}&limit=120`).then(response=>response.ok?response.json():null).then(value=>{if(!active||!value?.points)return;const prior=(value.points as Array<{mid:string}>).map(point=>Number(BigInt(point.mid))/1e6);setPriceHistory(current=>({...current,[name]:[...prior,...current[name]].slice(-120)}));}).catch(()=>{});return()=>{active=false};},[]);
   useEffect(()=>onWalletChange?.(account),[account,onWalletChange]);
   useEffect(()=>{const timer=setInterval(()=>setClock(Date.now()),500);return()=>clearInterval(timer);},[]);
-  useEffect(()=>{let stopped=false;fetch(`${API}/v1/dev/wallet`).then(response=>response.ok?response.json():null).then(value=>{if(stopped||!value?.account||!value?.privateKey)return;setLocalPrivateKey(value.privateKey);setAccount(value.account);void refreshAccount(value.account);}).catch(()=>{});return()=>{stopped=true;};},[]);
+  useEffect(()=>{let stopped=false;fetch(`${API}/v1/dev/wallet`).then(response=>response.ok?response.json():null).then(value=>{if(stopped||!value?.account||!value?.privateKey)return;setLocalPrivateKey(value.privateKey);activeWalletAccount.current=value.account;setAccount(value.account);void refreshAccount(value.account);}).catch(()=>{});return()=>{stopped=true;};},[]);
   useEffect(()=>{if(!account)return;const stream=new EventSource(`${INDEXER}/v1/updates/stream`);stream.addEventListener("indexed",event=>{try{const update=JSON.parse((event as MessageEvent).data) as {initial?:boolean;reset?:boolean;accounts?:string[]};if(update.initial||update.reset||update.accounts?.some(value=>value.toLowerCase()===account.toLowerCase()))void refreshAccount(account);}catch{}});return()=>stream.close();},[account]);
-  useEffect(()=>{const provider=(window as unknown as {ethereum?:WalletProvider}).ethereum;if(!provider?.on||localPrivateKey)return;const accountsChanged=(value:unknown)=>{const next=Array.isArray(value)&&typeof value[0]==="string"?value[0]:null;setAccount(next);setAccountState(null);setActivity([]);setOrders([]);setQuickSession(null);setStatus(next?"Wallet account changed":"Wallet disconnected");if(next)void refreshAccount(next);};const chainChanged=()=>{setAccountState(null);setQuickSession(null);setStatus("Wallet network changed · reconnect to continue");};provider.on("accountsChanged",accountsChanged);provider.on("chainChanged",chainChanged);return()=>{provider.removeListener?.("accountsChanged",accountsChanged);provider.removeListener?.("chainChanged",chainChanged);};},[localPrivateKey]);
+  useEffect(()=>{const provider=(window as unknown as {ethereum?:WalletProvider}).ethereum;if(!provider?.on||localPrivateKey)return;const accountsChanged=(value:unknown)=>{accountReadGeneration.current++;const next=Array.isArray(value)&&typeof value[0]==="string"?value[0]:null;activeWalletAccount.current=next;setAccount(next);setAccountState(null);setActivity([]);setOrders([]);setQuickSession(null);setStatus(next?"Wallet account changed":"Wallet disconnected");if(next)void refreshAccount(next);};const chainChanged=()=>{accountReadGeneration.current++;activeWalletAccount.current=null;setAccountState(null);setQuickSession(null);setStatus("Wallet network changed · reconnect to continue");};provider.on("accountsChanged",accountsChanged);provider.on("chainChanged",chainChanged);return()=>{provider.removeListener?.("accountsChanged",accountsChanged);provider.removeListener?.("chainChanged",chainChanged);};},[localPrivateKey]);
 
   async function wallet(): Promise<ConnectedWallet> {
     if(account&&localPrivateKey)return {account,privateKey:localPrivateKey};
@@ -109,6 +114,7 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
       if ((error as { code?: number }).code !== 4902 || !config.rpcUrl) throw error;
       await ethereum.request({ method: "wallet_addEthereumChain", params: [{ chainId: config.chainId, chainName: config.chainName, rpcUrls: [config.rpcUrl], nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 } }] });
     }
+    const currentAccounts=await ethereum.request({method:"eth_accounts"}) as string[];if(!currentAccounts[0])throw new Error("Wallet disconnected");accounts[0]=currentAccounts[0];activeWalletAccount.current=accounts[0];
     setAccount(accounts[0]);
     try{const stored=sessionStorage.getItem(`rfq-session:${accounts[0].toLowerCase()}`);const parsed=stored?JSON.parse(stored) as QuickSession:null;setQuickSession(current=>current?.account.toLowerCase()===accounts[0].toLowerCase()&&current.validUntil>Date.now()?current:parsed&&parsed.validUntil>Date.now()&&/^0x[0-9a-fA-F]{40}$/.test(parsed.sessionAddress)?parsed:null);}catch{setQuickSession(null);}
     void refreshAccount(accounts[0]);
@@ -148,12 +154,15 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
   async function deposit() {
     setDepositStatus("Waiting for wallet…");
     try {
-      const connected = await wallet(); setDepositStatus("Finding a route…");
-      const route = await post("/v1/deposit/quote", { account: connected.account, fromChainId: Number(sourceChain), fromToken: sourceToken, amount: depositAmount });
-      setDepositStatus(`Approve deposit of about ${dollars(route.expectedUsdc)}`);
-      const userSignature = await signTyped(connected, route, "DepositIntent"); setDepositStatus("Routing to Base USDC…");
-      const result = await post("/v1/deposit/execute", { routeId: route.routeId, userSignature });
-      setDepositStatus(`Deposited ${dollars(result.expectedUsdc)} · block ${result.transaction.blockNumber}`); await refreshAccount(connected.account);
+      const connected=await wallet(),config=await (await fetch(`${API}/v1/config`)).json();
+      const {BrowserProvider,Contract,JsonRpcProvider,Wallet,parseUnits}=await import("ethers");
+      const signer=connected.provider?await new BrowserProvider(connected.provider as never).getSigner(connected.account):connected.privateKey&&config.rpcUrl?new Wallet(connected.privateKey,new JsonRpcProvider(config.rpcUrl)):null;
+      if(!signer||!config.tokenAddress||!config.clearingAddress)throw new Error("Settlement wallet or token configuration unavailable");
+      const amount=parseUnits(depositAmount,6);if(amount<=0n)throw new Error("Deposit must be positive");
+      const token=new Contract(config.tokenAddress,["function approve(address,uint256) returns(bool)","function allowance(address,address) view returns(uint256)"],signer),clearing=new Contract(config.clearingAddress,["function deposit(uint256)"],signer);
+      if(BigInt(await token.allowance(connected.account,config.clearingAddress))<amount){setDepositStatus("Approve USDC in your wallet…");const approval=await (await token.approve(config.clearingAddress,amount)).wait();if(approval?.status!==1)throw new Error("USDC approval was not confirmed");}
+      setDepositStatus("Confirm deposit in your wallet…");const receipt=await (await clearing.deposit(amount)).wait();if(receipt?.status!==1)throw new Error("Deposit was not confirmed");
+      setDepositStatus(`Deposited ${depositAmount} USDC · block ${receipt.blockNumber}`);await refreshAccount(connected.account);
     } catch (error) { setDepositStatus(error instanceof Error ? error.message : "Deposit unavailable"); }
   }
   async function withdraw() {
@@ -231,8 +240,8 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
       <dl>{orderType==="market"?<><div><dt>Estimated price</dt><dd>{dollars(quote?.expectedPrice)}</dd></div><div><dt>Maximum fee</dt><dd>{dollars(quote?.fee)}</dd></div><div><dt>{side==="buy"?"Maximum":"Minimum"} accepted price</dt><dd>{dollars(quote?.worstPrice)}</dd></div></>:<><div><dt>Current maker {side==="buy"?"ask":"bid"}</dt><dd>{dollars(quote?.expectedPrice)}</dd></div><div><dt>Trigger</dt><dd className={limitMarketable?"positive":""}>{limitMarketable?"Marketable now":limitDistanceBps===null?"—":`${limitDistanceBps.toFixed(1)} bps away`}</dd></div><div><dt>Execution rule</dt><dd>{side==="buy"?"Ask ≤ limit":"Bid ≥ limit"}</dd></div><div><dt>Maximum fee</dt><dd>{dollars(quote?.fee)}</dd></div></>}</dl>
       <details className="price-details"><summary>Price details</summary><div><span>Oracle {side==="buy"?"ask":"bid"}<b>{dollars(side==="buy"?quote?.ask:quote?.bid)}</b></span><span>Adaptive spread<b>{quote?.spread?`${quote.spread.totalBps} bps`:"—"}</b></span><span>Inventory adjustment<b>{dollars(quote?.impactCharge)}</b></span><span>Price age<b>{quoteAge===null?"—":`${quoteAge} ms`}</b></span><span>Current maximum<b>{dollars(live?.operatingMaxTradeNotional)}</b></span></div></details>
       <button className={`submit ${side}`} disabled={!quote||tradeBusy} aria-busy={tradeBusy} onClick={orderType==="market"?approve:placeLimit}>{tradeBusy?"Submitting…":orderType==="market"?(side === "buy" ? "Buy" : "Sell"):`Place ${side}`} {tradeBusy?"":market}</button><p className="status" aria-live="polite"><i />{status}</p>
-      <button className="depositToggle" onClick={() => setShowDeposit(value => !value)}>{showDeposit ? "Hide deposit" : "Deposit from any chain"}</button>
-      {showDeposit && <section className="depositPanel"><div className="depositGrid"><label>From<select value={sourceChain} onChange={event => setSourceChain(Number(event.target.value) as keyof typeof chains)}>{Object.entries(chains).map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label><label>Asset<select value={sourceToken} onChange={event => setSourceToken(event.target.value as "ETH" | "USDC" | "USDT")}><option>ETH</option><option>USDC</option><option>USDT</option></select></label></div><label>Deposit amount</label><div className="amount compact"><input aria-label="Deposit amount" inputMode="decimal" value={depositAmount} onChange={event => setDepositAmount(event.target.value)} /><b>{sourceToken}</b></div><button className="route" onClick={deposit}>Route & deposit</button><p className="status">{depositStatus}</p></section>}
+      <button className="depositToggle" onClick={() => setShowDeposit(value => !value)}>{showDeposit ? "Hide deposit" : "Deposit USDC"}</button>
+      {showDeposit && <section className="depositPanel"><div className="depositGrid"><p>Native USDC on the settlement chain. Your wallet confirms approval and deposit.</p></div><label>Deposit amount</label><div className="amount compact"><input aria-label="Deposit amount" inputMode="decimal" value={depositAmount} onChange={event => setDepositAmount(event.target.value)} /><b>USDC</b></div><button className="route" onClick={deposit}>Approve & deposit</button><p className="status">{depositStatus}</p></section>}
       <button className="wallet trade-wallet" onClick={() => wallet().catch(error => setStatus(error instanceof Error ? error.message : "Wallet unavailable"))}>{account ? `${account.slice(0, 6)}…${account.slice(-4)}` : "Connect wallet"}</button>
       {account&&<button className={`depositToggle quickToggle ${quickSession?"active":""}`} onClick={quickSession?disableQuickTrading:enableQuickTrading}>{quickSession?"Revoke quick trading":"Enable quick trading"}</button>}
     </article>

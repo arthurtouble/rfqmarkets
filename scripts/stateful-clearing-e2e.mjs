@@ -8,7 +8,7 @@ const [governance, emergency, approverA, approverB, approverC, maker, relayer, .
 const traders=users.slice(0,4),artifact=name=>JSON.parse(fs.readFileSync(`artifacts/${name}.json`,"utf8"));
 const libraries={};
 const deploy=async(name,args=[])=>{const item=linkArtifact(artifact(name),libraries);const instance=await new ethers.ContractFactory(item.abi,item.bytecode,governance).deploy(...args);await instance.waitForDeployment();return instance;};
-const token=await deploy("MockUSDC"),oracle=await deploy("MockPriceOracle"),risk=await deploy("RFQRiskMath");libraries.RFQRiskMath=await risk.getAddress();
+const token=await deploy("MockUSDC"),oracle=await deploy("MockPriceOracle"),risk=await deploy("RFQRiskMath");libraries.RFQRiskMath=await risk.getAddress();const signatureVerifier=await deploy("RFQSignatureVerifier");libraries.RFQSignatureVerifier=await signatureVerifier.getAddress();
 const implementation=await deploy("RFQClearing");
 const init=new ethers.Interface(artifact("RFQClearing").abi).encodeFunctionData("initialize",[
   await token.getAddress(),await oracle.getAddress(),governance.address,emergency.address,
@@ -16,8 +16,8 @@ const init=new ethers.Interface(artifact("RFQClearing").abi).encodeFunctionData(
 ]);
 const proxy=await deploy("TestProxy",[await implementation.getAddress(),governance.address,init]);
 const clearing=new ethers.Contract(await proxy.getAddress(),artifact("RFQClearing").abi,governance);
-await (await token.mint(maker.address,750_000_000_000n)).wait();await (await token.connect(maker).approve(await clearing.getAddress(),ethers.MaxUint256)).wait();
-await (await clearing.connect(maker).fundMaker(600_000_000_000n)).wait();await (await clearing.connect(maker).fundInsurance(150_000_000_000n)).wait();
+await (await token.mint(maker.address,900_000_000_000n)).wait();await (await token.connect(maker).approve(await clearing.getAddress(),ethers.MaxUint256)).wait();
+await (await clearing.connect(maker).fundMaker(750_000_000_000n)).wait();await (await clearing.connect(maker).fundInsurance(150_000_000_000n)).wait();
 for(const trader of traders){await (await token.mint(trader.address,100_000_000_000n)).wait();await (await token.connect(trader).approve(await clearing.getAddress(),ethers.MaxUint256)).wait();await (await clearing.connect(trader).deposit(100_000_000_000n)).wait();}
 
 const coder=ethers.AbiCoder.defaultAbiCoder(),observationType="tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)";
@@ -37,10 +37,11 @@ const random=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return seed>>>0;}
 const steps=Number(process.env.RFQ_STATEFUL_STEPS??600);
 
 async function assertAccounting(){
-  let collateral=0n;const sums=[0n,0n];
-  for(const trader of traders){collateral+=await clearing.collateralOf(trader.address);for(let market=0;market<2;market++)sums[market]+=(await clearing.positionOf(trader.address,market)).size;}
+  let collateral=0n;const sums=[0n,0n],longs=[0n,0n],shorts=[0n,0n];
+  for(const trader of traders){collateral+=await clearing.collateralOf(trader.address);for(let market=0;market<2;market++){const size=(await clearing.positionOf(trader.address,market)).size;sums[market]+=size;if(size>0n)longs[market]+=size;else shorts[market]-=size;}}
   assert.equal(collateral,await clearing.totalCustomerCollateral(),"customer collateral aggregate drifted");
   for(let market=0;market<2;market++)assert.equal(sums[market],(await clearing.markets(market)).aggregateBase,`market ${market} aggregate drifted`);
+  for(let market=0;market<2;market++){const book=await clearing.exposureState(market);assert.equal(book.longBase,longs[market]);assert.equal(book.shortBase,shorts[market]);}
   assert.equal(await token.balanceOf(await clearing.getAddress()),BigInt(await clearing.makerBacking())+BigInt(await clearing.insuranceBalance())+collateral,"internal accounting no longer matches token custody");
 }
 
@@ -81,3 +82,23 @@ for(let step=0;step<steps;step++){
 }
 
 assert.equal(executed,steps);console.log(`Stateful clearing E2E passed: ${steps} deterministic multi-account/cross-market trades through price shocks with replay, exposure and custody invariants`);
+
+// Resolution includes already accrued but unsettled funding and must be
+// independent of keeper batching or wall-clock delay after the trigger.
+await (await clearing.pause()).wait();
+await ethers.provider.send('evm_increaseTime',[3600]);await ethers.provider.send('evm_mine',[]);
+for(let market=0;market<2;market++)await (await clearing.refreshOracle(await report(market))).wait();
+let frozenMarkets=await Promise.all([clearing.markets(0),clearing.markets(1)]),frozenAccounts=await Promise.all(traders.map(async trader=>({address:trader.address,collateral:await clearing.collateralOf(trader.address),positions:await Promise.all([clearing.positionOf(trader.address,0),clearing.positionOf(trader.address,1)])})));
+assert(frozenAccounts.some(account=>account.positions.some((p,i)=>p.size!==0n&&p.lastFundingIndex!==frozenMarkets[i].fundingIndex)),'fixture needs unsettled funding');
+await (await clearing.declareResolution()).wait();frozenMarkets=await Promise.all([clearing.markets(0),clearing.markets(1)]);
+for(let sample=0;sample<3;sample++){for(let market=0;market<2;market++)await (await clearing.submitResolutionObservation(await report(market))).wait();if(sample<2){await ethers.provider.send('evm_increaseTime',[15]);await ethers.provider.send('evm_mine',[]);}}
+const expected=await Promise.all(frozenAccounts.map(async account=>{let equity=account.collateral;for(let i=0;i<2;i++){const p=account.positions[i],mark=await clearing.resolutionPrice(i);equity+=await risk.positionPnl(p.size,p.entryPrice,mark);equity-=p.size*(frozenMarkets[i].fundingIndex-p.lastFundingIndex)/10n**18n;}return equity>0n?equity:0n;}));
+const snapshot=await ethers.provider.send('evm_snapshot',[]);
+await (await clearing.processResolution(100)).wait();for(let i=0;i<traders.length;i++)assert.equal(await clearing.resolutionClaim(traders[i].address),expected[i]);
+await ethers.provider.send('evm_revert',[snapshot]);
+await ethers.provider.send('evm_increaseTime',[3600]);await ethers.provider.send('evm_mine',[]);
+await assert.rejects(clearing.refreshOracle(await report(0)));
+for(let i=0;i<traders.length;i++)await (await clearing.processResolution(1)).wait();
+for(let i=0;i<traders.length;i++)assert.equal(await clearing.resolutionClaim(traders[i].address),expected[i],'keeper batching/time changed resolution claim');
+for(let market=0;market<2;market++){const book=await clearing.exposureState(market);assert.equal(book.longBase,0n);assert.equal(book.shortBase,0n);}
+console.log('Resolution regression passed: unsettled funding, frozen indices, delayed one-account batching');

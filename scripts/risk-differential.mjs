@@ -46,7 +46,7 @@ const liquidationClose=(size,mark,equity)=>{
 };
 const liquidationCharge=(closed,mark,available)=>{let penalty=closed*mark/BASE*50n/10_000n;if(penalty>available)penalty=available;let reward=closed*mark/BASE*10n/10_000n;if(reward>penalty/5n)reward=penalty/5n;return [penalty,reward];};
 const fundingStep=(aggregate,mark,index,fundingTime,currentTime,maxNotional)=>{
-  let elapsed=currentTime-fundingTime;if(elapsed===0n)return [index,fundingTime];if(elapsed>7n*86_400n)elapsed=7n*86_400n;
+  let elapsed=currentTime-fundingTime;if(elapsed===0n)return [index,fundingTime];
   const skew=aggregate*mark/BASE;let apr=skew*RATE/maxNotional;if(apr>RATE)apr=RATE;if(apr<-RATE)apr=-RATE;
   return [index+mark*apr*elapsed/(RATE*YEAR),fundingTime+elapsed];
 };

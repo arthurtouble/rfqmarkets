@@ -7,6 +7,7 @@ const files = [
   "contracts/RFQAuthorization.sol",
   "contracts/RFQClearing.sol",
   "contracts/libraries/RFQRiskMath.sol",
+  "contracts/libraries/RFQSignatureVerifier.sol",
   "contracts/interfaces/IPriceOracle.sol",
   "contracts/mocks/MockUSDC.sol",
   "contracts/mocks/MockPriceOracle.sol",
@@ -18,6 +19,8 @@ const files = [
   "contracts/test/RFQInvariants.sol",
   "contracts/test/TestProxy.sol",
   "contracts/test/RFQClearingV2.sol",
+  "contracts/test/RFQClearingBaseline.sol",
+  "contracts/test/RFQRiskMathBaseline.sol",
   "contracts/test/Mock1271Wallet.sol",
 ];
 const sources = Object.fromEntries(files.map((file) => [file, { content: fs.readFileSync(path.join(root, file), "utf8") }]));
