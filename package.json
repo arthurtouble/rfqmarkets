@@ -10,7 +10,7 @@
     "calibrate:quotes": "cd simulator && python3 -B walk_forward_calibration.py",
     "capture:market-flow": "node --import tsx scripts/capture-market-flow.ts",
     "calibrate:market-flow": "cd simulator && python3 -B flow_calibration_lab.py",
-    "test:services": "node --import tsx --test services/**/*.test.ts scripts/*.test.ts",
+    "test:services": "node --import tsx --test services/**/*.test.ts scripts/*.test.ts scripts/*.test.mjs",
     "typecheck": "tsc",
     "build:web": "vite build apps/web --outDir ../../dist/web --emptyOutDir",
     "build:admin": "vite build apps/admin --outDir ../../dist/admin --emptyOutDir",

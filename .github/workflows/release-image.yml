@@ -42,9 +42,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Enforce high-severity vulnerability gate
-        run: |
-          jq -r '.runs[].results[]? | select(.level == "error") | [.ruleId,.message.text] | @tsv' vulnerability-results.sarif
-          test "$(jq '[.runs[].results[]? | select(.level == "error")] | length' vulnerability-results.sarif)" -eq 0
+        run: node scripts/vulnerability-gate.mjs
 
   publish:
     if: inputs.publish
@@ -89,9 +87,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Enforce published-image vulnerability gate
-        run: |
-          jq -r '.runs[].results[]? | select(.level == "error") | [.ruleId,.message.text] | @tsv' vulnerability-results.sarif
-          test "$(jq '[.runs[].results[]? | select(.level == "error")] | length' vulnerability-results.sarif)" -eq 0
+        run: node scripts/vulnerability-gate.mjs
       - uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
