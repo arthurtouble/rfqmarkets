@@ -2,6 +2,12 @@ name: Release host image
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish and sign the validated image
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -9,8 +15,40 @@ permissions:
   id-token: write
 
 jobs:
-  build-scan-sign:
+  validate:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.host
+          platforms: linux/amd64
+          load: true
+          tags: rfq-host-scan:${{ github.sha }}
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: rfq-host-scan:${{ github.sha }}
+          fail-build: false
+          severity-cutoff: high
+          output-format: sarif
+          output-file: vulnerability-results.sarif
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vulnerability-scan-${{ github.sha }}
+          path: vulnerability-results.sarif
+          if-no-files-found: error
+          retention-days: 90
+      - name: Enforce high-severity vulnerability gate
+        run: |
+          jq -r '.runs[].results[]? | select(.level == "error") | [.ruleId,.message.text] | @tsv' vulnerability-results.sarif
+          test "$(jq '[.runs[].results[]? | select(.level == "error")] | length' vulnerability-results.sarif)" -eq 0
+
+  publish:
+    if: inputs.publish
+    needs: validate
     runs-on: ubuntu-latest
     env:
       IMAGE: ghcr.io/${{ github.repository }}/host
@@ -46,11 +84,11 @@ jobs:
           output-file: vulnerability-results.sarif
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: vulnerability-scan-${{ github.sha }}
+          name: published-vulnerability-scan-${{ github.sha }}
           path: vulnerability-results.sarif
           if-no-files-found: error
           retention-days: 90
-      - name: Enforce high-severity vulnerability gate
+      - name: Enforce published-image vulnerability gate
         run: |
           jq -r '.runs[].results[]? | select(.level == "error") | [.ruleId,.message.text] | @tsv' vulnerability-results.sarif
           test "$(jq '[.runs[].results[]? | select(.level == "error")] | length' vulnerability-results.sarif)" -eq 0
