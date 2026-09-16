@@ -16,7 +16,9 @@ const schema=z.object({
   RFQ_BTC_FEED_ID:feed,RFQ_ETH_FEED_ID:feed,
   RFQ_BTC_FEED_DECIMALS:z.coerce.number().int().min(6).max(18).default(8),
   RFQ_ETH_FEED_DECIMALS:z.coerce.number().int().min(6).max(18).default(8),
-  RFQ_BASE_RISK_CAPITAL_USDC:z.coerce.number().int().min(100_000).max(1_000_000).default(600_000),
+  // Base Sepolia qualification may use faucet-sized capital. Mainnet policy is
+  // validated separately by mainnet-manifest.ts and never consumes this schema.
+  RFQ_BASE_RISK_CAPITAL_USDC:z.coerce.number().int().min(10).max(1_000_000).default(600_000),
 });
 
 export function loadDeploymentConfig(env:NodeJS.ProcessEnv){
