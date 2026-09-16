@@ -320,3 +320,75 @@ main.wide .app-frame { width:100%; }
   .market-stage dl div,.market-stage dl div:nth-child(4) { padding-left:0; border-left:0; }
   .price-chart { height:190px; }
 }
+
+/* Brokerage workspace — shared light/dark semantic layer. */
+body { color:var(--text); background:var(--canvas); font-family:var(--font-ui); letter-spacing:-.01em; }
+main, main.wide { background:var(--canvas); }
+.topbar { border-color:var(--line); background:color-mix(in srgb,var(--surface) 94%,transparent); box-shadow:0 1px 0 var(--line); }
+.brand strong,.wordmark { color:var(--text); font-family:var(--font-ui); letter-spacing:-.02em; }
+.wordmark span { color:var(--buy); }
+.brand small,.network { color:var(--text-dim); }
+.topbar nav button { color:var(--text-dim); border-radius:0; }
+.topbar nav button:hover,.account-tabs button:hover,.order-types button:hover { color:var(--text); background:transparent; }
+.topbar nav button.active { color:var(--text); border-color:var(--text); background:transparent; }
+.network i { background:var(--buy); box-shadow:0 0 0 3px color-mix(in srgb,var(--buy) 18%,transparent); }
+.header-wallet { border-color:var(--text); border-radius:var(--radius-sm); color:var(--brand-contrast); background:var(--brand); }
+.header-wallet:hover { border-color:var(--brand); background:color-mix(in srgb,var(--brand) 88%,var(--canvas)); }
+.topbar .theme-toggle { flex:none; margin-left:14px; }
+.header-wallet { margin-left:8px; }
+.trading-workspace { border-color:var(--line); background:var(--surface); }
+.portfolio-panel,.trade-card,.public-dashboard,.quote-inspector { color:var(--text); border-color:var(--line); background:var(--surface); box-shadow:none; }
+.portfolio-panel { border-right-color:var(--line); }
+.market-stage { border-color:var(--line); background:var(--surface); }
+.market-identity select { color:var(--text); background:transparent; }
+.market-identity span,.market-last span,.market-stage dt,.portfolio-panel small,.ticket-heading small { color:var(--text-dim); }
+.market-stage dd,.market-last strong,.ticket-heading strong { color:var(--text); }
+.market-stage dl div { border-color:var(--line); }
+.price-chart { border-color:var(--line); background-color:var(--surface); background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px); opacity:.96; }
+.price-chart > span { color:var(--text-dim); border-color:var(--line); border-radius:var(--radius-sm); background:var(--surface-raised); }
+.market-tape { border-color:var(--line); border-radius:var(--radius-md); background:var(--line); }
+.market-tape div { background:var(--surface-muted); }
+.asset-icon.btc { color:#e68a00; background:#fff4df; border-color:#f3bd66; }
+:root[data-theme="dark"] .asset-icon.btc { color:#ffad3d; background:#2b2113; border-color:#6b4a1e; }
+.asset-icon.eth { color:#6a72e8; background:#eef0ff; border-color:#b8bcf7; }
+:root[data-theme="dark"] .asset-icon.eth { color:#a8adff; background:#20223d; border-color:#4a4e83; }
+.account-health { border-color:var(--line); background:var(--buy-surface); }
+.account-health.danger { background:var(--sell-surface); }
+.account-health span,.risk-grid span,.position-metrics span { color:var(--text-dim); }
+.risk-grid,.position-list { border-color:var(--line); background:var(--line); }
+.risk-grid div,.position-list article,.open-orders>div { color:var(--text); background:var(--surface); }
+.account-tabs { border-color:var(--line); }
+.account-tabs button,.order-types button { color:var(--text-dim); }
+.account-tabs button.active,.order-types button.active { color:var(--text); border-color:var(--buy); }
+.compact-heading button,.position-side button,.depositToggle,.trade-wallet { color:var(--text-soft); border-color:var(--line); border-radius:var(--radius-sm); background:var(--surface); }
+.compact-heading button:hover,.position-side button:hover,.depositToggle:hover { color:var(--text); border-color:var(--line-strong); background:var(--surface-hover); }
+.position-metrics b,.price-details b { color:var(--text); }
+.balance,.depositPanel { color:var(--text); border-color:var(--line); border-radius:var(--radius-md); background:var(--surface-muted); }
+.balance span,.balance small,.price-details,.status { color:var(--text-dim); }
+.markets,.sides { border-color:var(--line); border-radius:var(--radius-md); background:var(--surface-muted); }
+.markets button,.sides button { color:var(--text-soft); border-radius:var(--radius-sm); }
+.markets .active { color:var(--text); background:var(--surface); box-shadow:0 1px 3px rgba(0,0,0,.08); }
+.sides button { background:transparent; }
+.sides .buy.active { color:#fff; background:var(--buy); }
+.sides .sell.active { color:#fff; background:var(--sell); }
+.amount { border-color:var(--line); border-radius:var(--radius-md); background:var(--surface); }
+.amount:hover { border-color:var(--line-strong); }
+.amount:focus-within { border-color:var(--buy); box-shadow:0 0 0 3px color-mix(in srgb,var(--buy) 14%,transparent); }
+.amount input,.depositPanel select { color:var(--text); }
+.depositPanel select { border-color:var(--line); border-radius:var(--radius-sm); background:var(--surface); }
+.amount b,.trade-card>label,.depositPanel>label { color:var(--text-dim); }
+.order-ticket dl { border-color:var(--line); }
+.submit,.route { border-radius:var(--radius-md); }
+.submit.buy { color:#fff; background:var(--buy); }
+.submit.sell { color:#fff; background:var(--sell); }
+.route { color:var(--brand-contrast); background:var(--brand); }
+.price-details { border-color:var(--line); }
+.risk-notice,.warning,.emergencyPanel { color:var(--warn); border-color:color-mix(in srgb,var(--warn) 40%,var(--line)); border-radius:var(--radius-md); background:var(--warn-surface); }
+.quickToggle.active { color:var(--buy); border-color:var(--buy); background:var(--buy-surface); }
+.public-dashboard,.summary-grid article,.exposure-card,.data-panel,.block-state { border-color:var(--line); border-radius:var(--radius-md); background:var(--surface); }
+.dashboard-heading p,.panel-heading p,.summary-grid small,.exposure-sides small,.block-state span,.block-state small { color:var(--text-dim); }
+.panel-heading,th,td,.public-market-price { border-color:var(--line); }
+th { color:var(--text-dim); }
+tbody tr:hover { background:var(--surface-muted); }
+.side-pill { border-radius:999px; background:var(--surface-muted); }
+@media(max-width:700px){.topbar .theme-toggle{margin-left:2px}.theme-toggle{width:31px;height:31px}.header-wallet{margin-left:2px}.portfolio-panel,.trade-card{border-radius:0}}

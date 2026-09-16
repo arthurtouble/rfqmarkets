@@ -51,3 +51,24 @@ footer { margin-top: 22px; color: var(--text-dim); font-size: 11px; text-align: 
   .health { font-size: 12px; }
   h1 { font-size: 28px; }
 }
+
+
+/* Brokerage operations theme. */
+body { font-family:var(--font-ui); color:var(--text); background:var(--canvas); }
+main { max-width:1240px; }
+header { align-items:center; }
+.header-actions { display:flex; align-items:center; gap:12px; }
+h1 { color:var(--text); letter-spacing:-.035em; }
+header p,.eyebrow,small,.sectionTitle span,.summary span,.flow span,dt { color:var(--text-dim); }
+.health { border-color:var(--line); border-radius:999px; color:var(--sell); background:var(--surface); }
+.health.ok,.pill { color:var(--buy); }
+.summary article,.markets article,.orders { border-color:var(--line); border-radius:var(--radius-md); background:var(--surface); box-shadow:var(--shadow); }
+.summary article:hover,.markets article:hover { border-color:var(--line-strong); }
+.markets article { box-shadow:none; }
+.title em { border-radius:999px; color:var(--sell); background:var(--sell-surface); }
+.title em.within_band { color:var(--buy); background:var(--buy-surface); }
+.bar { border-radius:999px; background:var(--sell); }.bar i { background:var(--buy); }
+.empty { color:var(--text-dim); border-color:var(--line-strong); border-radius:var(--radius-md); background:var(--surface-muted); }
+th,td { border-color:var(--line); } footer { color:var(--text-dim); }
+.alert { color:var(--sell); border-color:var(--sell); border-radius:var(--radius-sm); background:var(--sell-surface); }
+@media(max-width:760px){.header-actions{align-items:flex-start}.theme-toggle{flex:none}}

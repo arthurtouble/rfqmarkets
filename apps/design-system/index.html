@@ -8,31 +8,31 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <header class="masthead"><div><span class="kicker">RFQ MARKETS / PRODUCT SYSTEM</span><h1>Lean trading interface</h1><p>Version 0.3 · terminal, market data, and operations surfaces</p></div><span class="version">BASE / USDC</span></header>
+    <header class="masthead"><div><span class="kicker">RFQ MARKETS / PRODUCT SYSTEM</span><h1>Clear, calm, and fast</h1><p>Version 1.0 · brokerage workspace for trading and operations</p></div><div class="masthead-actions"><button id="theme" class="theme-toggle" aria-label="Toggle color theme">☾</button><span class="version">BASE / USDC</span></div></header>
     <nav class="jump" aria-label="Specimen sections"><a href="#foundation">Foundation</a><a href="#type">Typography</a><a href="#controls">Controls</a><a href="#data">Trading data</a><a href="#states">States</a></nav>
     <main>
-      <section id="foundation"><header><span>01</span><div><h2>Foundation</h2><p>Square geometry, dark neutral surfaces, saturated semantic actions.</p></div></header>
+      <section id="foundation"><header><span>01</span><div><h2>Foundation</h2><p>Calm surfaces, soft geometry, high-contrast data, and restrained semantic color.</p></div></header>
         <div class="swatches">
-          <figure><i style="--swatch:#05070d"></i><figcaption>Canvas<code>#05070D</code></figcaption></figure>
-          <figure><i style="--swatch:#090d16"></i><figcaption>Surface<code>#090D16</code></figcaption></figure>
-          <figure><i style="--swatch:#26324a"></i><figcaption>Border<code>#26324A</code></figcaption></figure>
-          <figure><i style="--swatch:#7185ff"></i><figcaption>Selection<code>#7185FF</code></figcaption></figure>
-          <figure><i style="--swatch:#00e6b8"></i><figcaption>Buy / healthy<code>#00E6B8</code></figcaption></figure>
-          <figure><i style="--swatch:#ff3f69"></i><figcaption>Sell / danger<code>#FF3F69</code></figcaption></figure>
-          <figure><i style="--swatch:#ffc34d"></i><figcaption>Warning<code>#FFC34D</code></figcaption></figure>
-          <figure><i style="--swatch:#f7f9ff"></i><figcaption>Primary text<code>#F7F9FF</code></figcaption></figure>
+          <figure><i style="--swatch:var(--canvas)"></i><figcaption>Canvas<code>--canvas</code></figcaption></figure>
+          <figure><i style="--swatch:var(--surface)"></i><figcaption>Surface<code>--surface</code></figcaption></figure>
+          <figure><i style="--swatch:var(--line)"></i><figcaption>Border<code>--line</code></figcaption></figure>
+          <figure><i style="--swatch:var(--brand)"></i><figcaption>Selection<code>--brand</code></figcaption></figure>
+          <figure><i style="--swatch:var(--buy)"></i><figcaption>Buy / healthy<code>--buy</code></figcaption></figure>
+          <figure><i style="--swatch:var(--sell)"></i><figcaption>Sell / danger<code>--sell</code></figcaption></figure>
+          <figure><i style="--swatch:var(--warn)"></i><figcaption>Warning<code>--warn</code></figcaption></figure>
+          <figure><i style="--swatch:var(--text)"></i><figcaption>Primary text<code>--text</code></figcaption></figure>
         </div>
-        <div class="spacing"><b>4</b><b>8</b><b>12</b><b>16</b><b>24</b><b>32</b><b>48</b></div><p class="rule">Spacing follows a 4px base. Component radius is zero. Status dots remain circular. Shadows do not communicate hierarchy.</p>
+        <div class="spacing"><b>4</b><b>8</b><b>12</b><b>16</b><b>24</b><b>32</b><b>48</b></div><p class="rule">Spacing follows a 4px base. Controls use 6–10px radii; cards use 10–14px. Borders define structure and shadows remain subtle.</p>
       </section>
 
-      <section id="type"><header><span>02</span><div><h2>Typography</h2><p>IBM Plex Sans for interface copy; IBM Plex Mono for prices, quantities, addresses and hashes.</p></div></header>
+      <section id="type"><header><span>02</span><div><h2>Typography</h2><p>Inter or the native system sans for interface copy; SF Mono for prices, quantities, addresses, and hashes.</p></div></header>
         <div class="type-grid"><div><span>DISPLAY / 40 / 600</span><h3 class="display">Perpetual markets</h3></div><div><span>TITLE / 24 / 600</span><h3 class="title">BTC-PERP</h3></div><div><span>PRICE / 30 / 600 MONO</span><strong class="price">$77,228.26</strong></div><div><span>BODY / 14 / 400</span><p>Review the current quote and signed price protection before submitting.</p></div><div><span>LABEL / 11 / 600</span><b class="label">AVAILABLE MARGIN</b></div><div><span>MACHINE / 12 / 500 MONO</span><code>0x1114…6782</code></div></div>
       </section>
 
       <section id="controls"><header><span>03</span><div><h2>Controls</h2><p>Every control has visible default, hover, focus, active and disabled behavior.</p></div></header>
         <div class="component-grid"><article><h3>Actions</h3><div class="row"><button class="primary">Buy BTC</button><button class="danger">Sell BTC</button><button class="secondary">Withdraw</button><button disabled>Disabled</button></div></article>
           <article><h3>Direction</h3><div class="segmented"><button class="active buy">Buy</button><button>Sell</button></div></article>
-          <article><h3>Inputs</h3><label>Amount <span>USDC</span><div class="input"><input value="1000" aria-label="Example amount" /><b>USDC</b></div></label><label>Market<select aria-label="Example market"><option>BTC-PERP</option><option>ETH-PERP</option></select></label></article>
+          <article><h3>Inputs</h3><label>Amount <span>USDC</span><div class="input"><input value="10" aria-label="Example amount" /><b>USDC</b></div></label><label>Market<select aria-label="Example market"><option>BTC-PERP</option><option>ETH-PERP</option></select></label></article>
           <article><h3>Tabs</h3><div class="tabs"><button class="active">Positions</button><button>Open orders</button><button>History</button></div><label class="check"><input type="checkbox" checked /> Reduce only</label></article>
         </div>
       </section>

@@ -1,18 +1,33 @@
 :root {
-  --font-ui: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-  --ink-0: #05070d; --ink-1: #090d16; --ink-2: #0e1421; --ink-3: #172033;
-  --line: #26324a; --line-strong: #405174;
-  --text: #f7f9ff; --text-soft: #aeb9ce; --text-dim: #748099;
-  --brand: #7185ff; --brand-strong: #9ba8ff;
-  --buy: #00e6b8; --buy-surface: #073b34;
-  --sell: #ff3f69; --sell-surface: #470f22;
-  --warn: #ffc34d; --danger: #ff355f;
-  --radius-sm: 0; --radius-md: 0; --radius-lg: 0;
-  --shadow: 0 18px 48px rgba(0, 0, 0, .32);
-  color-scheme: dark; font-family: var(--font-ui); font-synthesis: none;
+  --font-ui: Inter, "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Consolas, monospace;
+  --canvas: #f6f7f9; --surface: #ffffff; --surface-raised: #ffffff; --surface-muted: #f0f2f5; --surface-hover: #e9edf1;
+  --line: #e1e4e8; --line-strong: #c8cdd3;
+  --text: #101214; --text-soft: #525960; --text-dim: #7d858d;
+  --brand: #111315; --brand-strong: #111315; --brand-contrast: #ffffff;
+  --buy: #00a67e; --buy-hover: #008f6d; --buy-surface: #e6f7f2;
+  --sell: #e3485b; --sell-hover: #c93649; --sell-surface: #fff0f2;
+  --warn: #b26a00; --warn-surface: #fff6df; --danger: #d63d50;
+  --ink-0: var(--canvas); --ink-1: var(--surface); --ink-2: var(--surface-muted); --ink-3: var(--surface-hover);
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+  --shadow: 0 1px 2px rgba(16,18,20,.05), 0 12px 32px rgba(16,18,20,.06);
+  color-scheme: light; font-family: var(--font-ui); font-synthesis: none;
 }
-::selection { color: var(--ink-0); background: var(--brand); }
-:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-button { transition: border-color .12s ease, background .12s ease, color .12s ease, transform .12s ease; }
-button:active { transform: translateY(1px); }
+:root[data-theme="dark"] {
+  --canvas: #0b0d10; --surface: #111419; --surface-raised: #171a20; --surface-muted: #1b1f25; --surface-hover: #22272e;
+  --line: #292e36; --line-strong: #3d444d;
+  --text: #f4f5f6; --text-soft: #adb3ba; --text-dim: #777f88;
+  --brand: #f4f5f6; --brand-strong: #ffffff; --brand-contrast: #111315;
+  --buy: #35d6a4; --buy-hover: #59e0b7; --buy-surface: #102d26;
+  --sell: #ff6678; --sell-hover: #ff8090; --sell-surface: #371a21;
+  --warn: #f2b84b; --warn-surface: #302715; --danger: #ff6678;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 18px 48px rgba(0,0,0,.2);
+  color-scheme: dark;
+}
+* { scrollbar-color: var(--line-strong) transparent; }
+::selection { color: var(--brand-contrast); background: var(--brand); }
+:focus-visible { outline: 2px solid var(--buy); outline-offset: 2px; }
+button { transition: border-color .14s ease, background .14s ease, color .14s ease, transform .14s ease, box-shadow .14s ease; }
+button:active { transform: scale(.985); }
+.theme-toggle { display:inline-grid; place-items:center; width:34px; height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--text-soft); background:var(--surface); cursor:pointer; }
+.theme-toggle:hover { color:var(--text); border-color:var(--line-strong); background:var(--surface-hover); }

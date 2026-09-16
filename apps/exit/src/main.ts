@@ -1,10 +1,12 @@
 import {BrowserProvider,Contract,getAddress,parseUnits} from 'ethers';
-import './styles.css';
+import {flipTheme,initializeTheme} from '../../../packages/design-system/theme.js';
 const env=import.meta.env,chainId=BigInt(env.VITE_EXIT_CHAIN_ID??0),address=env.VITE_EXIT_CLEARING_ADDRESS;
 const node=(id:string)=>document.getElementById(id)!,value=(id:string)=>(node(id) as HTMLInputElement).value;
 const status=(text:string)=>{node('status').textContent=text;};
 const abi=['function usdc() view returns(address)','function oracle() view returns(address)','function collateralOf(address) view returns(int256)','function positionOf(address,uint8) view returns(int256 size,uint256 entryPrice,int256 lastFundingIndex)','function paused() view returns(bool)','function resolutionRequired() view returns(bool)','function resolutionFinalized() view returns(bool)','function resolutionClaim(address) view returns(uint256)','function withdraw(uint256)','function cancelNonce(uint256)','function revokeSession(address)','function closePosition(uint8,bytes) payable','function claimResolution()'];
 let contract:Contract|undefined,provider:BrowserProvider|undefined,account:string|undefined;
+let theme=initializeTheme();
+const themeControl=document.createElement('button');themeControl.className='theme-toggle';themeControl.setAttribute('aria-label',`Use ${theme==='dark'?'light':'dark'} theme`);themeControl.textContent=theme==='dark'?'☀':'☾';document.querySelector('main')!.prepend(themeControl);themeControl.addEventListener('click',()=>{theme=flipTheme(theme);themeControl.textContent=theme==='dark'?'☀':'☾';themeControl.setAttribute('aria-label',`Use ${theme==='dark'?'light':'dark'} theme`);});
 async function connect(){
  if(!address||chainId<=0n)throw new Error('This build has no reviewed settlement configuration');
  const ethereum=(window as unknown as {ethereum?:ConstructorParameters<typeof BrowserProvider>[0]}).ethereum;if(!ethereum)throw new Error('Browser wallet unavailable');
