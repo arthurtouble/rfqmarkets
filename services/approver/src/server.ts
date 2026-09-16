@@ -36,7 +36,7 @@ export function buildApprover(options:ApproverOptions) {
   app.get("/health",async()=>({ok:!incompleteLegacy(),signer:wallet.address}));
   app.post("/approve",async(request,reply)=>{
     if(request.headers.authorization!==`Bearer ${options.transportToken}`)return reply.code(401).send({error:"unauthorized"});
-    const parsed=requestSchema.safeParse(request.body); if(!parsed.success)return reply.code(400).send({error:"invalid request"}); const input=parsed.data;
+    const parsed=requestSchema.safeParse(request.body); if(!parsed.success)return reply.code(400).send({error:"invalid request",details:process.env.NODE_ENV==="test"?parsed.error.issues.map(issue=>issue.path.join(".")):undefined}); const input=parsed.data;
     let domain:SigningDomain,intent:TradeIntent,approval:MakerApproval;
     try {
       domain={...input.domain,chainId:BigInt(input.domain.chainId),verifyingContract:getAddress(input.domain.verifyingContract)};

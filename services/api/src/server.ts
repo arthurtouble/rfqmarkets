@@ -440,7 +440,7 @@ export function buildApi(options: ApiOptions = {}) {
       }
       const oracleReportHash=report==="0x"?keccak256(toUtf8Bytes(JSON.stringify({market:quote.market,bid:quote.snapshot.bid.toString(),ask:quote.snapshot.ask.toString(),observedAtMs:quote.snapshot.observedAtMs}))):keccak256(report);
       approval={intentHash,executionPrice:quote.expectedPrice,impactCharge:quote.impactCharge,fee:quote.fee,oracleReportHash,deadline:approvalDeadline,leaderEpoch:versions.leaderEpoch,signerSetVersion:versions.signerSetVersion,policyVersion:versions.policyVersion};
-      const digest=hashApproval(domain,approval),approverPayload={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),quote:quoteToWire(quote),report,oracleAgeMs:Date.now()-quote.snapshot.observedAtMs};
+      const digest=hashApproval(domain,approval),approverPayload={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),quote:quoteToWire(quote),report,oracleAgeMs:Math.max(0,Date.now()-quote.snapshot.observedAtMs)};
       let grossItem:GrossReservation={market:intent.market as 0|1,baseDelta:intent.baseDelta,reduceOnly:intent.reduceOnly,deadline:Number(approval.deadline),makerDebit:2n*BigInt(quote.notional)};
       let grossSnapshot:{blockNumber:number;blockTimestamp:number;books:[ExposureBook,ExposureBook];states:[ExposureMarket,ExposureMarket];position:{size:bigint;entryPrice:bigint;lastFundingIndex:bigint};netLimits:[bigint,bigint];backing:bigint;floor:bigint;clock:Awaited<ReturnType<typeof finalizedClock>>}|undefined;
       if(clearing&&provider){
