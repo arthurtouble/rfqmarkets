@@ -1,0 +1,8 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {admitAtEdge} from './edge-admission.mjs';
+const limiter=(success=true,seen=[])=>({limit:async input=>{seen.push(input.key);return{success};}});
+const env=(success=true,seen=[])=>({PUBLIC_READ_LIMIT:limiter(success,seen),PUBLIC_WRITE_LIMIT:limiter(success,seen),GLOBAL_READ_LIMIT:limiter(success,seen),GLOBAL_WRITE_LIMIT:limiter(success,seen)});
+test('edge admission applies per-client and public-origin distributed budgets',async()=>{const seen=[],request=new Request('https://rfq.example/v1/quote',{headers:{'cf-connecting-ip':'192.0.2.4'}});assert.equal(await admitAtEdge(request,env(true,seen)),null);assert.deepEqual(seen,['192.0.2.4','public-origin']);});
+test('edge admission fails closed on missing identity, missing bindings and limiter outage',async()=>{assert.equal((await admitAtEdge(new Request('https://rfq.example/v1/quote'),env()))?.status,403);const request=new Request('https://rfq.example/v1/quote',{method:'POST',headers:{'cf-connecting-ip':'192.0.2.4'}});assert.equal((await admitAtEdge(request,{}))?.status,503);const broken={...env(),PUBLIC_WRITE_LIMIT:{limit:async()=>{throw new Error('offline');}}};assert.equal((await admitAtEdge(request,broken))?.status,503);});
+test('either exhausted distributed budget returns a bounded retry response',async()=>{const request=new Request('https://rfq.example/v1/quote',{method:'POST',headers:{'cf-connecting-ip':'192.0.2.4'}}),rejected=await admitAtEdge(request,env(false));assert.equal(rejected?.status,429);assert.equal(rejected?.headers.get('retry-after'),'10');assert.deepEqual(await rejected?.json(),{error:'rate_limit_exceeded'});});

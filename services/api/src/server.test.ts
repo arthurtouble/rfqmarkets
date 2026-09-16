@@ -285,15 +285,25 @@ test("approvers reject an API that requests signatures for an unpinned chain dom
   await wrongDomain.close();
 });
 
-test("a restart restores escaped reservation exposure from the API journal",async()=>{
+test("a restart restores the signed retry envelope and escaped reservation exposure",async()=>{
   const approvers=apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`}));
   const journalPath=join(directory,"api.sqlite");
   const firstApi=buildApi({approvers,fetchImpl:routedFetch,journalPath}); await firstApi.ready();
   const first=(await firstApi.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"900"}})).json();
-  assert.equal((await approveQuote(firstApi,first)).statusCode,200); await firstApi.close();
+  const nonce="909090",prepared=(await firstApi.inject({method:"POST",url:"/v1/prepare",payload:{quoteId:first.quoteId,account:user.address,nonce}})).json(),userSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),payload={quoteId:first.quoteId,account:user.address,nonce,userSignature};
+  assert.equal((await firstApi.inject({method:"POST",url:"/v1/approve",payload})).statusCode,200); await firstApi.close();
   const restarted=buildApi({approvers,fetchImpl:routedFetch,journalPath}); await restarted.ready();
+  const retried=await restarted.inject({method:"POST",url:"/v1/approve",payload});assert.equal(retried.statusCode,200,retried.body);
   const after=(await restarted.inject({method:"POST",url:"/v1/quote",payload:{market:"BTC",side:"buy",amount:"900"}})).json();
   assert(BigInt(after.expectedPrice)>BigInt(first.expectedPrice)); await restarted.close();
+});
+
+test("leader readiness rejects an active commitment whose approval artifact is missing",async()=>{
+  const approvers=apps.map((_,index)=>({url:`http://approver-${index}`,token:`transport-${index}`}));
+  const journalPath=join(directory,"api-incomplete.sqlite"),firstApi=buildApi({approvers,fetchImpl:routedFetch,journalPath});await firstApi.ready();
+  const quote=(await firstApi.inject({method:"POST",url:"/v1/quote",payload:{market:"ETH",side:"sell",amount:"125"}})).json();assert.equal((await approveQuote(firstApi,quote)).statusCode,200);await firstApi.close();
+  const database=new DatabaseSync(journalPath);database.prepare("DELETE FROM approval_artifacts WHERE quote_id=?").run(quote.quoteId);database.close();
+  assert.throws(()=>buildApi({approvers,fetchImpl:routedFetch,journalPath}),/approval artifact/);
 });
 
 test("deposit routes bind source terms and require the receiving wallet",async()=>{

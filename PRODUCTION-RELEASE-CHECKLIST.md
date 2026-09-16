@@ -1,12 +1,12 @@
 # Production release checklist
 
-Status date: 2026-09-10. This is the promotion record for a capped Base mainnet canary. Every box needs retained evidence and a named reviewer. Passing the local and testnet gates does not authorize real capital by itself.
+Status date: 2026-09-16. This is the promotion record for a capped Base mainnet canary. Every box needs retained evidence and a named reviewer. Passing the local and testnet gates does not authorize real capital by itself.
 
 ## Candidate freeze
 
 - [ ] Tag one reviewed commit and record the source, lockfile, Solidity compiler, build-info and frontend hashes.
 - [ ] Run `npm test`; require every contract, upgrade, simulator, service, type and frontend gate to pass from a clean checkout.
-- [ ] Run the production dependency audit; require `npm audit --omit=dev` to report zero findings. Review development-only findings separately.
+- [ ] Run the production dependency audit; require `npm audit --omit=dev` to report zero findings. Review development-only findings separately. Build the pinned Linux amd64 host image, record its immutable registry digest, and run `npm run evidence:supply-chain -- EVIDENCE_JSON sha256:IMAGE_DIGEST`; release evidence version 2 binds that digest and the complete npm/Python component inventory to the candidate.
 - [ ] Verify implementation bytecode remains below the 21,000-byte project gate and repeat OpenZeppelin storage validation.
 - [ ] Verify the deployed implementation, linked libraries, proxy, ProxyAdmin, oracle adapter, USDC, Safe and timelock addresses from two independent RPCs and the explorer.
 

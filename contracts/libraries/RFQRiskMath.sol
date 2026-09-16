@@ -148,6 +148,11 @@ library RFQRiskMath {
         (int256 btc, int256 eth) = portfolioExposure(markets);
         if (abs(btc) > limits[0] >> 128 || abs(eth) > limits[1] >> 128 || stressLoss(btc, eth) > backing / 4) revert Margin();
     }
+    function makerIncident(ExposureControls storage exposure, RFQClearing.Market[2] storage markets, uint256 backing, uint256 floor) public view returns (bool) {
+        if (exposure.longBase[0] + exposure.shortBase[0] + exposure.longBase[1] + exposure.shortBase[1] == 0) return false;
+        (int256 btc, int256 eth) = portfolioExposure(markets);
+        return backing < floor || stressLoss(btc, eth) > backing / 4;
+    }
     function accountEquity(RFQClearing.Account storage account, RFQClearing.Market[2] storage markets, bool positive) public view returns (int256 value) {
         value = account.collateral;
         for (uint8 i; i < 2; ++i) { RFQClearing.Position storage p = account.positions[i]; int256 pnl = positionPnl(p.size,p.entryPrice,p.size > 0 ? markets[i].lastBid : markets[i].lastAsk); if (positive || pnl < 0) value += pnl; }

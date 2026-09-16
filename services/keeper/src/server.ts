@@ -23,9 +23,10 @@ export function buildKeeper(options:KeeperOptions){
   execute:async(id,action:KeeperAction)=>{
    let data:string,value=0n;
    if(action.kind==='process')data=clearing.interface.encodeFunctionData('processResolution',[action.maxAccounts]);
+   else if(action.kind==='incident')data=clearing.interface.encodeFunctionData('declareResolution');
    else {const adapter=new Contract(await clearing.oracle(),['function updateFee(bytes) view returns(uint256)'],provider);value=BigInt(await adapter.updateFee(action.proof.report));data=action.kind==='liquidate'?clearing.interface.encodeFunctionData('liquidate',[action.account,action.market,action.proof.report]):clearing.interface.encodeFunctionData(action.kind==='sample'?'submitResolutionObservation':'refreshOracle',[action.proof.report]);}
    const request:TransactionRequest={from:wallet.address,to:options.clearingAddress,data,value};
-   let gas:bigint;try{await provider.call(request);gas=await provider.estimateGas(request);}catch(error){if((error as {code?:string}).code==='CALL_EXCEPTION')return false;throw error;}
+   let gas:bigint;try{await provider.call(request);gas=await provider.estimateGas(request);}catch(error){if((error as {code?:string}).code==='CALL_EXCEPTION'||action.kind==='incident'&&String(error).includes('0xfc220038'))return false;throw error;}
    const gasLimit=gas+gas/5n+10_000n;if(gasLimit>options.budget.maxGasLimit!||value>options.budget.maxValue!)throw new Error('keeper action exceeds configured budget');
    await sender.submit(id,{...request,gasLimit});return true;
   },

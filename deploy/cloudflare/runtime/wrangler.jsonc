@@ -12,5 +12,11 @@
   }],
   "durable_objects": {"bindings": [{"name": "RFQ_RUNTIME", "class_name": "RFQRuntimeContainer"}]},
   "migrations": [{"tag": "v1", "new_sqlite_classes": ["RFQRuntimeContainer"]}],
+  "ratelimits": [
+    {"name":"PUBLIC_READ_LIMIT","namespace_id":"84532001","simple":{"limit":600,"period":60}},
+    {"name":"PUBLIC_WRITE_LIMIT","namespace_id":"84532002","simple":{"limit":120,"period":60}},
+    {"name":"GLOBAL_READ_LIMIT","namespace_id":"84532003","simple":{"limit":12000,"period":60}},
+    {"name":"GLOBAL_WRITE_LIMIT","namespace_id":"84532004","simple":{"limit":2400,"period":60}}
+  ],
   "observability": {"enabled": true, "head_sampling_rate": 1}
 }

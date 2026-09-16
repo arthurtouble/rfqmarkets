@@ -29,6 +29,7 @@ import { ShadowModelTelemetry } from "./shadow-model.js";
 import { QuoteAdmission } from "./admission.js";
 
 import {validOwnerSignature} from "./owner-signature.js";
+import {archiveApiCommitments,initializeApiRecoveryJournal,restoreApiCommitments,type RecoveredCommitment} from "./recovery.js";
 
 export interface ApiOptions {
   senderBudget?:Pick<import("./sender.js").SenderOptions,"maxFeePerGas"|"maxGasLimit"|"maxValue"|"dailyBudgetWei">;
@@ -107,6 +108,7 @@ export function buildApi(options: ApiOptions = {}) {
   const pending=new PendingExposureBook();
   const journal=options.journalPath?new DatabaseSync(options.journalPath):undefined;
   journal?.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS commitments (quote_id TEXT PRIMARY KEY, market TEXT NOT NULL, delta TEXT NOT NULL, expires_ms INTEGER NOT NULL, status TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, approval_json TEXT, tx_hash TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS deposit_routes (route_id TEXT PRIMARY KEY, account TEXT NOT NULL, from_chain TEXT NOT NULL, from_token TEXT NOT NULL, source_amount TEXT NOT NULL, expected_usdc TEXT NOT NULL, minimum_usdc TEXT NOT NULL, deadline INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, destination_tx TEXT, updated_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS resting_orders (order_id TEXT PRIMARY KEY, account TEXT NOT NULL, market TEXT NOT NULL, side TEXT NOT NULL, amount TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, status TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, tx_hash TEXT, last_error TEXT); CREATE TABLE IF NOT EXISTS flow_fills (fill_id TEXT PRIMARY KEY, market TEXT NOT NULL, side TEXT NOT NULL, price TEXT NOT NULL, notional TEXT NOT NULL, filled_ms INTEGER NOT NULL)");
+  if(journal)initializeApiRecoveryJournal(journal);
   const grossReservations=new GrossReservationBook();
   if(journal){initializeGrossJournal(journal);bindGrossContext(journal,"api",`${options.chainId??31337n}:${getAddress(options.verifyingContract??"0x0000000000000000000000000000000000000001").toLowerCase()}`);migrateGross(journal,"api-v1",()=>{for(const row of journal.prepare("SELECT quote_id,intent_json FROM commitments").all()){const item=row as {quote_id:string;intent_json:string},intent=JSON.parse(item.intent_json);persistGross(journal,item.quote_id,{market:intent.market,baseDelta:BigInt(intent.baseDelta),reduceOnly:intent.reduceOnly,deadline:Number(intent.deadline)});}});restoreGross(journal,grossReservations);}
   const restoredFlow=(journal?.prepare("SELECT market,side,price,notional,filled_ms FROM flow_fills WHERE filled_ms>? ORDER BY filled_ms DESC LIMIT 512").all(Date.now()-240_000)??[]).reverse().map(row=>{const item=row as {market:"BTC"|"ETH";side:"buy"|"sell";price:string;notional:string;filled_ms:number};return{market:item.market,side:item.side,price:BigInt(item.price),notional:BigInt(item.notional),atMs:item.filled_ms} satisfies FlowFill;});
@@ -119,6 +121,7 @@ export function buildApi(options: ApiOptions = {}) {
   const quoteVersions = new Map<string,ProtocolVersions>();
   const quoteBindings = new Map<string,{account:string;nonce:string}>();
   const preparedIntents=new Map<string,TradeIntent>();
+  const forcedReduceOnly=new Set<string>();
   const activeSubmissions=new Map<string,Promise<void>>();
   const completedSubmissions=new Map<string,{account:string;nonce:string;userSignature:string;result:unknown;expiresAtMs:number}>();
   const restingOrders=new Map<string,RestingOrder>();
@@ -137,6 +140,7 @@ export function buildApi(options: ApiOptions = {}) {
   const provider=options.provider??(options.chain?new JsonRpcProvider(options.chain.rpcUrl,undefined,{batchMaxCount:1}):undefined);
   if(provider&&options.chain?.devFund)provider.pollingInterval=50;
   const sponsor=provider&&options.chain?new Wallet(options.chain.sponsorPrivateKey,provider):undefined;
+  if(journal&&sponsor)bindGrossContext(journal,"api-sponsor",sponsor.address.toLowerCase());
   const sender=options.sender??(provider&&sponsor?new DurableSender(provider,sponsor,journal,{chainId:options.chainId,initialFeeBumpBps:2_500,...options.senderBudget}):undefined);
   const clearing=options.chain&&provider?new Contract(options.chain.clearingAddress,clearingApiAbi,provider):undefined;
   const token=options.chain&&provider?new Contract(options.chain.tokenAddress,["function mint(address,uint256)"],provider):undefined;
@@ -144,11 +148,14 @@ export function buildApi(options: ApiOptions = {}) {
     name:DOMAIN_NAME, version:DOMAIN_VERSION, chainId:options.chainId ?? 31_337n,
     verifyingContract:getAddress(options.verifyingContract ?? "0x0000000000000000000000000000000000000001"),
   };
+  const recoveredCommitments:RecoveredCommitment[]=journal?restoreApiCommitments(journal,domain):[];
+  for(const recovered of recoveredCommitments){quotes.set(recovered.quote.quoteId,recovered.quote);preparedIntents.set(recovered.quote.quoteId,recovered.intent);quoteBindings.set(recovered.quote.quoteId,{account:recovered.intent.account,nonce:recovered.intent.nonce.toString()});quoteExpiries.schedule(recovered.quote.quoteId,recovered.quote.expiresAtMs+60_000);}
   const localDevMode=Boolean(options.chain?.devFund&&domain.chainId===31_337n&&options.chain.rpcUrl&&["127.0.0.1","localhost","::1"].includes(new URL(options.chain.rpcUrl).hostname));
   if(options.chain?.devFund&&!localDevMode)throw new Error("development funding requires local chain 31337 on a loopback RPC");
   let localAdvance:Promise<number>|undefined,lastLocalAdvanceAt=0,lastLocalTimestamp=0;
   let reservationTail=Promise.resolve();
   async function acquireReservationLock(){let release!:()=>void;const previous=reservationTail;reservationTail=new Promise<void>(resolve=>{release=resolve;});await previous;return release;}
+  const finalizeReservations=(block:number,timestamp:number,hash?:string)=>{const expired=finalizeGross(journal,grossReservations,block,timestamp,hash,ids=>{if(journal)archiveApiCommitments(journal,ids,Date.now(),false);});for(const id of expired)pending.delete(id);if(expired.length)marketReadCache=undefined;return expired;};
   let quoteSnapshotCache:{at:number;blockNumber:number;promise:Promise<{blockNumber:number;values:any[]}>}|undefined;const shadowTelemetry=new ShadowModelTelemetry();
   let marketReadCache:{at:number;promise:Promise<any>}|undefined;
   let senderReconciliation:Promise<void>|undefined;let senderReconcileTimer:ReturnType<typeof setInterval>|undefined;let orderTimer:ReturnType<typeof setTimeout>|undefined,orderReconcileTimer:ReturnType<typeof setInterval>|undefined,checkingOrders=false,orderCheckQueued=false;
@@ -174,7 +181,7 @@ export function buildApi(options: ApiOptions = {}) {
 
   function prune(now=Date.now()) {
     pending.prune(now);
-    for(const id of quoteExpiries.takeExpired(now)){quotes.delete(id);quoteReports.delete(id);quoteVersions.delete(id);quoteBindings.delete(id);preparedIntents.delete(id);}
+    for(const id of quoteExpiries.takeExpired(now)){quotes.delete(id);quoteReports.delete(id);quoteVersions.delete(id);quoteBindings.delete(id);preparedIntents.delete(id);forcedReduceOnly.delete(id);}
     for(const [id,item] of completedSubmissions)if(item.expiresAtMs<=now)completedSubmissions.delete(id);
     for(const id of preparedOrderExpiries.takeExpired(now)){const order=restingOrders.get(id);if(order?.status==="prepared")restingOrders.delete(id);}
   }
@@ -200,7 +207,7 @@ export function buildApi(options: ApiOptions = {}) {
     // interval. Oracle proof freshness is independent: a fresh proof is fetched
     // after wallet signing and bound by the approvers immediately before submit.
     const deadline=versions.blockTimestamp+30,protectedNotional=abs(quote.baseDelta)*quote.worstPrice/BASE,feeNotional=protectedNotional>quote.notional?protectedNotional:quote.notional,maxFee=(feeNotional*quote.fee+quote.notional-1n)/quote.notional;
-    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee,nonce:BigInt(nonce),deadline:BigInt(deadline),reduceOnly };
+    return { account:getAddress(account),market:quote.market==="BTC"?0:1,baseDelta:quote.baseDelta,limitPrice:quote.worstPrice,maxFee,nonce:BigInt(nonce),deadline:BigInt(deadline),reduceOnly:reduceOnly||forcedReduceOnly.has(quote.quoteId) };
   }
   async function readProtocolVersions():Promise<ProtocolVersions>{
     if(!clearing||!provider)return {leaderEpoch:1n,signerSetVersion:1n,policyVersion:1n,blockNumber:0,blockTimestamp:Math.floor(Date.now()/1_000)};
@@ -375,7 +382,7 @@ export function buildApi(options: ApiOptions = {}) {
     if(!parsed.success)return reply.code(400).send({error:"invalid quote request"});
     try {return quoteToWire((await createQuote(parsed.data)).quote);} catch(error){return reply.code(options.oracleSource||options.hedgeRiskSource?503:409).send({error:publicError(error,"quote rejected")});}
   });
-  app.post("/v1/close/quote",async(request,reply)=>{if(!admitQuoteWork(request,reply))return;const parsed=closeQuoteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid close quote request"});if(!clearing)return reply.code(503).send({error:"chain unavailable"});try{const account=getAddress(parsed.data.account),marketIndex=parsed.data.market==="BTC"?0:1,position=await clearing.positionOf(account,marketIndex),size=BigInt(position.size);if(size===0n)return reply.code(409).send({error:"position is already closed"});const side=size>0n?"sell":"buy",quote=(await createQuote({market:parsed.data.market,side,amount:"1"},true,-size,account)).quote;return quoteToWire(quote);}catch(error){return reply.code(503).send({error:publicError(error,"close quote rejected")});}});
+  app.post("/v1/close/quote",async(request,reply)=>{if(!admitQuoteWork(request,reply))return;const parsed=closeQuoteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid close quote request"});if(!clearing)return reply.code(503).send({error:"chain unavailable"});try{const account=getAddress(parsed.data.account),marketIndex=parsed.data.market==="BTC"?0:1,position=await clearing.positionOf(account,marketIndex),size=BigInt(position.size);if(size===0n)return reply.code(409).send({error:"position is already closed"});const side=size>0n?"sell":"buy",quote=(await createQuote({market:parsed.data.market,side,amount:"1"},true,-size,account)).quote;forcedReduceOnly.add(quote.quoteId);return quoteToWire(quote);}catch(error){return reply.code(503).send({error:publicError(error,"close quote rejected")});}});
   app.post("/v1/prepare",async(request,reply)=>{
     const parsed=intentRequestSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"invalid intent request"});
@@ -435,27 +442,27 @@ export function buildApi(options: ApiOptions = {}) {
       approval={intentHash,executionPrice:quote.expectedPrice,impactCharge:quote.impactCharge,fee:quote.fee,oracleReportHash,deadline:approvalDeadline,leaderEpoch:versions.leaderEpoch,signerSetVersion:versions.signerSetVersion,policyVersion:versions.policyVersion};
       const digest=hashApproval(domain,approval),approverPayload={domain:{...domain,chainId:domain.chainId.toString()},intent:intentToWire(intent),userSignature:parsed.data.userSignature,approval:approvalToWire(approval),quote:quoteToWire(quote),report,oracleAgeMs:Date.now()-quote.snapshot.observedAtMs};
       const grossItem:GrossReservation={market:intent.market as 0|1,baseDelta:intent.baseDelta,reduceOnly:intent.reduceOnly,deadline:Number(approval.deadline)};
-      let grossSnapshot:{blockNumber:number;blockTimestamp:number;books:[ExposureBook,ExposureBook];states:[{lastAsk:bigint;lastPriceTime:bigint},{lastAsk:bigint;lastPriceTime:bigint}];clock:Awaited<ReturnType<typeof finalizedClock>>}|undefined;
+      let grossSnapshot:{blockNumber:number;blockTimestamp:number;books:[ExposureBook,ExposureBook];states:[{aggregateBase:bigint;lastBid:bigint;lastAsk:bigint;lastPriceTime:bigint},{aggregateBase:bigint;lastBid:bigint;lastAsk:bigint;lastPriceTime:bigint}];netLimits:[bigint,bigint];backing:bigint;floor:bigint;clock:Awaited<ReturnType<typeof finalizedClock>>}|undefined;
       if(clearing&&provider){
         const blockNumber=Number(BigInt(await provider.send("eth_blockNumber",[]))),block=await provider.getBlock(blockNumber);if(!block)return reply.code(503).send({error:"gross reservation snapshot unavailable"});
-        const [btcBook,ethBook,btcState,ethState,clock]=await Promise.all([clearing.exposureState(0,{blockTag:blockNumber}),clearing.exposureState(1,{blockTag:blockNumber}),clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),finalizedClock(provider,blockNumber,block.timestamp)]);
-        grossSnapshot={blockNumber,blockTimestamp:block.timestamp,books:[btcBook,ethBook],states:[btcState,ethState],clock};
+        const [btcBook,ethBook,btcState,ethState,btcLimit,ethLimit,backing,floor,clock]=await Promise.all([clearing.exposureState(0,{blockTag:blockNumber}),clearing.exposureState(1,{blockTag:blockNumber}),clearing.markets(0,{blockTag:blockNumber}),clearing.markets(1,{blockTag:blockNumber}),clearing.marketLimitWord(0,{blockTag:blockNumber}),clearing.marketLimitWord(1,{blockTag:blockNumber}),clearing.makerBacking({blockTag:blockNumber}),clearing.baseRiskCapitalTarget({blockTag:blockNumber}),finalizedClock(provider,blockNumber,block.timestamp)]);
+        grossSnapshot={blockNumber,blockTimestamp:block.timestamp,books:[btcBook,ethBook],states:[btcState,ethState],netLimits:[BigInt(btcLimit),BigInt(ethLimit)],backing:BigInt(backing),floor:BigInt(floor),clock};
       }
       const releaseReservation=await acquireReservationLock();
       try{
       prune();
       if(pending.revision!==reservationRevision){if(++conflicts>=8)return reply.code(503).send({error:"admission inventory changed; request a fresh quote",retriable:true});attempt--;continue;}
       if(grossSnapshot){
-        const {blockNumber,blockTimestamp,books,states,clock}=grossSnapshot;
-        if(clock)finalizeGross(journal,grossReservations,clock.block,clock.timestamp,clock.hash);
+        const {blockNumber,blockTimestamp,books,states,netLimits,backing,floor,clock}=grossSnapshot;
+        if(clock)finalizeReservations(clock.block,clock.timestamp,clock.hash);
         const asks:[bigint,bigint]=[BigInt(states[0].lastAsk),BigInt(states[1].lastAsk)];asks[intent.market]=quote.snapshot.ask;
         const other=1-intent.market,otherState=states[other],priorGross=grossReservations.bounds(quote.quoteId)[other];if(priorGross.longBase+priorGross.shortBase>0n&&(Number(otherState.lastPriceTime)===0||blockTimestamp-Number(otherState.lastPriceTime)>15))return reply.code(503).send({error:"outstanding gross risk requires fresh cross-market price"});
-        if(!grossReservations.admit(quote.quoteId,grossItem,books,asks,blockNumber))return reply.code(409).send({error:"outstanding approvals exceed gross or side capacity"});
-      }else finalizeGross(journal,grossReservations,Math.floor(Date.now()/1000),Math.floor(Date.now()/1000));
+        const net:[bigint,bigint]=states.map(state=>BigInt(state.aggregateBase)*(BigInt(state.lastBid)+BigInt(state.lastAsk))/2n/BASE) as [bigint,bigint];
+        if(!grossReservations.admit(quote.quoteId,grossItem,books,asks,blockNumber,{net,netLimits,backing,floor}))return reply.code(409).send({error:"outstanding approvals exceed gross, net, stress, side or capital capacity"});
+      }else {const timestamp=Math.floor(Date.now()/1000);finalizeReservations(timestamp,timestamp);}
       if(!grossReservations.get(quote.quoteId)&&grossReservations.size>=(options.maxActiveQuotes??50_000))return reply.code(503).send({error:"gross reservation capacity reached"});
       // Persist and reserve before signatures can escape, even if the quorum
       // response is lost. Failed admission retains conservative risk to expiry.
-      journal?.exec("CREATE TABLE IF NOT EXISTS approval_artifacts(digest TEXT PRIMARY KEY,quote_id TEXT NOT NULL,payload TEXT NOT NULL,created_ms INTEGER NOT NULL)");
       journal?.exec("BEGIN IMMEDIATE");try{
       journal?.prepare("INSERT OR IGNORE INTO approval_artifacts VALUES(?,?,?,?)").run(digest,quote.quoteId,JSON.stringify(approverPayload),Date.now());
       journal?.prepare("INSERT INTO commitments VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, NULL, ?) ON CONFLICT(quote_id) DO UPDATE SET expires_ms=MAX(expires_ms,excluded.expires_ms),intent_json=excluded.intent_json,user_signature=excluded.user_signature,approval_json=excluded.approval_json,updated_ms=excluded.updated_ms").run(quote.quoteId,quote.market,quote.delta.toString(),Number(intent.deadline)*1_000,JSON.stringify(intentToWire(intent)),parsed.data.userSignature,JSON.stringify(approvalToWire(approval)),Date.now());
@@ -527,7 +534,7 @@ export function buildApi(options: ApiOptions = {}) {
       }catch(error){order.status="open";limitBook.add(order.orderId,order.market,order.side,order.intent.limitPrice,Number(order.intent.deadline)*1_000);order.updatedAtMs=Date.now();order.lastError=publicError(error,"execution unavailable");journal?.prepare("UPDATE resting_orders SET status='open',updated_ms=?,last_error=? WHERE order_id=?").run(order.updatedAtMs,order.lastError,order.orderId);}
     }}finally{checkingOrders=false;if(orderCheckQueued){orderCheckQueued=false;scheduleOrderCheck();}}
   }
-  app.addHook("onReady",async()=>{await sender?.reconcile();senderReconcileTimer=setInterval(()=>{if(sender&&!senderReconciliation)senderReconciliation=sender.reconcile().catch(()=>{}).finally(()=>{senderReconciliation=undefined;});},5000);senderReconcileTimer.unref();unsubscribeOracle=options.oracleSource?.subscribe?.(()=>{scheduleStreamPublish();scheduleOrderCheck();});await options.oracleSource?.start?.();orderReconcileTimer=setInterval(()=>scheduleOrderCheck(),30_000);orderReconcileTimer.unref();heartbeatTimer=setInterval(()=>{for(const client of marketClients)client.response.write(": heartbeat\n\n");},15_000);heartbeatTimer.unref();});
+  app.addHook("onReady",async()=>{if(recoveredCommitments.length){const versions=await readProtocolVersions();for(const recovered of recoveredCommitments)quoteVersions.set(recovered.quote.quoteId,versions);}await sender?.reconcile();senderReconcileTimer=setInterval(()=>{if(sender&&!senderReconciliation)senderReconciliation=sender.reconcile().catch(()=>{}).finally(()=>{senderReconciliation=undefined;});},5000);senderReconcileTimer.unref();unsubscribeOracle=options.oracleSource?.subscribe?.(()=>{scheduleStreamPublish();scheduleOrderCheck();});await options.oracleSource?.start?.();orderReconcileTimer=setInterval(()=>scheduleOrderCheck(),30_000);orderReconcileTimer.unref();heartbeatTimer=setInterval(()=>{for(const client of marketClients)client.response.write(": heartbeat\n\n");},15_000);heartbeatTimer.unref();});
   app.addHook("onClose",async()=>{if(senderReconcileTimer)clearInterval(senderReconcileTimer);if(orderTimer)clearTimeout(orderTimer);if(orderReconcileTimer)clearInterval(orderReconcileTimer);if(streamTimer)clearTimeout(streamTimer);if(heartbeatTimer)clearInterval(heartbeatTimer);unsubscribeOracle?.();for(const client of marketClients)client.response.end();await options.oracleSource?.close?.();await senderReconciliation;provider?.destroy();journal?.close();});
   return app;
 }

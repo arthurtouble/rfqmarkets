@@ -54,6 +54,7 @@ export async function handleRequest(request, env) {
 
   const serviceName = serviceForPath(url.pathname,request.method);
   if (serviceName) {
+    const rejected=await admitAtEdge(request,env);if(rejected)return rejected;
     const id = requestId(request);
     const service = env[serviceName];
     if (!service || typeof service.fetch !== "function") {
@@ -87,3 +88,4 @@ export default {
     return handleRequest(request, env);
   },
 };
+import {admitAtEdge} from '../runtime/edge-admission.mjs';

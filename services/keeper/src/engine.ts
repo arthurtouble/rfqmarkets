@@ -3,7 +3,7 @@ import {getAddress,keccak256,toUtf8Bytes} from 'ethers';
 export interface KeeperState {resolutionRequired:boolean;resolutionPricesReady:boolean;resolutionFinalized:boolean;resolutionCursor:bigint;sampleCounts:[number,number];priceTimes:[number,number];timestamp:number}
 export interface KeeperAccount {account:string;positions:{BTC:{size:string};ETH:{size:string}}}
 export interface KeeperProof {report:string;observedAt:number;validUntil:number}
-export type KeeperAction={kind:'refresh'|'sample';market:0|1;proof:KeeperProof}|{kind:'liquidate';market:0|1;account:string;proof:KeeperProof}|{kind:'process';cursor:bigint;maxAccounts:number};
+export type KeeperAction={kind:'refresh'|'sample';market:0|1;proof:KeeperProof}|{kind:'liquidate';market:0|1;account:string;proof:KeeperProof}|{kind:'process';cursor:bigint;maxAccounts:number}|{kind:'incident'};
 export interface KeeperDependencies {
  reconcile():Promise<boolean>;
  state():Promise<KeeperState>;
@@ -48,6 +48,7 @@ export class KeeperEngine {
   for(const market of [0,1] as const){if(state.timestamp-state.priceTimes[market]>5){await execute({kind:'refresh',market,proof:await proof(market)});if(state.resolutionRequired||this.stopped)return;}}
   if(writes>=this.limits.maxTransactions)return;
   if(state.priceTimes.some(time=>state.timestamp-time>15))throw new Error('keeper could not refresh cross-market prices');
+  await execute({kind:'incident'});if(state.resolutionRequired||this.stopped)return;
   const page=await this.deps.accounts(this.cursor,this.limits.accountsPerCycle);
   if(page.items.length>this.limits.accountsPerCycle)throw new Error('oversized keeper page');
   for(let index=0;index<page.items.length;index++){
