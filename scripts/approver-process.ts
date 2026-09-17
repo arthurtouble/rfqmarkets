@@ -1,6 +1,7 @@
 import { buildApprover } from "../services/approver/src/server.js";
+import {requiredEnv} from "./lib/env.js";
 
-const required=(name:string)=>{const value=process.env[name];if(!value)throw new Error(`missing ${name}`);return value;};
+const required=(name:string)=>requiredEnv(name,{allowPlaceholder:true});
 const rpcUrl=required("RFQ_RPC_URL");
 const oracleMode=(process.env.RFQ_ORACLE_MODE??"local") as "local"|"chainlink"|"pyth";
 const streams=oracleMode==="chainlink"&&process.env.RFQ_BTC_FEED_ID&&process.env.RFQ_ETH_FEED_ID?{feedIds:[process.env.RFQ_BTC_FEED_ID,process.env.RFQ_ETH_FEED_ID] as [string,string],feedDecimals:[Number(process.env.RFQ_BTC_FEED_DECIMALS??8),Number(process.env.RFQ_ETH_FEED_DECIMALS??8)] as [number,number]}:undefined;

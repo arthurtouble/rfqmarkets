@@ -38,6 +38,18 @@ The [hedging and operations design](HEDGING-OPERATIONS.md) defines separate venu
 
 Run the current local gate with `npm test`; run the fault report with `python3 -B simulator/fault_harness.py`.
 
+## Repository map
+
+- `contracts/` contains the upgradeable clearing and authorization contracts. The baseline contract under `contracts/test/` is intentionally independent so differential tests can detect behavior changes.
+- `packages/shared/` contains contract ABI fragments, typed authorization, pricing, risk, reservation, and process-boundary primitives shared by services and scripts.
+- `services/` contains the API leader, independent approvers, finalized-state indexer, hedger, keeper, and streaming gateway. API validation, market policy, and persisted server models are separate modules under `services/api/src/`.
+- `apps/` contains the customer trading UI, private operations UI, exit UI, documentation, and design-system specimen. UI entry points stay presentational; data transport and account calculations live beside them in focused modules.
+- `scripts/` contains deployment, qualification, smoke, load, evidence, and recovery commands. Common environment and HTTP/runtime helpers live in `scripts/lib/`.
+- `simulator/` contains the independent Python economic and fault models.
+- `deploy/` and `.github/workflows/` contain runtime packaging, edge configuration, and delivery automation.
+
+Use `npm run typecheck` and `npm run test:services` for the fast TypeScript gate, `npm run build:apps` for every UI artifact, and `npm test` for the complete release gate. `npm run build:public` builds only the customer UI and public documentation used by the Cloudflare delivery workflow.
+
 The executable product-system specimen lives at [`apps/design-system/index.html`](apps/design-system/index.html). Run `npm run dev:design-system` to review the typography, spacing, colors, controls, trading tables and interaction states that govern customer UI work.
 
 [The simplified design](SIMPLIFIED-DESIGN.md) supplies detailed API and recovery discussion. [The earlier system design](SYSTEM-DESIGN.md) retains financial background, with its superseded service layout clearly marked. The consolidated overview takes precedence where earlier documents differ.

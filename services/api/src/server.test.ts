@@ -72,11 +72,13 @@ test("two distinct approvers sign and same-direction reservations worsen the nex
 
 test("one unavailable approver still leaves quorum", async () => {
   const healthy = apps.slice(0,2).map((_,index) => ({ url:`http://approver-${index}`, token:`transport-${index}` }));
-  const degraded = buildApi({ approvers:[...healthy,{url:"http://approver-99",token:"offline"}], fetchImpl:routedFetch });
+  const degraded = buildApi({ approvers:[...healthy,{url:"http://approver-99",token:"offline"}], fetchImpl:routedFetch,operationsToken:"ops" });
   await degraded.ready();
   const quote = (await degraded.inject({method:"POST",url:"/v1/quote",payload:{market:"ETH",side:"sell",amount:"500"}})).json();
   const result = await approveQuote(degraded,quote);
   assert.equal(result.statusCode, 200, result.body);
+  const metrics=(await degraded.inject({url:"/internal/metrics",headers:{authorization:"Bearer ops"}})).json();
+  assert.deepEqual(metrics.quorum,{attempts:1,failures:0,invalidResponses:0});
   await degraded.close();
 });
 

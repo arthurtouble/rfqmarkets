@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Contract, JsonRpcProvider, Wallet } from "ethers";
+import { postJson, randomNonce } from "./lib/http.js";
 
 const api=process.env.RFQ_API_URL??"http://127.0.0.1:4100",count=Number(process.env.RFQ_SETTLEMENT_CLIENTS??24);
 const deployment=JSON.parse(readFileSync(".local-state/deployment.json","utf8")) as {rpcUrl:string;clearingAddress:string;tokenAddress:string};
 const provider=new JsonRpcProvider(deployment.rpcUrl),clearingArtifact=JSON.parse(readFileSync("artifacts/RFQClearing.json","utf8")),tokenArtifact=JSON.parse(readFileSync("artifacts/MockUSDC.json","utf8"));
 const clearing=new Contract(deployment.clearingAddress,clearingArtifact.abi,provider),token=new Contract(deployment.tokenAddress,tokenArtifact.abi,provider);
-const nonce=()=>BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString();
-async function post(path:string,body:unknown){const response=await fetch(`${api}${path}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}),payload=await response.json();return {response,payload};}
+const post=(path:string,body:unknown)=>postJson(api,path,body);
 
 const startingAggregate=[BigInt((await clearing.markets(0)).aggregateBase),BigInt((await clearing.markets(1)).aggregateBase)];
-const clients=Array.from({length:count},(_,index)=>({wallet:Wallet.createRandom(),market:index%2===0?"BTC":"ETH",side:index%4<2?"buy":"sell",amount:String(100+(index%5)*25),nonce:nonce()}));
+const clients=Array.from({length:count},(_,index)=>({wallet:Wallet.createRandom(),market:index%2===0?"BTC":"ETH",side:index%4<2?"buy":"sell",amount:String(100+(index%5)*25),nonce:randomNonce()}));
 // Fund accounts before the latency-sensitive trade phase. Local auto-funding is
 // intentionally implemented as two extra sponsored transactions and would test
 // fixture setup throughput rather than settlement throughput here.
@@ -38,7 +38,7 @@ const retry=await post("/v1/approve",accepted[0].payload);assert(retry.response.
 const closed=await Promise.all(accepted.map(async item=>{
   for(let attempt=0;attempt<4;attempt++){
     const closeQuote=await post("/v1/close/quote",{account:item.wallet.address,market:item.market});assert(closeQuote.response.ok,JSON.stringify(closeQuote.payload));
-    const closeNonce=nonce(),preparedClose=await post("/v1/prepare",{quoteId:closeQuote.payload.quoteId,account:item.wallet.address,nonce:closeNonce,reduceOnly:true});assert(preparedClose.response.ok,JSON.stringify(preparedClose.payload));
+    const closeNonce=randomNonce(),preparedClose=await post("/v1/prepare",{quoteId:closeQuote.payload.quoteId,account:item.wallet.address,nonce:closeNonce,reduceOnly:true});assert(preparedClose.response.ok,JSON.stringify(preparedClose.payload));
     const signature=await item.wallet.signTypedData(preparedClose.payload.domain,preparedClose.payload.types,preparedClose.payload.intent),result=await post("/v1/approve",{quoteId:closeQuote.payload.quoteId,account:item.wallet.address,nonce:closeNonce,reduceOnly:true,userSignature:signature});
     if(result.response.ok)return {...item,closeNonce,result};
     assert.match(String(result.payload.error),/price moved|inclusion|settlement/);

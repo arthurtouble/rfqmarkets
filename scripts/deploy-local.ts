@@ -19,8 +19,8 @@ const clearingInterface=new Interface(artifact("RFQClearing").abi);
 const init=clearingInterface.encodeFunctionData("initialize",[await token.getAddress(),await oracle.getAddress(),ownerAddress,emergencyAddress,approvers.map(item=>item.address),10_000_000_000_000n]);
 const proxy=await deploy("TestProxy",[await implementation.getAddress(),ownerAddress,init]); const clearing=new Contract(await proxy.getAddress(),artifact("RFQClearing").abi,deployer);
 const adminWord=await provider.getStorage(await proxy.getAddress(),"0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"),proxyAdminAddress=`0x${adminWord.slice(-40)}`;
-await (await token.mint(ownerAddress,12_000_000_000_000n)).wait(); await (await token.approve(await clearing.getAddress(),MaxUint256)).wait();
-await (await clearing.fundMaker(10_000_000_000_000n)).wait(); await (await clearing.fundInsurance(2_000_000_000_000n)).wait();
+await (await token.mint(ownerAddress,15_000_000_000_000n)).wait(); await (await token.approve(await clearing.getAddress(),MaxUint256)).wait();
+await (await clearing.fundMaker(12_000_000_000_000n)).wait(); await (await clearing.fundInsurance(2_000_000_000_000n)).wait();
 await (await deployer.sendTransaction({to:sponsorWallet.address,value:parseEther("5")})).wait();
 await (await deployer.sendTransaction({to:devWallet.address,value:parseEther("2")})).wait();
 await (await token.mint(devWallet.address,5_000_000_000_000n)).wait();
@@ -28,4 +28,4 @@ await (await (token.connect(devSigner) as any).approve(await clearing.getAddress
 await (await (clearing.connect(devSigner) as any).deposit(5_000_000_000_000n)).wait();
 const deployment={deploymentId:crypto.randomUUID(),rpcUrl,chainId:chain.chainId.toString(),clearingAddress:await clearing.getAddress(),proxyAdminAddress,tokenAddress:await token.getAddress(),oracleAddress:await oracle.getAddress(),riskMathAddress:await riskMath.getAddress(),signatureVerifierAddress:await signatureVerifier.getAddress(),implementationAddress:await implementation.getAddress(),deploymentBlock:await provider.getBlockNumber(),governanceAddress:ownerAddress,emergencyAddress,approvers:approvers.map(item=>({address:item.address,privateKey:item.privateKey})),sponsorPrivateKey:sponsorWallet.privateKey,devWallet:{account:devWallet.address,privateKey:devWallet.privateKey},deployedAt:new Date().toISOString()};
 mkdirSync(resolve(".local-state"),{recursive:true}); const path=resolve(".local-state","deployment.json"); writeFileSync(path,JSON.stringify(deployment,null,2),{mode:0o600}); chmodSync(path,0o600);
-console.log(JSON.stringify({chainId:deployment.chainId,clearingAddress:deployment.clearingAddress,proxyAdminAddress:deployment.proxyAdminAddress,tokenAddress:deployment.tokenAddress,oracleAddress:deployment.oracleAddress,devWallet:deployment.devWallet.account,devCollateral:"5000000 USDC",makerBacking:"10000000 USDC",insurance:"2000000 USDC",approvers:deployment.approvers.map(item=>item.address)},null,2));
+console.log(JSON.stringify({chainId:deployment.chainId,clearingAddress:deployment.clearingAddress,proxyAdminAddress:deployment.proxyAdminAddress,tokenAddress:deployment.tokenAddress,oracleAddress:deployment.oracleAddress,devWallet:deployment.devWallet.account,devCollateral:"5000000 USDC",makerBacking:"12000000 USDC",insurance:"2000000 USDC",approvers:deployment.approvers.map(item=>item.address)},null,2));

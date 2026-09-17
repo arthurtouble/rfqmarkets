@@ -1,18 +1,67 @@
 :root {
-  --font-ui: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-  --ink-0: #05070d; --ink-1: #090d16; --ink-2: #0e1421; --ink-3: #172033;
-  --line: #26324a; --line-strong: #405174;
-  --text: #f7f9ff; --text-soft: #aeb9ce; --text-dim: #748099;
-  --brand: #7185ff; --brand-strong: #9ba8ff;
-  --buy: #00e6b8; --buy-surface: #073b34;
-  --sell: #ff3f69; --sell-surface: #470f22;
-  --warn: #ffc34d; --danger: #ff355f;
-  --radius-sm: 0; --radius-md: 0; --radius-lg: 0;
-  --shadow: 0 18px 48px rgba(0, 0, 0, .32);
-  color-scheme: dark; font-family: var(--font-ui); font-synthesis: none;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  --ink-0: #000000;
+  --ink-1: #1d1d1f;
+  --ink-2: #2c2c2e;
+  --ink-3: #3a3a3c;
+  --text: #f5f5f7;
+  --text-soft: #d2d2d7;
+  --text-dim: #a1a1a6;
+  --control: #2c2c2e;
+  --control-hover: #3a3a3c;
+  --overlay: rgba(29, 29, 31, .84);
+  --line: transparent;
+  --line-strong: transparent;
+  --brand: #2997ff;
+  --brand-strong: #64b5ff;
+  --buy: #4ed59d;
+  --buy-strong: #72e0b1;
+  --buy-surface: #113b2c;
+  --sell: #ff697b;
+  --sell-strong: #ff8b99;
+  --sell-surface: #4a1d25;
+  --warn: #ffd36a;
+  --warn-surface: #3d3013;
+  --radius-sm: 12px;
+  --radius-md: 18px;
+  --radius-lg: 24px;
+  --shadow: 0 22px 60px rgba(0, 0, 0, .48);
+  --ease: cubic-bezier(.22, 1, .36, 1);
+  color-scheme: dark;
+  font-family: var(--font-ui);
+  font-synthesis: none;
 }
-::selection { color: var(--ink-0); background: var(--brand); }
-:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-button { transition: border-color .12s ease, background .12s ease, color .12s ease, transform .12s ease; }
-button:active { transform: translateY(1px); }
+
+:root[data-theme="light"] {
+  --ink-0: #ffffff;
+  --ink-1: #f5f5f7;
+  --ink-2: #e8e8ed;
+  --ink-3: #d2d2d7;
+  --text: #1d1d1f;
+  --text-soft: #424245;
+  --text-dim: #6e6e73;
+  --control: #ffffff;
+  --control-hover: #e8e8ed;
+  --overlay: rgba(255, 255, 255, .82);
+  --brand: #0071e3;
+  --brand-strong: #0077ed;
+  --buy: #16835b;
+  --buy-strong: #0b6f4d;
+  --buy-surface: #e8f5ef;
+  --sell: #d94152;
+  --sell-strong: #bf3445;
+  --sell-surface: #faebed;
+  --warn: #9a6700;
+  --warn-surface: #fff4d6;
+  --shadow: 0 18px 50px rgba(0, 0, 0, .1);
+  color-scheme: light;
+}
+
+::selection { color: #fff; background: var(--brand); }
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--brand) 44%, transparent); outline-offset: 2px; }
+button, input, select, summary { -webkit-tap-highlight-color: transparent; }
+button { transition: background .28s var(--ease), color .28s var(--ease), transform .28s var(--ease), opacity .28s var(--ease); }
+button:active { transform: scale(.98); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }

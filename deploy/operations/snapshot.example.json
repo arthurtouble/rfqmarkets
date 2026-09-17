@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "apiUrl": "https://api.example.com",
+  "indexerUrl": "https://indexer.example.com",
+  "keeperUrl": "https://keeper.example.com",
+  "hedgerUrl": "https://hedger.example.com",
+  "approverUrls": [
+    "https://approver-a.example.com",
+    "https://approver-b.example.com",
+    "https://approver-c.example.com"
+  ],
+  "rpcUrl": "https://base-rpc.example.com",
+  "clearingAddress": "0x0000000000000000000000000000000000000001",
+  "sponsorAddresses": [
+    "0x0000000000000000000000000000000000000002",
+    "0x0000000000000000000000000000000000000003"
+  ],
+  "sponsorBurnWeiPerHour": "1000000000000000",
+  "backupManifests": [
+    "/secure/backups/api/manifest.json",
+    "/secure/backups/approver-a/manifest.json",
+    "/secure/backups/approver-b/manifest.json",
+    "/secure/backups/approver-c/manifest.json",
+    "/secure/backups/indexer/manifest.json",
+    "/secure/backups/hedger/manifest.json",
+    "/secure/backups/keeper/manifest.json"
+  ]
+}

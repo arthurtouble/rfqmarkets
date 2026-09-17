@@ -35,7 +35,7 @@ test("database failure rolls back headers, events, accounts and finalized cursor
   try{
     await app.ready();const db=new DatabaseSync(path);db.exec("CREATE TRIGGER fail_accounts BEFORE INSERT ON accounts BEGIN SELECT RAISE(ABORT,'injected write failure'); END");provider.failReads=false;
     assert.equal((await app.inject({method:"GET",url:"/health"})).json().ok,false);
-    for(const table of ["blocks","activity","accounts","finalized_accounts","metadata"])assert.equal(db.prepare(`SELECT count(*) n FROM ${table}`).get()!.n,0,table);
+    for(const table of ["blocks","activity","accounts","finalized_accounts"])assert.equal(db.prepare(`SELECT count(*) n FROM ${table}`).get()!.n,0,table);assert.equal(db.prepare("SELECT value FROM metadata WHERE key='activity_projection_version'").get()!.value,"2");assert.equal(db.prepare("SELECT value FROM metadata WHERE key='finalized_cursor'").get(),undefined);
     db.exec("DROP TRIGGER fail_accounts");assert.equal((await app.inject({method:"GET",url:"/health"})).json().ok,true);assert.equal(db.prepare("SELECT max(number) n FROM blocks").get()!.n,10);db.close();
   }finally{await app.close();provider.destroy();rmSync(directory,{recursive:true,force:true});}
 });
