@@ -461,6 +461,7 @@ export function buildApi(options: ApiOptions = {}) {
         const net:[bigint,bigint]=states.map(state=>BigInt(state.aggregateBase)*(BigInt(state.lastBid)+BigInt(state.lastAsk))/2n/BASE) as [bigint,bigint];
         const capitalMarket={...states[intent.market],lastBid:quote.snapshot.bid,lastAsk:quote.snapshot.ask,lastPriceTime:BigInt(Math.floor(quote.snapshot.observedAtMs/1000))};
         grossItem={...grossItem,makerDebit:pendingMakerDebit({position,market:capitalMarket,delta:intent.baseDelta,executionPrice:approval.executionPrice,timestamp:BigInt(blockTimestamp),deadline:approval.deadline,netLimit:netLimits[intent.market]})};
+        const existingGross=grossReservations.get(quote.quoteId);if(existingGross&&existingGross.makerDebit!==grossItem.makerDebit)return reply.code(503).send({error:"approval risk changed; request a fresh quote",retriable:true});
         if(!grossReservations.admit(quote.quoteId,grossItem,books,asks,blockNumber,{net,netLimits,backing,floor}))return reply.code(409).send({error:"outstanding approvals exceed gross, net, stress, side or capital capacity"});
       }else {const timestamp=Math.floor(Date.now()/1000);finalizeReservations(timestamp,timestamp);}
       if(!grossReservations.get(quote.quoteId)&&grossReservations.size>=(options.maxActiveQuotes??50_000))return reply.code(503).send({error:"gross reservation capacity reached"});
