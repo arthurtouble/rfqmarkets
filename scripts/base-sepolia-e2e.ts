@@ -7,6 +7,7 @@ import { buildApprover } from "../services/approver/src/server.js";
 import { buildApi } from "../services/api/src/server.js";
 import { PythHermesSource } from "../services/api/src/oracle.js";
 import { loadDeploymentConfig } from "./deployment-config.js";
+import { btcRetryDelay, QualificationResponseError, retryQualification, transientReadError } from "./qualification-retry.js";
 
 type Identity={address:string;privateKey:string};
 type Manifest={chainId:string;contracts:{clearingProxy:string;usdc:string};feedIds:[string,string]};
@@ -24,6 +25,8 @@ const identities=JSON.parse(readFileSync(resolve(".local-state/testnet-identitie
 const directory=mkdtempSync(join(tmpdir(),"rfq-pyth-e2e-")),apps:Array<{close():Promise<void>}>=[],approvers:Array<{url:string;token:string}>=[];
 const wallet=new Wallet(identities.sponsor.privateKey);
 let api:Injectable|undefined;
+const positionProvider=new JsonRpcProvider(config.rpcUrl,undefined,{batchMaxCount:1});
+const positionContract=new Contract(manifest.contracts.clearingProxy,["function positionOf(address,uint8) view returns(int256 size,uint256 entryPrice,int256 lastFundingIndex)"],positionProvider);
 
 async function request(path:string,body?:Record<string,unknown>){
   assert(api,"API unavailable");
@@ -32,13 +35,11 @@ async function request(path:string,body?:Record<string,unknown>){
 }
 async function post(path:string,body:Record<string,unknown>){
   const {response,payload}=await request(path,body);
-  assert.equal(response.statusCode,200,`${path}: ${JSON.stringify(payload)}`);
+  if(response.statusCode!==200)throw new QualificationResponseError(path,response.statusCode,payload);
   return payload;
 }
 async function btcSize(){
-  const provider=new JsonRpcProvider(config.rpcUrl,undefined,{batchMaxCount:1});
-  const clearing=new Contract(manifest.contracts.clearingProxy,["function positionOf(address,uint8) view returns(int256 size,uint256 entryPrice,int256 lastFundingIndex)"],provider);
-  return BigInt((await clearing.positionOf(wallet.address,0)).size);
+  return retryQualification(async()=>BigInt((await positionContract.positionOf(wallet.address,0)).size),error=>transientReadError(error)?5_000:null);
 }
 async function waitForBtc(open:boolean){
   for(let attempt=0;attempt<20;attempt++){
@@ -48,19 +49,16 @@ async function waitForBtc(open:boolean){
   }
   throw new Error(`BTC position did not become ${open?"open":"flat"} within 10 seconds`);
 }
-const priceMoved=(error:unknown)=>String(error).includes("price moved beyond signed protection");
 async function closeBtc(){
   if(await btcSize()===0n)return undefined;
-  let last:unknown;
-  for(let attempt=1;attempt<=12;attempt++)try{
+  return retryQualification(async()=>{
     const quote=await post("/v1/close/quote",{account:wallet.address,market:"BTC"}),nonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString(),prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:wallet.address,nonce,reduceOnly:true}),userSignature=await wallet.signTypedData(prepared.domain,prepared.types,prepared.intent),closed=await post("/v1/approve",{quoteId:quote.quoteId,account:wallet.address,nonce,userSignature});
     await waitForBtc(false);return closed;
-  }catch(error){last=error;if(!priceMoved(error)||attempt===12)throw error;await new Promise(resolve=>setTimeout(resolve,250));}
-  throw last;
+  },btcRetryDelay);
 }
-async function openBtc(){let last:unknown;for(let attempt=1;attempt<=12;attempt++)try{
+async function openBtc(){return retryQualification(async()=>{
   const quote=await post("/v1/quote",{market:"BTC",side:"buy",amount:"1"}),nonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString(),prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:wallet.address,nonce}),signature=await wallet.signTypedData(prepared.domain,prepared.types,prepared.intent),executed=await post("/v1/approve",{quoteId:quote.quoteId,account:wallet.address,nonce,userSignature:signature});await waitForBtc(true);return executed;
- }catch(error){last=error;if(!priceMoved(error)||attempt===12)throw error;await new Promise(resolve=>setTimeout(resolve,250));}throw last;
+ },btcRetryDelay);
 }
 
 try{
@@ -84,4 +82,5 @@ try{
 }finally{
   if(api)await closeBtc().catch(error=>console.error(`cleanup failed: ${String(error)}`));
   await Promise.allSettled(apps.reverse().map(app=>app.close()));
+  positionProvider.destroy();
 }

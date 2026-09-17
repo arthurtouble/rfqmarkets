@@ -8,7 +8,7 @@ import { Contract, JsonRpcProvider, Wallet } from "ethers";
 type Identity={address:string;privateKey:string};
 type Account={positions:{ETH:{size:string}}};
 type HedgeOrder={client_id:string;market:string;base_delta:string;status:string;venue_order_id:string|null;filled_base:string;reason:string|null;created_ms:number};
-type HedgeStatus={healthy:boolean;error?:string;positions:{ETH:string};markets:{ETH:{customerBase:string;venueBase:string;gapNotional:string}};orders:HedgeOrder[]};
+type HedgeStatus={healthy:boolean;error?:string;positions:Record<"BTC"|"ETH",string>;markets:Record<"BTC"|"ETH",{customerBase:string;venueBase:string;gapNotional:string}>;orders:HedgeOrder[]};
 type HedgeRisk={healthy:boolean;markets:{ETH:{mode:"normal"|"guarded"|"reduce_only"}}};
 
 const required=(name:string)=>{const value=process.env[name];if(!value||value.startsWith("replace_"))throw new Error(`missing ${name}`);return value;};
@@ -76,11 +76,13 @@ try{
 
   const close=await closeEth();assert.match(close.transaction.hash,/^0x[0-9a-f]{64}$/i);
   const flat=await waitFor("finalized close and venue unwind",()=>json(hedger+"/v1/status") as Promise<HedgeStatus>,status=>status.healthy&&status.markets.ETH.customerBase==="0"&&status.positions.ETH==="0");
+  assert.equal(flat.markets.BTC.customerBase,"0","BTC customer exposure remains after cycle");
+  assert.equal(flat.positions.BTC,"0","BTC venue exposure remains after cycle");
   const orders=flat.orders.filter(order=>order.market==="ETH"&&order.created_ms>=started);
   const closingOrders=orders.filter(order=>order.status==="filled"&&BigInt(order.base_delta)<0n&&order.reason===null);
   assert(closingOrders.length>0,"no filled closing hedge was journaled");assert.equal(new Set(orders.map(order=>order.client_id)).size,orders.length,"duplicate hedge client IDs");assert(orders.every(order=>order.venue_order_id),"a hedge lacks a venue order ID");
   const indexed=await waitFor("indexed flat account",()=>json(`${indexer}/v1/account/${wallet.address}`) as Promise<Account>,account=>account.positions.ETH.size==="0");assert.equal(indexed.positions.ETH.size,"0");
-  console.log(JSON.stringify({verified:true,market:"ETH",customerNotionalUsdc:"11.5",tradeTransaction:execution.transaction.hash,closeTransaction:close.transaction.hash,openingHedgeOrders:openingOrders.map(order=>({clientId:order.client_id,venueOrderId:order.venue_order_id,filledBase:order.filled_base})),closingHedgeOrders:closingOrders.map(order=>({clientId:order.client_id,venueOrderId:order.venue_order_id,filledBase:order.filled_base})),finalCustomerBase:flat.markets.ETH.customerBase,finalVenueBase:flat.positions.ETH},null,2));
+  console.log(JSON.stringify({verified:true,market:"ETH",customerNotionalUsdc:"11.5",tradeTransaction:execution.transaction.hash,closeTransaction:close.transaction.hash,openingHedgeOrders:openingOrders.map(order=>({clientId:order.client_id,venueOrderId:order.venue_order_id,filledBase:order.filled_base})),closingHedgeOrders:closingOrders.map(order=>({clientId:order.client_id,venueOrderId:order.venue_order_id,filledBase:order.filled_base})),finalCustomerBase:flat.markets.ETH.customerBase,finalVenueBase:flat.positions.ETH,finalBtcCustomerBase:flat.markets.BTC.customerBase,finalBtcVenueBase:flat.positions.BTC},null,2));
 }finally{
   try{const account=await json(`${api}/v1/account/${wallet.address}`) as Account;if(account.positions.ETH.size!=="0"){await closeEth();await waitFlat();}}catch(error){console.error(`cleanup warning: ${String(error)}`);}
   await stop(child);
