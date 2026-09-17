@@ -1,1 +1,29 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https:; object-src 'none'; base-uri 'none'"><title>RFQ direct exits</title></head><body><main><h1>RFQ direct exits</h1><p>Owner transactions go directly to the settlement contract. Your wallet pays gas. Withdrawals require sufficient margin; position closes require trading to be paused. Claims require finalized resolution.</p><p id="deployment"></p><button id="connect">Connect and read account</button><pre id="state"></pre><label>USDC amount <input id="amount" inputmode="decimal" value="1"></label><button id="withdraw">Withdraw</button><label>Trade nonce <input id="nonce" value="0"></label><button id="cancel">Cancel nonce</button><label>Session address <input id="session"></label><button id="revoke">Revoke session</button><label>Market <select id="market"><option value="0">BTC</option><option value="1">ETH</option></select></label><label>Fresh oracle proof (hex) <textarea id="proof"></textarea></label><button id="close">Close paused position</button><button id="claim">Claim resolution payment</button><p role="status" id="status"></p></main><script type="module" src="/src/main.ts"></script></body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https:; object-src 'none'; base-uri 'none'">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <title>RFQ Markets · Direct settlement</title>
+  </head>
+  <body>
+    <header class="topbar"><a class="brand" href="/" aria-label="RFQ Markets home"><i></i>RFQ Markets</a><span class="mode">Direct settlement</span></header>
+    <main>
+      <section class="intro"><p class="eyebrow">Independent recovery path</p><h1>Manage your account directly.</h1><p>These transactions go from your wallet to the settlement contract. Use this page when the trading application is unavailable or the protocol is paused.</p><div id="deployment" class="deployment"></div></section>
+      <section class="connection card"><div><span class="label">Wallet</span><strong id="wallet">Not connected</strong><small id="network">Connect to inspect your onchain account.</small></div><div class="button-row"><button id="refresh" class="secondary" disabled>Refresh</button><button id="connect">Connect wallet</button></div></section>
+      <section class="account card" aria-labelledby="account-title"><div class="section-heading"><div><span class="label">Onchain state</span><h2 id="account-title">Account overview</h2></div><span id="protocol-state" class="pill">Unavailable</span></div><div class="metrics"><div><span>Collateral</span><strong id="collateral">—</strong></div><div><span>Resolution claim</span><strong id="claim-value">—</strong></div><div><span>BTC position</span><strong id="btc-position">—</strong><small id="btc-entry">Entry —</small></div><div><span>ETH position</span><strong id="eth-position">—</strong><small id="eth-entry">Entry —</small></div></div></section>
+      <section class="actions">
+        <article class="card"><div class="action-copy"><h2>Withdraw collateral</h2><p>Available only when the account remains above its required margin.</p></div><label for="amount">Amount</label><div class="field"><input id="amount" inputmode="decimal" autocomplete="off" value="1"><span>USDC</span></div><button id="withdraw" disabled>Withdraw to wallet</button></article>
+        <article class="card"><div class="action-copy"><h2>Cancel an authorization</h2><p>Permanently invalidate a signed trade nonce.</p></div><label for="nonce">Trade nonce</label><input id="nonce" inputmode="numeric" autocomplete="off" value="0"><button id="cancel" disabled>Cancel nonce</button></article>
+        <article class="card"><div class="action-copy"><h2>Revoke a session</h2><p>Disable a delegated quick-trading address immediately.</p></div><label for="session">Session address</label><input id="session" autocomplete="off" placeholder="0x…"><button id="revoke" disabled>Revoke session</button></article>
+        <article class="card critical"><div class="action-copy"><h2>Close during a pause</h2><p>Closes the full selected position at the verified directional oracle price. An oracle proof is required.</p></div><label for="market">Position</label><select id="market"><option value="0">BTC-PERP</option><option value="1">ETH-PERP</option></select><label for="proof">Fresh oracle proof</label><textarea id="proof" spellcheck="false" placeholder="0x…"></textarea><button id="close" disabled>Close paused position</button></article>
+        <article class="card resolution"><div class="action-copy"><h2>Claim resolution payment</h2><p>Available after protocol resolution is finalized and your claim is calculated.</p></div><button id="claim" disabled>Claim payment</button></article>
+      </section>
+      <div id="status" role="status" aria-live="polite">Connect a wallet to begin.</div>
+      <p class="footnote">Verify the chain and settlement address above before signing. Your wallet pays network gas.</p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

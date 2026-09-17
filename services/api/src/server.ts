@@ -30,6 +30,7 @@ import { QuoteAdmission } from "./admission.js";
 import {validOwnerSignature} from "./owner-signature.js";
 import {archiveApiCommitments,initializeApiRecoveryJournal,restoreApiCommitments,type RecoveredCommitment} from "./recovery.js";
 import {actionBaseSchema,approvalRequestSchema,cancelExecuteSchema,closeExecuteSchema,closePrepareSchema,closeQuoteSchema,depositExecuteSchema,depositQuoteSchema,intentRequestSchema,orderPlaceSchema,orderPrepareSchema,sessionExecuteSchema,sessionPrepareSchema,withdrawalExecuteSchema,withdrawalPrepareSchema} from "./schemas.js";
+import {partialCloseDelta} from "./close-quote.js";
 import {abs,decodeLimits,DEFAULT_MARKET_LIMIT,DEFAULT_TRADE_LIMIT,errorText,quoteSpread,RATE,shadowQuoteSpread,staleOracleFailure,YEAR} from "./market-policy.js";
 import type {DepositRoute,ProtocolVersions,RestingOrder} from "./server-model.js";
 
@@ -92,6 +93,7 @@ export function buildApi(options: ApiOptions = {}) {
   const quoteExpiries=new ExpiryIndex(),preparedOrderExpiries=new ExpiryIndex();
   const quoteReports = new Map<string,{report:string;validUntil:number}>();
   const approvalQuorums=new Map<string,Promise<PromiseSettledResult<{digest:string;signer:string;signature:string}>[]>>();
+  const quorumTelemetry={attempts:0,failures:0,invalidResponses:0};
   const quoteVersions = new Map<string,ProtocolVersions>();
   const quoteBindings = new Map<string,{account:string;nonce:string}>();
   const preparedIntents=new Map<string,TradeIntent>();
@@ -161,14 +163,15 @@ export function buildApi(options: ApiOptions = {}) {
   }
   function collectApprovals(digest:string,payload:unknown){
     const existing=approvalQuorums.get(digest);if(existing)return existing;
+    quorumTelemetry.attempts++;
     const job=firstQuorum((options.approvers??[]).map(async approver=>{
       const response=await fetchImpl(`${approver.url}/approve`,{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${approver.token}`},body:JSON.stringify(payload),signal:AbortSignal.timeout(options.approverTimeoutMs??1_000)});
       if(!response.ok)throw new Error(`approver ${response.status}: ${await response.text()}`);
       const result=await response.json() as {digest:string;signer:string;signature:string};
-      if(result.digest!==digest||recoverAddress(digest,result.signature).toLowerCase()!==result.signer.toLowerCase())throw new Error("invalid approver response");
-      if(clearing&&!await clearing.isApprover(result.signer))throw new Error("signer is not a current approver");
+      if(result.digest!==digest||recoverAddress(digest,result.signature).toLowerCase()!==result.signer.toLowerCase()){quorumTelemetry.invalidResponses++;throw new Error("invalid approver response");}
+      if(clearing&&!await clearing.isApprover(result.signer)){quorumTelemetry.invalidResponses++;throw new Error("signer is not a current approver");}
       return result;
-    }),result=>result.signer.toLowerCase()).then(results=>{if(new Set(results.flatMap(item=>item.status==="fulfilled"?[item.value.signer.toLowerCase()]:[])).size<2)approvalQuorums.delete(digest);return results;});
+    }),result=>result.signer.toLowerCase()).then(results=>{if(new Set(results.flatMap(item=>item.status==="fulfilled"?[item.value.signer.toLowerCase()]:[])).size<2){quorumTelemetry.failures++;approvalQuorums.delete(digest);}return results;});
     // Successful immutable approvals are safe to reuse for idempotent client
     // retries. Bound the cache independently of active quote capacity.
     if(approvalQuorums.size>=100_000)approvalQuorums.delete(approvalQuorums.keys().next().value!);
@@ -268,7 +271,7 @@ export function buildApi(options: ApiOptions = {}) {
     }finally{streamPublishing=false;if(streamPublishQueued){streamPublishQueued=false;scheduleStreamPublish();}}
   }
 
-  const operationalSnapshot=()=>({grossReservations:{active:grossReservations.size,capacity:options.maxActiveQuotes??50_000,finalizedBlock:grossReservations.finalizedBlock,finalizedTimestamp:grossReservations.finalizedTimestamp},quoteModel:{version:"adaptive-v1",restoredPaidFills:flowRisk.entries().length,markets:Object.fromEntries((["BTC","ETH"] as const).map(market=>[market,{toxicityScoreBps:flowRisk.score(market,prices[market]),volatility:prices[market].volatility??null}]))},shadowModel:shadowTelemetry.snapshot(),streams:{connections:marketClients.size,eventsSent:streamSequence},firmQuotes:{active:quotes.size,capacity:options.maxActiveQuotes??50_000},orders:{active:activeOrderCount(),indexed:limitBook.size,capacity:options.maxRestingOrders??100_000},sender:sender?.status(),latency:runtimeMetrics.snapshot()});
+  const operationalSnapshot=()=>({grossReservations:{active:grossReservations.size,capacity:options.maxActiveQuotes??50_000,finalizedBlock:grossReservations.finalizedBlock,finalizedTimestamp:grossReservations.finalizedTimestamp},quoteModel:{version:"adaptive-v1",restoredPaidFills:flowRisk.entries().length,markets:Object.fromEntries((["BTC","ETH"] as const).map(market=>[market,{toxicityScoreBps:flowRisk.score(market,prices[market]),volatility:prices[market].volatility??null}]))},shadowModel:shadowTelemetry.snapshot(),streams:{connections:marketClients.size,eventsSent:streamSequence},firmQuotes:{active:quotes.size,capacity:options.maxActiveQuotes??50_000},orders:{active:activeOrderCount(),indexed:limitBook.size,capacity:options.maxRestingOrders??100_000},sender:sender?.status(),quorum:{...quorumTelemetry},latency:runtimeMetrics.snapshot()});
   app.get("/health",async()=>({ok:!sender?.status().some(row=>["signed","submitted","ambiguous","reorged"].includes(String(row.status))),role:"leader",epoch:(clearing?await clearing.leaderEpoch():1n).toString(),chain:options.chain?{chainId:domain.chainId.toString(),clearingAddress:domain.verifyingContract}:null,marketData:options.oracleSource?.status?.()??{source:"configured"}}));
   app.get("/internal/metrics",async(request,reply)=>{if(!options.operationsToken||request.headers.authorization!==`Bearer ${options.operationsToken}`)return reply.code(401).send({error:"unauthorized"});return operationalSnapshot();});
   app.get("/v1/config",async()=>({chainId:`0x${domain.chainId.toString(16)}`,chainName:options.chain?.devFund?"RFQ Local":domain.chainId===84532n?"Base Sepolia":"Base",rpcUrl:options.publicRpcUrl,clearingAddress:domain.verifyingContract,tokenAddress:options.chain?.tokenAddress}));
@@ -356,7 +359,7 @@ export function buildApi(options: ApiOptions = {}) {
     if(!parsed.success)return reply.code(400).send({error:"invalid quote request"});
     try {return quoteToWire((await createQuote(parsed.data)).quote);} catch(error){return reply.code(options.oracleSource||options.hedgeRiskSource?503:409).send({error:publicError(error,"quote rejected")});}
   });
-  app.post("/v1/close/quote",async(request,reply)=>{if(!admitQuoteWork(request,reply))return;const parsed=closeQuoteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid close quote request"});if(!clearing)return reply.code(503).send({error:"chain unavailable"});try{const account=getAddress(parsed.data.account),marketIndex=parsed.data.market==="BTC"?0:1,position=await clearing.positionOf(account,marketIndex),size=BigInt(position.size);if(size===0n)return reply.code(409).send({error:"position is already closed"});const side=size>0n?"sell":"buy",quote=(await createQuote({market:parsed.data.market,side,amount:"1"},true,-size,account)).quote;forcedReduceOnly.add(quote.quoteId);return quoteToWire(quote);}catch(error){return reply.code(503).send({error:publicError(error,"close quote rejected")});}});
+  app.post("/v1/close/quote",async(request,reply)=>{if(!admitQuoteWork(request,reply))return;const parsed=closeQuoteSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:"invalid close quote request"});if(!clearing)return reply.code(503).send({error:"chain unavailable"});try{const account=getAddress(parsed.data.account),marketIndex=parsed.data.market==="BTC"?0:1,position=await clearing.positionOf(account,marketIndex),size=BigInt(position.size),baseDelta=partialCloseDelta(size,parsed.data.percentBps),side=size>0n?"sell":"buy",quote=(await createQuote({market:parsed.data.market,side,amount:"1"},true,baseDelta,account)).quote;forcedReduceOnly.add(quote.quoteId);return quoteToWire(quote);}catch(error){return reply.code(503).send({error:publicError(error,"close quote rejected")});}});
   app.post("/v1/prepare",async(request,reply)=>{
     const parsed=intentRequestSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"invalid intent request"});

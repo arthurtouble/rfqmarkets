@@ -51,7 +51,7 @@ const fundingStep=(aggregate,mark,index,fundingTime,currentTime,maxNotional)=>{
   return [index+mark*apr*elapsed/(RATE*YEAR),fundingTime+elapsed];
 };
 
-let state=0x9e3779b9;
+let state=Number(process.env.RFQ_DIFFERENTIAL_SEED??0x9e3779b9);
 const random=()=>{state^=state<<13;state^=state>>>17;state^=state<<5;return state>>>0;};
 const signed=max=>BigInt(random()%max)*(random()%2?1n:-1n);
 const vectors=Number(process.env.RFQ_DIFFERENTIAL_VECTORS??1_500),chunkSize=50;

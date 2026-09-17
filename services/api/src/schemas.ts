@@ -37,7 +37,7 @@ export const closePrepareSchema = actionBaseSchema.extend({ market });
 export const closeExecuteSchema = signedActionSchema.extend({
   intent: z.object({ account: z.string(), market: z.number().int().min(0).max(1), nonce: unsignedInteger, deadline: unsignedInteger }),
 });
-export const closeQuoteSchema = z.object({ account: z.string(), market });
+export const closeQuoteSchema = z.object({ account: z.string(), market, percentBps:z.number().int().min(1).max(10_000).default(10_000) });
 
 export const sessionPrepareSchema = actionBaseSchema.extend({
   session: z.string(),

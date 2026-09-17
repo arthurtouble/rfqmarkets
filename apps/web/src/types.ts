@@ -13,5 +13,5 @@ export type Risk = { indexedBlock: number; accountCount: number; totalCollateral
 export type Position = { account: string; collateral: string; positions: Record<Market, { size: string; entryPrice: string }> };
 export type TradeActivity = {
   tx_hash: string; log_index: number; block_number: number; timestamp: number; kind: string; account: string; market: number;
-  finality: "included" | "finalized"; payload: { baseDelta: string; price: string; fee: string };
+  finality: "included" | "finalized"; payload: { baseDelta: string; price: string; fee?: string;positionBefore?:string;entryPriceBefore?:string;positionAfter?:string;entryPriceAfter?:string;notional?:string;realizedPnl?:string;netRealizedPnl?:string };
 };

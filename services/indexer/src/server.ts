@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Contract, Interface, JsonRpcProvider, getAddress, type Log } from "ethers";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
 import { RiskProjection, type AccountProjection } from "./risk-projection.js";
+import {tradeDetails,type IndexedPosition} from "./trade-activity.js";
 
 export interface IndexerOptions{rpcUrl:string;clearingAddress:string;databasePath:string;startBlock?:number;confirmations?:number;pollMs?:number;corsOrigin?:string|string[];provider?:JsonRpcProvider}
 
@@ -23,7 +24,8 @@ export function buildIndexer(options:IndexerOptions){
   function indexedBlock(){return (db.prepare("SELECT max(number) value FROM blocks").get() as {value:number|null}).value??((options.startBlock??0)-1);}
   function publishUpdate(accounts:Set<string>,reset=false){const block=indexedBlock();if(block===lastPublishedBlock&&!accounts.size&&!reset)return;lastPublishedBlock=block;const data=`event: indexed\ndata: ${JSON.stringify({indexedBlock:block,changed:accounts.size>0||reset,reset,accounts:[...accounts]})}\n\n`;for(const client of updateClients){if(client.destroyed||client.writableEnded){updateClients.delete(client);continue;}if(client.writableLength>262_144){client.destroy();updateClients.delete(client);continue;}client.write(data);}}
   function atomic(write:()=>void){db.exec("BEGIN IMMEDIATE");try{write();db.exec("COMMIT");}catch(error){db.exec("ROLLBACK");throw error;}}
-  const reset=()=>{atomic(()=>db.exec("DELETE FROM blocks; DELETE FROM activity; DELETE FROM accounts; DELETE FROM finalized_accounts; DELETE FROM metadata"));liveRisk.clear();finalizedRisk.clear();};
+  const projectionVersion="2",reset=()=>{atomic(()=>{db.exec("DELETE FROM blocks; DELETE FROM activity; DELETE FROM accounts; DELETE FROM finalized_accounts; DELETE FROM metadata");db.prepare("INSERT INTO metadata VALUES('activity_projection_version',?)").run(projectionVersion);});liveRisk.clear();finalizedRisk.clear();};
+  if((db.prepare("SELECT value FROM metadata WHERE key='activity_projection_version'").get() as {value:string}|undefined)?.value!==projectionVersion)reset();
   async function readAccount(account:string,blockTag:number,txHash?:string){
     const [collateral,btc,eth]=await Promise.all([contract.collateralOf(account,{blockTag}),contract.positionOf(account,0,{blockTag}),contract.positionOf(account,1,{blockTag})]);
     return {account,collateral:collateral.toString(),btc_size:btc.size.toString(),btc_entry:btc.entryPrice.toString(),eth_size:eth.size.toString(),eth_entry:eth.entryPrice.toString(),blockTag,txHash};
@@ -48,12 +50,18 @@ export function buildIndexer(options:IndexerOptions){
     if(from>head){const finalized=await stageFinalized(head);atomic(()=>writeFinalized(finalized));for(const item of finalized?.rows??[])finalizedRisk.update(item);return {accounts:new Set<string>(),reset:rebuilt};}
     // Stage every network read before opening a synchronous transaction. A failed
     // read or crash cannot advance the checkpoint past incomplete projections.
-    const to=Math.min(head,from+9_999),logs=await provider.getLogs({address:options.clearingAddress,fromBlock:from,toBlock:to}),affected=new Map<string,{tx:string;block:number}>(),numbers=[...new Set([...logs.map(log=>log.blockNumber),to])],headers=await Promise.all(numbers.map(number=>provider.getBlock(number))),timestamps=new Map<number,number>();
+    const to=Math.min(head,from+9_999),logs=(await provider.getLogs({address:options.clearingAddress,fromBlock:from,toBlock:to})).sort((left,right)=>left.blockNumber-right.blockNumber||left.index-right.index),affected=new Map<string,{tx:string;block:number}>(),numbers=[...new Set([...logs.map(log=>log.blockNumber),to])],headers=await Promise.all(numbers.map(number=>provider.getBlock(number))),timestamps=new Map<number,number>(),activityPositions=new Map<string,IndexedPosition>();
     for(const block of headers){if(!block?.hash)throw new Error("missing canonical header");timestamps.set(block.number,block.timestamp);}
     const events:Array<{log:Log;timestamp:number;kind:string;account:string|null;market:number|null;payload:string}>=[];
     for(const log of logs){let parsed;try{parsed=iface.parseLog(log);}catch{continue}if(!parsed)continue;const timestamp=timestamps.get(log.blockNumber);if(timestamp===undefined)throw new Error(`missing block ${log.blockNumber}`);
       if(headers.find(header=>header?.number===log.blockNumber)?.hash!==log.blockHash)throw new Error("log/header divergence");
-      const account=parsed.args.account?getAddress(parsed.args.account):null,market=parsed.args.market===undefined?null:Number(parsed.args.market),payload=JSON.stringify(parsed.args.toObject(),(_,value)=>typeof value==="bigint"?value.toString():value);
+      const account=parsed.args.account?getAddress(parsed.args.account):null,market=parsed.args.market===undefined?null:Number(parsed.args.market),payloadObject=parsed.args.toObject() as Record<string,unknown>;
+      if(account&&market!==null&&(parsed.name==="TradeExecuted"||parsed.name==="PositionClosed")){
+        const key=`${account}:${market}`;let previous=activityPositions.get(key);
+        if(!previous){const row=db.prepare("SELECT btc_size,btc_entry,eth_size,eth_entry FROM accounts WHERE account=?").get(account) as Record<string,string>|undefined,prefix=market===0?"btc":"eth";previous={size:BigInt(row?.[`${prefix}_size`]??0),entryPrice:BigInt(row?.[`${prefix}_entry`]??0)};}
+        const details=tradeDetails(previous,BigInt(String(payloadObject.baseDelta)),BigInt(String(payloadObject.price)),parsed.name==="TradeExecuted"?BigInt(String(payloadObject.fee)):0n),{next,...serializable}=details;activityPositions.set(key,next);Object.assign(payloadObject,serializable);
+      }
+      const payload=JSON.stringify(payloadObject,(_,value)=>typeof value==="bigint"?value.toString():value);
       events.push({log,timestamp,kind:parsed.name,account,market,payload});if(account)affected.set(account,{tx:log.transactionHash,block:log.blockNumber});
     }
     const included=await Promise.all([...affected].map(([account,event])=>readAccount(account,event.block,event.tx)));
