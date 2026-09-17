@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { HyperliquidVenue } from "../services/hedger/src/hyperliquid.js";
+import {requiredEnv} from "./lib/env.js";
 
 type Identity={address:string;privateKey:string};
 const identities=JSON.parse(readFileSync(resolve(".local-state/testnet-identities.json"),"utf8")) as {hyperliquidAgent:Identity};
-const required=(name:string)=>{const value=process.env[name];if(!value||value.startsWith("replace_"))throw new Error(`missing ${name}`);return value;};
-const venue=new HyperliquidVenue({accountAddress:required("RFQ_HYPERLIQUID_ACCOUNT_ADDRESS"),agentPrivateKey:identities.hyperliquidAgent.privateKey,agentName:required("RFQ_HYPERLIQUID_AGENT_NAME"),apiUrl:process.env.RFQ_HYPERLIQUID_API_URL,pythonPath:process.env.RFQ_HYPERLIQUID_PYTHON});
+const venue=new HyperliquidVenue({accountAddress:requiredEnv("RFQ_HYPERLIQUID_ACCOUNT_ADDRESS"),agentPrivateKey:identities.hyperliquidAgent.privateKey,agentName:requiredEnv("RFQ_HYPERLIQUID_AGENT_NAME"),apiUrl:process.env.RFQ_HYPERLIQUID_API_URL,pythonPath:process.env.RFQ_HYPERLIQUID_PYTHON});
 try{
   const verification=await venue.verify(),[btc,eth]=await Promise.all([venue.position("BTC"),venue.position("ETH")]);
   let signerExercise:unknown="skipped";

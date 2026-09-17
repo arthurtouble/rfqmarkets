@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { expectGetJson, expectPostJson } from "./lib/http.js";
 
 const api=process.env.RFQ_API_URL??"http://127.0.0.1:4100";
-const get=async(path:string)=>{const response=await fetch(`${api}${path}`);const body=await response.json();assert(response.ok,`${path} failed: ${JSON.stringify(body)}`);return body;};
-const post=async(path:string,body:unknown)=>{const response=await fetch(`${api}${path}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});const payload=await response.json();assert(response.ok,`${path} failed: ${JSON.stringify(payload)}`);return payload;};
+const get=(path:string)=>expectGetJson(api,path);
+const post=(path:string,body:unknown)=>expectPostJson(api,path,body);
 
 const health=await get("/health");assert.equal(health.marketData.source,"coinbase");
 const markets=await get("/v1/markets");

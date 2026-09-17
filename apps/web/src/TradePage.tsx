@@ -1,31 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { API, INDEXER, MARKET_STREAM, base, dollars } from "./config.js";
 import type { AccountState, Market, MarketSnapshot, Quote, RestingOrder, Side, TradeActivity, WalletProvider } from "./types.js";
-import { adaptiveSpread, constructQuote, marginRate } from "../../../packages/shared/src/pricing.js";
+import { constructQuote } from "../../../packages/shared/src/pricing.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
-
-import {openingPnl,positionPnl} from "../../../packages/shared/src/account-risk.js";
+import { markAccount } from "./account-view.js";
+import { optionalJson, postJson } from "./http.js";
+import { inputDollars, leverage, ratio, signedDollars } from "./presentation.js";
+import { randomNonce, spreadFromWire } from "./trading-utils.js";
 
 type QuickSession={account:string;sessionAddress:string;privateKey?:string;validUntil:number};
 type ConnectedWallet={account:string;provider?:WalletProvider;privateKey?:string};
-const signedDollars=(value?:string)=>value===undefined?"—":`${BigInt(value)>0n?"+":""}${dollars(value)}`;
-const ratio=(bps?:string|null)=>bps===null||bps===undefined?"—":`${(Number(bps)/100).toFixed(2)}%`;
-const leverage=(bps?:string|null)=>bps===null||bps===undefined?"—":`${(Number(bps)/10_000).toFixed(2)}×`;
-const inputDollars=(value:string)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:2}).format(Number(value));
-const abs=(value:bigint)=>value<0n?-value:value;
-const spreadFromWire=(value:MarketSnapshot["markets"][Market])=>value.spread?{
-  ...value.spread,
-  baseBps:BigInt(value.spread.baseBps),volatilityBps:BigInt(value.spread.volatilityBps),
-  toxicityBps:BigInt(value.spread.toxicityBps),hedgeBps:BigInt(value.spread.hedgeBps),
-  basisBps:BigInt(value.spread.basisBps),uncertaintyBps:BigInt(value.spread.uncertaintyBps),
-  totalBps:BigInt(value.spread.totalBps),
-}:adaptiveSpread({volatilityBps:value.volatilityBps,riskMode:value.riskMode});
-function markAccount(state:AccountState,snapshot:MarketSnapshot|null):AccountState{
-  if(!snapshot)return state;let unrealized=0n,negativePnl=0n,funding=0n,gross=0n,initial=0n,maintenance=0n;const positions={...state.positions};
-  for(const market of ["BTC","ETH"] as Market[]){const position=state.positions[market],size=BigInt(position.size),live=snapshot.markets[market],mark=size>=0n?BigInt(live.bid):BigInt(live.ask),notional=abs(size)*BigInt(live.ask)/10n**18n,pnl=positionPnl(size,BigInt(position.entryPrice),mark),accrued=-size*(BigInt(live.projectedFundingIndex)-BigInt(position.lastFundingIndex))/10n**18n;unrealized+=pnl;negativePnl+=openingPnl([pnl]);funding+=accrued;gross+=notional;initial+=notional*marginRate(notional,true)/10_000n;maintenance+=notional*marginRate(notional,false)/10_000n;positions[market]={...position,markPrice:mark.toString(),notional:notional.toString(),unrealizedPnl:pnl.toString(),accruedFunding:accrued.toString()};}
-  const collateral=BigInt(state.collateral),equity=collateral+unrealized+funding,openingEquity=collateral+funding+negativePnl;return {...state,blockNumber:snapshot.blockNumber,positions,unrealizedPnl:unrealized.toString(),accruedFunding:funding.toString(),grossNotional:gross.toString(),equity:equity.toString(),openingEquity:openingEquity.toString(),initialMargin:initial.toString(),maintenanceMargin:maintenance.toString(),availableMargin:(openingEquity-initial).toString(),maintenanceBuffer:(equity-maintenance).toString(),marginRatioBps:equity>0n?(maintenance*10_000n/equity).toString():null,effectiveLeverageBps:equity>0n?(gross*10_000n/equity).toString():null,liquidatable:equity<maintenance};
-}
-
 function PriceChart({values}:{values:number[]}){
   const width=800,height=230,pad=12,rawMin=Math.min(...values),rawMax=Math.max(...values),first=values[0]??0,last=values.at(-1)??0,minimumRange=Math.max(.01,Math.abs(last)*.0002),center=(rawMax+rawMin)/2,range=Math.max(rawMax-rawMin,minimumRange),min=center-range/2,max=center+range/2,moveBps=first?Math.abs(last/first-1)*10_000:0,trend=moveBps<.25?"flat":last>=first?"up":"down",color=trend==="flat"?"#7185ff":trend==="up"?"#00e6b8":"#ff3f69",points=values.map((value,index)=>`${pad+index*(width-pad*2)/Math.max(1,values.length-1)},${pad+(max-value)*(height-pad*2)/range}`).join(" ");
   return <div className="price-chart"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Live price chart, ${trend}, ${Math.abs(last-first).toFixed(2)} dollars`} preserveAspectRatio="none"><defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={color} stopOpacity=".22"/><stop offset="1" stopColor={color} stopOpacity="0"/></linearGradient></defs><path d={`M ${points.replaceAll(" "," L ")} L ${width-pad},${height-pad} L ${pad},${height-pad} Z`} fill="url(#chartFill)"/><polyline points={points} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke"/></svg><span>Live session</span></div>;
@@ -62,25 +46,19 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
   const [tradeBusy,setTradeBusy]=useState(false);
 
   async function requestQuote(signal?: AbortSignal) {
-    const response = await fetch(`${API}/v1/quote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ market, side, amount }), signal });
-    if (!response.ok) throw new Error((await response.json()).error);
-    return response.json() as Promise<Quote>;
+    return postJson<Quote>(`${API}/v1/quote`, { market, side, amount }, signal);
   }
   async function post(path: string, body: unknown) {
-    const response = await fetch(`${API}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? "Request failed");
-    return result;
+    return postJson(`${API}${path}`, body);
   }
   const accountReadGeneration=useRef(0),activeWalletAccount=useRef<string|null>(null);
   useEffect(()=>()=>{accountReadGeneration.current++;activeWalletAccount.current=null;},[]);
   async function refreshAccount(address: string) {
     const generation=++accountReadGeneration.current;
-    const protocolRequest=fetch(`${INDEXER}/v1/protocol`).then(response=>response.ok?response.json():null).catch(()=>null);
-    const activityRequest=fetch(`${INDEXER}/v1/account/${address}/activity?limit=30`).then(response=>response.ok?response.json():null).catch(()=>null);
-    const ordersRequest=fetch(`${API}/v1/orders/${address}`).then(response=>response.ok?response.json():null).catch(()=>null);
-    const response = await fetch(`${API}/v1/account/${address}`);
-    const state=response.ok?await response.json():null;
+    const protocolRequest=optionalJson(`${INDEXER}/v1/protocol`);
+    const activityRequest=optionalJson(`${INDEXER}/v1/account/${address}/activity?limit=30`);
+    const ordersRequest=optionalJson(`${API}/v1/orders/${address}`);
+    const state=await optionalJson<AccountState>(`${API}/v1/account/${address}`);
     const [protocol,history,orderHistory]=await Promise.all([protocolRequest,activityRequest,ordersRequest]);
     if(generation!==accountReadGeneration.current||activeWalletAccount.current?.toLowerCase()!==address.toLowerCase())return;
     if(state)setAccountState(state);
@@ -88,7 +66,6 @@ export function TradePage({onWalletChange}:{onWalletChange?:(account:string|null
     if(history)setActivity(history.items);
     if(orderHistory)setOrders(orderHistory.items);
   }
-  const randomNonce=()=>BigInt(`0x${[...crypto.getRandomValues(new Uint8Array(32))].map(value => value.toString(16).padStart(2, "0")).join("")}`).toString();
   useEffect(() => {
     if(!marketSnapshot){setQuote(null);return;}try{const live=marketSnapshot.markets[market];if(streamState!=="live"||clock-live.observedAtMs>2_500)throw new Error("Market data reconnecting");if(!(side==="buy"?live.canBuy:live.canSell))throw new Error(`Only exposure-reducing ${side==="buy"?"buys":"sells"} are available`);const pricing=marketSnapshot.pricing,spread=spreadFromWire(live),value=constructQuote({market,side,amount},{market,bid:BigInt(live.bid),ask:BigInt(live.ask),observedAtMs:live.observedAtMs,source:live.source,volatilityBps:live.volatilityBps},{BTC:BigInt(pricing.settled.BTC),ETH:BigInt(pricing.settled.ETH)},pricing.pending.map(item=>({market:item.market,delta:BigInt(item.delta)})),clock,crypto.randomUUID(),{maxNotional:BigInt(live.operatingMaxTradeNotional),baseSpreadBps:spread.totalBps,feeBps:BigInt(pricing.feeBps),toleranceBps:BigInt(pricing.toleranceBps),spread});setQuote({...quoteToWire(value),quoteId:undefined,indicative:true});setStatus(current=>["Waiting for wallet…","Requesting two approvals…","No browser wallet detected"].includes(current)||current.startsWith("Executed")?current:live.riskMode==="guarded"?"Reduced size limits":"Live estimate");}catch(error){setQuote(null);setStatus(error instanceof Error?error.message:"Quote unavailable");}
   }, [marketSnapshot,market,side,amount,streamState,clock]);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Contract, JsonRpcProvider, Wallet } from "ethers";
+import { postJson, randomNonce } from "./lib/http.js";
 
 const api=process.env.RFQ_API_URL??"http://127.0.0.1:4100";
 const deployment=JSON.parse(readFileSync(resolve(".local-state","deployment.json"),"utf8")) as {rpcUrl:string;clearingAddress:string};
@@ -9,10 +10,10 @@ const provider=new JsonRpcProvider(process.env.RFQ_RPC_URL??deployment.rpcUrl);
 const council=await provider.getSigner(1);
 const clearing=new Contract(deployment.clearingAddress,["function leaderEpoch() view returns(uint64)","function advanceLeaderEpoch(uint64)"],council);
 const user=Wallet.createRandom();
-const post=async(path:string,body:unknown)=>{const response=await fetch(`${api}${path}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});return {response,payload:await response.json()};};
+const post=(path:string,body:unknown)=>postJson(api,path,body);
 const prepare=async()=>{
   const quoted=await post("/v1/quote",{market:"ETH",side:"buy",amount:"250"});assert(quoted.response.ok,JSON.stringify(quoted.payload));
-  const nonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString();
+  const nonce=randomNonce();
   const prepared=await post("/v1/prepare",{quoteId:quoted.payload.quoteId,account:user.address,nonce});assert(prepared.response.ok,JSON.stringify(prepared.payload));
   const signature=await user.signTypedData(prepared.payload.domain,prepared.payload.types,prepared.payload.intent);
   return {quoteId:quoted.payload.quoteId,nonce,prepared:prepared.payload,signature};

@@ -7,6 +7,7 @@ import { buildApprover } from "../services/approver/src/server.js";
 import { buildApi } from "../services/api/src/server.js";
 import { PythHermesSource } from "../services/api/src/oracle.js";
 import { loadDeploymentConfig } from "./deployment-config.js";
+import {randomNonce,sleep} from "./lib/http.js";
 
 type Identity={address:string;privateKey:string};
 type Manifest={chainId:string;contracts:{clearingProxy:string;usdc:string};feedIds:[string,string]};
@@ -44,7 +45,7 @@ async function waitForBtc(open:boolean){
   for(let attempt=0;attempt<20;attempt++){
     const size=await btcSize();
     if((size!==0n)===open)return size;
-    await new Promise(resolve=>setTimeout(resolve,500));
+    await sleep(500);
   }
   throw new Error(`BTC position did not become ${open?"open":"flat"} within 10 seconds`);
 }
@@ -53,14 +54,14 @@ async function closeBtc(){
   if(await btcSize()===0n)return undefined;
   let last:unknown;
   for(let attempt=1;attempt<=12;attempt++)try{
-    const quote=await post("/v1/close/quote",{account:wallet.address,market:"BTC"}),nonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString(),prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:wallet.address,nonce,reduceOnly:true}),userSignature=await wallet.signTypedData(prepared.domain,prepared.types,prepared.intent),closed=await post("/v1/approve",{quoteId:quote.quoteId,account:wallet.address,nonce,userSignature});
+    const quote=await post("/v1/close/quote",{account:wallet.address,market:"BTC"}),nonce=randomNonce(),prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:wallet.address,nonce,reduceOnly:true}),userSignature=await wallet.signTypedData(prepared.domain,prepared.types,prepared.intent),closed=await post("/v1/approve",{quoteId:quote.quoteId,account:wallet.address,nonce,userSignature});
     await waitForBtc(false);return closed;
-  }catch(error){last=error;if(!priceMoved(error)||attempt===12)throw error;await new Promise(resolve=>setTimeout(resolve,250));}
+  }catch(error){last=error;if(!priceMoved(error)||attempt===12)throw error;await sleep(250);}
   throw last;
 }
 async function openBtc(){let last:unknown;for(let attempt=1;attempt<=12;attempt++)try{
-  const quote=await post("/v1/quote",{market:"BTC",side:"buy",amount:"1"}),nonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString(),prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:wallet.address,nonce}),signature=await wallet.signTypedData(prepared.domain,prepared.types,prepared.intent),executed=await post("/v1/approve",{quoteId:quote.quoteId,account:wallet.address,nonce,userSignature:signature});await waitForBtc(true);return executed;
- }catch(error){last=error;if(!priceMoved(error)||attempt===12)throw error;await new Promise(resolve=>setTimeout(resolve,250));}throw last;
+  const quote=await post("/v1/quote",{market:"BTC",side:"buy",amount:"1"}),nonce=randomNonce(),prepared=await post("/v1/prepare",{quoteId:quote.quoteId,account:wallet.address,nonce}),signature=await wallet.signTypedData(prepared.domain,prepared.types,prepared.intent),executed=await post("/v1/approve",{quoteId:quote.quoteId,account:wallet.address,nonce,userSignature:signature});await waitForBtc(true);return executed;
+ }catch(error){last=error;if(!priceMoved(error)||attempt===12)throw error;await sleep(250);}throw last;
 }
 
 try{

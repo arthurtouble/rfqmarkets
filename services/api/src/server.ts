@@ -13,10 +13,9 @@ import type { ServerResponse } from "node:http";
 import cors from "@fastify/cors";
 import { DatabaseSync } from "node:sqlite";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256, parseUnits, recoverAddress, TypedDataEncoder, toUtf8Bytes } from "ethers";
-import { z } from "zod";
 import { clearingApiAbi } from "../../../packages/shared/src/abi.js";
 import { approvalToWire, cancelToWire, cancelTypes, closeToWire, closeTypes, depositToWire, depositTypes, DOMAIN_NAME, DOMAIN_VERSION, hashApproval, hashIntent, intentToWire, intentTypes, recoverCancelSigner, recoverCloseSigner, recoverDepositSigner, recoverIntentSigner, recoverSessionGrantSigner, recoverWithdrawalSigner, sessionGrantToWire, sessionGrantTypes, withdrawalToWire, withdrawalTypes, type CancelIntent, type CloseIntent, type DepositIntent, type MakerApproval, type SessionGrant, type SigningDomain, type TradeIntent, type WithdrawalIntent } from "../../../packages/shared/src/eip712.js";
-import { adaptiveSpread, BASE, constructQuote, formatUsdc, marginRate, parseUsdc, quoteRequestSchema, type Exposure, type PriceSnapshot, type PricingParameters, type Quote } from "../../../packages/shared/src/policy.js";
+import { BASE, constructQuote, formatUsdc, marginRate, parseUsdc, quoteRequestSchema, type Exposure, type PriceSnapshot, type PricingParameters, type Quote } from "../../../packages/shared/src/policy.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import { DurableSender } from "./sender.js";
 import type { OracleSource } from "./oracle.js";
@@ -30,6 +29,9 @@ import { QuoteAdmission } from "./admission.js";
 
 import {validOwnerSignature} from "./owner-signature.js";
 import {archiveApiCommitments,initializeApiRecoveryJournal,restoreApiCommitments,type RecoveredCommitment} from "./recovery.js";
+import {actionBaseSchema,approvalRequestSchema,cancelExecuteSchema,closeExecuteSchema,closePrepareSchema,closeQuoteSchema,depositExecuteSchema,depositQuoteSchema,intentRequestSchema,orderPlaceSchema,orderPrepareSchema,sessionExecuteSchema,sessionPrepareSchema,withdrawalExecuteSchema,withdrawalPrepareSchema} from "./schemas.js";
+import {abs,decodeLimits,DEFAULT_MARKET_LIMIT,DEFAULT_TRADE_LIMIT,errorText,quoteSpread,RATE,shadowQuoteSpread,staleOracleFailure,YEAR} from "./market-policy.js";
+import type {DepositRoute,ProtocolVersions,RestingOrder} from "./server-model.js";
 
 export interface ApiOptions {
   senderBudget?:Pick<import("./sender.js").SenderOptions,"maxFeePerGas"|"maxGasLimit"|"maxValue"|"dailyBudgetWei">;
@@ -63,34 +65,6 @@ export interface ApiOptions {
   operationsToken?:string;
   trustedProxy?:string|string[];
 }
-
-const intentRequestSchema = z.object({ quoteId:z.string().uuid(), account:z.string(), nonce:z.string().regex(/^\d+$/), reduceOnly:z.boolean().default(false) });
-const approvalRequestSchema = intentRequestSchema.extend({ userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/) });
-const depositQuoteSchema=z.object({account:z.string(),fromChainId:z.number().int().positive(),fromToken:z.enum(["USDC","USDT","ETH"]),amount:z.string().regex(/^\d+(\.\d{1,18})?$/)});
-const depositExecuteSchema=z.object({routeId:z.string().regex(/^0x[0-9a-fA-F]{64}$/),userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/)});
-const actionBaseSchema=z.object({account:z.string(),nonce:z.string().regex(/^\d+$/)});
-const signedActionSchema=z.object({userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/)});
-const withdrawalPrepareSchema=actionBaseSchema.extend({recipient:z.string().optional(),amount:z.string().regex(/^\d+(\.\d{1,6})?$/)});
-const withdrawalExecuteSchema=signedActionSchema.extend({intent:z.object({account:z.string(),recipient:z.string(),amount:z.string().regex(/^\d+$/),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
-const cancelExecuteSchema=signedActionSchema.extend({intent:z.object({account:z.string(),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
-const closePrepareSchema=actionBaseSchema.extend({market:z.enum(["BTC","ETH"])});
-const closeExecuteSchema=signedActionSchema.extend({intent:z.object({account:z.string(),market:z.number().int().min(0).max(1),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
-const closeQuoteSchema=z.object({account:z.string(),market:z.enum(["BTC","ETH"])});
-const sessionPrepareSchema=actionBaseSchema.extend({session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxCumulativeAmount:z.string().regex(/^\d+(\.\d{1,6})?$/),maxFee:z.string().regex(/^\d+(\.\d{1,6})?$/),durationSeconds:z.number().int().min(300).max(2_592_000)});
-const sessionExecuteSchema=signedActionSchema.extend({grant:z.object({account:z.string(),session:z.string(),marketMask:z.number().int().min(1).max(3),maxTradeNotional:z.string().regex(/^\d+$/),maxCumulativeNotional:z.string().regex(/^\d+$/),maxFee:z.string().regex(/^\d+$/),validUntil:z.string().regex(/^\d+$/),nonce:z.string().regex(/^\d+$/),deadline:z.string().regex(/^\d+$/)})});
-const orderPrepareSchema=z.object({account:z.string(),market:z.enum(["BTC","ETH"]),side:z.enum(["buy","sell"]),amount:z.string().regex(/^\d+(\.\d{1,6})?$/),limitPrice:z.string().regex(/^\d+(\.\d{1,6})?$/),durationSeconds:z.number().int().min(300).max(2_592_000),nonce:z.string().regex(/^\d+$/),reduceOnly:z.boolean().default(false)});
-const orderPlaceSchema=z.object({orderId:z.string().uuid(),userSignature:z.string().regex(/^0x[0-9a-fA-F]+$/)});
-type DepositRoute={intent:DepositIntent;fromToken:"USDC"|"USDT"|"ETH";amount:string;expectedUsdc:bigint;status:"quoted"|"authorized"|"deposited";destinationTxHash?:string;transaction?:{hash:string;blockNumber:number;collateral:string}};
-type ProtocolVersions={leaderEpoch:bigint;signerSetVersion:bigint;policyVersion:bigint;blockNumber:number;blockTimestamp:number};
-type RestingOrder={orderId:string;intent:TradeIntent;market:"BTC"|"ETH";side:"buy"|"sell";amount:string;userSignature?:string;status:"prepared"|"open"|"executing"|"filled"|"cancelled"|"expired";createdAtMs:number;updatedAtMs:number;transactionHash?:string;lastError?:string};
-const YEAR=365n*24n*60n*60n,RATE=1_000_000_000_000n,DEFAULT_TRADE_LIMIT=1_000_000n*1_000_000n,DEFAULT_MARKET_LIMIT=5_000_000n*1_000_000n;
-
-function abs(value:bigint){return value<0n?-value:value;}
-function decodeLimits(word:unknown){const value=BigInt(word as bigint);return {maxTradeNotional:value&((1n<<128n)-1n),maxMarketNotional:value>>128n};}
-function quoteSpread(snapshot:PriceSnapshot,riskMode:"normal"|"guarded"|"reduce_only"="normal",toxicityScoreBps=0,execution?:{estimatedCostBps:number;latencyMs:number;basisBps:number}){return adaptiveSpread({volatilityBps:snapshot.volatilityBps,riskMode,toxicityScoreBps,hedgeCostBps:execution?.estimatedCostBps,hedgeLatencyMs:execution?.latencyMs,venueBasisBps:execution?.basisBps});}
-function shadowQuoteSpread(snapshot:PriceSnapshot,riskMode:"normal"|"guarded"|"reduce_only",toxicityScoreBps:number,execution?:{estimatedCostBps:number;latencyMs:number;basisBps:number}){return adaptiveSpread({volatilityBps:(snapshot.volatilityBps??0)*1.25,riskMode,toxicityScoreBps,hedgeCostBps:execution?.estimatedCostBps,hedgeLatencyMs:execution?.latencyMs,venueBasisBps:execution?.basisBps});}
-function errorText(error:unknown){try{return `${String(error)} ${JSON.stringify(error)}`;}catch{return String(error);}}
-function staleOracleFailure(error:unknown){const text=errorText(error).toLowerCase();return text.includes("staleprice")||text.includes("0xd7815800")||text.includes("0x45805f5d");}
 
 export function buildApi(options: ApiOptions = {}) {
   const app = Fastify({ logger:false, bodyLimit:16_384, trustProxy:options.trustedProxy });
