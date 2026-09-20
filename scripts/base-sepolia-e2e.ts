@@ -7,7 +7,7 @@ import { buildApprover } from "../services/approver/src/server.js";
 import { buildApi } from "../services/api/src/server.js";
 import { PythHermesSource } from "../services/api/src/oracle.js";
 import { loadDeploymentConfig } from "./deployment-config.js";
-import { btcRetryDelay, QualificationResponseError, retryQualification, transientReadError } from "./qualification-retry.js";
+import { btcRetryDelay, QualificationResponseError, retryQualification, startQualificationApp, transientReadError } from "./qualification-retry.js";
 
 type Identity={address:string;privateKey:string};
 type Manifest={chainId:string;contracts:{clearingProxy:string;usdc:string};feedIds:[string,string]};
@@ -18,7 +18,7 @@ const key=process.env.PYTH_API_KEY;
 if(!key)throw new Error("missing PYTH_API_KEY");
 const config=loadDeploymentConfig(process.env);
 if(config.oracleMode!=="pyth")throw new Error("deployment is not configured for Pyth");
-const approverTimeoutMs=Number(process.env.RFQ_APPROVER_TIMEOUT_MS??5_000);
+const approverTimeoutMs=Number(process.env.RFQ_APPROVER_TIMEOUT_MS??30_000);
 if(!Number.isInteger(approverTimeoutMs)||approverTimeoutMs<1_000||approverTimeoutMs>30_000)throw new Error("invalid approver timeout");
 const manifest=JSON.parse(readFileSync(resolve(process.env.RFQ_BASE_SEPOLIA_DEPLOYMENT_FILE??".local-state/base-sepolia-deployment.json"),"utf8")) as Manifest;
 const identities=JSON.parse(readFileSync(resolve(".local-state/testnet-identities.json"),"utf8")) as {sponsor:Identity;approvers:Identity[]};
@@ -69,8 +69,8 @@ try{
     const url=await app.listen({host:"127.0.0.1",port:0});apps.push(app);approvers.push({url,token});
   }
   const source=new PythHermesSource({apiKey:key,feedIds:{BTC:manifest.feedIds[0],ETH:manifest.feedIds[1]}});
-  api=buildApi({approvers,approverTimeoutMs,chainId:BigInt(manifest.chainId),verifyingContract:manifest.contracts.clearingProxy,journalPath:join(directory,"api.sqlite"),oracleSource:source,chain:{rpcUrl:config.rpcUrl,sponsorPrivateKey:identities.sponsor.privateKey,clearingAddress:manifest.contracts.clearingProxy,tokenAddress:manifest.contracts.usdc}}) as Injectable;
-  await (api as any).ready();apps.push(api);
+  api=await startQualificationApp(()=>buildApi({approvers,approverTimeoutMs,chainId:BigInt(manifest.chainId),verifyingContract:manifest.contracts.clearingProxy,journalPath:join(directory,"api.sqlite"),oracleSource:source,chain:{rpcUrl:config.rpcUrl,sponsorPrivateKey:identities.sponsor.privateKey,clearingAddress:manifest.contracts.clearingProxy,tokenAddress:manifest.contracts.usdc}}));
+  apps.push(api);
 
   const recovered=await closeBtc();
   const executed=await openBtc();
