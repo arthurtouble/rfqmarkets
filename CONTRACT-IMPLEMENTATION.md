@@ -1,6 +1,23 @@
 # Clearing contract implementation
 
-`contracts/RFQClearing.sol` is the first executable version of the clearing design. It is a local prototype and not an audited production contract.
+`contracts/RFQClearing.sol` is the v1 clearing contract. It has not been externally audited. v1 is a fresh deployment: its storage is not compatible with the earlier Base Sepolia proxies, so those cannot be upgraded to it.
+
+## Layout
+
+```mermaid
+flowchart TB
+    P[TransparentUpgradeableProxy] --> C[RFQClearing facade<br/>entrypoints, roles, views]
+    C -- delegatecall --> S[RFQSettlement<br/>trades, withdrawals, fees]
+    C -- delegatecall --> L[RFQLiquidation<br/>liquidation, owner close]
+    C -- delegatecall --> R[RFQResolution<br/>incidents, resolution, claims]
+    C -- delegatecall --> M[RFQRiskMath<br/>valuation, exposure, pure math]
+    C -- delegatecall --> V[RFQSignatureVerifier<br/>EIP-712, quorum]
+    S & L & R -.inline.-> G[RFQLedger<br/>shared bookkeeping]
+```
+
+`RFQClearing` keeps the external ABI, access control and views. The heavy paths live in linked libraries that run by `DELEGATECALL` against the proxy's storage, which keeps every deployed contract under the 24,576-byte EIP-170 limit with room to grow. All state sits in one ERC-7201 namespace (`rfq.clearing.v1`, `contracts/RFQClearingStorage.sol`), so no contract in the chain declares ordinary storage variables. Shared constants, structs and errors are in `contracts/RFQTypes.sol`; every event is declared once in `contracts/interfaces/IRFQClearingEvents.sol`, which libraries emit and the facade inherits so the ABI exposes them. The build pins `evmVersion` to `cancun` for transient-storage reentrancy guards.
+
+`npm run compile:contracts` (solc-js, used by the e2e scripts and deploy tooling) and `forge build` compile the same sources with the same settings. Both deploy scripts deploy the libraries recursively and link them before the implementation.
 
 ## Settlement state
 
@@ -26,7 +43,7 @@ flowchart LR
 
 The transaction sender has no authority in this flow. The API gas wallet, another sponsor or the user can submit the identical signed payload. The user signature binds account, market, base delta, limit price, fee ceiling, nonce, deadline and reduce-only flag. The maker approval binds exact execution price, impact charge, oracle report hash, leader epoch, signer-set version and policy version. Operator versions are deliberately absent from customer authorization: a failover invalidates every old maker approval while a still-valid customer intent can receive a fresh approval under the current policy. Users may cancel any unused nonce directly or through an exact EIP-712 cancellation signed for a sponsor.
 
-An account may authorize a scoped trading session with one owner EIP-712 signature. The contract limits its markets, single-trade notional, cumulative notional, per-trade fee and expiry, capped at 30 days. A session key cannot withdraw, cancel, close through the emergency path, create another session or change authority. Revocation is currently a direct owner transaction; the local UI defaults to an eight-hour, $2,500-per-trade, $10,000-cumulative session.
+An account may authorize a scoped trading session with one owner EIP-712 signature. The contract limits its markets, single-trade notional, cumulative notional, per-trade fee and expiry, capped at 30 days. A session key cannot withdraw, cancel, close through the emergency path, create another session or change authority. A session key belongs to the account that first granted it: another account cannot re-grant the same key to itself until the owner revokes it. Revocation is currently a direct owner transaction; the local UI defaults to an eight-hour, $2,500-per-trade, $10,000-cumulative session.
 
 The contract recomputes impact from settled aggregate BTC/ETH inventory and requires the execution price to deliver at least that signed impact relative to the directional oracle bid/ask. This closes the gap where an approval could state a safe impact charge without placing it into the actual price.
 
@@ -44,22 +61,39 @@ Initial and maintenance requirements add across markets using the version 0.1 ti
 
 Liquidation values longs at bid and shorts at ask. It closes a small enough amount to target 22% equity, capped at 25% per transaction; positions at or below $10,000 or accounts with nonpositive equity close fully. The penalty is capped by positive collateral. The keeper receives the smaller of 10 bps of closed notional and 20% of the collected penalty; the remainder goes to insurance. Deficits consume insurance and then maker backing. Any remainder atomically pauses the system and starts resolution.
 
-Resolution cannot iterate an unbounded account set in one transaction. New depositors are registered on-chain, with a $10 minimum first deposit to make dust-account expansion costly. After resolution begins, anyone may submit verified observations. The contract uses the first three monotonically timed observations for each market spanning at least 30 seconds and fixes each median. Anyone can then crystallize the account registry in bounded batches. Once complete, each account can withdraw its pro-rata entitlement. Later recoveries increase entitlements without changing claim priority, and payouts never exceed the original claim when assets are abundant.
+Stored oracle prices are monotonic: a report is recorded only if its observation time is later than the stored one. Liquidations and owner closes value positions at the stored price after the report is applied, so a keeper cannot submit an older, still-fresh, more adverse report than the one already on chain.
+
+A maker incident (portfolio stress above a quarter of maker backing) no longer resolves the venue immediately. Anyone may call `reportMakerIncident()` while the incident holds, which starts a grace period (72 hours by default; governance may set 1 hour to 30 days). `clearMakerIncident()` resets it once the maker has recapitalized. Anyone may call `declareResolution()` only after the grace period has elapsed and the incident still holds; governance can declare resolution of a paused venue at any time.
+
+Resolution cannot iterate an unbounded account set in one transaction. New depositors are registered on-chain, with a $10 minimum first deposit to make dust-account expansion costly. After resolution begins, anyone may submit verified observations. The contract uses the first three monotonically timed observations for each market spanning at least 30 seconds and fixes each median. Anyone can then crystallize the account registry in bounded batches. Once complete, each account can withdraw its pro-rata entitlement. Later recoveries increase entitlements without changing claim priority, and payouts never exceed the original claim when assets are abundant. After finalization, governance may withdraw any assets beyond 100% of claims with `withdrawResolutionSurplus(recipient)`; outstanding claims stay fully payable.
 
 ## Upgrades and authority
 
-The implementation runs behind OpenZeppelin's transparent proxy. Its dedicated `ProxyAdmin` is owned by the governance timelock, keeping upgrade dispatch outside the custody implementation and avoiding selector ambiguity. The implementation constructor disables initialization and the proxy initializes once. Governance may also unpause, rotate approvers or replace the oracle through ordinary clearing calls. The emergency council may pause or disable a market and cannot unpause, upgrade or add authority.
+The implementation runs behind OpenZeppelin's transparent proxy with a dedicated `ProxyAdmin`. The implementation constructor disables initialization. `initialize` takes the USDC token, oracle, governance, emergency council, three approvers, the maker capital target and a launch configuration for each market (enabled flag, per-trade cap, net cap, gross limit and per-side limit). The venue always starts paused, so the operator can fund the maker and check the deployment before governance unpauses.
+
+Governance is any address. A development deployment uses a plain key so policy changes and upgrades are immediate; production hands both roles to a timelock without redeploying:
+
+1. Deploy `contracts/governance/RFQTimelock.sol` with the chosen delay and the governance Safe as its proposer and executor.
+2. Current governance calls `transferGovernance(timelock)` and transfers the ProxyAdmin's ownership to the timelock.
+3. The timelock schedules and executes `acceptGovernance()`.
+
+The handover is two-step so a typo cannot strand the venue, and the emergency council can never become governance. Governance may unpause, rotate approvers, replace the oracle, change market and exposure policy, set the emergency council and the incident grace period, and withdraw surplus. The emergency council may pause or disable a market (keeping or tightening limits) and cannot unpause, upgrade or add authority. A market policy change accrues funding at the old net limit before applying the new one, because the net limit is the funding-rate denominator.
 
 The contract computes the exact EIP-712 domain separator it needs from fixed name/version hashes, `block.chainid` and the proxy address. This removes general-purpose upgradeable metadata machinery while preserving standard wallet signatures, chain separation and verifying-contract separation. EOA, ERC-1271, limited-session, replay and sponsored-action tests exercise this boundary.
 
-Approver rotation replaces all three addresses atomically and increments both signer-set version and leader epoch. The emergency council or governance can advance only the exact current leader epoch; this fences old approvals and serializes competing API failovers without granting upgrade or fund-transfer authority. Existing nonces and financial state survive either operation and the tested V2 upgrade.
+Approver rotation replaces all three addresses atomically and increments both signer-set version and leader epoch. The emergency council or governance can advance only the exact current leader epoch; this fences old approvals and serializes competing API failovers without granting upgrade or fund-transfer authority.
 
 Owner withdrawals can be direct or sponsored. A sponsored `WithdrawalIntent` binds the account, recipient, exact amount, nonce and deadline; the sponsor cannot redirect or increase it. Both paths settle funding, reject stale marks for open positions and preserve opening margin. When governance or the emergency council pauses trading, an owner can directly or indirectly close an entire position at the conservative verified oracle side without maker approvals. This path is unavailable while ordinary trading is live, which prevents it from bypassing RFQ inventory pricing.
 
-Governance can withdraw maker capital only when the remaining backing stays above the configured capital target and four times the live portfolio stress loss. It cannot withdraw during resolution. The production governance address remains subject to the timelock requirement.
+Governance can withdraw maker capital only when the remaining backing stays above the configured capital target and four times the live portfolio stress loss. It cannot withdraw maker capital during resolution, only the surplus after finalization.
+
+## Tests
+
+- `test/contracts/*.t.sol` (Foundry, `npm run test:foundry`): launch configuration, oracle monotonicity, maker incident grace period, resolution surplus, governance handover to the timelock, session-key ownership, funding accrual on policy changes, and stateful invariants (custody equals the collateral, maker and insurance buckets; market aggregates and exposure books equal the sum of positions) driven through the real signing path.
+- `scripts/*-e2e.mjs`, `risk-differential.mjs` and `stateful-clearing-e2e.mjs` (Node, part of `npm run test:contracts`): end-to-end clearing, bankruptcy, exposure, API settlement, gross reservation, keeper and account-response flows against a local chain, and a differential check of the linked math against a JavaScript reference.
 
 ## Current engineering limits
 
-The compiler uses the Solidity IR pipeline. Runtime bytecode is 20,850 bytes, 15.2% below the 24,576-byte EVM limit. The repository enforces a tighter 21,000-byte gate to prevent feature creep. Portfolio impact, trade assessment, stress, liquidation, position transition, PnL and funding calculations live in the stateless linked `RFQRiskMath` library and have direct edge tests. Repeated exact-token receipt checks share one implementation. The library and `ProxyAdmin` addresses are recorded and must be verified with the implementation and proxy. Further clearing features require a deliberate module split rather than consuming this reserve.
+Runtime sizes with the IR pipeline at `optimizer_runs = 1`: RFQClearing 18,687 bytes, RFQRiskMath 9,370, RFQResolution 6,690, RFQSettlement 6,223, RFQLiquidation 5,901, RFQSignatureVerifier 2,700. `scripts/compile-contracts.mjs` fails the build if any contract exceeds EIP-170. Library addresses are recorded in the deployment manifest and must be verified with the implementation and proxy.
 
-The current implementation still needs a production timelock deployment and live Chainlink or Pyth/Base validation. The browser prototype keeps the limited session secret in tab-scoped storage; production requires a strict content-security policy, no unreviewed third-party scripts and a provider/session design chosen after wallet testing. Its tests do not replace independent economic review, invariant fuzzing, formal accounting checks or external audits.
+Production still needs the timelock handover above, live Chainlink or Pyth validation on Base, and an external audit. The browser prototype keeps the limited session secret in tab-scoped storage; production requires a strict content-security policy, no unreviewed third-party scripts and a provider/session design chosen after wallet testing.

@@ -4,7 +4,7 @@ Candidate identity is produced by `scripts/candidate-identity.ts`; reviewers mus
 
 ## Contract and economic review
 
-Review `RFQClearing`, `RFQAuthorization`, `RFQRiskMath`, `RFQSignatureVerifier`, both oracle adapters and proxy initialization/upgrade scripts. Treat linked libraries as implementation authority. Focus on custody conservation, signed-domain and epoch fencing, fee/PnL/funding rounding, cross-margin bankruptcy, maker exhaustion, exposure migration, gross/side/net/stress limits, permissionless incident entry, resolution sampling and claims, owner exits during pause and storage continuity from the frozen baseline.
+Review `RFQClearing` and its linked modules (`RFQSettlement`, `RFQLiquidation`, `RFQResolution`, `RFQRiskMath`, `RFQSignatureVerifier`, inlined `RFQLedger`), both oracle adapters and proxy initialization/upgrade scripts. Treat linked libraries as implementation authority. Focus on custody conservation, signed-domain and epoch fencing, fee/PnL/funding rounding, cross-margin bankruptcy, maker exhaustion, exposure migration, gross/side/net/stress limits, permissionless incident entry, resolution sampling and claims, owner exits during pause, the maker-incident grace period, the governance handover to `RFQTimelock`, and ERC-7201 storage layout for future upgrades.
 
 Required commands: `npm run test:contracts`, `npm run validate:upgrades`, `npm run test:python`, and the complete `npm test`. The clearing bytecode must remain at or below 21,000 bytes. The OpenZeppelin linked-library allowance is an explicit manual-review item.
 

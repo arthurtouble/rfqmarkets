@@ -8,6 +8,8 @@
   with both and treat CI on Node.js 24 as the release baseline.
 - Python 3 is required for the simulator tests. The standard test suite does not
   require the optional Hyperliquid SDK.
+- Foundry (`forge`) is required for the Solidity tests. Initialise
+  `lib/forge-std` with `git submodule update --init --recursive`.
 - Install `services/hedger/requirements.txt` only when working on the live or
   testnet Hyperliquid integration.
 - Treat `.local-state/`, `.env*`, private keys, RPC credentials, and deployment
@@ -16,6 +18,8 @@
 ## Validation
 
 - Run `npm run typecheck` after TypeScript changes.
+- Run `npm run test:foundry` after contract changes, then
+  `npm run test:contracts` for the compile gate and local-chain e2e suites.
 - Run `npm run test:services` for service and script unit tests.
 - Run `npm run test:python` for simulator changes.
 - Run `npm run test:cloudflare-edge` for Cloudflare edge/runtime changes.
