@@ -1,5 +1,5 @@
-export type LimitMarket = "BTC" | "ETH";
-export type LimitSide = "buy" | "sell";
+import type { Market, Side } from "./markets.js";
+
 type Entry = { id: string; price: bigint; sequence: number };
 
 class Heap {
@@ -46,12 +46,12 @@ export class LimitTriggerBook {
   private sequence = 0;
   private active = new Map<
     string,
-    { market: LimitMarket; side: LimitSide; price: bigint; deadlineMs: number; sequence: number }
+    { market: Market; side: Side; price: bigint; deadlineMs: number; sequence: number }
   >();
   private expiries = new Heap(
     (a, b) => a.price < b.price || (a.price === b.price && a.sequence < b.sequence),
   );
-  private books: Record<LimitMarket, Record<LimitSide, Heap>> = {
+  private books: Record<Market, Record<Side, Heap>> = {
     BTC: {
       buy: new Heap((a, b) => a.price > b.price || (a.price === b.price && a.sequence < b.sequence)),
       sell: new Heap((a, b) => a.price < b.price || (a.price === b.price && a.sequence < b.sequence)),
@@ -61,7 +61,7 @@ export class LimitTriggerBook {
       sell: new Heap((a, b) => a.price < b.price || (a.price === b.price && a.sequence < b.sequence)),
     },
   };
-  add(id: string, market: LimitMarket, side: LimitSide, price: bigint, deadlineMs = Number.MAX_SAFE_INTEGER) {
+  add(id: string, market: Market, side: Side, price: bigint, deadlineMs = Number.MAX_SAFE_INTEGER) {
     const entry = { market, side, price, deadlineMs, sequence: ++this.sequence };
     this.active.set(id, entry);
     this.books[market][side].push({ id, price, sequence: entry.sequence });
@@ -89,7 +89,7 @@ export class LimitTriggerBook {
     }
     return ids;
   }
-  takeMarketable(market: LimitMarket, bid: bigint, ask: bigint, limit = 64) {
+  takeMarketable(market: Market, bid: bigint, ask: bigint, limit = 64) {
     const ids: string[] = [];
     for (const side of ["buy", "sell"] as const) {
       const heap = this.books[market][side];

@@ -11,10 +11,11 @@ import {
   type TradeIntent,
 } from "../../../packages/shared/src/eip712.js";
 import type { Quote } from "../../../packages/shared/src/policy.js";
+import { marketIndex, type Market } from "./markets.js";
 
 type CommitmentRow = {
   quote_id: string;
-  market: "BTC" | "ETH";
+  market: Market;
   delta: string;
   expires_ms: number;
   status: string;
@@ -100,7 +101,7 @@ export function restoreApiCommitments(
     if (!selected) throw new Error(`missing or inconsistent API approval artifact ${row.quote_id}`);
     const intent = toIntent(selected.intent),
       approval = toApproval(selected.approval),
-      market = selected.quote.market === "BTC" ? 0 : 1,
+      market = marketIndex(selected.quote.market),
       notional = BigInt(selected.quote.amount),
       expectedDelta = selected.quote.side === "buy" ? notional : -notional;
     const storedIntent = approverPayloadSchema.shape.intent.safeParse(JSON.parse(row.intent_json));
