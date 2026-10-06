@@ -44,7 +44,7 @@ await assert.rejects(deployCore(deployer,manifest,{candidateHash:manifest.candid
 assert.deepEqual(Object.keys(partial),[firstLibrary,secondLibrary]);
 const record=await deployCore(deployer,manifest,{candidateHash:manifest.candidateHash,launchProfile:"dormant",confirmations:1,resume:partial});
 assert.equal(record.contracts.libraries[firstLibrary],partial[firstLibrary],"resume reuses deployed libraries");
-assert.equal(Object.keys(record.contracts.libraries).length,5);
+assert.equal(Object.keys(record.contracts.libraries).length,5);assert.equal(record.deploymentBlock,(await provider.getTransactionReceipt(record.transactions.clearingProxy))!.blockNumber,"record carries the proxy deployment block for the indexer");
 assert.equal(getAddress(record.contracts.clearingProxy),getAddress(report.predicted.clearingProxy!),"proxy lands at the preflight-predicted address");
 
 const initial=await verifyDeployment(provider,record,manifest);
