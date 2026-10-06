@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { senderHealthy } from "./operations.js";
 import { buildApi } from "./server.js";
+import type { SenderStatus } from "./sender.js";
 
 const receipt = { hash: "0x", blockHash: "0x", blockNumber: 0, status: 1 as const };
 
@@ -22,7 +23,7 @@ test("in-flight and final sender rows keep the leader healthy", () => {
 });
 
 test("/health treats an in-flight trade as healthy and an ambiguous one as unhealthy", async () => {
-  let rows = [{ status: "submitted", count: 1 }];
+  let rows: Array<{ status: SenderStatus; count: number }> = [{ status: "submitted", count: 1 }];
   const app = buildApi({
     sender: { reconcile: async () => {}, status: () => rows, submit: async () => receipt },
   });
