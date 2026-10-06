@@ -7,19 +7,37 @@ import { DurableSender } from "./sender.js";
 type Receipt = { transactionHash: string; blockNumber: string; blockHash: string; status: string };
 
 class DeterministicProvider {
-  pendingNonce = 0;
+  minedNonce = 0;
+  finalized = 0;
+  holdInMempool = false;
+  mempool = new Map<string, Receipt>();
   broadcasts: string[] = [];
   receipts = new Map<string, Receipt>();
+  receiptReads: string[] = [];
   failBeforeAccept = false;
   failAfterAccept = false;
   revertNext = false;
+  get pendingNonce() {
+    return this.minedNonce + this.mempool.size;
+  }
   async getFeeData() {
     return { gasPrice: null, maxFeePerGas: 2_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n };
   }
   async send(method: string, params: unknown[]) {
-    if (method === "eth_getTransactionCount") return `0x${this.pendingNonce.toString(16)}`;
-    if (method === "eth_getTransactionReceipt") return this.receipts.get(String(params[0])) ?? null;
+    if (method === "eth_getTransactionCount")
+      return `0x${(params[1] === "latest" ? this.minedNonce : this.pendingNonce).toString(16)}`;
+    if (method === "eth_getTransactionReceipt") {
+      this.receiptReads.push(String(params[0]));
+      return this.receipts.get(String(params[0])) ?? null;
+    }
+    if (method === "eth_getBlockByNumber" && params[0] === "finalized")
+      return { number: `0x${this.finalized.toString(16)}` };
     throw new Error(`unsupported ${method}`);
+  }
+  mine() {
+    for (const [hash, receipt] of this.mempool) this.receipts.set(hash, receipt);
+    this.minedNonce += this.mempool.size;
+    this.mempool.clear();
   }
   async broadcastTransaction(raw: string) {
     if (this.failBeforeAccept) {
@@ -29,16 +47,21 @@ class DeterministicProvider {
     const transaction = Transaction.from(raw),
       hash = keccak256(raw);
     this.broadcasts.push(raw);
-    this.pendingNonce = Math.max(this.pendingNonce, transaction.nonce + 1);
-    this.receipts.set(hash, {
+    if (this.receipts.has(hash) || transaction.nonce < this.minedNonce) throw new Error("nonce too low");
+    const receipt = {
       transactionHash: hash,
-      blockNumber: `0x${(100 + this.pendingNonce).toString(16)}`,
+      blockNumber: `0x${(101 + transaction.nonce).toString(16)}`,
       blockHash: `0x${hash.slice(2).padEnd(64, "0")}`,
       status: "0x1",
-    });
+    };
     if (this.revertNext) {
       this.revertNext = false;
-      this.receipts.get(hash)!.status = "0x0";
+      receipt.status = "0x0";
+    }
+    if (this.holdInMempool) this.mempool.set(hash, receipt);
+    else {
+      this.receipts.set(hash, receipt);
+      this.minedNonce = Math.max(this.minedNonce, transaction.nonce + 1);
     }
     if (this.failAfterAccept) {
       this.failAfterAccept = false;
@@ -108,7 +131,7 @@ test("parallel operations serialize onto unique consecutive sponsor nonces", asy
     Array.from({ length: 100 }, (_, index) => index),
   );
   assert(journal.every((item) => item.status === "included"));
-  assert.equal(provider.pendingNonce, 100);
+  assert.equal(provider.minedNonce, 100);
   database.close();
 });
 
@@ -156,7 +179,7 @@ test("reconcile marks an externally consumed nonce ambiguous instead of guessing
   provider.failBeforeAccept = true;
   const sender = new DurableSender(provider as never, wallet, database, options);
   await assert.rejects(sender.submit("lost", request));
-  provider.pendingNonce = 1;
+  provider.minedNonce = 1;
   await sender.reconcile();
   assert.equal(rows(database)[0].status, "ambiguous");
   database.close();
@@ -220,5 +243,76 @@ test("sponsor ceilings and durable daily budget fail before broadcast without pa
   assert.equal(database.prepare("SELECT count(*) n FROM sender_budget").get()!.n, 1);
   await sender.submit("first", request);
   assert.equal(provider.broadcasts.length, 1);
+  database.close();
+});
+
+test("reconcile reads receipts only for unresolved and not-yet-finalized operations", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    sender = new DurableSender(provider as never, randomWallet(), database, options);
+  for (let index = 0; index < 20; index++) await sender.submit(`history-${index}`, request);
+  provider.finalized = 101 + 17; // nonces 0..17 are final, 18 and 19 are still reorgable
+  provider.receiptReads = [];
+  await sender.reconcile();
+  const recent = new Set(
+    rows(database)
+      .slice(18)
+      .map((row) => row.tx_hash),
+  );
+  assert.equal(provider.receiptReads.length, 2);
+  assert(provider.receiptReads.every((hash) => recent.has(hash)));
+  provider.finalized = 1_000;
+  provider.receiptReads = [];
+  await sender.reconcile();
+  assert.equal(provider.receiptReads.length, 0, "finalized history must not be re-read");
+  assert(rows(database).every((row) => row.status === "included"));
+  database.close();
+});
+
+test("an included operation whose receipt is reorged out is rebroadcast and fences until re-included", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    sender = new DurableSender(provider as never, randomWallet(), database, options);
+  await sender.submit("reorged", request);
+  const included = rows(database)[0];
+  provider.receipts.delete(included.tx_hash);
+  provider.minedNonce = 0;
+  provider.holdInMempool = true;
+  await sender.reconcile();
+  assert.equal(rows(database)[0].status, "reorged");
+  assert.equal(provider.broadcasts.length, 2, "reorged transaction must be rebroadcast");
+  assert.equal(sender.hasUnresolved(), true);
+  await assert.rejects(sender.submit("blocked", request), /unresolved sponsor operation reorged/);
+  await sender.reconcile();
+  assert.equal(rows(database)[0].status, "reorged", "still waiting for re-inclusion");
+  provider.mine();
+  await sender.reconcile();
+  assert.equal(rows(database)[0].status, "included");
+  assert.equal(sender.hasUnresolved(), false);
+  database.close();
+});
+
+test("an included operation whose receipt vanished never supersedes itself", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    sender = new DurableSender(provider as never, randomWallet(), database, options);
+  await sender.submit("vanished", request);
+  provider.receipts.delete(rows(database)[0].tx_hash);
+  await sender.reconcile();
+  assert.equal(rows(database)[0].status, "ambiguous", "nonce consumed by an unknown transaction");
+  database.close();
+});
+
+test("reconcile keeps a mempool transaction submitted instead of declaring it ambiguous", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    sender = new DurableSender(provider as never, randomWallet(), database, options);
+  provider.holdInMempool = true;
+  await assert.rejects(sender.submit("slow", request), /was not included/);
+  await sender.reconcile();
+  assert.equal(rows(database)[0].status, "submitted");
+  provider.mine();
+  await sender.reconcile();
+  assert.equal(rows(database)[0].status, "included");
   database.close();
 });

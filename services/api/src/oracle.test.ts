@@ -425,3 +425,91 @@ test("simulated source encodes mock-oracle reports and accepts scripted prices",
   assert.throws(() => source.setPrice("BTC", 0));
   await source.close();
 });
+
+test("counts rejected upstream updates instead of silently dropping them", async () => {
+  const listeners: Record<string, Array<(event: any) => void>> = {},
+    socket = {
+      readyState: 1,
+      send: () => {},
+      close: () => {},
+      addEventListener: (type: string, listener: (event: any) => void) => {
+        (listeners[type] ??= []).push(listener);
+      },
+    };
+  const coinbase = new CoinbaseMarketDataSource({ socketFactory: () => socket });
+  await coinbase.start();
+  listeners.message[0]({ data: "not json" });
+  listeners.message[0]({
+    data: JSON.stringify({
+      channel: "ticker",
+      events: [{ tickers: [{ product_id: "BTC-USD", best_bid: "60001", best_ask: "60000" }] }],
+    }),
+  });
+  listeners.message[0]({ data: JSON.stringify({ channel: "heartbeats" }) });
+  assert.equal(coinbase.status().rejectedUpdates, 2);
+  assert.equal(coinbase.status().agesMs.BTC, null, "crossed book must not be cached");
+  await coinbase.close();
+
+  let streamListener: ((value: any) => void) | undefined;
+  const chainlink = new ChainlinkDataStreamsSource({
+    apiKey: "test",
+    userSecret: "secret",
+    endpoint: "https://data.example",
+    wsEndpoint: "wss://data.example",
+    feedIds: { BTC: feedId, ETH: `0x0003${"22".repeat(30)}` },
+    feedDecimals: { BTC: 8, ETH: 8 },
+    client: {
+      getLatestReport: async () => {
+        throw new Error("unused");
+      },
+      createStream: () => ({
+        on(_event, callback) {
+          streamListener = callback;
+          return this;
+        },
+        connect: async () => {},
+        close: async () => {},
+      }),
+    },
+  });
+  await chainlink.start();
+  streamListener?.({ feedID: feedId, fullReport: report(), validFromTimestamp: 0, observationsTimestamp: 1 });
+  assert.equal(chainlink.status().rejectedUpdates, 1);
+  await chainlink.close();
+});
+
+test("a rejected Pyth stream update is counted and later updates still flow", async () => {
+  const now = Math.floor(Date.now() / 1_000),
+    btc = `0x${"99".repeat(32)}`,
+    eth = `0x${"aa".repeat(32)}`,
+    good = {
+      binary: { encoding: "hex", data: ["abcd"] },
+      parsed: [
+        {
+          id: btc.slice(2),
+          price: { price: "8000000000000", conf: "100000000", expo: -8, publish_time: now },
+        },
+      ],
+    };
+  const source = new PythHermesSource({
+    apiKey: "trial-secret",
+    feedIds: { BTC: btc, ETH: eth },
+    fetchImpl: async (_url, init) => {
+      let controller: ReadableStreamDefaultController<Uint8Array>;
+      const stream = new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+          value.enqueue(new TextEncoder().encode(`data: {"broken"\n\ndata: ${JSON.stringify(good)}\n\n`));
+        },
+      });
+      init?.signal?.addEventListener("abort", () => controller.close());
+      return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+    },
+  });
+  const changed = new Promise<string>((resolve) => source.subscribe(resolve));
+  await source.start();
+  assert.equal(await changed, "BTC");
+  assert.equal(source.status().rejectedUpdates, 1);
+  assert.equal(source.status().streamFailures, 0);
+  await source.close();
+});

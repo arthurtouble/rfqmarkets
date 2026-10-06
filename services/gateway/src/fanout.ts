@@ -1,3 +1,5 @@
+import { SSE_HEARTBEAT, readSseEvents, sseFrame } from "../../lib/src/sse.js";
+
 export interface FanoutClient {
   write(chunk: string): boolean;
   bufferedBytes(): number;
@@ -27,12 +29,12 @@ export class MarketFanout {
     return () => this.clients.delete(client);
   }
   publish(data: string) {
-    const frame = `id: ${++this.sequence}\nevent: markets\ndata: ${data}\n\n`;
+    const frame = sseFrame("markets", data, ++this.sequence);
     this.latest = frame;
     for (const client of this.clients) if (this.write(client, frame)) this.sent++;
   }
   heartbeat() {
-    for (const client of this.clients) this.write(client, ": heartbeat\n\n");
+    for (const client of this.clients) this.write(client, SSE_HEARTBEAT);
   }
   close() {
     for (const client of this.clients) client.close();
@@ -51,24 +53,5 @@ export class MarketFanout {
 
 export async function consumeMarketEvents(response: Response, onData: (data: string) => void) {
   if (!response.ok || !response.body) throw new Error(`upstream market stream returned ${response.status}`);
-  const reader = response.body.getReader(),
-    decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
-    let boundary;
-    while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-      const block = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      let event = "message";
-      const data: string[] = [];
-      for (const line of block.split("\n")) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
-      }
-      if (event === "markets" && data.length) onData(data.join("\n"));
-    }
-  }
+  for await (const event of readSseEvents(response.body)) if (event.event === "markets") onData(event.data);
 }

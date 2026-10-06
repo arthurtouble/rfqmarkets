@@ -1,9 +1,11 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyReply } from "fastify";
 import cors from "@fastify/cors";
-import type { ServerResponse } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { Contract, Interface, JsonRpcProvider, getAddress, type Log } from "ethers";
+import { z } from "zod";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
+import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
+import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 import { RiskProjection, type AccountProjection } from "./risk-projection.js";
 
 export interface IndexerOptions {
@@ -15,14 +17,85 @@ export interface IndexerOptions {
   pollMs?: number;
   corsOrigin?: string | string[];
   provider?: JsonRpcProvider;
+  /** Update-stream connection caps (global and per client IP). */
+  maxStreamConnections?: number;
+  maxStreamConnectionsPerClient?: number;
+  /** Where sync failures are reported; defaults to stderr. Each distinct failure is logged once. */
+  logError?: (message: string, error: unknown) => void;
 }
+
+const ACTIVITY_KINDS = [
+  "Deposited",
+  "Withdrawn",
+  "NonceCancelled",
+  "SessionGranted",
+  "SessionRevoked",
+  "TradeExecuted",
+  "FundingSettled",
+  "PositionClosed",
+  "Liquidated",
+  "DeficitAbsorbed",
+  "MakerWithdrawn",
+  "EpochAdvanced",
+  "ResolutionStarted",
+  "ResolutionPriceReady",
+  "ResolutionFinalized",
+] as const;
+const address = (message: string) =>
+  z.string().transform((value, context) => {
+    try {
+      return getAddress(value);
+    } catch {
+      context.addIssue({ code: z.ZodIssueCode.custom, message });
+      return z.NEVER;
+    }
+  });
+/** Page size: invalid values fall back, valid ones are clamped to 1..100. */
+const pageLimit = (fallback: number) =>
+  z.coerce
+    .number()
+    .int()
+    .catch(fallback)
+    .transform((value) => Math.min(100, Math.max(1, value)));
+/** "block:logIndex" of the last item already seen; omitted means "from the newest". */
+const activityCursor = z
+  .string()
+  .regex(/^\d+:\d+$/, "invalid cursor")
+  .transform((value) => value.split(":").map(Number) as [number, number])
+  .refine((parts) => parts.every(Number.isSafeInteger), "invalid cursor")
+  .default(`${Number.MAX_SAFE_INTEGER}:${Number.MAX_SAFE_INTEGER}`);
+const isTrue = z
+  .string()
+  .optional()
+  .transform((value) => value === "true");
+const accountParams = z.object({ address: address("invalid account") });
+const accountActivityQuery = z.object({ cursor: activityCursor, limit: pageLimit(25) });
+const activityQuery = z.object({
+  cursor: activityCursor,
+  limit: pageLimit(25),
+  kind: z.enum(ACTIVITY_KINDS, { message: "invalid activity kind" }).optional(),
+  market: z.enum(["0", "1"], { message: "invalid market" }).transform(Number).optional(),
+  finalized: isTrue,
+});
+const finalityQuery = z.object({ finalized: isTrue });
+const positionsQuery = z.object({
+  limit: pageLimit(50),
+  // Finalized unless explicitly asked for included state.
+  finalized: z
+    .string()
+    .optional()
+    .transform((value) => value !== "false"),
+  market: z.enum(["BTC", "ETH"], { message: "invalid market" }).optional(),
+  cursor: address("invalid cursor").optional(),
+});
 
 export function buildIndexer(options: IndexerOptions) {
   const corsOrigins = options.corsOrigin ?? ["http://127.0.0.1:4173", "http://127.0.0.1:4174"],
-    originFor = (requestOrigin: string | undefined) => {
-      const allowed = Array.isArray(corsOrigins) ? corsOrigins : [corsOrigins];
-      return requestOrigin && allowed.includes(requestOrigin) ? requestOrigin : allowed[0];
-    };
+    streamBudget = new ConnectionBudget(
+      options.maxStreamConnections ?? 1_000,
+      options.maxStreamConnectionsPerClient ?? 8,
+    ),
+    logError = options.logError ?? ((message: string, error: unknown) => console.error(message, error));
   // The first finalized sync can span the full deployment history and depends
   // on public RPC latency. Keep Fastify's startup watchdog above the ordinary
   // ten-second plugin default while retaining a finite failure boundary.
@@ -50,7 +123,7 @@ export function buildIndexer(options: IndexerOptions) {
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let lastError: string | undefined,
     lastPublishedBlock = -1;
-  const updateClients = new Set<ServerResponse>();
+  const updateClients = new SseClients();
   function indexedBlock() {
     return (
       (db.prepare("SELECT max(number) value FROM blocks").get() as { value: number | null }).value ??
@@ -61,19 +134,14 @@ export function buildIndexer(options: IndexerOptions) {
     const block = indexedBlock();
     if (block === lastPublishedBlock && !accounts.size && !reset) return;
     lastPublishedBlock = block;
-    const data = `event: indexed\ndata: ${JSON.stringify({ indexedBlock: block, changed: accounts.size > 0 || reset, reset, accounts: [...accounts] })}\n\n`;
-    for (const client of updateClients) {
-      if (client.destroyed || client.writableEnded) {
-        updateClients.delete(client);
-        continue;
-      }
-      if (client.writableLength > 262_144) {
-        client.destroy();
-        updateClients.delete(client);
-        continue;
-      }
-      client.write(data);
-    }
+    updateClients.broadcast(
+      sseFrame("indexed", {
+        indexedBlock: block,
+        changed: accounts.size > 0 || reset,
+        reset,
+        accounts: [...accounts],
+      }),
+    );
   }
   function atomic(write: () => void) {
     db.exec("BEGIN IMMEDIATE");
@@ -207,7 +275,7 @@ export function buildIndexer(options: IndexerOptions) {
       try {
         parsed = iface.parseLog(log);
       } catch {
-        continue;
+        continue; // proxy/admin events from the same address are not part of the read model
       }
       if (!parsed) continue;
       const timestamp = timestamps.get(log.blockNumber);
@@ -283,7 +351,9 @@ export function buildIndexer(options: IndexerOptions) {
         return result;
       })
       .catch((error) => {
-        lastError = String(error);
+        const message = String(error);
+        if (message !== lastError) logError("indexer sync failed:", error);
+        lastError = message;
         return { accounts: new Set<string>(), reset: false };
       })
       .finally(() => {
@@ -291,23 +361,39 @@ export function buildIndexer(options: IndexerOptions) {
       });
     return syncing;
   }
-  const limitFrom = (value: string | undefined, fallback = 25) => {
-    const parsed = Number(value ?? fallback);
-    return Number.isSafeInteger(parsed) ? Math.min(100, Math.max(1, parsed)) : fallback;
-  };
-  const cursorFrom = (value: string | undefined) => {
-    const parts = (value ?? `${Number.MAX_SAFE_INTEGER}:${Number.MAX_SAFE_INTEGER}`).split(":").map(Number);
-    return parts.length === 2 && parts.every(Number.isSafeInteger) ? parts : null;
-  };
+  const finalizedCursor = () =>
+    Number(
+      (
+        db.prepare("SELECT value FROM metadata WHERE key='finalized_cursor'").get() as
+          { value: string } | undefined
+      )?.value ?? (options.startBlock ?? 0) - 1,
+    );
   const finalityBlock = async () =>
     Math.max((options.startBlock ?? 0) - 1, (await provider.getBlockNumber()) - (options.confirmations ?? 2));
+  /** Parses a query or params object; on failure replies 400 with the first issue and returns undefined. */
+  const parse = <T extends z.ZodTypeAny>(schema: T, value: unknown, reply: FastifyReply) => {
+    const result = schema.safeParse(value);
+    if (result.success) return result.data as z.output<T>;
+    void reply.code(400).send({ error: result.error.issues[0]?.message ?? "invalid request" });
+    return undefined;
+  };
+  const activityPage = (rows: Array<Record<string, string | number>>, limit: number, finalized: number) => ({
+    items: rows.map((row) => ({
+      ...row,
+      payload: JSON.parse(String(row.payload)),
+      finality: Number(row.block_number) <= finalized ? "finalized" : "included",
+    })),
+    nextCursor:
+      rows.length === limit
+        ? `${rows[rows.length - 1].block_number}:${rows[rows.length - 1].log_index}`
+        : null,
+  });
+
   app.get("/health", async () => {
     await sync();
-    const head = await provider.getBlockNumber();
-    const indexed =
-      (db.prepare("SELECT max(number) value FROM blocks").get() as { value: number | null }).value ??
-      (options.startBlock ?? 0) - 1;
-    const finalized = Math.max((options.startBlock ?? 0) - 1, head - (options.confirmations ?? 2));
+    const head = await provider.getBlockNumber(),
+      indexed = indexedBlock(),
+      finalized = Math.max((options.startBlock ?? 0) - 1, head - (options.confirmations ?? 2));
     return {
       ok: !lastError,
       indexedBlock: indexed,
@@ -315,35 +401,30 @@ export function buildIndexer(options: IndexerOptions) {
       headBlock: head,
       lag: head - indexed,
       error: lastError ? "index_sync_failed" : undefined,
+      streams: streamBudget.status(),
     };
   });
   app.get("/v1/updates/stream", async (request, reply) => {
-    reply.hijack();
-    reply.raw.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      "access-control-allow-origin": originFor(request.headers.origin),
-    });
-    updateClients.add(reply.raw);
-    request.raw.on("close", () => updateClients.delete(reply.raw));
-    reply.raw.write(
-      `event: indexed\ndata: ${JSON.stringify({ indexedBlock: indexedBlock(), changed: true, initial: true, accounts: [] })}\n\n`,
+    const release = streamBudget.acquire(request.ip);
+    if (!release)
+      return reply.code(429).header("retry-after", "5").send({ error: "stream connection limit reached" });
+    const response = openSse(reply, corsOrigins);
+    response.once("close", release);
+    updateClients.add(response);
+    updateClients.send(
+      response,
+      sseFrame("indexed", { indexedBlock: indexedBlock(), changed: true, initial: true, accounts: [] }),
     );
   });
   app.get("/v1/account/:address", async (request, reply) => {
     await sync();
-    let account;
-    try {
-      account = getAddress((request.params as { address: string }).address);
-    } catch {
-      return reply.code(400).send({ error: "invalid account" });
-    }
-    const row = db.prepare("SELECT * FROM accounts WHERE account=?").get(account) as
+    const params = parse(accountParams, request.params, reply);
+    if (!params) return;
+    const row = db.prepare("SELECT * FROM accounts WHERE account=?").get(params.address) as
       Record<string, string | number> | undefined;
     if (!row) return reply.code(404).send({ error: "account not indexed" });
     return {
-      account,
+      account: params.address,
       collateral: row.collateral,
       positions: {
         BTC: { size: row.btc_size, entryPrice: row.btc_entry },
@@ -355,74 +436,28 @@ export function buildIndexer(options: IndexerOptions) {
   });
   app.get("/v1/account/:address/activity", async (request, reply) => {
     await sync();
-    let account;
-    try {
-      account = getAddress((request.params as { address: string }).address);
-    } catch {
-      return reply.code(400).send({ error: "invalid account" });
-    }
-    const query = request.query as { cursor?: string; limit?: string };
-    const cursor = cursorFrom(query.cursor);
-    if (!cursor) return reply.code(400).send({ error: "invalid cursor" });
-    const [cursorBlock, cursorLog] = cursor;
-    const limit = limitFrom(query.limit);
+    const params = parse(accountParams, request.params, reply),
+      query = params && parse(accountActivityQuery, request.query, reply);
+    if (!params || !query) return;
+    const [cursorBlock, cursorLog] = query.cursor;
     const rows = db
       .prepare(
         "SELECT * FROM activity WHERE account=? AND (block_number<? OR (block_number=? AND log_index<?)) ORDER BY block_number DESC,log_index DESC LIMIT ?",
       )
-      .all(account, cursorBlock, cursorBlock, cursorLog, limit) as Array<Record<string, string | number>>;
-    const finalized = await finalityBlock();
-    return {
-      items: rows.map((row) => ({
-        ...row,
-        payload: JSON.parse(String(row.payload)),
-        finality: Number(row.block_number) <= finalized ? "finalized" : "included",
-      })),
-      nextCursor:
-        rows.length === limit
-          ? `${rows[rows.length - 1].block_number}:${rows[rows.length - 1].log_index}`
-          : null,
-    };
+      .all(params.address, cursorBlock, cursorBlock, cursorLog, query.limit) as Array<
+      Record<string, string | number>
+    >;
+    return activityPage(rows, query.limit, await finalityBlock());
   });
   app.get("/v1/activity", async (request, reply) => {
     await sync();
-    const query = request.query as {
-      cursor?: string;
-      limit?: string;
-      kind?: string;
-      market?: string;
-      finalized?: string;
-    };
-    const cursor = cursorFrom(query.cursor);
-    if (!cursor) return reply.code(400).send({ error: "invalid cursor" });
-    const [cursorBlock, cursorLog] = cursor;
-    const limit = limitFrom(query.limit);
-    const allowedKinds = [
-      "Deposited",
-      "Withdrawn",
-      "NonceCancelled",
-      "SessionGranted",
-      "SessionRevoked",
-      "TradeExecuted",
-      "FundingSettled",
-      "PositionClosed",
-      "Liquidated",
-      "DeficitAbsorbed",
-      "MakerWithdrawn",
-      "EpochAdvanced",
-      "ResolutionStarted",
-      "ResolutionPriceReady",
-      "ResolutionFinalized",
-    ];
-    if (query.kind && !allowedKinds.includes(query.kind))
-      return reply.code(400).send({ error: "invalid activity kind" });
-    const market = query.market === undefined ? undefined : Number(query.market);
-    if (market !== undefined && market !== 0 && market !== 1)
-      return reply.code(400).send({ error: "invalid market" });
-    const finalized = await finalityBlock();
+    const query = parse(activityQuery, request.query, reply);
+    if (!query) return;
+    const [cursorBlock, cursorLog] = query.cursor,
+      finalized = await finalityBlock();
     const clauses = ["(block_number<? OR (block_number=? AND log_index<?))"],
       params: Array<string | number> = [cursorBlock, cursorBlock, cursorLog];
-    if (query.finalized === "true") {
+    if (query.finalized) {
       clauses.push("block_number<=?");
       params.push(finalized);
     }
@@ -430,94 +465,55 @@ export function buildIndexer(options: IndexerOptions) {
       clauses.push("kind=?");
       params.push(query.kind);
     }
-    if (market !== undefined) {
+    if (query.market !== undefined) {
       clauses.push("market=?");
-      params.push(market);
+      params.push(query.market);
     }
-    params.push(limit);
     const rows = db
       .prepare(
         `SELECT * FROM activity WHERE ${clauses.join(" AND ")} ORDER BY block_number DESC,log_index DESC LIMIT ?`,
       )
-      .all(...params) as Array<Record<string, string | number>>;
-    return {
-      items: rows.map((row) => ({
-        ...row,
-        payload: JSON.parse(String(row.payload)),
-        finality: Number(row.block_number) <= finalized ? "finalized" : "included",
-      })),
-      nextCursor:
-        rows.length === limit
-          ? `${rows[rows.length - 1].block_number}:${rows[rows.length - 1].log_index}`
-          : null,
-      finalizedBlock: finalized,
-    };
+      .all(...params, query.limit) as Array<Record<string, string | number>>;
+    return { ...activityPage(rows, query.limit, finalized), finalizedBlock: finalized };
   });
-  app.get("/v1/exposure", async (request) => {
+  app.get("/v1/exposure", async (request, reply) => {
     await sync();
-    const head = await provider.getBlockNumber();
-    const query = request.query as { finalized?: string };
-    const blockTag =
-      query.finalized === "true"
+    const query = parse(finalityQuery, request.query, reply);
+    if (!query) return;
+    const head = await provider.getBlockNumber(),
+      blockTag = query.finalized
         ? Math.max(options.startBlock ?? 0, head - (options.confirmations ?? 2))
         : head;
     const [btc, eth] = await Promise.all([
       contract.markets(0, { blockTag }),
       contract.markets(1, { blockTag }),
     ]);
-    return {
-      blockNumber: blockTag,
-      markets: {
-        BTC: {
-          aggregateBase: btc.aggregateBase.toString(),
-          bid: btc.lastBid.toString(),
-          ask: btc.lastAsk.toString(),
-        },
-        ETH: {
-          aggregateBase: eth.aggregateBase.toString(),
-          bid: eth.lastBid.toString(),
-          ask: eth.lastAsk.toString(),
-        },
-      },
-    };
+    const market = (state: { aggregateBase: bigint; lastBid: bigint; lastAsk: bigint }) => ({
+      aggregateBase: state.aggregateBase.toString(),
+      bid: state.lastBid.toString(),
+      ask: state.lastAsk.toString(),
+    });
+    return { blockNumber: blockTag, markets: { BTC: market(btc), ETH: market(eth) } };
   });
-  app.get("/v1/risk", async (request) => {
+  app.get("/v1/risk", async (request, reply) => {
     await sync();
-    const finalized = (request.query as { finalized?: string }).finalized === "true",
-      block = finalized
-        ? Number(
-            (
-              db.prepare("SELECT value FROM metadata WHERE key=\'finalized_cursor\'").get() as
-                { value: string } | undefined
-            )?.value ?? (options.startBlock ?? 0) - 1,
-          )
-        : indexedBlock();
-    return (finalized ? finalizedRisk : liveRisk).snapshot(block);
+    const query = parse(finalityQuery, request.query, reply);
+    if (!query) return;
+    return query.finalized ? finalizedRisk.snapshot(finalizedCursor()) : liveRisk.snapshot(indexedBlock());
   });
   app.get("/v1/positions", async (request, reply) => {
     await sync();
-    const query = request.query as { limit?: string; cursor?: string; finalized?: string; market?: string };
-    const limit = limitFrom(query.limit, 50),
-      finalized = query.finalized !== "false",
-      table = finalized ? "finalized_accounts" : "accounts";
-    if (query.market && !["BTC", "ETH"].includes(query.market))
-      return reply.code(400).send({ error: "invalid market" });
-    let cursor: string | undefined;
-    if (query.cursor) {
-      try {
-        cursor = getAddress(query.cursor);
-      } catch {
-        return reply.code(400).send({ error: "invalid cursor" });
-      }
-    }
-    const open =
+    const query = parse(positionsQuery, request.query, reply);
+    if (!query) return;
+    const table = query.finalized ? "finalized_accounts" : "accounts",
+      open =
         query.market === "BTC"
           ? "btc_size != '0'"
           : query.market === "ETH"
             ? "eth_size != '0'"
             : "(btc_size != '0' OR eth_size != '0')",
-      where = cursor ? `${open} AND account > ?` : open,
-      params = cursor ? [cursor, limit] : [limit],
+      where = query.cursor ? `${open} AND account > ?` : open,
+      params = query.cursor ? [query.cursor, query.limit] : [query.limit],
       rows = db
         .prepare(
           `SELECT account,collateral,btc_size,btc_entry,eth_size,eth_entry,indexed_block FROM ${table} WHERE ${where} ORDER BY account LIMIT ?`,
@@ -526,14 +522,6 @@ export function buildIndexer(options: IndexerOptions) {
       total = Number(
         (db.prepare(`SELECT count(*) value FROM ${table} WHERE ${open}`).get() as { value: number }).value,
       ),
-      block = finalized
-        ? Number(
-            (
-              db.prepare("SELECT value FROM metadata WHERE key='finalized_cursor'").get() as
-                { value: string } | undefined
-            )?.value ?? (options.startBlock ?? 0) - 1,
-          )
-        : indexedBlock(),
       items = rows.map((row) => ({
         account: String(row.account),
         collateral: String(row.collateral),
@@ -545,9 +533,9 @@ export function buildIndexer(options: IndexerOptions) {
     return {
       items,
       total,
-      nextCursor: items.length === limit ? items[items.length - 1].account : null,
-      indexedBlock: block,
-      finality: finalized ? "finalized" : "included",
+      nextCursor: items.length === query.limit ? items[items.length - 1].account : null,
+      indexedBlock: query.finalized ? finalizedCursor() : indexedBlock(),
+      finality: query.finalized ? "finalized" : "included",
     };
   });
   app.get("/v1/protocol", async () => {
@@ -573,15 +561,13 @@ export function buildIndexer(options: IndexerOptions) {
     await sync();
     timer = setInterval(() => void sync(), options.pollMs ?? 500);
     timer.unref();
-    heartbeat = setInterval(() => {
-      for (const client of updateClients) client.write(": heartbeat\n\n");
-    }, 15_000);
+    heartbeat = setInterval(() => updateClients.heartbeat(), 15_000);
     heartbeat.unref();
   });
   app.addHook("onClose", async () => {
     if (timer) clearInterval(timer);
     if (heartbeat) clearInterval(heartbeat);
-    for (const client of updateClients) client.end();
+    updateClients.close();
     await syncing;
     db.close();
   });
