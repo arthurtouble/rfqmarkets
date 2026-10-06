@@ -2,11 +2,14 @@ import { Container, getContainer, switchPort } from "@cloudflare/containers";
 import { portForPath } from "./routing.mjs";
 import { admitAtEdge } from "./edge-admission.mjs";
 import { loadJournals, saveJournals } from "./dev-journal-store.mjs";
+import { ensureIdentities, matchesDeployment, publicIdentities } from "./dev-identities.mjs";
 
 // Base mainnet dev runtime: one container runs every service (scripts/cloudflare-dev-container.ts).
-// The deployment record comes from the DEV_STATE KV namespace, written by the dev-contracts workflow;
-// keys come from the RFQ_DEV_RUNTIME_SECRETS secret. Journals live in this Durable Object's storage,
-// keyed by proxy address, so a fresh contract deployment starts with empty journals.
+// The deployment record comes from the DEV_STATE KV namespace, written by the dev-contracts workflow.
+// Approver, sponsor and emergency keys are generated and kept in this Durable Object's storage
+// (dev-identities.mjs); RPC URLs and the Pyth key come from the RFQ_DEV_RUNTIME_SECRETS secret.
+// Journals also live in Durable Object storage, keyed by proxy address, so a fresh contract
+// deployment starts with empty journals.
 const CONTROL=4099,INSTANCE="base-mainnet-dev",control=path=>`http://container${path}`;
 const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...headers}});
 
@@ -26,11 +29,20 @@ export class RFQDevRuntime extends Container {
     return this.starting;
   }
 
+  /** Creates the runtime's keys on first use and publishes their addresses for the contracts workflow. */
+  async identities(){
+    const identities=await ensureIdentities(this.ctx.storage),published=JSON.stringify(publicIdentities(identities));
+    if(await this.env.DEV_STATE.get("identities.json")!==published)await this.env.DEV_STATE.put("identities.json",published);
+    return identities;
+  }
+
   async start(){
-    const text=await this.env.DEV_STATE.get("deployment.json");
+    const identities=await this.identities(),text=await this.env.DEV_STATE.get("deployment.json");
     if(!text)return {ready:false,reason:"contracts_not_deployed"};
     if(!this.env.RFQ_DEV_RUNTIME_SECRETS)return {ready:false,reason:"runtime_secrets_missing"};
     const deployment=JSON.parse(text),clearing=deployment.contracts.clearingProxy.toLowerCase();
+    if(!matchesDeployment(identities,deployment))return {ready:false,reason:"approver_keys_do_not_match_deployment"};
+    const secrets={...JSON.parse(this.env.RFQ_DEV_RUNTIME_SECRETS),sponsorKey:identities.sponsor.privateKey,approverKeys:identities.approvers.map(item=>item.privateKey)};
     await this.startAndWaitForPorts(CONTROL);
     let status=await this.status();
     if(status.phase!=="waiting"&&(status.phase==="exited"||status.clearing?.toLowerCase()!==clearing)){
@@ -39,7 +51,7 @@ export class RFQDevRuntime extends Container {
     }
     if(status.phase==="waiting"){
       const journals=await loadJournals(this.ctx.storage,clearing);
-      const started=await this.containerFetch(new Request(control("/control/start"),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({deployment,secrets:JSON.parse(this.env.RFQ_DEV_RUNTIME_SECRETS),journals})}),CONTROL);
+      const started=await this.containerFetch(new Request(control("/control/start"),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({deployment,secrets,journals})}),CONTROL);
       if(started.status!==202)return {ready:false,reason:`start_failed:${(await started.json()).error}`};
     }
     this.readyUntil=Date.now()+15_000;

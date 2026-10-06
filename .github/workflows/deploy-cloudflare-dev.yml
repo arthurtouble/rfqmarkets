@@ -21,6 +21,9 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PYTH_API_KEY: ${{ secrets.PYTH_API_KEY }}
+      RFQ_BASE_MAINNET_RPC_URL: ${{ secrets.RFQ_BASE_MAINNET_RPC_URL }}
+      RFQ_BASE_MAINNET_SECONDARY_RPC_URL: ${{ secrets.RFQ_BASE_MAINNET_SECONDARY_RPC_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,5 +40,9 @@ jobs:
         run: |
           sed "s/REPLACED_AT_DEPLOY/${{ steps.kv.outputs.id }}/" deploy/cloudflare/runtime/wrangler.dev.jsonc > deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
           npx wrangler deploy --config deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
+      - name: Give the dev runtime its RPC and Pyth settings
+        run: |
+          node -e 'const rpc=process.env.RFQ_BASE_MAINNET_RPC_URL||"https://mainnet.base.org";if(!process.env.PYTH_API_KEY)throw new Error("PYTH_API_KEY is required");process.stdout.write(JSON.stringify({rpcUrl:rpc,secondaryRpcUrl:process.env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||rpc,pythApiKey:process.env.PYTH_API_KEY}))' \
+            | npx wrangler secret put RFQ_DEV_RUNTIME_SECRETS --name rfq-markets-runtime-dev
       - run: npx wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
       - run: npx wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
