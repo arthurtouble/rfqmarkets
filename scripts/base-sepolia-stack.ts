@@ -1,16 +1,12 @@
-import { childEnvironment } from "../packages/shared/src/process-environment.js";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// All RFQ services against a Base Sepolia deployment, with Pyth prices and either the local hedge
+// simulator or the Hyperliquid testnet venue.
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
 import { JsonRpcProvider, parseUnits } from "ethers";
-import { buildApi } from "../services/api/src/server.js";
 import { PythHermesSource } from "../services/api/src/oracle.js";
-import { buildIndexer } from "../services/indexer/src/server.js";
-import { buildHedger } from "../services/hedger/src/server.js";
 import { HyperliquidVenue } from "../services/hedger/src/hyperliquid.js";
-import { HttpHedgeRiskSource } from "../services/api/src/hedge-risk.js";
-import { buildGateway } from "../services/gateway/src/server.js";
 import { loadDeploymentConfig } from "./deployment-config.js";
+import { startServiceStack, stopOnSignals } from "./lib/service-stack.js";
 
 type Identity = { address: string; privateKey: string };
 type Manifest = {
@@ -49,57 +45,46 @@ const config = process.env.RFQ_TESTNET_MANIFEST_JSON
   );
 if (manifest.chainId !== "84532") throw new Error("Disposable testnet runtime cannot select another chain");
 if (config.oracleMode !== "pyth") throw new Error("Base Sepolia runtime requires RFQ_ORACLE_MODE=pyth");
-const state = resolve(process.env.RFQ_TESTNET_RUNTIME_DIR ?? ".local-state/base-sepolia-runtime"),
-  bindHost = process.env.RFQ_BIND_HOST ?? "127.0.0.1",
-  runtimeRpc = process.env.RFQ_API_RPC_URL ?? config.rpcUrl;
-mkdirSync(state, { recursive: true });
-const provider = new JsonRpcProvider(runtimeRpc, undefined, { batchMaxCount: 1 }),
-  deploymentProvider = new JsonRpcProvider(config.rpcUrl, undefined, { batchMaxCount: 1 });
+
+/** Binary search for the proxy's creation block when the manifest does not record it. */
 async function deploymentBlock() {
   if (typeof manifest.deploymentBlock === "number") return manifest.deploymentBlock;
-  let low = 0,
-    high = await deploymentProvider.getBlockNumber();
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if ((await deploymentProvider.getCode(manifest.contracts.clearingProxy, middle)) === "0x")
-      low = middle + 1;
-    else high = middle;
+  const provider = new JsonRpcProvider(config.rpcUrl, undefined, { batchMaxCount: 1 });
+  try {
+    let low = 0,
+      high = await provider.getBlockNumber();
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if ((await provider.getCode(manifest.contracts.clearingProxy, middle)) === "0x") low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  } finally {
+    provider.destroy();
   }
-  return low;
 }
-const defaultPrimaryRpcs = [
+
+const primaryRpcs = process.env.RFQ_APPROVER_RPC_URLS?.split(",") ?? [
     "https://base-sepolia-rpc.publicnode.com",
     "https://base-sepolia.drpc.org",
     "https://sepolia-preconf.base.org",
   ],
-  defaultSecondaryRpcs = [
+  secondaryRpcs = process.env.RFQ_APPROVER_SECONDARY_RPC_URLS?.split(",") ?? [
     "https://sepolia.base.org",
     "https://base-sepolia-rpc.publicnode.com",
     "https://base-sepolia.drpc.org",
-  ],
-  startBlock = await deploymentBlock(),
-  chainId = BigInt(manifest.chainId),
-  servers: Array<{ close(): Promise<void> }> = [],
-  children: ChildProcess[] = [],
-  approvers: Array<{ url: string; token: string }> = [],
-  hedgeToken = process.env.RFQ_HEDGE_OPS_TOKEN ?? `testnet-hedge-${crypto.randomUUID()}`,
-  primaryRpcs = process.env.RFQ_APPROVER_RPC_URLS?.split(",") ?? defaultPrimaryRpcs,
-  secondaryRpcs = process.env.RFQ_APPROVER_SECONDARY_RPC_URLS?.split(",") ?? defaultSecondaryRpcs,
-  apiPort = Number(process.env.RFQ_API_PORT ?? 4100),
-  approverBasePort = Number(process.env.RFQ_APPROVER_BASE_PORT ?? 4201),
-  indexerPort = Number(process.env.RFQ_INDEXER_PORT ?? 4300),
-  hedgerPort = Number(process.env.RFQ_HEDGER_PORT ?? 4400),
-  gatewayPort = Number(process.env.RFQ_GATEWAY_PORT ?? 4500);
-const indexer = buildIndexer({
-  rpcUrl: runtimeRpc,
-  clearingAddress: manifest.contracts.clearingProxy,
-  databasePath: resolve(state, "indexer.sqlite"),
-  startBlock,
-  confirmations: 2,
-});
-await indexer.listen({ host: bindHost, port: indexerPort });
-servers.push(indexer);
+  ];
+const ports = {
+  api: Number(process.env.RFQ_API_PORT ?? 4100),
+  approverBase: Number(process.env.RFQ_APPROVER_BASE_PORT ?? 4201),
+  indexer: Number(process.env.RFQ_INDEXER_PORT ?? 4300),
+  hedger: Number(process.env.RFQ_HEDGER_PORT ?? 4400),
+  gateway: Number(process.env.RFQ_GATEWAY_PORT ?? 4500),
+};
+
 const hedgeVenueMode = process.env.RFQ_HEDGE_VENUE ?? "local-simulator";
+if (hedgeVenueMode !== "local-simulator" && hedgeVenueMode !== "hyperliquid-testnet")
+  throw new Error(`unsupported RFQ_HEDGE_VENUE ${hedgeVenueMode}`);
 const hedgeVenue =
   hedgeVenueMode === "hyperliquid-testnet"
     ? new HyperliquidVenue({
@@ -111,8 +96,6 @@ const hedgeVenue =
         minimumPerpUsdc: process.env.RFQ_HYPERLIQUID_MIN_PERP_USDC ?? "1",
       })
     : undefined;
-if (hedgeVenueMode !== "local-simulator" && !hedgeVenue)
-  throw new Error(`unsupported RFQ_HEDGE_VENUE ${hedgeVenueMode}`);
 if (hedgeVenue) {
   try {
     await hedgeVenue.verify();
@@ -125,99 +108,49 @@ const hedgeBand = usdcSetting("RFQ_HEDGE_BAND_USDC", "25000"),
   hedgeMaximum = usdcSetting("RFQ_HEDGE_MAX_ORDER_USDC", "25000"),
   hedgeMinimum = hedgeVenue ? usdcSetting("RFQ_HEDGE_MIN_ORDER_USDC", "10") : 0n;
 if (hedgeMaximum < hedgeMinimum) throw new Error("RFQ_HEDGE_MAX_ORDER_USDC must meet the venue minimum");
-const hedgeRiskMaxAgeMs = Number(process.env.RFQ_HEDGE_RISK_MAX_AGE_MS ?? 10_000),
-  hedger = buildHedger({
-    indexerUrl: `http://127.0.0.1:${indexerPort}`,
-    databasePath: resolve(state, "hedger.sqlite"),
-    healthToken: hedgeToken,
+
+const startBlock = await deploymentBlock();
+const trustedProxy = process.env.RFQ_TRUSTED_PROXY?.split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const stack = await startServiceStack({
+  stateDirectory: resolve(process.env.RFQ_TESTNET_RUNTIME_DIR ?? ".local-state/base-sepolia-runtime"),
+  bindHost: process.env.RFQ_BIND_HOST,
+  exposeHedger: true,
+  ports,
+  chainId: BigInt(manifest.chainId),
+  clearingAddress: manifest.contracts.clearingProxy,
+  tokenAddress: manifest.contracts.usdc,
+  startBlock,
+  rpcUrl: process.env.RFQ_API_RPC_URL ?? config.rpcUrl,
+  sponsorKey: identities.sponsor.privateKey,
+  oracleSource: new PythHermesSource({
+    apiKey: required("PYTH_API_KEY"),
+    feedIds: { BTC: manifest.feedIds[0], ETH: manifest.feedIds[1] },
+  }),
+  approvers: {
+    keys: identities.approvers.map((approver) => approver.privateKey),
+    rpc: (index) => ({ primary: primaryRpcs[index], secondary: secondaryRpcs[index] }),
+    rpcBatchMaxCount: process.env.RFQ_APPROVER_RPC_BATCH_MAX_COUNT ?? "1",
+    maxFutureSeconds: 5,
+    oracleMode: "pyth",
+    tokenPrefix: "testnet-transport",
+  },
+  hedge: {
+    token: process.env.RFQ_HEDGE_OPS_TOKEN ?? `testnet-hedge-${crypto.randomUUID()}`,
+    riskMaxAgeMs: Number(process.env.RFQ_HEDGE_RISK_MAX_AGE_MS ?? 10_000),
     venue: hedgeVenue,
     bandUsdc: hedgeBand,
     maxOrderUsdc: hedgeMaximum,
     minOrderUsdc: hedgeMinimum,
-    riskStaleMs: hedgeRiskMaxAgeMs,
-  });
-await hedger.listen({ host: bindHost, port: hedgerPort });
-servers.push(hedger);
-const hedgeRiskUrl = `http://127.0.0.1:${hedgerPort}/internal/risk`,
-  waitForHealth = async (url: string, child: ChildProcess) => {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (child.exitCode !== null) throw new Error(`approver exited with ${child.exitCode}`);
-      try {
-        if ((await fetch(`${url}/health`, { signal: AbortSignal.timeout(250) })).ok) return;
-      } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error(`approver did not become ready at ${url}`);
-  };
-for (let index = 0; index < 3; index++) {
-  const token = `testnet-transport-${index}-${crypto.randomUUID()}`,
-    port = approverBasePort + index,
-    url = `http://127.0.0.1:${port}`,
-    child = spawn(process.execPath, ["--import", "tsx", resolve("scripts/approver-process.ts")], {
-      stdio: ["ignore", "inherit", "inherit"],
-      env: childEnvironment({
-        RFQ_APPROVER_KEY: identities.approvers[index].privateKey,
-        RFQ_APPROVER_TOKEN: token,
-        RFQ_APPROVER_DB: resolve(state, `approver-${index}.sqlite`),
-        RFQ_CHAIN_ID: chainId.toString(),
-        RFQ_CLEARING_ADDRESS: manifest.contracts.clearingProxy,
-        RFQ_RPC_URL: primaryRpcs[index],
-        RFQ_SECONDARY_RPC_URL: secondaryRpcs[index],
-        RFQ_RPC_BATCH_MAX_COUNT: process.env.RFQ_APPROVER_RPC_BATCH_MAX_COUNT ?? "1",
-        RFQ_APPROVER_PORT: String(port),
-        RFQ_MAX_FUTURE_SECONDS: "5",
-        RFQ_ORACLE_MODE: "pyth",
-        RFQ_HEDGE_RISK_URL: hedgeRiskUrl,
-        RFQ_HEDGE_RISK_TOKEN: hedgeToken,
-        RFQ_HEDGE_RISK_MAX_AGE_MS: String(hedgeRiskMaxAgeMs),
-      }),
-    });
-  await waitForHealth(url, child);
-  writeFileSync(resolve(state, `approver-${index}.pid`), String(child.pid));
-  children.push(child);
-  approvers.push({ url, token });
-}
-const oracleSource = new PythHermesSource({
-    apiKey: required("PYTH_API_KEY"),
-    feedIds: { BTC: manifest.feedIds[0], ETH: manifest.feedIds[1] },
-  }),
-  trustedProxy = process.env.RFQ_TRUSTED_PROXY?.split(",")
-    .map((value) => value.trim())
-    .filter(Boolean),
-  api = buildApi({
-    approvers,
+  },
+  api: {
     approverTimeoutMs: Number(process.env.RFQ_APPROVER_TIMEOUT_MS ?? 5_000),
-    hedgeRiskMaxAgeMs,
-    chainId,
-    verifyingContract: manifest.contracts.clearingProxy,
-    journalPath: resolve(state, "api.sqlite"),
-    oracleSource,
-    hedgeRiskSource: new HttpHedgeRiskSource(hedgeRiskUrl, hedgeToken),
-    operationsToken: hedgeToken,
     trustedProxy: trustedProxy?.length ? trustedProxy : undefined,
     publicRpcUrl: process.env.RFQ_PUBLIC_RPC_URL ?? "https://sepolia.base.org",
-    chain: {
-      rpcUrl: runtimeRpc,
-      sponsorPrivateKey: identities.sponsor.privateKey,
-      clearingAddress: manifest.contracts.clearingProxy,
-      tokenAddress: manifest.contracts.usdc,
-    },
-  });
-await api.listen({ host: bindHost, port: apiPort });
-servers.push(api);
-const gateway = buildGateway({ upstreamUrl: `http://127.0.0.1:${apiPort}` });
-await gateway.listen({ host: bindHost, port: gatewayPort });
-servers.push(gateway);
+  },
+});
 console.log(
-  `Base Sepolia RFQ services ready from block ${startBlock}: API :${apiPort}; Pyth SSE; approvers :${approverBasePort}-${approverBasePort + 2}; indexer :${indexerPort}; ${hedgeVenueMode} hedge :${hedgerPort}; gateway :${gatewayPort}`,
+  `Base Sepolia RFQ services ready from block ${startBlock}: API :${ports.api}; Pyth SSE; approvers :${ports.approverBase}-${ports.approverBase + 2}; indexer :${ports.indexer}; ${hedgeVenueMode} hedge :${ports.hedger}; gateway :${ports.gateway}`,
 );
-const shutdown = async () => {
-  const forced = setTimeout(() => process.exit(1), 5_000);
-  forced.unref();
-  for (const child of children) child.kill("SIGTERM");
-  await Promise.allSettled(servers.map((server) => server.close()));
-  clearTimeout(forced);
-  process.exit(0);
-};
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+stopOnSignals(stack);
