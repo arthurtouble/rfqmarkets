@@ -4,7 +4,7 @@ pragma solidity 0.8.34;
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
 import {IRFQClearingEvents} from "../interfaces/IRFQClearingEvents.sol";
-import {RFQClearingStorage} from "../RFQClearingStorage.sol";
+import {RFQClearingNamespace, RFQClearingStorage} from "../RFQClearingStorage.sol";
 import {RFQLedger} from "./RFQLedger.sol";
 import {RFQRiskMath} from "./RFQRiskMath.sol";
 import {RFQSignatureVerifier} from "./RFQSignatureVerifier.sol";
@@ -25,7 +25,7 @@ library RFQSettlement {
         bytes calldata makerSignatureOne,
         bytes calldata makerSignatureTwo
     ) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if ($.paused || $.resolutionRequired || intent.market >= MARKET_COUNT || intent.baseDelta == 0) {
             revert InvalidTrade();
         }
@@ -57,7 +57,7 @@ library RFQSettlement {
     /// @notice Withdraws collateral. Open legs need fresh prices, and initial margin must hold afterwards.
     /// Allowed while paused so traders can always leave.
     function withdraw(address account, address recipient, uint256 amount) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if ($.resolutionRequired || recipient == address(0) || amount == 0) revert InvalidTrade();
         RFQLedger.requireFreshPositions(account);
         RFQLedger.updateAllFunding();
@@ -71,7 +71,7 @@ library RFQSettlement {
 
     /// @dev 20% of each fee goes to insurance while it is below a quarter of the capital floor, else 10%.
     function chargeFee(address account, uint256 fee) private {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         RFQLedger.changeCollateral(account, -int256(fee));
         uint256 insuranceShare = $.insuranceBalance < $.baseRiskCapitalTarget / 4 ? fee / 5 : fee / 10;
         $.insuranceBalance += insuranceShare;

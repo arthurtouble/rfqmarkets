@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IRFQClearingEvents} from "../interfaces/IRFQClearingEvents.sol";
-import {RFQClearingStorage} from "../RFQClearingStorage.sol";
+import {RFQClearingNamespace, RFQClearingStorage} from "../RFQClearingStorage.sol";
 import "../RFQTypes.sol";
 
 /// @notice Risk arithmetic and account bookkeeping for RFQClearing. Values are signed USDC micro-units.
@@ -33,7 +33,7 @@ library RFQRiskMath {
     /// @dev Checks the capital floor, gross/side/net caps per market and stress loss <= backing / 4.
     /// A reduction may proceed above a cap as long as it does not make that metric worse.
     function checkExposureTrade(TradeIntent calldata intent, uint256 price) public view {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Position storage position = $.accounts[intent.account].positions[intent.market];
         int256 previous = position.size;
         int256 next = previous + intent.baseDelta;
@@ -91,7 +91,7 @@ library RFQRiskMath {
         uint256 ask,
         address sessionSigner
     ) public view returns (uint256 notional) {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         (int256 btc, int256 eth) = portfolioExposure();
         int256 requiredImpact;
         int256 deliveredImpact;
@@ -139,7 +139,7 @@ library RFQRiskMath {
     /// @param includeGains True for maintenance equity (all unrealized PnL); false for opening equity
     /// (only unrealized losses). Longs are marked at bid and shorts at ask.
     function accountEquity(address owner, bool includeGains) public view returns (int256 value) {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Account storage account = $.accounts[owner];
         value = account.collateral;
         for (uint8 i; i < MARKET_COUNT; ++i) {
@@ -151,7 +151,7 @@ library RFQRiskMath {
 
     /// @notice Tiered initial or maintenance margin across both legs, each valued at the ask.
     function accountMargin(address owner, bool initial) public view returns (uint256 total) {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         for (uint8 i; i < MARKET_COUNT; ++i) {
             uint256 notional = abs($.accounts[owner].positions[i].size) * $.markets[i].lastAsk / BASE_UNIT;
             uint256 rate = marginRate(notional, initial);
@@ -162,14 +162,14 @@ library RFQRiskMath {
 
     /// @notice Net customer skew per market at mid, in USDC. Reverts if an open market's price is stale.
     function portfolioExposure() public view returns (int256 btc, int256 eth) {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         return (marketSkew($.markets[0]), marketSkew($.markets[1]));
     }
 
     /// @notice True when customers hold open exposure and maker backing is below the opening floor or
     /// cannot cover four times the stress loss.
     function makerIncident() public view returns (bool) {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         uint256 gross;
         for (uint8 i; i < MARKET_COUNT; ++i) gross += $.exposure[i].longBase + $.exposure[i].shortBase;
         if (gross == 0) return false;
@@ -183,7 +183,7 @@ library RFQRiskMath {
 
     /// @notice Realized PnL and closed notional if every leg of `owner` were closed at the stored exit prices.
     function closeAssessment(address owner) public view returns (int256 pnl, uint256 notional) {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         for (uint8 i; i < MARKET_COUNT; ++i) {
             Position storage p = $.accounts[owner].positions[i];
             uint256 price = exitPrice($.markets[i], p.size);
@@ -194,7 +194,7 @@ library RFQRiskMath {
 
     /// @notice Removes every leg of `owner` from the books. The caller has already moved the PnL.
     function clearPortfolio(address owner) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         for (uint8 i; i < MARKET_COUNT; ++i) {
             Position storage position = $.accounts[owner].positions[i];
             int256 size = position.size;
@@ -208,7 +208,7 @@ library RFQRiskMath {
     }
 
     function fundingPayments(address owner) public view returns (int256[2] memory payments, int256 total) {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         for (uint8 i; i < MARKET_COUNT; ++i) {
             Position storage p = $.accounts[owner].positions[i];
             payments[i] = p.size * ($.markets[i].fundingIndex - p.lastFundingIndex) / int256(BASE_UNIT);
@@ -217,7 +217,7 @@ library RFQRiskMath {
     }
 
     function recordFunding(address owner, int256[2] memory payments) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         for (uint8 i; i < MARKET_COUNT; ++i) {
             $.accounts[owner].positions[i].lastFundingIndex = $.markets[i].fundingIndex;
             if (payments[i] != 0) emit IRFQClearingEvents.FundingSettled(owner, i, payments[i]);
@@ -230,7 +230,7 @@ library RFQRiskMath {
         view
         returns (uint256 debt, uint256 insuranceUsed, uint256 makerUsed, uint256 unresolved)
     {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Account storage account = $.accounts[owner];
         if (account.collateral >= 0) return (0, 0, 0, 0);
         for (uint8 i; i < MARKET_COUNT; ++i) if (account.positions[i].size != 0) revert Insolvent();
@@ -241,7 +241,7 @@ library RFQRiskMath {
     }
 
     function setApprovers(address[3] calldata next) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         for (uint256 i; i < 3; ++i) $.isApprover[$.approvers[i]] = false;
         for (uint256 i; i < 3; ++i) {
             if (next[i] == address(0) || $.isApprover[next[i]]) revert InvalidSignature();

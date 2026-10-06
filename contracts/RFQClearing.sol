@@ -6,7 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
-import {RFQClearingStorage} from "./RFQClearingStorage.sol";
+import {RFQClearingNamespace, RFQClearingStorage} from "./RFQClearingStorage.sol";
 import {IRFQClearingEvents} from "./interfaces/IRFQClearingEvents.sol";
 import {RFQLedger} from "./libraries/RFQLedger.sol";
 import {RFQLiquidation} from "./libraries/RFQLiquidation.sol";
@@ -45,7 +45,7 @@ interface IERC3009 {
 ///
 /// The proxy is deployed paused with the launch caps passed to `initialize`.
 /// @custom:oz-upgrades
-contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransient {
+contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     // =======================================================================
@@ -71,7 +71,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
             usdc_ == address(0) || oracle_ == address(0) || governance_ == address(0)
                 || emergencyCouncil_ == address(0) || governance_ == emergencyCouncil_ || baseRiskCapitalTarget_ == 0
         ) revert InvalidConfiguration();
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         $.usdc = IERC20(usdc_);
         $.oracle = IPriceOracle(oracle_);
         $.governance = governance_;
@@ -104,7 +104,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
     }
 
     modifier onlyEmergencyOrGovernance() {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         if (msg.sender != $.governance && msg.sender != $.emergencyCouncil) revert Unauthorized();
         _;
     }
@@ -165,7 +165,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
 
     /// @notice Adds maker backing. Anyone may top up.
     function fundMaker(uint256 amount) external nonReentrant {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         _requireLiveAmount(amount);
         RFQRiskMath.pullExact($.usdc, msg.sender, amount);
         $.makerBacking += amount;
@@ -174,7 +174,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
 
     /// @notice Adds to the insurance fund. Anyone may top up.
     function fundInsurance(uint256 amount) external nonReentrant {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         _requireLiveAmount(amount);
         RFQRiskMath.pullExact($.usdc, msg.sender, amount);
         $.insuranceBalance += amount;
@@ -183,7 +183,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
 
     /// @notice Releases maker capital above both the opening floor and four times the live stress loss.
     function withdrawMakerExcess(address recipient, uint256 amount) external onlyGovernance nonReentrant {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         if ($.resolutionRequired || recipient == address(0) || amount == 0 || amount > $.makerBacking) {
             revert InvalidTrade();
         }
@@ -249,7 +249,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
     }
 
     function revokeSession(address session) external {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         if ($.sessions[session].account != msg.sender) revert Unauthorized();
         delete $.sessions[session];
         emit SessionRevoked(msg.sender, session);
@@ -322,7 +322,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
     }
 
     function unpause() external onlyGovernance {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         if ($.resolutionRequired) revert Insolvent();
         $.paused = false;
         emit PauseChanged(false);
@@ -335,7 +335,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
     }
 
     function rotateApprovers(address[3] calldata next) external onlyGovernance {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         RFQRiskMath.setApprovers(next);
         ++$.signerSetVersion;
         emit ApproversRotated(next, $.signerSetVersion);
@@ -343,7 +343,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
     }
 
     function setOracle(address next) external onlyGovernance {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         if ($.resolutionRequired || next == address(0)) revert InvalidConfiguration();
         $.oracle = IPriceOracle(next);
         ++$.policyVersion;
@@ -356,7 +356,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
         external
         onlyEmergencyOrGovernance
     {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         if (market >= MARKET_COUNT) revert InvalidTrade();
         _validateLimits(maxTradeNotional, maxMarketNotional);
         MarketLimits storage limits = $.limits[market];
@@ -374,7 +374,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
 
     /// @notice Sets a market's gross and per-side limits (valued at the ask). Only while paused.
     function setExposurePolicy(uint8 market, uint128 grossLimit, uint128 sideLimit) external onlyGovernance {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         if (!$.paused || $.resolutionRequired || market >= MARKET_COUNT) revert InvalidTrade();
         _validateExposureLimits(grossLimit, sideLimit);
         $.exposure[market].grossLimit = grossLimit;
@@ -387,13 +387,13 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
     /// @dev Moving to production governance is: deploy a timelock, `transferGovernance(timelock)`, have the
     /// timelock call `acceptGovernance()`, and transfer the ProxyAdmin's ownership to the same timelock.
     function transferGovernance(address next) external onlyGovernance {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         $.pendingGovernance = next;
         emit GovernanceTransferStarted($.governance, next);
     }
 
     function acceptGovernance() external {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         address next = $.pendingGovernance;
         if (msg.sender != next || next == $.emergencyCouncil) revert Unauthorized();
         emit GovernanceTransferred($.governance, next);
@@ -402,7 +402,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
     }
 
     function setEmergencyCouncil(address next) external onlyGovernance {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         if (next == address(0) || next == $.governance) revert InvalidConfiguration();
         $.emergencyCouncil = next;
         emit EmergencyCouncilUpdated(next);
@@ -665,7 +665,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
     // Internals
     // =======================================================================
 
-    function _s() private pure returns (RFQClearingStorage.Layout storage) {
+    function _s() private pure returns (RFQClearingNamespace.Layout storage) {
         return RFQClearingStorage.layout();
     }
 
@@ -674,7 +674,7 @@ contract RFQClearing is IRFQClearingEvents, Initializable, ReentrancyGuardTransi
     }
 
     function _creditDeposit(address account, uint256 amount) private {
-        RFQClearingStorage.Layout storage $ = _s();
+        RFQClearingNamespace.Layout storage $ = _s();
         if (!$.accountRegistered[account]) {
             if (amount < MIN_FIRST_DEPOSIT) revert InvalidTrade();
             $.accountRegistered[account] = true;

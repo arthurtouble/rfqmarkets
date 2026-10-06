@@ -3,7 +3,7 @@ pragma solidity 0.8.34;
 
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IRFQClearingEvents} from "../interfaces/IRFQClearingEvents.sol";
-import {RFQClearingStorage} from "../RFQClearingStorage.sol";
+import {RFQClearingNamespace, RFQClearingStorage} from "../RFQClearingStorage.sol";
 import {RFQLedger} from "./RFQLedger.sol";
 import {RFQRiskMath} from "./RFQRiskMath.sol";
 import "../RFQTypes.sol";
@@ -16,7 +16,7 @@ library RFQLiquidation {
     /// is partially closed toward 22% equity. A remaining deficit is covered by insurance, then maker backing,
     /// and only then by global resolution. The keeper reward is paid to `keeper`.
     function liquidate(address account, uint8 market, bytes calldata report, address keeper) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if ($.resolutionRequired || market >= MARKET_COUNT) revert InvalidTrade();
         RFQLedger.touchOracle(report, market);
         RFQLedger.requireFreshPositions(account);
@@ -57,7 +57,7 @@ library RFQLiquidation {
 
     /// @notice Closes one leg at the oracle side while trading is paused (not during resolution).
     function closePosition(address account, uint8 market, bytes calldata report) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if (!$.paused || $.resolutionRequired || market >= MARKET_COUNT) revert InvalidTrade();
         RFQLedger.touchOracle(report, market);
         RFQLedger.settleFunding(account, market);
