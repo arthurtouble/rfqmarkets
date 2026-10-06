@@ -3,7 +3,7 @@ pragma solidity 0.8.34;
 
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
-import {RFQClearingStorage} from "../RFQClearingStorage.sol";
+import {RFQClearingNamespace, RFQClearingStorage} from "../RFQClearingStorage.sol";
 import "../RFQTypes.sol";
 
 /// @notice EIP-712 authorization for RFQClearing: trader intents, owner actions and the 2-of-3 approver quorum.
@@ -38,7 +38,7 @@ library RFQSignatureVerifier {
         view
         returns (bytes32 digest, address sessionSigner)
     {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         // Approvals are fenced by the current leader epoch, signer set and policy versions.
         if (
             block.timestamp > intent.deadline || block.timestamp > approval.deadline

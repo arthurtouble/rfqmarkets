@@ -6,9 +6,9 @@ import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 import "./RFQTypes.sol";
 
 /// @notice ERC-7201 namespaced storage shared by the clearing proxy and its linked libraries.
-/// @dev Libraries run by DELEGATECALL in the proxy's context, so `layout()` resolves to proxy storage.
-/// Append new fields at the end of `Layout`; never reorder or remove existing ones.
-library RFQClearingStorage {
+/// @dev Declared in a contract that RFQClearing inherits so OpenZeppelin's upgrade validator checks the
+/// namespace layout. Append new fields at the end of `Layout`; never reorder or remove existing ones.
+abstract contract RFQClearingNamespace {
     /// @custom:storage-location erc7201:rfq.clearing.v1
     struct Layout {
         // Wiring and roles
@@ -45,11 +45,16 @@ library RFQClearingStorage {
         uint64 makerIncidentGracePeriod;
         ResolutionState resolution;
     }
+}
+
+/// @notice Accessor for the clearing namespace.
+/// @dev Libraries run by DELEGATECALL in the proxy's context, so `layout()` resolves to proxy storage.
+library RFQClearingStorage {
 
     // keccak256(abi.encode(uint256(keccak256("rfq.clearing.v1")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 internal constant SLOT = 0x380d1b904479cc040b615065b149573a5f65fb6ce8d21382c296a05a0cc86d00;
 
-    function layout() internal pure returns (Layout storage $) {
+    function layout() internal pure returns (RFQClearingNamespace.Layout storage $) {
         assembly {
             $.slot := SLOT
         }

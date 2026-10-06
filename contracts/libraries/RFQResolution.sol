@@ -5,7 +5,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
 import {IRFQClearingEvents} from "../interfaces/IRFQClearingEvents.sol";
-import {RFQClearingStorage} from "../RFQClearingStorage.sol";
+import {RFQClearingNamespace, RFQClearingStorage} from "../RFQClearingStorage.sol";
 import {RFQLedger} from "./RFQLedger.sol";
 import {RFQRiskMath} from "./RFQRiskMath.sol";
 import "../RFQTypes.sol";
@@ -23,7 +23,7 @@ library RFQResolution {
     // ---- Maker incidents ----
 
     function reportMakerIncident() public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if ($.resolutionRequired || $.makerIncidentSince != 0) revert InvalidTrade();
         if (!RFQRiskMath.makerIncident()) revert Insolvent();
         $.makerIncidentSince = uint64(block.timestamp);
@@ -31,7 +31,7 @@ library RFQResolution {
     }
 
     function clearMakerIncident() public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if ($.makerIncidentSince == 0 || RFQRiskMath.makerIncident()) revert InvalidTrade();
         $.makerIncidentSince = 0;
         emit IRFQClearingEvents.MakerIncidentCleared();
@@ -39,7 +39,7 @@ library RFQResolution {
 
     /// @param caller The account asking; governance may resolve a paused venue without an incident.
     function declareResolution(address caller) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if (caller == $.governance) {
             if (!$.paused) revert InvalidTrade();
         } else {
@@ -55,7 +55,7 @@ library RFQResolution {
     /// @notice Records one of the first three post-trigger reports for its market. The first and third must be
     /// at least 30 seconds apart; the median of the three is the market's resolution price.
     function submitObservation(bytes calldata report) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         ResolutionState storage r = $.resolution;
         if (!$.resolutionRequired || r.pricesReady) revert InvalidTrade();
         IPriceOracle.Observation memory o = RFQLedger.verifyReport(report, type(uint8).max);
@@ -81,7 +81,7 @@ library RFQResolution {
 
     /// @notice Crystallizes up to `maxAccounts` claims in registration order; finalizes after the last one.
     function process(uint256 maxAccounts) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         ResolutionState storage r = $.resolution;
         if (!r.pricesReady || r.finalized || maxAccounts == 0) revert InvalidTrade();
 
@@ -117,7 +117,7 @@ library RFQResolution {
 
     /// @notice Pays `claimant` its pro-rata share of resolution assets, up to 100% of its claim.
     function claim(address claimant) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         ResolutionState storage r = $.resolution;
         if (!r.finalized || r.totalClaims == 0) revert InvalidTrade();
         uint256 entitlement = r.claim[claimant] * Math.min(r.assets, r.totalClaims) / r.totalClaims;
@@ -130,7 +130,7 @@ library RFQResolution {
 
     /// @notice Tops up resolution assets when claims are underfunded, never beyond 100% of claims.
     function addRecovery(address from, uint256 amount) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         ResolutionState storage r = $.resolution;
         if (!r.finalized || amount == 0) revert InvalidTrade();
         if (amount > r.totalClaims - Math.min(r.assets, r.totalClaims)) revert InvalidTrade();
@@ -142,7 +142,7 @@ library RFQResolution {
     /// @notice Sends assets beyond 100% of all claims (leftover maker and insurance capital) to `recipient`.
     /// Every claim stays fully payable afterwards.
     function withdrawSurplus(address recipient) public {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         ResolutionState storage r = $.resolution;
         if (!r.finalized || recipient == address(0)) revert InvalidTrade();
         if (r.assets <= r.totalClaims) revert NoSurplus();
@@ -154,7 +154,7 @@ library RFQResolution {
 
     /// @notice Collateral plus PnL at the resolution prices, minus unsettled funding.
     function resolutionEquity(address owner) public view returns (int256 value) {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         value = $.accounts[owner].collateral;
         for (uint8 i; i < MARKET_COUNT; ++i) {
             Position storage p = $.accounts[owner].positions[i];

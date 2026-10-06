@@ -3,7 +3,7 @@ pragma solidity 0.8.34;
 
 import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
 import {IRFQClearingEvents} from "../interfaces/IRFQClearingEvents.sol";
-import {RFQClearingStorage} from "../RFQClearingStorage.sol";
+import {RFQClearingNamespace, RFQClearingStorage} from "../RFQClearingStorage.sol";
 import {RFQRiskMath} from "./RFQRiskMath.sol";
 import "../RFQTypes.sol";
 
@@ -15,7 +15,7 @@ library RFQLedger {
     // ---- Collateral and PnL ----
 
     function changeCollateral(address account, int256 delta) internal {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         $.accounts[account].collateral += delta;
         $.totalCustomerCollateral += delta;
     }
@@ -23,7 +23,7 @@ library RFQLedger {
     /// @notice Moves PnL between an account and maker backing.
     /// @return paid False when the maker cannot pay a customer gain; resolution has then started.
     function transferPnl(address account, int256 pnl) internal returns (bool paid) {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if (pnl > 0 && uint256(pnl) > $.makerBacking) {
             startResolution();
             return false;
@@ -38,7 +38,7 @@ library RFQLedger {
 
     /// @notice Applies a fill to a position, realizing PnL against the maker. No-op if resolution starts.
     function applyPosition(address account, uint8 market, int256 delta, uint256 price) internal {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Position storage p = $.accounts[account].positions[market];
         (int256 next, uint256 entry, int256 pnl) = RFQRiskMath.positionTransition(p.size, p.entryPrice, delta, price);
         if (!transferPnl(account, pnl)) return;
@@ -63,7 +63,7 @@ library RFQLedger {
         internal
         returns (uint256 insuranceUsed, uint256 makerUsed, uint256 unresolved)
     {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         uint256 debt;
         (debt, insuranceUsed, makerUsed, unresolved) = RFQRiskMath.deficitAssessment(account);
         if (debt != 0) {
@@ -86,7 +86,7 @@ library RFQLedger {
 
     /// @notice Enters terminal global resolution: funding freezes, trading pauses, approvals are fenced.
     function startResolution() internal {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if ($.resolutionRequired) return;
         updateAllFunding();
         $.resolutionRequired = true;
@@ -140,7 +140,7 @@ library RFQLedger {
     }
 
     function requireFreshPositions(address account) internal view {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         for (uint8 i; i < MARKET_COUNT; ++i) {
             if ($.accounts[account].positions[i].size != 0 && !RFQRiskMath.isFresh($.markets[i])) revert Stale();
         }
@@ -154,7 +154,7 @@ library RFQLedger {
 
     /// @notice Accrues a market's funding index up to now at the stored mid.
     function updateFunding(uint8 market) internal {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Market storage m = $.markets[market];
         (m.fundingIndex, m.fundingTime) = RFQRiskMath.fundingStep(
             m.aggregateBase,
@@ -174,7 +174,7 @@ library RFQLedger {
     }
 
     function settleFunding(address account, uint8 market) internal {
-        RFQClearingStorage.Layout storage $ = RFQClearingStorage.layout();
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Position storage p = $.accounts[account].positions[market];
         int256 index = $.markets[market].fundingIndex;
         int256 payment = p.size * (index - p.lastFundingIndex) / int256(BASE_UNIT);
