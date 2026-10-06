@@ -1,20 +1,16 @@
 export type AccountProjection = { account: string; collateral: string; btc_size: string; eth_size: string };
 type MarketTotals = { longBase: bigint; shortBase: bigint; longAccounts: number; shortAccounts: number };
+const emptyTotals = (): MarketTotals => ({ longBase: 0n, shortBase: 0n, longAccounts: 0, shortAccounts: 0 });
+const emptyMarkets = (): Record<"BTC" | "ETH", MarketTotals> => ({ BTC: emptyTotals(), ETH: emptyTotals() });
 
 export class RiskProjection {
   private accounts = new Map<string, { collateral: bigint; btc: bigint; eth: bigint }>();
   private collateral = 0n;
-  private markets: Record<"BTC" | "ETH", MarketTotals> = {
-    BTC: { longBase: 0n, shortBase: 0n, longAccounts: 0, shortAccounts: 0 },
-    ETH: { longBase: 0n, shortBase: 0n, longAccounts: 0, shortAccounts: 0 },
-  };
+  private markets = emptyMarkets();
   clear() {
     this.accounts.clear();
     this.collateral = 0n;
-    this.markets = {
-      BTC: { longBase: 0n, shortBase: 0n, longAccounts: 0, shortAccounts: 0 },
-      ETH: { longBase: 0n, shortBase: 0n, longAccounts: 0, shortAccounts: 0 },
-    };
+    this.markets = emptyMarkets();
   }
   update(row: AccountProjection) {
     const prior = this.accounts.get(row.account);
