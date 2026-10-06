@@ -4,6 +4,7 @@ import { openingPnl, positionPnl } from "../../../packages/shared/src/account-ri
 import { BASE, marginRate } from "../../../packages/shared/src/policy.js";
 import type { ApiContext } from "./context.js";
 import { abs, MARKETS, type Market } from "./markets.js";
+import { publicError } from "./public-error.js";
 import type { MarketView, QuoteEngine } from "./quoting.js";
 
 export type AccountPosition = { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
@@ -162,8 +163,9 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
           maintenanceMargin: maintenanceMargin.toString(),
         },
       };
-    } catch {
-      return reply.code(400).send({ error: "invalid account" });
+    } catch (error) {
+      // A valid address that cannot be read is an upstream outage, not a bad request.
+      return reply.code(503).send({ error: publicError(error, "account data unavailable") });
     }
   });
 }
