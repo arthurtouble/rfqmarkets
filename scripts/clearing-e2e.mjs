@@ -1,18 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { network } from "hardhat";
-import { linkArtifact } from "./link-artifact.mjs";
+import { MAX_MARKET_CONFIG, deployLinked } from "./lib/contract-fixture.mjs";
 
 const { ethers } = await network.create({ network: "hardhatOp", chainType: "op" });
 const [governance, emergency, approverA, approverB, approverC, maker, user, keeper, relayer] = await ethers.getSigners();
 const artifact = (name) => JSON.parse(fs.readFileSync(`artifacts/${name}.json`, "utf8"));
 const libraryAddresses = {};
-const deploy = async (name, args = [], signer = governance) => {
-  const item = linkArtifact(artifact(name), libraryAddresses);
-  const instance = await new ethers.ContractFactory(item.abi, item.bytecode, signer).deploy(...args);
-  await instance.waitForDeployment();
-  return instance;
-};
+const deploy = (name, args = [], signer = governance) => deployLinked(signer, name, args, libraryAddresses);
 const reject = async (promise, label) => {
   let failed = false;
   try { await (await promise).wait(); } catch { failed = true; }
@@ -77,7 +72,7 @@ const implementation = await deploy("RFQClearing");
 const clearingInterface = new ethers.Interface(artifact("RFQClearing").abi);
 const init = clearingInterface.encodeFunctionData("initialize", [
   await token.getAddress(), await oracle.getAddress(), governance.address, emergency.address,
-  [approverA.address, approverB.address, approverC.address], 600_000_000_000n,
+  [approverA.address, approverB.address, approverC.address], 600_000_000_000n, [MAX_MARKET_CONFIG, MAX_MARKET_CONFIG],
 ]);
 const proxy = await deploy("TestProxy", [await implementation.getAddress(), governance.address, init]);
 const clearing = new ethers.Contract(await proxy.getAddress(), artifact("RFQClearing").abi, governance);
@@ -86,6 +81,9 @@ const adminWord=await ethers.provider.getStorage(await proxy.getAddress(),ADMIN_
 const proxyAdminAddress=ethers.getAddress(`0x${adminWord.slice(-40)}`);
 const proxyAdmin=new ethers.Contract(proxyAdminAddress,artifact("ProxyAdmin").abi,governance);
 assert.equal(await proxyAdmin.owner(),governance.address);
+assert.equal(await clearing.paused(),true,"a fresh deployment must start paused");
+await reject(clearing.connect(emergency).unpause(),"only governance may open trading");
+await (await clearing.connect(governance).unpause()).wait();
 
 await (await token.mint(maker.address, 750_000_000_000n)).wait();
 await (await token.mint(user.address, 20_000_000_000n)).wait();

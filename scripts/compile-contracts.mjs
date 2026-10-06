@@ -3,33 +3,20 @@ import path from "node:path";
 import solc from "solc";
 
 const root = process.cwd();
-const files = [
-  "contracts/RFQAuthorization.sol",
-  "contracts/RFQClearing.sol",
-  "contracts/libraries/RFQRiskMath.sol",
-  "contracts/libraries/RFQSignatureVerifier.sol",
-  "contracts/interfaces/IPriceOracle.sol",
-  "contracts/mocks/MockUSDC.sol",
-  "contracts/mocks/MockPriceOracle.sol",
-  "contracts/mocks/MockStreamsVerifier.sol",
-  "contracts/mocks/MockPythCore.sol",
-  "contracts/mocks/MockSafe.sol",
-  "contracts/oracle/ChainlinkDataStreamsV3Adapter.sol",
-  "contracts/oracle/PythCoreAdapter.sol",
-  "contracts/testnet/RFQTimelock.sol",
-  "contracts/test/RFQInvariants.sol",
-  "contracts/test/TestProxy.sol",
-  "contracts/test/RFQClearingV2.sol",
-  "contracts/test/RFQClearingBaseline.sol",
-  "contracts/test/RFQRiskMathBaseline.sol",
-  "contracts/test/Mock1271Wallet.sol",
-];
+// Every Solidity source under contracts/ is compiled; foundry.toml uses the same settings.
+const listSources = (directory) => fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+  const full = path.join(directory, entry.name);
+  if (entry.isDirectory()) return listSources(full);
+  return entry.name.endsWith(".sol") ? [path.relative(root, full).split(path.sep).join("/")] : [];
+});
+const files = listSources(path.join(root, "contracts")).sort();
 const sources = Object.fromEntries(files.map((file) => [file, { content: fs.readFileSync(path.join(root, file), "utf8") }]));
 const input = {
   language: "Solidity",
   sources,
   settings: {
     viaIR: true,
+    evmVersion: "cancun",
     optimizer: { enabled: true, runs: 1 },
     outputSelection: { "*": {
       "": ["ast"],
@@ -49,6 +36,7 @@ const diagnostics = output.errors ?? [];
 for (const item of diagnostics) process.stderr.write(`${item.formattedMessage}\n`);
 if (diagnostics.some((item) => item.severity === "error")) process.exit(1);
 const artifactDir = path.join(root, "artifacts");
+fs.rmSync(artifactDir, { recursive: true, force: true }); // drop artifacts of deleted sources
 fs.mkdirSync(artifactDir, { recursive: true });
 const buildInfoDir = path.join(artifactDir, "build-info");
 fs.mkdirSync(buildInfoDir, { recursive: true });
@@ -79,9 +67,17 @@ for (const [source, contracts] of Object.entries(output.contracts)) {
     }, null, 2));
   }
 }
-const clearingBytes = output.contracts["contracts/RFQClearing.sol"]?.RFQClearing?.evm?.deployedBytecode?.object?.length / 2;
-if (!clearingBytes || clearingBytes > 21_000) {
-  throw new Error(`RFQClearing deployed bytecode is ${clearingBytes} bytes; 21,000-byte project gate exceeded`);
+// EIP-170 runtime limit for every deployable contract (libraries included).
+const EIP170_LIMIT = 24_576;
+const sizes = Object.values(output.contracts).flatMap((contracts) => Object.entries(contracts))
+  .map(([name, artifact]) => [name, artifact.evm.deployedBytecode.object.length / 2])
+  .filter(([, bytes]) => bytes > 0)
+  .sort((a, b) => b[1] - a[1]);
+const oversized = sizes.filter(([, bytes]) => bytes > EIP170_LIMIT);
+if (oversized.length) {
+  throw new Error(`EIP-170 runtime limit exceeded: ${oversized.map(([name, bytes]) => `${name} ${bytes}`).join(", ")}`);
 }
-console.log(`Compiled ${Object.keys(output.contracts).length} source files with solc ${solc.version()}`);
-console.log(`RFQClearing deployed bytecode: ${clearingBytes} bytes (project gate: 21,000; EVM limit: 24,576)`);
+console.log(`Compiled ${files.length} source files with solc ${solc.version()}`);
+for (const [name, bytes] of sizes.filter(([name]) => name.startsWith("RFQ"))) {
+  console.log(`${name.padEnd(24)} ${String(bytes).padStart(6)} bytes (headroom ${EIP170_LIMIT - bytes})`);
+}

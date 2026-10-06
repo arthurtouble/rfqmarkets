@@ -1,0 +1,39 @@
+# Foundry builds the same sources as scripts/compile-contracts.mjs, with the
+# same compiler settings, so forge tests exercise the bytecode that ships.
+[profile.default]
+src = "contracts"
+test = "test/contracts"
+script = "script"
+out = "out"
+cache_path = "cache/forge"
+libs = ["node_modules", "lib"]
+remappings = [
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "@openzeppelin/contracts-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/",
+  "forge-std/=lib/forge-std/src/",
+]
+solc_version = "0.8.34"
+evm_version = "cancun"
+via_ir = true
+optimizer = true
+optimizer_runs = 1
+bytecode_hash = "ipfs"
+fs_permissions = [{ access = "read", path = "./out" }]
+
+[fuzz]
+runs = 512
+
+[invariant]
+runs = 64
+depth = 128
+fail_on_revert = false
+
+[profile.ci.fuzz]
+runs = 2048
+
+[profile.ci.invariant]
+runs = 256
+depth = 256
+
+[lint]
+lint_on_build = false
