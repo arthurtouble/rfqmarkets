@@ -24,6 +24,8 @@
     "dev:internal-docs": "vite apps/internal-docs --port 4176",
     "dev:design-system": "vite apps/design-system --port 4177",
     "dev:services": "tsx scripts/local-stack.ts",
+    "dev:stack": "tsx scripts/dev-stack.ts",
+    "dev:scenario": "tsx scripts/dev-scenario.ts",
     "dev:testnet-services": "tsx scripts/base-sepolia-stack.ts",
     "prepare:cloudflare-runtime": "node --import tsx scripts/prepare-cloudflare-runtime.ts",
     "dev:web": "vite apps/web",

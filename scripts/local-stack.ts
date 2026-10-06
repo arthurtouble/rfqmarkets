@@ -5,7 +5,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { buildApi } from "../services/api/src/server.js";
 import { buildIndexer } from "../services/indexer/src/server.js";
 import { buildHedger } from "../services/hedger/src/server.js";
-import { CoinbaseMarketDataSource } from "../services/api/src/oracle.js";
+import { createServer } from "node:http";
+import { CoinbaseMarketDataSource, SimulatedMarketDataSource, type OracleMarket } from "../services/api/src/oracle.js";
 import { HttpHedgeRiskSource } from "../services/api/src/hedge-risk.js";
 import { buildGateway } from "../services/gateway/src/server.js";
 
@@ -30,11 +31,25 @@ for (let index=0; index<3; index++) {
   const child=spawn(process.execPath,["--import","tsx",resolve("scripts/approver-process.ts")],{stdio:["ignore","inherit","inherit"],env:childEnvironment({RFQ_APPROVER_KEY:deployment.approvers[index].privateKey,RFQ_APPROVER_TOKEN:token,RFQ_APPROVER_DB:resolve(state,`approver-${index}.sqlite`),RFQ_CHAIN_ID:chainId.toString(),RFQ_CLEARING_ADDRESS:verifyingContract,RFQ_RPC_URL:deployment.rpcUrl,RFQ_SECONDARY_RPC_URL:deployment.rpcUrl,RFQ_APPROVER_PORT:String(port),RFQ_MAX_FUTURE_SECONDS:"30",RFQ_HEDGE_RISK_URL:hedgeRiskUrl,RFQ_HEDGE_RISK_TOKEN:hedgeHealthToken})});
   await waitForHealth(url,child);writeFileSync(resolve(state,`approver-${index}.pid`),String(child.pid));approverProcesses.push(child);approverConfigs.push({url,token});
 }
-const oracleSource=new CoinbaseMarketDataSource();
+// RFQ_MARKET_DATA=sim runs offline with random-walk prices; the default streams Coinbase public tickers.
+const simulated=process.env.RFQ_MARKET_DATA==="sim"?new SimulatedMarketDataSource():undefined;
+const oracleSource=simulated??new CoinbaseMarketDataSource();
+if(simulated){
+  // Loopback-only price control for scripted scenarios: POST /price {"market":"BTC","price":85000}.
+  const control=createServer((request,response)=>{
+    const send=(status:number,body:unknown)=>{response.writeHead(status,{"content-type":"application/json"});response.end(JSON.stringify(body));};
+    if(request.method==="GET"&&request.url==="/price")return send(200,simulated.prices());
+    if(request.method!=="POST"||request.url!=="/price")return send(404,{error:"not found"});
+    let body="";request.on("data",chunk=>{body+=chunk;if(body.length>1_000)request.destroy();});
+    request.on("end",()=>{try{const {market,price}=JSON.parse(body) as {market:OracleMarket;price:number};if(market!=="BTC"&&market!=="ETH")throw new Error("market must be BTC or ETH");simulated.setPrice(market,Number(price));send(200,simulated.prices());}catch(error){send(400,{error:(error as Error).message});}});
+  });
+  await new Promise<void>(done=>control.listen(4600,"127.0.0.1",done));
+  servers.push({close:()=>new Promise<void>(done=>control.close(()=>done()))});
+}
 const api = buildApi({approvers:approverConfigs,chainId,verifyingContract,journalPath:resolve(state,"api.sqlite"),oracleSource,hedgeRiskSource,operationsToken:hedgeHealthToken,publicRpcUrl:deployment.rpcUrl,chain:{rpcUrl:deployment.rpcUrl,sponsorPrivateKey:deployment.sponsorPrivateKey,clearingAddress:deployment.clearingAddress,tokenAddress:deployment.tokenAddress,devFund:true,devWallet:deployment.devWallet}});
 await api.listen({host:"127.0.0.1",port:4100}); servers.push(api);
 const gateway=buildGateway({upstreamUrl:"http://127.0.0.1:4100"});await gateway.listen({host:"127.0.0.1",port:4500});servers.push(gateway);
-console.log("Local RFQ services ready: API :4100; private approvers :4201-4203; indexer :4300; hedge worker :4400; stream gateway :4500");
+console.log(`Local RFQ services ready: API :4100; private approvers :4201-4203; indexer :4300; hedge worker :4400; stream gateway :4500; market data ${simulated?"simulated (price control :4600)":"Coinbase"}`);
 console.log("Run `npm run dev:web` for the trade UI and `npm run dev:admin` for private hedge operations");
 const shutdown = async () => {
   const forced=setTimeout(()=>process.exit(1),5_000);forced.unref();
