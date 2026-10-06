@@ -6,9 +6,13 @@ import type { RuntimeMetrics } from "./metrics.js";
 import type { LimitOrders } from "./orders.js";
 import type { QuoteEngine } from "./quoting.js";
 
-const UNRESOLVED_SENDER_STATUSES = new Set(["signed", "submitted", "ambiguous", "reorged"]);
+/**
+ * Sender rows that need an operator. `signed` and `submitted` are normal in-flight states and
+ * `included`, `reverted` and `superseded` are final, so none of those make the leader unhealthy.
+ */
+const UNRESOLVED_SENDER_STATUSES = new Set(["ambiguous", "reorged"]);
 
-export function senderHealthy(rows: ReadonlyArray<{ status?: unknown }> | undefined) {
+export function senderHealthy(rows: ReadonlyArray<Record<string, unknown>> | undefined) {
   return !rows?.some((row) => UNRESOLVED_SENDER_STATUSES.has(String(row.status)));
 }
 
