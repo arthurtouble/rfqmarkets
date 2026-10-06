@@ -42,9 +42,12 @@ export class KeeperEngine {
   private stopped = false;
   private error?: string;
   private completedAt?: number;
+  private lastFailure?: string;
   constructor(
     private deps: KeeperDependencies,
     private limits = { accountsPerCycle: 25, maxTransactions: 4, resolutionPage: 50 },
+    /** Receives each distinct cycle failure once; public status only shows a generic code. */
+    private onError: (error: unknown) => void = (error) => console.error("keeper cycle failed:", error),
   ) {
     for (const [name, value] of Object.entries(limits))
       if (!Number.isInteger(value) || value < 1 || value > 200) throw new Error(`invalid keeper ${name}`);
@@ -66,11 +69,14 @@ export class KeeperEngine {
     if (this.running) return this.running;
     this.running = this.run()
       .then(() => {
-        this.error = undefined;
+        this.error = this.lastFailure = undefined;
         this.completedAt = Date.now();
       })
-      .catch(() => {
+      .catch((error) => {
         this.error = "keeper_cycle_failed";
+        const failure = String(error);
+        if (failure !== this.lastFailure) this.onError(error);
+        this.lastFailure = failure;
       })
       .finally(() => {
         this.running = undefined;
