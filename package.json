@@ -89,7 +89,9 @@
     "dev-basescan:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-basescan",
     "basescan:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts basescan",
     "check:operations-alerts": "node --import tsx scripts/operations-alerts.ts",
-    "validate:production-topology": "node --import tsx scripts/production-topology.ts"
+    "validate:production-topology": "node --import tsx scripts/production-topology.ts",
+    "format": "prettier --write \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/{local-stack,base-sepolia-stack,base-mainnet-dev-stack,approver-process,persistent-service,persistent-config,cloudflare-dev-container,dev-stack,dev-scenario}.ts\"",
+    "format:check": "prettier --check \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/{local-stack,base-sepolia-stack,base-mainnet-dev-stack,approver-process,persistent-service,persistent-config,cloudflare-dev-container,dev-stack,dev-scenario}.ts\""
   },
   "devDependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",
@@ -106,6 +108,7 @@
     "chai": "6.2.2",
     "hardhat": "3.16.0",
     "mocha": "12.0.0",
+    "prettier": "3.9.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "solc": "0.8.34",
