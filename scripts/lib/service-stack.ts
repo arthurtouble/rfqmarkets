@@ -1,17 +1,20 @@
 // Starts every RFQ service in one process tree: indexer, hedger, three approver child processes,
-// API and stream gateway. The local, Base Sepolia and Base mainnet dev stacks differ only in the
+// API, stream gateway and, when configured, the liquidation keeper. The local, Base Sepolia and Base mainnet dev stacks differ only in the
 // configuration they pass here. The persistent-host profile runs one role per process instead
 // (scripts/persistent-service.ts).
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Wallet } from "ethers";
 import { childEnvironment } from "../../packages/shared/src/process-environment.js";
 import { buildApi, type ApiOptions } from "../../services/api/src/server.js";
 import { HttpHedgeRiskSource } from "../../services/api/src/hedge-risk.js";
 import type { OracleSource } from "../../services/api/src/oracle.js";
+import type { SenderOptions } from "../../services/api/src/sender.js";
 import { buildGateway } from "../../services/gateway/src/server.js";
 import { buildHedger, type HedgeVenue } from "../../services/hedger/src/server.js";
 import { buildIndexer } from "../../services/indexer/src/server.js";
+import { buildKeeper, type KeeperOptions } from "../../services/keeper/src/server.js";
 
 export interface Closable {
   close(): Promise<unknown>;
@@ -23,9 +26,17 @@ export interface StackPorts {
   indexer: number;
   hedger: number;
   gateway: number;
+  keeper: number;
 }
 
-export const DEFAULT_PORTS: StackPorts = { api: 4100, approverBase: 4201, indexer: 4300, hedger: 4400, gateway: 4500 };
+export const DEFAULT_PORTS: StackPorts = {
+  api: 4100,
+  approverBase: 4201,
+  indexer: 4300,
+  hedger: 4400,
+  gateway: 4500,
+  keeper: 4700,
+};
 
 export interface ServiceStackConfig {
   stateDirectory: string;
@@ -60,8 +71,31 @@ export interface ServiceStackConfig {
     minOrderUsdc?: bigint;
   };
   /** Extra API options (public RPC, trusted proxies, dev funding). */
-  api?: Omit<ApiOptions, "approvers" | "chainId" | "verifyingContract" | "journalPath" | "oracleSource" | "hedgeRiskSource" | "operationsToken" | "hedgeRiskMaxAgeMs" | "chain"> & {
+  api?: Omit<
+    ApiOptions,
+    | "approvers"
+    | "chainId"
+    | "verifyingContract"
+    | "journalPath"
+    | "oracleSource"
+    | "hedgeRiskSource"
+    | "operationsToken"
+    | "hedgeRiskMaxAgeMs"
+    | "chain"
+  > & {
     chain?: Pick<NonNullable<ApiOptions["chain"]>, "devFund" | "devWallet">;
+  };
+  /**
+   * Liquidation and resolution keeper. It signs with its own sponsor key (never the API's), reads
+   * accounts from the stack's indexer and is bound to loopback.
+   */
+  keeper?: {
+    sponsorKey: string;
+    token: string;
+    /** Explicit sponsor ceilings; the keeper refuses to start without them. */
+    budget: Required<Pick<SenderOptions, "dailyBudgetWei" | "maxGasLimit" | "maxFeePerGas" | "maxValue">>;
+    oracleFee?: KeeperOptions["oracleFee"];
+    pollMs?: number;
   };
   /** Stop the whole stack when an approver dies. Local scenarios kill approvers on purpose, so it is opt-in. */
   stopOnApproverExit?: boolean;
@@ -191,6 +225,27 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     const gateway = buildGateway({ upstreamUrl: `http://127.0.0.1:${ports.api}` });
     await gateway.listen({ host: bindHost, port: ports.gateway });
     servers.push(gateway);
+
+    if (config.keeper) {
+      if (new Wallet(config.keeper.sponsorKey).address === new Wallet(config.sponsorKey).address)
+        throw new Error("keeper sponsor key must differ from the API sponsor key");
+      const keeper = buildKeeper({
+        rpcUrl: config.rpcUrl,
+        chainId: config.chainId,
+        clearingAddress: config.clearingAddress,
+        tokenAddress: config.tokenAddress,
+        sponsorKey: config.keeper.sponsorKey,
+        databasePath: state("keeper.sqlite"),
+        oracleSource: config.oracleSource,
+        indexerUrl: `http://127.0.0.1:${ports.indexer}`,
+        operationsToken: config.keeper.token,
+        budget: config.keeper.budget,
+        oracleFee: config.keeper.oracleFee,
+        pollMs: config.keeper.pollMs,
+      });
+      await keeper.listen({ host: "127.0.0.1", port: ports.keeper });
+      servers.push(keeper);
+    }
   } catch (error) {
     await close();
     throw error;

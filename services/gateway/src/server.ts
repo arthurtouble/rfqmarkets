@@ -1,8 +1,8 @@
 import Fastify from "fastify";
-import type { ServerResponse } from "node:http";
 import { MarketFanout, consumeMarketEvents } from "./fanout.js";
 import { MarketHistory, type HistoryMarket } from "./history.js";
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
+import { openSse } from "../../lib/src/sse.js";
 
 export interface GatewayOptions {
   upstreamUrl: string;
@@ -99,21 +99,13 @@ export function buildGateway(options: GatewayOptions) {
     const release = connections.acquire(request.ip);
     if (!release)
       return reply.code(429).header("retry-after", "5").send({ error: "stream connection limit reached" });
-    reply.raw.once("close", release);
-    reply.hijack();
-    reply.raw.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-      "access-control-allow-origin": corsOrigin,
+    const response = openSse(reply, corsOrigin);
+    response.once("close", release);
+    const remove = fanout.add({
+      write: (chunk) => response.write(chunk),
+      bufferedBytes: () => response.writableLength,
+      close: () => response.end(),
     });
-    const response = reply.raw as ServerResponse,
-      remove = fanout.add({
-        write: (chunk) => response.write(chunk),
-        bufferedBytes: () => response.writableLength,
-        close: () => response.end(),
-      });
     response.on("close", remove);
   });
   app.addHook("onReady", async () => {

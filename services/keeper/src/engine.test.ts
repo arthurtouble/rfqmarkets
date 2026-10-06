@@ -150,3 +150,22 @@ test("keeper single-flight cycle and shutdown wait for active work and prevent n
   await engine.cycle();
   assert.equal(f.actions.length, 0);
 });
+test("keeper reports each distinct cycle failure once and keeps public status generic", async () => {
+  const f = fixture(),
+    reported: unknown[] = [];
+  let healthy = false;
+  f.deps.reconcile = async () => healthy;
+  const engine = new KeeperEngine(f.deps, undefined, (error) => reported.push(error));
+  await engine.cycle();
+  await engine.cycle();
+  assert.equal(reported.length, 1);
+  assert.match(String(reported[0]), /unresolved keeper sponsor/);
+  assert.equal(engine.status().error, "keeper_cycle_failed");
+  healthy = true;
+  await engine.cycle();
+  assert.equal(engine.status().ok, true);
+  healthy = false;
+  await engine.cycle();
+  assert.equal(reported.length, 2, "a failure after recovery is reported again");
+  await engine.close();
+});

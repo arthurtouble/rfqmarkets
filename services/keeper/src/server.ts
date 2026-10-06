@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { DatabaseSync } from "node:sqlite";
 import { Contract, JsonRpcProvider, Wallet, getAddress, type TransactionRequest } from "ethers";
+import { z } from "zod";
 import { clearingStateAbi } from "../../../packages/shared/src/abi.js";
 import {
   bindGrossContext,
@@ -9,6 +10,20 @@ import {
 import { DurableSender, type SenderOptions } from "../../api/src/sender.js";
 import type { OracleSource } from "../../api/src/oracle.js";
 import { KeeperEngine, type KeeperAction, type KeeperDependencies } from "./engine.js";
+
+/** Maximum indexer lag, in blocks, before the keeper stops trusting its account scan. */
+const MAX_INDEXER_LAG = 12;
+const indexerHealth = z.object({ ok: z.boolean(), lag: z.number().int().nonnegative() });
+const signedInteger = z.string().regex(/^-?\d+$/);
+const positionsPage = z.object({
+  items: z.array(
+    z.object({
+      account: z.string(),
+      positions: z.object({ BTC: z.object({ size: signedInteger }), ETH: z.object({ size: signedInteger }) }),
+    }),
+  ),
+  nextCursor: z.string().nullable(),
+});
 
 const keeperAbi = [
   ...clearingStateAbi,
@@ -34,7 +49,14 @@ export interface KeeperOptions {
   indexerUrl: string;
   operationsToken: string;
   budget: SenderOptions;
+  /**
+   * "adapter" (default) pays the fee quoted by the oracle adapter's updateFee(bytes). "none" is for
+   * oracles without a fee function, such as the local MockPriceOracle.
+   */
+  oracleFee?: "adapter" | "none";
   pollMs?: number;
+  /** Where cycle failures are reported; defaults to stderr. Each distinct failure is logged once. */
+  logError?: (error: unknown) => void;
   provider?: JsonRpcProvider;
   fetchImpl?: typeof fetch;
   dependencies?: KeeperDependencies;
@@ -69,14 +91,21 @@ export function buildKeeper(options: KeeperOptions) {
     )
       throw new Error("keeper chain/token mismatch");
   };
+  const oracleFee = async (report: string) => {
+    if (options.oracleFee === "none") return 0n;
+    const adapter = new Contract(
+      await clearing.oracle(),
+      ["function updateFee(bytes) view returns(uint256)"],
+      provider,
+    );
+    return BigInt(await adapter.updateFee(report));
+  };
   const engine = new KeeperEngine(
     options.dependencies ?? {
       reconcile: async () => {
         await validateChain();
         await sender.reconcile();
-        return !sender
-          .status()
-          .some((row) => ["signed", "submitted", "ambiguous", "reorged"].includes(String(row.status)));
+        return !sender.hasUnresolved();
       },
       state: async () => {
         const blockNumber = Number(BigInt(await provider.send("eth_blockNumber", []))),
@@ -116,8 +145,8 @@ export function buildKeeper(options: KeeperOptions) {
       accounts: async (cursor, limit) => {
         const health = await fetcher(`${options.indexerUrl}/health`, { signal: AbortSignal.timeout(3000) });
         if (!health.ok) throw new Error("keeper indexer unavailable");
-        const status = (await health.json()) as { ok: boolean; lag: number };
-        if (!status.ok || !Number.isInteger(status.lag) || status.lag < 0 || status.lag > 12)
+        const status = indexerHealth.safeParse(await health.json());
+        if (!status.success || !status.data.ok || status.data.lag > MAX_INDEXER_LAG)
           throw new Error("keeper indexer unhealthy");
         const url = new URL("/v1/positions", options.indexerUrl);
         url.searchParams.set("finalized", "false");
@@ -125,7 +154,7 @@ export function buildKeeper(options: KeeperOptions) {
         if (cursor) url.searchParams.set("cursor", cursor);
         const response = await fetcher(url, { signal: AbortSignal.timeout(3000) });
         if (!response.ok) throw new Error("keeper indexer page unavailable");
-        return response.json();
+        return positionsPage.parse(await response.json());
       },
       execute: async (id, action: KeeperAction) => {
         let data: string,
@@ -137,12 +166,7 @@ export function buildKeeper(options: KeeperOptions) {
             BigInt(await clearing.makerIncidentSince()) === 0n ? "reportMakerIncident" : "declareResolution",
           ); // report starts the grace period; declare resolves once it has passed
         else {
-          const adapter = new Contract(
-            await clearing.oracle(),
-            ["function updateFee(bytes) view returns(uint256)"],
-            provider,
-          );
-          value = BigInt(await adapter.updateFee(action.proof.report));
+          value = await oracleFee(action.proof.report);
           data =
             action.kind === "liquidate"
               ? clearing.interface.encodeFunctionData("liquidate", [
@@ -180,6 +204,8 @@ export function buildKeeper(options: KeeperOptions) {
         return true;
       },
     },
+    undefined,
+    options.logError,
   );
   let timer: ReturnType<typeof setInterval> | undefined;
   app.get("/health", async () => engine.status());
