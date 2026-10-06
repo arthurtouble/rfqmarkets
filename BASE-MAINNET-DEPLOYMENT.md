@@ -1,17 +1,17 @@
 # Base mainnet deployment
 
-Status 2026-10-06: tooling ready and rehearsed locally. **No mainnet transaction has been sent.** Any deploy waits for an explicit go-ahead from the project owner.
+Status 2026-10-06: tooling targets the contracts v1 rewrite (draft PR #13) and is rehearsed locally. **No mainnet transaction has been sent.** Any deploy waits for an explicit go-ahead from the project owner.
 
 There are two profiles:
 
-- **Dev** (next): a development deployment on Base mainnet that replaces Base Sepolia for day-to-day testing, so real USDC and ETH can be used instead of faucet assets. One owner wallet controls everything directly: caps change immediately and upgrades land in a single transaction, with no Safe and no timelock. Caps are hard-limited by the tooling. It is planned for after the contract rewrite and bug fixes.
-- **Production** (later): a fresh deployment with Safes, a 72-hour timelock and canary caps. It does not reuse the dev proxy, because the clearing contract has no way to hand governance from the owner wallet to a timelock.
+- **Dev** (next): a development deployment on Base mainnet that replaces Base Sepolia for day-to-day testing, so real USDC and ETH can be used instead of faucet assets. One owner wallet controls everything directly: caps change immediately and upgrades land in a single transaction, with no Safe and no timelock. Caps are hard-limited by the tooling. It is planned for after the contract rewrite and bug fixes land.
+- **Production** (later): Safes, a 72-hour timelock and canary caps. It can be a fresh deployment, or the dev proxy handed over in place with `dev-handover` (v1 has two-step governance transfer), keeping its address and balances.
 
 ## Dev profile
 
 ### What the owner must supply
 
-1. **About 0.02 ETH on Base** sent to the owner address that `dev-identities` prints. That covers the deploy (~0.0001 ETH at normal fees) and many upgrades (~0.00008 ETH each).
+1. **About 0.02 ETH on Base** sent to the owner address that `dev-identities` prints. That covers the deploy (~13M gas, ~0.00015 ETH at normal fees, ~0.007 ETH at a 0.5 gwei spike) and many upgrades (~11M gas, ~0.0001 ETH each).
 2. **Some USDC on Base** for testing: the maker capital floor (100 USDC in the generated manifest) plus whatever test trades need.
 3. **The Pyth Core address on Base mainnet**, confirmed on deploy day (see item 6 of the production list). The existing Hermes API key works for mainnet too.
 4. **A Base RPC URL.** A paid one (Alchemy, QuickNode) is better, but public `https://mainnet.base.org` works for a low-volume dev deployment.
@@ -32,11 +32,20 @@ npm run dev-verify:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.js
 npm run dev-configure:base-mainnet -- MANIFEST [--unpause]  # after editing caps
 npm run dev-upgrade:base-mainnet -- MANIFEST                # after contract changes
 npm run dev-basescan:base-mainnet -- MANIFEST
+npm run dev-handover:base-mainnet -- MANIFEST TIMELOCK GOVERNANCE_SAFE EMERGENCY_SAFE  # when going to production
 ```
 
-`dev-deploy` deploys the same five contracts as production, then pauses, sets exposure and market caps, and (with `--unpause`) reopens trading, all from the owner key. `dev-upgrade` runs the storage-layout check, deploys fresh libraries and a fresh implementation from the current build, and points the proxy at them with one `upgradeAndCall` transaction. Balances and positions stay in place, which the rehearsal checks. Each broadcasting command still requires the `RFQ_MAINNET_DEPLOY_CONFIRM` string it prints, so a stray shell can't send mainnet transactions by accident.
+`dev-deploy` deploys the same contracts as production (five libraries, implementation, oracle adapter, proxy). v1 initializes paused with the manifest caps already set, so `--unpause` is the only extra step. `dev-configure` re-applies edited caps (pause, set exposure and market caps, optionally unpause). `dev-upgrade` checks the new build's storage layout against the build-info snapshot taken at deploy (or at the last upgrade), deploys fresh libraries and a fresh implementation, and points the proxy at them with one `upgradeAndCall` transaction. Balances and positions stay in place, which the rehearsal checks. Each broadcasting command still requires the `RFQ_MAINNET_DEPLOY_CONFIRM` string it prints, so a stray shell can't send mainnet transactions by accident.
 
-The storage check compares against the frozen `RFQClearingBaseline`, not the deployed implementation, and the layout has fixed `Market[2]` arrays and no storage gap. Rewrites that change storage layout need a fresh dev proxy (move `deployment.json` aside and run `dev-deploy` again) rather than an upgrade.
+v1 storage lives in the ERC-7201 namespace `rfq.clearing.v1`. A change the validator rejects needs a fresh dev proxy (move `deployment.json` aside and run `dev-deploy` again) rather than an upgrade.
+
+### Handing the dev proxy to production governance
+
+1. Create the governance and emergency Safes, run `deploy:base-mainnet-timelock -- GOVERNANCE_SAFE`, and execute the renounce batch it writes.
+2. `dev-handover` checks the timelock (delay, self-administration, owner holds no role), sets the emergency Safe as emergency council, nominates the timelock as governance, and transfers the ProxyAdmin to it. It writes `safe-batches/handover-1-schedule-accept.json` and `handover-2-execute-accept.json`.
+3. The governance Safe schedules `acceptGovernance` now and executes it after 72 hours. Until then the owner key is still clearing governance, but upgrades already need the timelock.
+
+Before relying on a handed-over proxy for real capital, lower or re-set caps through the timelock and remove the dev approver keys with `rotateApprovers`, since those keys were generated on a laptop.
 
 # Production profile
 
@@ -47,11 +56,10 @@ The storage check compares against the frozen `RFQClearingBaseline`, not the dep
 | 0a | Governance Safe | Owner, in the Safe app | 2-of-3 or stronger, hardware-wallet owners |
 | 0b | Emergency Safe | Owner, in the Safe app | Different owners from the governance Safe |
 | 0c | `RFQTimelock` | `deploy:base-mainnet-timelock` | OpenZeppelin `TimelockController`, 72 h delay. Governance Safe is proposer/executor and must renounce the bootstrap admin role |
-| 1 | `RFQRiskMath` | `deploy:base-mainnet` | Linked library, part of implementation authority |
-| 2 | `RFQSignatureVerifier` | same | Linked library |
-| 3 | `RFQClearing` implementation | same | Constructor disables initializers |
-| 4 | `PythCoreAdapter` | same | Bound to the proxy address predicted from the deployer nonce |
-| 5 | `TransparentUpgradeableProxy` | same | Calls `initialize`; creates a `ProxyAdmin` owned by the timelock |
+| 1–5 | `RFQRiskMath`, `RFQLiquidation`, `RFQResolution`, `RFQSignatureVerifier`, `RFQSettlement` | `deploy:base-mainnet` | Linked libraries, deployed in dependency order; part of implementation authority |
+| 6 | `RFQClearing` implementation | same | Constructor disables initializers |
+| 7 | `PythCoreAdapter` | same | Bound to the proxy address predicted from the deployer nonce |
+| 8 | `TransparentUpgradeableProxy` | same | Calls `initialize` paused with the manifest caps; creates a `ProxyAdmin` owned by the timelock |
 
 Already on Base and only referenced: native USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (pinned in `mainnet-manifest.ts`) and Pyth Core. `RFQAuthorization` and the Chainlink adapter are not part of this deployment.
 
@@ -72,15 +80,18 @@ Measured in the rehearsal (`npm run rehearse:base-mainnet`):
 
 | Transaction | Gas |
 | --- | --- |
-| RFQRiskMath | 2,384,469 |
-| RFQSignatureVerifier | 594,505 |
-| RFQClearing implementation | 4,620,390 |
-| PythCoreAdapter | 686,284 |
-| Proxy + initialize + ProxyAdmin | 1,055,243 |
-| RFQTimelock | 1,381,091 |
-| **Total** | **10,721,982** |
+| RFQRiskMath | 2,078,497 |
+| RFQLiquidation | 1,328,730 |
+| RFQResolution | 1,499,710 |
+| RFQSignatureVerifier | 636,556 |
+| RFQSettlement | 1,398,322 |
+| RFQClearing implementation | 4,121,162 |
+| PythCoreAdapter | 686,296 |
+| Proxy + initialize + ProxyAdmin | 1,044,493 |
+| RFQTimelock | 1,381,354 |
+| **Total** | **14,175,120** |
 
-L2 execution at 0.01 gwei is about 0.0001 ETH; at a 0.5 gwei spike it is about 0.0054 ETH. Base also charges an L1 data fee for roughly 45 KB of init code, normally cents. Preflight prints the live estimate (including the L1 fee upper bound from the `GasPriceOracle` predeploy) and refuses to proceed unless the deployer holds twice the estimate. Two Safe creations and the four launch batches are paid by the Safe owners and cost a few cents each.
+L2 execution at 0.01 gwei is about 0.00014 ETH; at a 0.5 gwei spike it is about 0.0071 ETH. Base also charges an L1 data fee for the init code, normally cents. Preflight prints the live estimate (including the L1 fee upper bound from the `GasPriceOracle` predeploy) and refuses to proceed unless the deployer holds twice the estimate. Two Safe creations and the launch batches are paid by the Safe owners and cost a few cents each.
 
 ## Procedure
 
@@ -92,23 +103,22 @@ Every broadcasting command refuses to run until `RFQ_MAINNET_DEPLOY_CONFIRM` equ
 2. `npm run deploy:base-mainnet-timelock -- GOVERNANCE_SAFE`, then execute `safe-batches/0-renounce-timelock-admin.json` from the governance Safe (Transaction Builder, "Load batch").
 3. Freeze the commit. Write the manifest outside the repository or under `.local-state/`, with `candidateHash` from `npm run candidate:base-mainnet`. Any change to tracked source changes the hash and invalidates the manifest.
 4. `npm run preflight:base-mainnet -- MANIFEST.json`. It is read-only: it checks the chain ID, USDC decimals, Pyth, both Safe thresholds and owner overlap, timelock delay and self-administration, that the deployer holds no role, and gas/balance.
-5. `npm run deploy:base-mainnet -- MANIFEST.json --dormant` (or `--release-evidence EVIDENCE.json` once `release:check` passes). It deploys steps 1–5, waits two confirmations per transaction, and writes `deployment.json` plus four Safe batches. An interrupted run resumes from `deployment.partial.json`; the adapter is re-checked against the next proxy address.
-6. **Immediately** execute `safe-batches/1-emergencyPause.json` from the emergency Safe: pause, and disable both markets at canary caps. See "Initial state" below for why.
-7. `npm run verify:base-mainnet -- MANIFEST.json` runs 32 checks against both RPCs: implementation and library runtime bytecode equal the local build, proxy slots, ProxyAdmin owned by the timelock, every role, approvers, capital floor, adapter feeds and binding, timelock self-administration, and no deployer authority.
-8. `npm run basescan:base-mainnet -- MANIFEST.json` publishes standard-JSON source for all five contracts.
-9. Execute `safe-batches/2-governanceSchedule.json` from the governance Safe. It schedules two timelock operations: `configure` (gross/side exposure caps, enable markets at canary caps) and `go-live` (unpause), which depends on `configure`.
-10. After 72 hours, execute `3-governanceConfigure.json`. Run verify again.
-11. Execute `4-governanceGoLive.json` only once the approvers, keeper, hedger, indexer and monitoring are running against mainnet and the release checklist allows it. Until then the deployment stays paused, while deposits, withdrawals and paused closes keep working.
+5. `npm run deploy:base-mainnet -- MANIFEST.json --dormant` (or `--release-evidence EVIDENCE.json` once `release:check` passes). It deploys steps 1–8, waits two confirmations per transaction, and writes `deployment.json` plus two Safe batches. An interrupted run resumes from `deployment.partial.json`; the adapter is re-checked against the next proxy address. The proxy starts paused with the manifest caps, so no emergency step is needed.
+6. `npm run verify:base-mainnet -- MANIFEST.json` runs 35 checks against both RPCs: implementation and library runtime bytecode equal the local build, proxy slots, ProxyAdmin owned by the timelock, every role, approvers, capital floor, adapter feeds and binding, caps match the manifest, timelock self-administration, and no deployer authority.
+7. `npm run basescan:base-mainnet -- MANIFEST.json` publishes standard-JSON source for all eight contracts.
+8. Execute `safe-batches/1-schedule-go-live.json` from the governance Safe. It schedules a timelocked `unpause`.
+9. Execute `2-execute-go-live.json` after 72 hours and only once the approvers, keeper, hedger, indexer and monitoring are running against mainnet and the release checklist allows it. Until then the deployment stays paused, while deposits, withdrawals and paused closes keep working.
 
 ## Upgradeability and admin review
 
-- **Initial state is open.** `initialize` enables both markets at the contract maxima (1M USDC per trade, 5M per market) and leaves the clearing unpaused. Nothing can trade without two approver signatures and the maker capital floor deposited, so the practical exposure between steps 5 and 6 is nil while approver keys stay offline. Step 6 still closes it right away, because the emergency Safe can only reduce risk.
-- **Caps take at least 72 hours.** `setExposurePolicy` is governance-only and requires the clearing to be paused, so per-market gross/side caps arrive through the timelock. Scheduling them right after deploy overlaps the delay with runtime setup.
+- **Initial state is closed.** v1 `initialize` takes the per-market caps and starts paused, so there is no window where the proxy is open at contract maxima. The manifest validator also refuses caps above the contract bounds (1M per trade, 5M gross).
+- **Cap changes take 72 hours in production.** `setExposurePolicy` is governance-only and requires the clearing to be paused. The emergency council can only lower market caps.
+- **Governance can move.** `transferGovernance` then `acceptGovernance` lets the dev owner (or a timelock) hand over without redeploying; the emergency council can never become governance.
 - **Upgrades go through the timelock only.** The `ProxyAdmin` is owned by the timelock and there is no emergency upgrade bypass, by design. During an incident the emergency Safe can pause, lower caps and rotate the leader epoch; a code fix takes 72 hours. Users can always withdraw free collateral and close through the paused-close path.
-- **Linked libraries are implementation authority.** `RFQRiskMath` writes proxy storage through delegatecall. Storage validation runs with `--unsafeAllowLinkedLibraries`, so library changes need the same review as implementation changes.
-- **Bytecode headroom is 5 bytes.** `RFQClearing` is 20,995 bytes against the project's 21,000-byte gate (EVM limit 24,576). Any post-deploy fix to the clearing will need logic moved into a library or a deliberate decision to raise the gate.
-- **`RFQTimelock` lives in `contracts/testnet/`** but is an unmodified OpenZeppelin `TimelockController` with a fixed 3-day delay. It is reused for mainnet as is; moving the file is left to the refactor track.
-- **Compiler target.** `evmVersion` is unpinned, so solc 0.8.34 defaults to `osaka`. A `prague` build of all four deployed contracts is byte-identical apart from metadata, so no Osaka-only opcode is emitted today. Pinning it is still worthwhile in the rewrite.
+- **Linked libraries are implementation authority.** The five libraries run in the proxy's context through delegatecall. Storage validation runs with `--unsafeAllowLinkedLibraries`, so library changes need the same review as implementation changes.
+- **Bytecode headroom.** `RFQClearing` is 18,687 bytes, 5,889 under the EIP-170 limit, which the compile script enforces.
+- **`RFQTimelock`** (`contracts/governance/`) is an OpenZeppelin `TimelockController` taking `(minDelay, governanceSafe)`; the tooling requires at least 72 hours.
+- **Compiler target** is pinned to `cancun`.
 - **Deployer is powerless after deploy.** Preflight and verify both check that it holds no Safe ownership, timelock role or clearing role.
 
 ## Blockers before real capital
@@ -123,4 +133,4 @@ The deploy itself is cheap and can be undone by redeploying. Accepting customer 
 
 ## Rehearsal
 
-`npm run rehearse:base-mainnet` runs both profiles. For production, it runs the whole sequence on a local OP-stack chain that reports chain ID 8453, with the real USDC address planted with a mock token and stand-in Safes. It checks preflight refusals, an interrupted deploy and resume, all 32 verification checks, the emergency batch, timelock enforcement (early configure and out-of-order go-live both revert), the configured caps, unpause, a USDC deposit, and the Basescan payloads. For dev, it covers the ceiling refusal, an owner-key requirement, deploy plus immediate caps and unpause, a deposit, an upgrade that preserves custody and collateral, and verification after the upgrade. It also runs as part of `npm run test:contracts`.
+`npm run rehearse:base-mainnet` runs both profiles. For production, it runs the whole sequence on a local OP-stack chain that reports chain ID 8453, with the real USDC address planted with a mock token and stand-in Safes. It checks preflight refusals, an interrupted deploy and resume, all 35 verification checks, that the proxy starts paused with the manifest caps, timelock enforcement (early go-live reverts), unpause, a USDC deposit, and the Basescan payloads. For dev, it covers the ceiling refusal, an owner-key requirement, deploy and unpause, a deposit, an upgrade that preserves custody and collateral, and the handover: refusal while the Safe still administers the timelock, the timelocked `acceptGovernance`, and that the old owner can neither pause nor upgrade afterwards. It also runs as part of `npm run test:contracts`.
