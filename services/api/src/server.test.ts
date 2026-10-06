@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { after, before, mock, test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1268,4 +1268,57 @@ test("owner exit and cancellation actions are exactly signed before sponsorship"
     ).statusCode,
     503,
   );
+});
+
+test("limit-order execution does not spend the public write budget", async () => {
+  // Freeze Date so the 127.0.0.1 write bucket cannot refill between the client's writes and the
+  // order executor; when executions went through the public route they were rejected with 429.
+  mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  let approverCalls = 0;
+  const countingFetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    approverCalls++;
+    return routedFetch(input, init);
+  }) as typeof fetch;
+  const target = buildApi({
+    approvers: apps.map((_, index) => ({ url: `http://approver-${index}`, token: `transport-${index}` })),
+    fetchImpl: countingFetch,
+    publicWriteBurst: 2,
+  });
+  try {
+    await target.ready();
+    const prepared = (
+      await target.inject({
+        method: "POST",
+        url: "/v1/orders/prepare",
+        payload: {
+          account: user.address,
+          market: "BTC",
+          side: "buy",
+          amount: "100",
+          limitPrice: "200000",
+          durationSeconds: 3600,
+          nonce: "556677",
+        },
+      })
+    ).json();
+    const userSignature = await user.signTypedData(prepared.domain, prepared.types, prepared.intent);
+    const placed = await target.inject({
+      method: "POST",
+      url: "/v1/orders",
+      payload: { orderId: prepared.orderId, userSignature },
+    });
+    assert.equal(placed.statusCode, 200, placed.body);
+    const exhausted = await target.inject({ method: "POST", url: "/v1/quote", payload: {} });
+    assert.equal(exhausted.statusCode, 429, "the client's write budget should be spent");
+    let order: { status: string; lastError?: string } | undefined;
+    for (let poll = 0; poll < 200 && !order?.lastError; poll++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      order = (await target.inject({ url: `/v1/orders/${user.address}` })).json().items[0];
+    }
+    assert(approverCalls >= 2, `the order never reached the approvers: ${order?.lastError}`);
+    assert.doesNotMatch(order?.lastError ?? "", /rate limit/);
+  } finally {
+    await target.close();
+    mock.timers.reset();
+  }
 });
