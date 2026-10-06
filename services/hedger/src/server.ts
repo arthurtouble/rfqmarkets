@@ -1,15 +1,37 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import type { ServerResponse } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { keccak256, toUtf8Bytes } from "ethers";
+import { z } from "zod";
 import type { HedgeExecutionSignal, HedgeRiskSnapshot } from "../../../packages/shared/src/hedge-risk.js";
+import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 
 export type HedgeMarket = "BTC" | "ETH";
-type ExposureResponse = {
-  blockNumber: number;
-  markets: Record<HedgeMarket, { aggregateBase: string; bid: string; ask: string }>;
-};
+const HEDGE_MARKETS = ["BTC", "ETH"] as const satisfies readonly HedgeMarket[];
+const integerString = z.string().regex(/^-?\d+$/);
+const exposureMarket = z.object({ aggregateBase: integerString, bid: integerString, ask: integerString });
+/** The indexer's finalized `/v1/exposure` response. */
+const exposureResponse = z.object({
+  blockNumber: z.number().int().nonnegative(),
+  markets: z.object({ BTC: exposureMarket, ETH: exposureMarket }),
+});
+type ExposureResponse = z.infer<typeof exposureResponse>;
+
+const ONE = 10n ** 18n;
+const abs = (value: bigint) => (value < 0n ? -value : value);
+/** USDC notional (6 decimals) of a signed 18-decimal base amount at `mid`. */
+const notional = (base: bigint, mid: bigint) => (abs(base) * mid) / ONE;
+
+/** Customer exposure versus the venue position for one market. */
+function marketGap(exposure: ExposureResponse | undefined, market: HedgeMarket, venueBase: bigint) {
+  const source = exposure?.markets[market],
+    bid = BigInt(source?.bid ?? 0),
+    ask = BigInt(source?.ask ?? 0),
+    mid = (bid + ask) / 2n,
+    target = BigInt(source?.aggregateBase ?? 0),
+    gap = target - venueBase;
+  return { bid, ask, mid, target, current: venueBase, gap, gapNotional: notional(gap, mid) };
+}
 export interface VenueOrder {
   clientId: string;
   market: HedgeMarket;
@@ -40,7 +62,10 @@ export interface HedgeOptions {
   minOrderUsdc?: bigint;
   riskStaleMs?: number;
   venue?: HedgeVenue;
-  healthToken?: string;
+  /** Bearer token for /internal/risk, /v1/status, /v1/status/stream and /v1/tick. Required. */
+  healthToken: string;
+  /** Origins allowed to read the operations endpoints from a browser (defaults to the local admin UI). */
+  corsOrigin?: string | string[];
 }
 class IndexerUnavailable extends Error {}
 
@@ -92,8 +117,12 @@ export class LocalHedgeVenue implements HedgeVenue {
 }
 
 export function buildHedger(options: HedgeOptions) {
+  if (!options.healthToken) throw new Error("hedger requires an operations token");
+  const corsOrigin = options.corsOrigin ?? "http://127.0.0.1:4174",
+    band = options.bandUsdc ?? 25_000n * 1_000_000n,
+    riskStaleMs = options.riskStaleMs ?? 3_000;
   const app = Fastify({ logger: false });
-  app.register(cors, { origin: "http://127.0.0.1:4174" });
+  app.register(cors, { origin: corsOrigin });
   const db = new DatabaseSync(options.databasePath);
   const fetchImpl = options.fetchImpl ?? fetch;
   db.exec(
@@ -115,7 +144,7 @@ export function buildHedger(options: HedgeOptions) {
   const lastVenuePositions: Record<HedgeMarket, bigint> = { BTC: 0n, ETH: 0n },
     lastExecution: Partial<Record<HedgeMarket, HedgeExecutionSignal>> = {},
     executionErrors: Partial<Record<HedgeMarket, string>> = {},
-    statusClients = new Set<ServerResponse>();
+    statusClients = new SseClients(64 * 1024);
   const record = (clientId: string, result: VenueResult) =>
     db
       .prepare(
@@ -174,46 +203,38 @@ export function buildHedger(options: HedgeOptions) {
         signal: AbortSignal.timeout(2_000),
       });
       if (!response.ok) throw new Error(String(response.status));
-      exposure = (await response.json()) as ExposureResponse;
+      exposure = exposureResponse.parse(await response.json());
     } catch (error) {
       throw new IndexerUnavailable(`indexer unavailable: ${String(error)}`);
     }
     lastExposure = exposure;
     lastIndexedBlock = exposure.blockNumber;
-    for (const market of ["BTC", "ETH"] as HedgeMarket[]) {
+    for (const market of HEDGE_MARKETS) {
       const current = await venue.position(market);
       lastVenuePositions[market] = current;
-      const state = exposure.markets[market],
-        bid = BigInt(state.bid),
-        ask = BigInt(state.ask);
+      const { bid, ask, mid, target, gap, gapNotional } = marketGap(exposure, market, current);
       if (bid === 0n || ask === 0n) continue;
-      const mid = (bid + ask) / 2n,
-        target = BigInt(state.aggregateBase),
-        gap = target - current,
-        notional = ((gap < 0n ? -gap : gap) * mid) / 10n ** 18n,
-        band = options.bandUsdc ?? 25_000n * 1_000_000n;
       if (venue.execution)
         try {
-          lastExecution[market] = await venue.execution(market, mid, notional > band ? notional : band);
+          lastExecution[market] = await venue.execution(market, mid, gapNotional > band ? gapNotional : band);
           delete executionErrors[market];
         } catch (error) {
           executionErrors[market] = String(error);
           delete lastExecution[market];
         }
-      if (blockedMarkets.has(market) || notional <= band) continue;
-      const residualBase = ((band / 2n) * 10n ** 18n) / mid,
-        targetNotional = ((target < 0n ? -target : target) * mid) / 10n ** 18n,
-        currentNotional = ((current < 0n ? -current : current) * mid) / 10n ** 18n,
+      if (blockedMarkets.has(market) || gapNotional <= band) continue;
+      // Trade toward the middle of the band; if the customer side is already inside the band and the
+      // venue position is large enough to close, flatten the venue instead.
+      const residualBase = ((band / 2n) * ONE) / mid,
         minOrder = options.minOrderUsdc ?? 0n;
       let delta =
-        minOrder > 0n && targetNotional <= band && currentNotional >= minOrder
+        minOrder > 0n && notional(target, mid) <= band && notional(current, mid) >= minOrder
           ? -current
           : gap - (gap > 0n ? residualBase : -residualBase);
-      const maxBase = ((options.maxOrderUsdc ?? 25_000n * 1_000_000n) * 10n ** 18n) / mid;
+      const maxBase = ((options.maxOrderUsdc ?? 25_000n * 1_000_000n) * ONE) / mid;
       if (delta > maxBase) delta = maxBase;
       if (delta < -maxBase) delta = -maxBase;
-      const deltaNotional = ((delta < 0n ? -delta : delta) * mid) / 10n ** 18n;
-      if (deltaNotional < minOrder) continue;
+      if (notional(delta, mid) < minOrder) continue;
       const limit = gap > 0n ? (ask * 10_020n) / 10_000n : (bid * 9_980n) / 10_000n,
         clientId = keccak256(toUtf8Bytes(`rfq:${exposure.blockNumber}:${market}:${target}:${current}`));
       const exists = db.prepare("SELECT status FROM hedge_orders WHERE client_id=?").get(clientId) as
@@ -239,16 +260,14 @@ export function buildHedger(options: HedgeOptions) {
     }
   }
   const statusSnapshot = () => {
-    const band = options.bandUsdc ?? 25_000n * 1_000_000n,
-      positions = { BTC: lastVenuePositions.BTC.toString(), ETH: lastVenuePositions.ETH.toString() },
+    const positions = { BTC: lastVenuePositions.BTC.toString(), ETH: lastVenuePositions.ETH.toString() },
       markets = Object.fromEntries(
-        (["BTC", "ETH"] as HedgeMarket[]).map((market) => {
-          const source = lastExposure?.markets[market],
-            target = BigInt(source?.aggregateBase ?? 0),
-            current = lastVenuePositions[market],
-            gap = target - current,
-            mid = source ? (BigInt(source.bid) + BigInt(source.ask)) / 2n : 0n,
-            gapNotional = ((gap < 0n ? -gap : gap) * mid) / 10n ** 18n;
+        HEDGE_MARKETS.map((market) => {
+          const { target, current, gap, gapNotional } = marketGap(
+            lastExposure,
+            market,
+            lastVenuePositions[market],
+          );
           return [
             market,
             {
@@ -275,17 +294,7 @@ export function buildHedger(options: HedgeOptions) {
       orders: db.prepare("SELECT * FROM hedge_orders ORDER BY created_ms DESC LIMIT 20").all(),
     };
   };
-  const broadcastStatus = () => {
-    const frame = `event: status\ndata: ${JSON.stringify(statusSnapshot())}\n\n`;
-    for (const client of statusClients) {
-      if (client.writableLength > 64 * 1024) {
-        statusClients.delete(client);
-        client.end();
-        continue;
-      }
-      client.write(frame);
-    }
-  };
+  const broadcastStatus = () => statusClients.broadcast(sseFrame("status", statusSnapshot()));
   async function tick() {
     if (ticking) return ticking;
     ticking = doTick()
@@ -304,26 +313,19 @@ export function buildHedger(options: HedgeOptions) {
       });
     return ticking;
   }
-  const effectivelyHealthy = () =>
-    !lastFailureCritical && Date.now() - lastSuccessAtMs <= (options.riskStaleMs ?? 3_000);
+  const effectivelyHealthy = () => !lastFailureCritical && Date.now() - lastSuccessAtMs <= riskStaleMs;
   const authorized = (request: { headers: { authorization?: string } }) =>
-    !options.healthToken || request.headers.authorization === `Bearer ${options.healthToken}`;
+    request.headers.authorization === `Bearer ${options.healthToken}`;
   async function riskSnapshot(): Promise<HedgeRiskSnapshot> {
-    const band = options.bandUsdc ?? 25_000n * 1_000_000n,
-      executableBand = (options.minOrderUsdc ?? 0n) > band ? (options.minOrderUsdc ?? 0n) : band,
+    const minOrder = options.minOrderUsdc ?? 0n,
+      executableBand = minOrder > band ? minOrder : band,
       healthy = effectivelyHealthy(),
       markets = {} as HedgeRiskSnapshot["markets"];
-    for (const market of ["BTC", "ETH"] as HedgeMarket[]) {
-      const source = lastExposure?.markets[market],
-        target = BigInt(source?.aggregateBase ?? 0),
-        current = lastVenuePositions[market],
-        mid = source ? (BigInt(source.bid) + BigInt(source.ask)) / 2n : 0n,
-        gap = target - current,
-        gapNotional = ((gap < 0n ? -gap : gap) * mid) / 10n ** 18n,
+    for (const market of HEDGE_MARKETS) {
+      const { gapNotional } = marketGap(lastExposure, market, lastVenuePositions[market]),
         execution = lastExecution[market],
         executionHealthy =
-          !venue.execution ||
-          (execution !== undefined && Date.now() - execution.observedAtMs <= (options.riskStaleMs ?? 3_000)),
+          !venue.execution || (execution !== undefined && Date.now() - execution.observedAtMs <= riskStaleMs),
         mode =
           !healthy || !executionHealthy || gapNotional > executableBand * 2n
             ? "reduce_only"
@@ -345,8 +347,7 @@ export function buildHedger(options: HedgeOptions) {
     error: lastError,
   }));
   app.get("/internal/risk", async (request, reply) => {
-    if (!options.healthToken || request.headers.authorization !== `Bearer ${options.healthToken}`)
-      return reply.code(401).send({ error: "unauthorized" });
+    if (!authorized(request)) return reply.code(401).send({ error: "unauthorized" });
     return riskSnapshot();
   });
   app.get("/v1/status", async (request, reply) =>
@@ -354,17 +355,9 @@ export function buildHedger(options: HedgeOptions) {
   );
   app.get("/v1/status/stream", async (request, reply) => {
     if (!authorized(request)) return reply.code(401).send({ error: "unauthorized" });
-    reply.hijack();
-    reply.raw.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-      "access-control-allow-origin": "http://127.0.0.1:4174",
-    });
-    statusClients.add(reply.raw);
-    reply.raw.write(`event: status\ndata: ${JSON.stringify(statusSnapshot())}\n\n`);
-    request.raw.on("close", () => statusClients.delete(reply.raw));
+    const response = openSse(reply, corsOrigin);
+    statusClients.add(response);
+    statusClients.send(response, sseFrame("status", statusSnapshot()));
   });
   app.post("/v1/tick", async (request, reply) => {
     if (!authorized(request)) return reply.code(401).send({ error: "unauthorized" });
@@ -382,8 +375,7 @@ export function buildHedger(options: HedgeOptions) {
   });
   app.addHook("onClose", async () => {
     if (timer) clearInterval(timer);
-    for (const client of statusClients) client.end();
-    statusClients.clear();
+    statusClients.close();
     await ticking;
     if (venue.close) await venue.close();
     db.close();

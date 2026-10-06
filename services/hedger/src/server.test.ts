@@ -11,6 +11,9 @@ import {
   type VenueResult,
 } from "./server.js";
 
+const TOKEN = "hedge-test-token",
+  AUTH = { authorization: `Bearer ${TOKEN}` };
+
 test("hedges finalized aggregate exposure once with a stable client order id", async () => {
   const directory = mkdtempSync(join(tmpdir(), "rfq-hedger-"));
   const payload = {
@@ -26,34 +29,36 @@ test("hedges finalized aggregate exposure once with a stable client order id", a
       headers: { "content-type": "application/json" },
     })) as typeof fetch;
   const hedge = buildHedger({
+    healthToken: TOKEN,
     indexerUrl: "http://indexer",
     databasePath: join(directory, "hedge.sqlite"),
     fetchImpl,
     pollMs: 60_000,
   });
   await hedge.ready();
-  const first = (await hedge.inject({ method: "GET", url: "/v1/status" })).json();
+  const first = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
   assert.equal(first.orders.length, 1);
   assert.equal(first.orders[0].status, "filled");
   assert.equal(first.positions.BTC, "250000000000000000");
   assert(first.observedAtMs > 0);
-  await hedge.inject({ method: "POST", url: "/v1/tick" });
-  const second = (await hedge.inject({ method: "GET", url: "/v1/status" })).json();
+  await hedge.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+  const second = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
   assert.equal(second.orders.length, 2);
   assert.equal(second.positions.BTC, "500000000000000000");
   await hedge.close();
   const restarted = buildHedger({
+    healthToken: TOKEN,
     indexerUrl: "http://indexer",
     databasePath: join(directory, "hedge.sqlite"),
     fetchImpl,
     pollMs: 60_000,
   });
   await restarted.ready();
-  const recovered = (await restarted.inject({ method: "GET", url: "/v1/status" })).json();
+  const recovered = (await restarted.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
   assert.equal(recovered.orders.length, 3);
   assert.equal(recovered.positions.BTC, "750000000000000000");
-  await restarted.inject({ method: "POST", url: "/v1/tick" });
-  const stable = (await restarted.inject({ method: "GET", url: "/v1/status" })).json();
+  await restarted.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+  const stable = (await restarted.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
   assert.equal(stable.orders.length, 3);
   assert.equal(stable.positions.BTC, recovered.positions.BTC);
   await restarted.close();
@@ -105,6 +110,7 @@ test("reconciles a lost partial-fill acknowledgement before submitting another s
         headers: { "content-type": "application/json" },
       })) as typeof fetch;
   const hedge = buildHedger({
+    healthToken: TOKEN,
     indexerUrl: "http://indexer",
     databasePath: join(directory, "hedge.sqlite"),
     fetchImpl,
@@ -112,11 +118,11 @@ test("reconciles a lost partial-fill acknowledgement before submitting another s
     venue,
   });
   await hedge.ready();
-  let status = (await hedge.inject({ method: "GET", url: "/v1/status" })).json();
+  let status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
   assert.equal(status.healthy, false);
   assert.equal(venue.submissions, 1);
-  await hedge.inject({ method: "POST", url: "/v1/tick" });
-  status = (await hedge.inject({ method: "GET", url: "/v1/status" })).json();
+  await hedge.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+  status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
   assert.equal(status.healthy, true);
   assert.equal(
     status.orders.some((order: { status: string }) => order.status === "partial"),
@@ -165,6 +171,7 @@ test("does not stack hedge slices while a venue order remains open", async () =>
         headers: { "content-type": "application/json" },
       })) as typeof fetch;
   const hedge = buildHedger({
+    healthToken: TOKEN,
     indexerUrl: "http://indexer",
     databasePath: join(directory, "hedge.sqlite"),
     fetchImpl,
@@ -172,9 +179,9 @@ test("does not stack hedge slices while a venue order remains open", async () =>
     venue,
   });
   await hedge.ready();
-  await hedge.inject({ method: "POST", url: "/v1/tick" });
-  await hedge.inject({ method: "POST", url: "/v1/tick" });
-  const status = (await hedge.inject({ method: "GET", url: "/v1/status" })).json();
+  await hedge.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+  await hedge.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+  const status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
   assert.equal(status.orders.length, 1);
   assert.equal(status.orders[0].status, "open");
   assert.equal(venue.submissions, 1);
@@ -310,6 +317,7 @@ test("flattens venue exposure instead of leaving residual below its minimum orde
     },
     fetchImpl = (async () => new Response(JSON.stringify(payload), { status: 200 })) as typeof fetch;
   const hedge = buildHedger({
+    healthToken: TOKEN,
     indexerUrl: "http://indexer",
     databasePath: join(directory, "hedge.sqlite"),
     fetchImpl,
@@ -319,12 +327,12 @@ test("flattens venue exposure instead of leaving residual below its minimum orde
     minOrderUsdc: 10_000_000n,
   });
   await hedge.ready();
-  let status = (await hedge.inject({ method: "GET", url: "/v1/status" })).json();
+  let status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
   assert(BigInt(status.positions.BTC) > 0n, "opening hedge was not submitted");
   payload.blockNumber++;
   payload.markets.BTC.aggregateBase = "0";
-  await hedge.inject({ method: "POST", url: "/v1/tick" });
-  status = (await hedge.inject({ method: "GET", url: "/v1/status" })).json();
+  await hedge.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+  status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
   assert.equal(status.positions.BTC, "0");
   assert.equal(status.orders.length, 2);
   await hedge.close();
@@ -460,4 +468,78 @@ test("a recent finalized snapshot survives a transient indexer failure", async (
   assert.match((await hedge.inject({ method: "GET", url: "/health" })).json().error, /indexer unavailable/);
   await hedge.close();
   rmSync(directory, { recursive: true, force: true });
+});
+
+test("operations endpoints always require the token and CORS follows configuration", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-hedger-auth-")),
+    fetchImpl = (async () => new Response("offline", { status: 503 })) as typeof fetch;
+  assert.throws(
+    () => buildHedger({ indexerUrl: "http://indexer", databasePath: ":memory:", healthToken: "" }),
+    /operations token/,
+  );
+  const hedge = buildHedger({
+    indexerUrl: "http://indexer",
+    databasePath: join(directory, "hedge.sqlite"),
+    fetchImpl,
+    pollMs: 60_000,
+    healthToken: TOKEN,
+    corsOrigin: ["https://ops.example", "https://backup.example"],
+  });
+  try {
+    await hedge.ready();
+    for (const [method, url] of [
+      ["GET", "/v1/status"],
+      ["GET", "/v1/status/stream"],
+      ["POST", "/v1/tick"],
+      ["GET", "/internal/risk"],
+    ] as const) {
+      assert.equal((await hedge.inject({ method, url })).statusCode, 401, url);
+      assert.equal(
+        (await hedge.inject({ method, url, headers: { authorization: "Bearer wrong" } })).statusCode,
+        401,
+        url,
+      );
+    }
+    const allowed = await hedge.inject({
+      method: "GET",
+      url: "/v1/status",
+      headers: { ...AUTH, origin: "https://backup.example" },
+    });
+    assert.equal(allowed.headers["access-control-allow-origin"], "https://backup.example");
+    const local = await hedge.inject({
+      method: "GET",
+      url: "/v1/status",
+      headers: { ...AUTH, origin: "http://127.0.0.1:4174" },
+    });
+    assert.equal(local.headers["access-control-allow-origin"], undefined);
+  } finally {
+    await hedge.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a malformed exposure response is rejected before it can size a hedge", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-hedger-malformed-")),
+    payload = {
+      blockNumber: 70,
+      markets: { BTC: { aggregateBase: "1e18", bid: "99990000000", ask: "100010000000" } },
+    },
+    fetchImpl = (async () => new Response(JSON.stringify(payload), { status: 200 })) as typeof fetch;
+  const hedge = buildHedger({
+    indexerUrl: "http://indexer",
+    databasePath: join(directory, "hedge.sqlite"),
+    fetchImpl,
+    pollMs: 60_000,
+    healthToken: TOKEN,
+  });
+  try {
+    await hedge.ready();
+    const status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
+    assert.equal(status.healthy, false);
+    assert.match(status.error, /indexer unavailable/);
+    assert.equal(status.orders.length, 0);
+  } finally {
+    await hedge.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
