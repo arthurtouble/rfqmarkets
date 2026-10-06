@@ -1,0 +1,14 @@
+# Base mainnet dev runtime for Cloudflare Containers (deploy/cloudflare/runtime/wrangler.dev.jsonc).
+# Hedging is simulated, so the Python Hyperliquid bridge is not installed.
+FROM node:24-bookworm-slim
+
+ENV NODE_ENV=production RFQ_DEV_RUNTIME_DIR=/tmp/rfq-dev-runtime
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev --ignore-scripts
+COPY packages ./packages
+COPY services ./services
+COPY scripts ./scripts
+
+EXPOSE 4099 4100 4300 4500
+CMD ["node", "--import", "tsx", "scripts/cloudflare-dev-container.ts"]

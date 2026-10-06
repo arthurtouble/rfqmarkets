@@ -11,3 +11,4 @@ dist/
 .playwright-cli/
 output/
 out/
+deploy/cloudflare/runtime/wrangler.dev.generated.jsonc

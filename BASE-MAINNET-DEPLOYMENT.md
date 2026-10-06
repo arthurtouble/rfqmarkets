@@ -18,6 +18,8 @@ There are two profiles:
 
 `dev-identities` generates the owner, emergency and three approver keys into `.local-state/base-mainnet-dev/identities.json` (mode 0600, never committed) and writes a ready `dev-manifest.json` that uses their addresses. To use a wallet you already hold as owner instead, set `owner` in the manifest and pass its key as `RFQ_MAINNET_DEPLOYER_KEY`.
 
+To run the dev profile from GitHub Actions with the UI and services hosted on Cloudflare instead of from a laptop, see [deploy/cloudflare/DEV-ENVIRONMENT.md](deploy/cloudflare/DEV-ENVIRONMENT.md).
+
 ### Dev caps
 
 `validateDevManifest` refuses anything above 1,000 USDC per trade, 5,000 USDC net or 10,000 USDC gross per market, and a 50,000 USDC maker capital floor. The generated manifest uses 25 USDC per trade, 100 net, 200 gross and 150 per side, plus a 100 USDC maker floor. These caps bound trading exposure, not deposits: the contract is public, so anyone who finds it can deposit their own USDC and withdraw it again. Don't publicize the address.

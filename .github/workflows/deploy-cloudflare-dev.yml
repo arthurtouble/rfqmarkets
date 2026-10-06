@@ -1,0 +1,41 @@
+name: Deploy Cloudflare dev (Base mainnet)
+# Every green CI run on main redeploys the trading UI, the docs and the dev runtime container.
+# Contracts are deployed and upgraded separately by dev-contracts.yml.
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: cloudflare-dev
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: ${{ vars.CLOUDFLARE_DEV_DEPLOY_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: cloudflare-dev
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:web && npm run build:docs && npm run validate:cloudflare-static
+      - id: kv
+        run: echo "id=$(node scripts/cloudflare-kv-namespace.mjs rfq-markets-dev-state)" >> "$GITHUB_OUTPUT"
+      - name: Deploy dev runtime
+        run: |
+          sed "s/REPLACED_AT_DEPLOY/${{ steps.kv.outputs.id }}/" deploy/cloudflare/runtime/wrangler.dev.jsonc > deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
+          npx wrangler deploy --config deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
+      - run: npx wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
+      - run: npx wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc

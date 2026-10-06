@@ -12,7 +12,7 @@ export type MarketCaps={maxTradeUsdc:bigint;netUsdc:bigint;grossUsdc:bigint;side
 /** The subset of a manifest the deployment consumes (shared by production and dev profiles). */
 export type CoreInputs={usdc:string;oracleSource:string;feedIds:[string,string];governance:string;emergencyCouncil:string;approvers:[string,string,string];policy:{makerCapitalUsdc:bigint;markets:{BTC:MarketCaps;ETH:MarketCaps}}};
 export type DeploymentContracts={libraries:Record<string,string>;clearingImplementation:string;oracleAdapter:string;clearingProxy:string;proxyAdmin:string;usdc:string;oracleSource:string};
-export type DeploymentRecord={network:"base-mainnet";chainId:string;candidateHash:string;launchProfile:"dormant"|"released"|"dev";deployer:string;contracts:DeploymentContracts;governance:string;governanceSafe:string|null;emergencyCouncil:string;approvers:[string,string,string];feedIds:[string,string];baseRiskCapitalTarget:string;transactions:Record<string,string>;gasUsed:Record<string,string>;deployedAt:string;proxyInitImplementation?:string;upgrades?:{implementation:string;libraries:Record<string,string>;transaction:string;candidateHash:string;at:string}[]};
+export type DeploymentRecord={network:"base-mainnet";chainId:string;candidateHash:string;launchProfile:"dormant"|"released"|"dev";deployer:string;contracts:DeploymentContracts;governance:string;governanceSafe:string|null;emergencyCouncil:string;approvers:[string,string,string];feedIds:[string,string];baseRiskCapitalTarget:string;transactions:Record<string,string>;gasUsed:Record<string,string>;deployedAt:string;proxyInitImplementation?:string;deploymentBlock?:number;upgrades?:{implementation:string;libraries:Record<string,string>;transaction:string;candidateHash:string;at:string}[]};
 type Artifact={source:string;abi:any[];bytecode:string;deployedBytecode:string;linkReferences:Record<string,Record<string,{start:number;length:number}[]>>;immutableReferences?:Record<string,{start:number;length:number}[]>};
 // Measured in the local rehearsal (initialize + ProxyAdmin creation); used only by the preflight
 // estimate because the proxy constructor delegatecalls an implementation that does not exist yet.
@@ -115,7 +115,7 @@ export async function estimateDeployCost(provider:Provider,manifest:CoreInputs,d
  */
 export async function deployCore(signer:Signer,manifest:CoreInputs&{governanceSafe?:string},options:{candidateHash:string;launchProfile:DeploymentRecord["launchProfile"];confirmations?:number;resume?:Record<string,string>;onStep?:(step:string,address:string,partial:Record<string,string>)=>void;root?:string}){
   const provider=signer.provider!;const deployer=await signer.getAddress(),root=options.root??process.cwd(),confirmations=options.confirmations??2,steps=deploySteps(root);
-  const addresses:Record<string,string>={},transactions:Record<string,string>={},gasUsed:Record<string,string>={};
+  const addresses:Record<string,string>={},transactions:Record<string,string>={},gasUsed:Record<string,string>={};let deploymentBlock:number|undefined;
   for(const step of steps){const prior=options.resume?.[step];if(prior&&await provider.getCode(prior)!=="0x")addresses[step]=getAddress(prior);}
   const remaining=steps.filter(step=>!addresses[step]);
   let nonce=await provider.getTransactionCount(deployer,"pending");
@@ -124,14 +124,14 @@ export async function deployCore(signer:Signer,manifest:CoreInputs&{governanceSa
   for(const step of remaining){
     const contract=await factory(step,addresses,signer,root).deploy(...constructorArgs(step,manifest,addresses,proxy,root),{nonce:nonce++});
     const receipt=await contract.deploymentTransaction()!.wait(confirmations);if(!receipt||receipt.status!==1)throw new Error(`${step} deployment failed`);
-    addresses[step]=getAddress(receipt.contractAddress!);transactions[step]=receipt.hash;gasUsed[step]=receipt.gasUsed.toString();
+    addresses[step]=getAddress(receipt.contractAddress!);transactions[step]=receipt.hash;gasUsed[step]=receipt.gasUsed.toString();if(step==="clearingProxy")deploymentBlock=receipt.blockNumber;
     if(await provider.getCode(addresses[step])==="0x")throw new Error(`${step} has no code after ${confirmations} confirmations`);
     options.onStep?.(step,addresses[step],{...addresses});
   }
   if(!same(addresses.clearingProxy,proxy))throw new Error("clearing proxy address does not match the address bound into the oracle adapter");
   const record:DeploymentRecord={network:"base-mainnet",chainId:(await provider.getNetwork()).chainId.toString(),candidateHash:options.candidateHash,launchProfile:options.launchProfile,deployer,
     contracts:{libraries:librariesOf(addresses,root),clearingImplementation:addresses.clearingImplementation,oracleAdapter:addresses.oracleAdapter,clearingProxy:addresses.clearingProxy,proxyAdmin:word(await provider.getStorage(addresses.clearingProxy,ADMIN_SLOT)),usdc:manifest.usdc,oracleSource:manifest.oracleSource},
-    governance:manifest.governance,governanceSafe:manifest.governanceSafe??null,emergencyCouncil:manifest.emergencyCouncil,approvers:manifest.approvers,feedIds:manifest.feedIds,baseRiskCapitalTarget:manifest.policy.makerCapitalUsdc.toString(),transactions,gasUsed,deployedAt:new Date().toISOString(),proxyInitImplementation:addresses.clearingImplementation};
+    governance:manifest.governance,governanceSafe:manifest.governanceSafe??null,emergencyCouncil:manifest.emergencyCouncil,approvers:manifest.approvers,feedIds:manifest.feedIds,baseRiskCapitalTarget:manifest.policy.makerCapitalUsdc.toString(),transactions,gasUsed,deployedAt:new Date().toISOString(),proxyInitImplementation:addresses.clearingImplementation,...(deploymentBlock===undefined?{}:{deploymentBlock})};
   return record;
 }
 
