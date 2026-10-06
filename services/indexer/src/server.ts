@@ -275,7 +275,7 @@ export function buildIndexer(options: IndexerOptions) {
       try {
         parsed = iface.parseLog(log);
       } catch {
-        continue;
+        continue; // proxy/admin events from the same address are not part of the read model
       }
       if (!parsed) continue;
       const timestamp = timestamps.get(log.blockNumber);
