@@ -5,18 +5,20 @@ import { linkArtifact } from "./link-artifact.mjs";
 import { validateMainnetManifest } from "./mainnet-manifest.js";
 
 // Base mainnet core-contract deployment. Every function here is chain-agnostic so the
-// local rehearsal (scripts/base-mainnet-rehearsal.mjs) exercises the exact mainnet code path.
+// local rehearsal (scripts/base-mainnet-rehearsal.ts) exercises the exact mainnet code path.
 export const BASE_MAINNET_CHAIN_ID=8453n;
 export type MainnetManifest=ReturnType<typeof validateMainnetManifest>;
-export type DeploymentRecord={network:"base-mainnet";chainId:string;candidateHash:string;launchProfile:"dormant"|"released";deployer:string;contracts:{riskMath:string;signatureVerifier:string;clearingImplementation:string;oracleAdapter:string;clearingProxy:string;proxyAdmin:string;usdc:string;oracleSource:string};governance:string;governanceSafe:string;emergencyCouncil:string;approvers:[string,string,string];feedIds:[string,string];baseRiskCapitalTarget:string;transactions:Record<string,string>;gasUsed:Record<string,string>;deployedAt:string};
-type Step="riskMath"|"signatureVerifier"|"clearingImplementation"|"oracleAdapter"|"clearingProxy";
+/** The subset of a manifest the five deployment transactions consume (shared by production and dev profiles). */
+export type CoreInputs={usdc:string;oracleSource:string;feedIds:[string,string];governance:string;emergencyCouncil:string;approvers:[string,string,string];policy:{makerCapitalUsdc:bigint}};
+export type DeploymentRecord={network:"base-mainnet";chainId:string;candidateHash:string;launchProfile:"dormant"|"released"|"dev";deployer:string;contracts:{riskMath:string;signatureVerifier:string;clearingImplementation:string;oracleAdapter:string;clearingProxy:string;proxyAdmin:string;usdc:string;oracleSource:string};governance:string;governanceSafe:string|null;emergencyCouncil:string;approvers:[string,string,string];feedIds:[string,string];baseRiskCapitalTarget:string;transactions:Record<string,string>;gasUsed:Record<string,string>;deployedAt:string;upgrades?:{implementation:string;riskMath:string;signatureVerifier:string;transaction:string;candidateHash:string;at:string}[]};
+export type Step="riskMath"|"signatureVerifier"|"clearingImplementation"|"oracleAdapter"|"clearingProxy";
 export const DEPLOY_STEPS:Step[]=["riskMath","signatureVerifier","clearingImplementation","oracleAdapter","clearingProxy"];
 // Measured in the local rehearsal (initialize + ProxyAdmin creation); used only by the preflight
 // estimate because the proxy constructor delegatecalls an implementation that does not exist yet.
 export const PROXY_GAS_UPPER_BOUND=1_200_000n;
 
-const ADMIN_SLOT="0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103";
-const IMPLEMENTATION_SLOT="0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+export const ADMIN_SLOT="0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103";
+export const IMPLEMENTATION_SLOT="0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const ARTIFACT:Record<Step,string>={riskMath:"RFQRiskMath",signatureVerifier:"RFQSignatureVerifier",clearingImplementation:"RFQClearing",oracleAdapter:"PythCoreAdapter",clearingProxy:"TransparentUpgradeableProxy"};
 const SOURCE:Record<Step,string>={riskMath:"contracts/libraries/RFQRiskMath.sol",signatureVerifier:"contracts/libraries/RFQSignatureVerifier.sol",clearingImplementation:"contracts/RFQClearing.sol",oracleAdapter:"contracts/oracle/PythCoreAdapter.sol",clearingProxy:"@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol"};
 const SAFE_ABI=["function getThreshold() view returns(uint256)","function getOwners() view returns(address[])"];
@@ -24,17 +26,17 @@ const TIMELOCK_ABI=["function getMinDelay() view returns(uint256)","function has
 const ROLES={admin:ZeroHash,proposer:id("PROPOSER_ROLE"),executor:id("EXECUTOR_ROLE"),canceller:id("CANCELLER_ROLE")};
 
 export const artifact=(name:string,root=process.cwd())=>JSON.parse(readFileSync(resolve(root,"artifacts",`${name}.json`),"utf8")) as {abi:any[];bytecode:string;deployedBytecode:string;linkReferences:Record<string,Record<string,{start:number;length:number}[]>>};
-const same=(left:string,right:string)=>getAddress(left)===getAddress(right);
-const word=(value:string)=>getAddress(`0x${value.slice(-40)}`);
+export const same=(left:string,right:string)=>getAddress(left)===getAddress(right);
+export const word=(value:string)=>getAddress(`0x${value.slice(-40)}`);
 
 /** Constructor arguments for each step, given library and predicted proxy addresses. */
-export function constructorArgs(step:Step,manifest:MainnetManifest,addresses:Partial<Record<Step,string>>,proxy:string,root=process.cwd()):unknown[]{
+export function constructorArgs(step:Step,manifest:CoreInputs,addresses:Partial<Record<Step,string>>,proxy:string,root=process.cwd()):unknown[]{
   if(step==="oracleAdapter")return [manifest.oracleSource,proxy,manifest.feedIds];
   if(step!=="clearingProxy")return [];
   const init=new Interface(artifact("RFQClearing",root).abi).encodeFunctionData("initialize",[manifest.usdc,addresses.oracleAdapter,manifest.governance,manifest.emergencyCouncil,manifest.approvers,manifest.policy.makerCapitalUsdc]);
   return [addresses.clearingImplementation,manifest.governance,init];
 }
-const factory=(step:Step,addresses:Partial<Record<Step,string>>,signer?:Signer,root=process.cwd())=>{
+export const factory=(step:Step,addresses:Partial<Record<Step,string>>,signer?:Signer,root=process.cwd())=>{
   const libraries=Object.fromEntries(Object.entries({RFQRiskMath:addresses.riskMath,RFQSignatureVerifier:addresses.signatureVerifier}).filter((entry):entry is [string,string]=>Boolean(entry[1])));
   const item=linkArtifact(artifact(ARTIFACT[step],root),libraries);
   return new ContractFactory(item.abi,item.bytecode,signer);
@@ -61,6 +63,12 @@ export async function preflight(provider:Provider,manifest:MainnetManifest,deplo
   if(await timelock.hasRole(ROLES.admin,manifest.governanceSafe))throw new Error("governance Safe still holds timelock admin; execute the renounce batch first");
   if(!await timelock.hasRole(ROLES.admin,manifest.governance))throw new Error("timelock must be self-administered");
   for(const role of Object.values(ROLES))if(await timelock.hasRole(role,deployer))throw new Error("deployer holds a timelock role");
+  const cost=await estimateDeployCost(provider,manifest,deployer);
+  return {ready:true,chainId:network.chainId.toString(),...cost,timelockDelaySeconds:delay.toString(),safes};
+}
+
+/** Live gas/fee estimate for the five deployment transactions; refuses a deployer holding under twice the estimate. */
+export async function estimateDeployCost(provider:Provider,manifest:CoreInputs,deployer:string){
   const nonce=await provider.getTransactionCount(deployer,"pending"),balance=await provider.getBalance(deployer),fee=await provider.getFeeData();
   // Library/implementation/adapter gas is estimated live from their creation code; the proxy uses the rehearsal bound.
   const predicted:Partial<Record<Step,string>>={};DEPLOY_STEPS.forEach((step,index)=>predicted[step]=getCreateAddress({from:deployer,nonce:nonce+index}));
@@ -73,7 +81,7 @@ export async function preflight(provider:Provider,manifest:MainnetManifest,deplo
   let l1Fee:bigint|null=null;try{l1Fee=await new Contract("0x420000000000000000000000000000000000000F",["function getL1FeeUpperBound(uint256) view returns(uint256)"],provider).getL1FeeUpperBound(totalBytes+DEPLOY_STEPS.length*120) as bigint;}catch{}
   const estimatedWei=totalGas*maxFeePerGas+(l1Fee??0n);
   if(balance<estimatedWei*2n)throw new Error(`deployer balance ${balance} wei is below twice the estimated ${estimatedWei} wei`);
-  return {ready:true,chainId:network.chainId.toString(),deployer,nonce,balanceWei:balance.toString(),predicted,gas:Object.fromEntries(Object.entries(gas).map(([key,value])=>[key,value.toString()])),totalGas:totalGas.toString(),maxFeePerGasWei:maxFeePerGas.toString(),l1FeeUpperBoundWei:l1Fee?.toString()??"unavailable",estimatedCostWei:estimatedWei.toString(),timelockDelaySeconds:delay.toString(),safes};
+  return {deployer,nonce,balanceWei:balance.toString(),predicted,gas:Object.fromEntries(Object.entries(gas).map(([key,value])=>[key,value.toString()])),totalGas:totalGas.toString(),maxFeePerGasWei:maxFeePerGas.toString(),l1FeeUpperBoundWei:l1Fee?.toString()??"unavailable",estimatedCostWei:estimatedWei.toString()};
 }
 
 /**
@@ -81,7 +89,7 @@ export async function preflight(provider:Provider,manifest:MainnetManifest,deplo
  * run; steps whose code is already on-chain are skipped, and the oracle adapter is re-checked against
  * the proxy address the remaining nonces will produce.
  */
-export async function deployCore(signer:Signer,manifest:MainnetManifest,options:{candidateHash:string;launchProfile:"dormant"|"released";confirmations?:number;resume?:Partial<Record<Step,string>>;onStep?:(step:Step,address:string,partial:Partial<Record<Step,string>>)=>void;root?:string}){
+export async function deployCore(signer:Signer,manifest:CoreInputs&{governanceSafe?:string},options:{candidateHash:string;launchProfile:DeploymentRecord["launchProfile"];confirmations?:number;resume?:Partial<Record<Step,string>>;onStep?:(step:Step,address:string,partial:Partial<Record<Step,string>>)=>void;root?:string}){
   const provider=signer.provider!;const deployer=await signer.getAddress(),root=options.root??process.cwd(),confirmations=options.confirmations??2;
   const addresses:Partial<Record<Step,string>>={},transactions:Record<string,string>={},gasUsed:Record<string,string>={};
   for(const step of DEPLOY_STEPS){const prior=options.resume?.[step];if(prior&&await provider.getCode(prior)!=="0x")addresses[step]=getAddress(prior);}
@@ -99,7 +107,7 @@ export async function deployCore(signer:Signer,manifest:MainnetManifest,options:
   if(!same(addresses.clearingProxy!,proxy))throw new Error("clearing proxy address does not match the address bound into the oracle adapter");
   const record:DeploymentRecord={network:"base-mainnet",chainId:(await provider.getNetwork()).chainId.toString(),candidateHash:options.candidateHash,launchProfile:options.launchProfile,deployer,
     contracts:{riskMath:addresses.riskMath!,signatureVerifier:addresses.signatureVerifier!,clearingImplementation:addresses.clearingImplementation!,oracleAdapter:addresses.oracleAdapter!,clearingProxy:addresses.clearingProxy!,proxyAdmin:word(await provider.getStorage(addresses.clearingProxy!,ADMIN_SLOT)),usdc:manifest.usdc,oracleSource:manifest.oracleSource},
-    governance:manifest.governance,governanceSafe:manifest.governanceSafe,emergencyCouncil:manifest.emergencyCouncil,approvers:manifest.approvers,feedIds:manifest.feedIds,baseRiskCapitalTarget:manifest.policy.makerCapitalUsdc.toString(),transactions,gasUsed,deployedAt:new Date().toISOString()};
+    governance:manifest.governance,governanceSafe:manifest.governanceSafe??null,emergencyCouncil:manifest.emergencyCouncil,approvers:manifest.approvers,feedIds:manifest.feedIds,baseRiskCapitalTarget:manifest.policy.makerCapitalUsdc.toString(),transactions,gasUsed,deployedAt:new Date().toISOString()};
   return record;
 }
 
@@ -120,8 +128,8 @@ export function runtimeMatches(onChain:string,name:string,libraries:Record<strin
   return maskImmutables(onChain,item.immutableReferences)===maskImmutables(expected,item.immutableReferences);
 }
 
-/** On-chain verification of a mainnet deployment record against its manifest. Throws on mismatch. */
-export async function verifyDeployment(provider:Provider,record:DeploymentRecord,manifest:MainnetManifest,root=process.cwd()){
+/** Checks shared by every profile: code identity, proxy wiring, roles, approvers, capital floor and oracle binding. */
+export async function verifyCore(provider:Provider,record:DeploymentRecord,manifest:CoreInputs,root=process.cwd()){
   const checks:string[]=[],check=(ok:boolean,label:string)=>{if(!ok)throw new Error(`verification failed: ${label}`);checks.push(label);};
   check((await provider.getNetwork()).chainId.toString()===record.chainId,"RPC chain matches the deployment record");
   for(const [name,address] of Object.entries(record.contracts))check(await provider.getCode(address)!=="0x",`${name} has code`);
@@ -129,23 +137,29 @@ export async function verifyDeployment(provider:Provider,record:DeploymentRecord
   for(const [step,name] of [["riskMath","RFQRiskMath"],["signatureVerifier","RFQSignatureVerifier"]] as const)check(runtimeMatches(await provider.getCode(record.contracts[step]),name,{},root),`${name} runtime bytecode equals the local build`);
   check(same(word(await provider.getStorage(record.contracts.clearingProxy,IMPLEMENTATION_SLOT)),record.contracts.clearingImplementation),"proxy points at the recorded implementation");
   check(same(word(await provider.getStorage(record.contracts.clearingProxy,ADMIN_SLOT)),record.contracts.proxyAdmin),"proxy admin slot matches the record");
-  const proxyAdmin=new Contract(record.contracts.proxyAdmin,["function owner() view returns(address)"],provider);check(same(await proxyAdmin.owner(),manifest.governance),"ProxyAdmin is owned by the governance timelock");
+  const proxyAdmin=new Contract(record.contracts.proxyAdmin,["function owner() view returns(address)"],provider);check(same(await proxyAdmin.owner(),manifest.governance),"ProxyAdmin is owned by governance");
   const clearing=new Contract(record.contracts.clearingProxy,artifact("RFQClearing",root).abi,provider);
   check(same(await clearing.usdc(),manifest.usdc),"clearing collateral is Base USDC");
   check(same(await clearing.oracle(),record.contracts.oracleAdapter),"clearing oracle is the recorded adapter");
-  check(same(await clearing.governance(),manifest.governance),"clearing governance is the timelock");
-  check(same(await clearing.emergencyCouncil(),manifest.emergencyCouncil),"clearing emergency council is the emergency Safe");
+  check(same(await clearing.governance(),manifest.governance),"clearing governance matches the manifest");
+  check(same(await clearing.emergencyCouncil(),manifest.emergencyCouncil),"clearing emergency council matches the manifest");
   for(let index=0;index<3;index++)check(same(await clearing.approvers(index),manifest.approvers[index]),`approver ${index+1} matches the manifest`);
   check(await clearing.baseRiskCapitalTarget()===manifest.policy.makerCapitalUsdc,"maker capital floor matches the manifest");
   const adapter=new Contract(record.contracts.oracleAdapter,["function pyth() view returns(address)","function clearing() view returns(address)","function feedIds(uint256) view returns(bytes32)"],provider);
   check(same(await adapter.pyth(),manifest.oracleSource)&&same(await adapter.clearing(),record.contracts.clearingProxy),"oracle adapter binds Pyth Core and the clearing proxy");
   for(let index=0;index<2;index++)check((await adapter.feedIds(index)).toLowerCase()===manifest.feedIds[index].toLowerCase(),`oracle feed ${index===0?"BTC":"ETH"} matches the manifest`);
+  const state={paused:await clearing.paused() as boolean,markets:[] as {enabled:boolean;maxTradeNotional:string;maxMarketNotional:string;grossLimit:string;sideLimit:string}[]};
+  for(let market=0;market<2;market++){const [info,limits,exposure]=await Promise.all([clearing.markets(market),clearing.marketLimitWord(market),clearing.exposureState(market)]);const mask=(1n<<128n)-1n;state.markets.push({enabled:info.enabled,maxTradeNotional:(limits&mask).toString(),maxMarketNotional:(limits>>128n).toString(),grossLimit:(exposure.limits&mask).toString(),sideLimit:(exposure.limits>>128n).toString()});}
+  return {verified:true,checks,check,state};
+}
+
+/** Production verification: core checks plus timelock delay, self-administration and no deployer role. */
+export async function verifyDeployment(provider:Provider,record:DeploymentRecord,manifest:MainnetManifest,root=process.cwd()){
+  const {checks,check,state}=await verifyCore(provider,record,manifest,root);
   const timelock=new Contract(manifest.governance,TIMELOCK_ABI,provider);
   check(await timelock.getMinDelay()>=BigInt(manifest.policy.timelockSeconds),"timelock delay meets the manifest minimum");
   check(!await timelock.hasRole(ROLES.admin,manifest.governanceSafe)&&await timelock.hasRole(ROLES.admin,manifest.governance),"timelock is self-administered");
   for(const role of Object.values(ROLES))check(!await timelock.hasRole(role,record.deployer),`deployer holds no timelock role ${role.slice(0,10)}`);
-  const state={paused:await clearing.paused() as boolean,markets:[] as {enabled:boolean;maxTradeNotional:string;maxMarketNotional:string;grossLimit:string;sideLimit:string}[]};
-  for(let market=0;market<2;market++){const [info,limits,exposure]=await Promise.all([clearing.markets(market),clearing.marketLimitWord(market),clearing.exposureState(market)]);const mask=(1n<<128n)-1n;state.markets.push({enabled:info.enabled,maxTradeNotional:(limits&mask).toString(),maxMarketNotional:(limits>>128n).toString(),grossLimit:(exposure.limits&mask).toString(),sideLimit:(exposure.limits>>128n).toString()});}
   return {verified:true,checks,state};
 }
 
@@ -187,7 +201,7 @@ export function launchBatches(record:DeploymentRecord,manifest:MainnetManifest,r
 }
 
 /** Standard-JSON verification payloads for Basescan (Etherscan API v2). */
-export function basescanSubmissions(record:DeploymentRecord,manifest:MainnetManifest,root=process.cwd()){
+export function basescanSubmissions(record:DeploymentRecord,manifest:CoreInputs,root=process.cwd()){
   const build=JSON.parse(readFileSync(resolve(root,"artifacts/build-info/rfq-build.json"),"utf8")) as {solcLongVersion:string;input:{settings:Record<string,unknown>}};
   const proxy=record.contracts.clearingProxy,addresses:Partial<Record<Step,string>>=record.contracts;
   return DEPLOY_STEPS.map(step=>{

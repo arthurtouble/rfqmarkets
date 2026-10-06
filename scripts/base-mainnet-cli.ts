@@ -1,9 +1,10 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { ContractFactory, JsonRpcProvider, Wallet, formatEther, getAddress } from "ethers";
-import { BASE_MAINNET_CHAIN_ID, artifact, basescanSubmissions, deployCore, launchBatches, preflight, renounceTimelockAdminBatch, verifyDeployment, type DeploymentRecord } from "./base-mainnet.js";
+import { configureDev, devPreflight, generateDevIdentities, upgradeDev, verifyDev } from "./base-mainnet-dev.js";
+import { BASE_MAINNET_CHAIN_ID, artifact, basescanSubmissions, deployCore, launchBatches, preflight, renounceTimelockAdminBatch, verifyDeployment, type CoreInputs, type DeploymentRecord } from "./base-mainnet.js";
 import { identifyCandidate } from "./candidate-identity.js";
-import { validateMainnetManifest } from "./mainnet-manifest.js";
+import { validateDevManifest, validateMainnetManifest } from "./mainnet-manifest.js";
 import { checkReleaseEvidence } from "./release-evidence.js";
 
 // Usage (see BASE-MAINNET-DEPLOYMENT.md):
@@ -14,6 +15,14 @@ import { checkReleaseEvidence } from "./release-evidence.js";
 //   verify            MANIFEST
 //   batches           MANIFEST
 //   basescan          MANIFEST
+// Development profile (owner EOA, no timelock, dev-capped; state in .local-state/base-mainnet-dev):
+//   dev-identities    [PYTH_CORE_ADDRESS]
+//   dev-preflight     DEV_MANIFEST
+//   dev-deploy        DEV_MANIFEST [--unpause]
+//   dev-configure     DEV_MANIFEST [--unpause]
+//   dev-upgrade       DEV_MANIFEST
+//   dev-verify        DEV_MANIFEST
+//   dev-basescan      DEV_MANIFEST
 const STATE=resolve(process.env.RFQ_MAINNET_STATE_DIR??".local-state/base-mainnet");
 const RECORD=resolve(STATE,"deployment.json"),PARTIAL=resolve(STATE,"deployment.partial.json");
 const [command,target,...flags]=process.argv.slice(2);
@@ -21,7 +30,22 @@ const env=(name:string)=>{const value=process.env[name];if(!value)throw new Erro
 const rpc=(name="RFQ_BASE_MAINNET_RPC_URL")=>{const url=env(name);if(!url.startsWith("https://"))throw new Error(`${name} must use HTTPS`);return new JsonRpcProvider(url,undefined,{staticNetwork:false});};
 const writePrivate=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(value,null,2)+"\n",{mode:0o600});chmodSync(path,0o600);};
 const loadManifest=()=>{if(!target)throw new Error("MANIFEST path is required");const manifest=validateMainnetManifest(JSON.parse(readFileSync(resolve(target),"utf8")));const candidate=identifyCandidate();if(candidate.candidateHash!==manifest.candidateHash)throw new Error(`manifest candidate ${manifest.candidateHash.slice(0,12)} does not match this checkout (${candidate.candidateHash.slice(0,12)})`);return manifest;};
-const loadRecord=()=>JSON.parse(readFileSync(RECORD,"utf8")) as DeploymentRecord;
+const DEV_STATE=resolve(process.env.RFQ_MAINNET_DEV_STATE_DIR??".local-state/base-mainnet-dev"),DEV_RECORD=resolve(DEV_STATE,"deployment.json"),DEV_PARTIAL=resolve(DEV_STATE,"deployment.partial.json"),DEV_IDENTITIES=resolve(DEV_STATE,"identities.json");
+const loadDevManifest=()=>{if(!target)throw new Error("DEV_MANIFEST path is required");return validateDevManifest(JSON.parse(readFileSync(resolve(target),"utf8")));};
+const devOwner=(provider:JsonRpcProvider)=>process.env.RFQ_MAINNET_DEPLOYER_KEY?deployerWallet(provider):new Wallet((JSON.parse(readFileSync(DEV_IDENTITIES,"utf8")) as {owner:{privateKey:string}}).owner.privateKey,provider);
+const loadRecord=(path=RECORD)=>JSON.parse(readFileSync(path,"utf8")) as DeploymentRecord;
+async function submitBasescan(record:DeploymentRecord,inputs:CoreInputs){
+  // Publishes verified source to Basescan through the Etherscan v2 API.
+  const apiKey=env("RFQ_BASESCAN_API_KEY"),api="https://api.etherscan.io/v2/api?chainid=8453";
+  for(const item of basescanSubmissions(record,inputs)){
+    const body=new URLSearchParams({apikey:apiKey,module:"contract",action:"verifysourcecode",contractaddress:item.address,sourceCode:JSON.stringify(item.input),codeformat:"solidity-standard-json-input",contractname:item.contractName,compilerversion:item.compilerVersion,constructorArguements:item.constructorArguments});
+    const submitted=await (await fetch(api,{method:"POST",body})).json() as {status:string;result:string};
+    if(submitted.status!=="1"&&!/already verified/i.test(submitted.result)){console.error(`${item.step}: ${submitted.result}`);process.exitCode=1;continue;}
+    let result=submitted.result;
+    for(let attempt=0;attempt<20&&submitted.status==="1";attempt++){await new Promise(done=>setTimeout(done,3_000));const status=await (await fetch(`${api}&module=contract&action=checkverifystatus&guid=${submitted.result}&apikey=${apiKey}`)).json() as {result:string};result=status.result;if(!/pending/i.test(result))break;}
+    console.log(`${item.step} ${item.address}: ${result}`);if(!/pass|verified/i.test(result))process.exitCode=1;
+  }
+}
 const deployerWallet=(provider:JsonRpcProvider)=>new Wallet(env("RFQ_MAINNET_DEPLOYER_KEY"),provider);
 // Mainnet broadcasts need a typed confirmation bound to the chain, deployer and candidate.
 const confirm=(action:string,deployer:string,suffix:string)=>{const expected=`${action}-8453-${deployer.toLowerCase()}-${suffix}`;if(process.env.RFQ_MAINNET_DEPLOY_CONFIRM!==expected)throw new Error(`refusing to broadcast. Set RFQ_MAINNET_DEPLOY_CONFIRM=${expected}`);};
@@ -69,18 +93,45 @@ switch(command){
     for(const [index,name] of (["emergencyPause","governanceSchedule","governanceConfigure","governanceGoLive"] as const).entries())writePrivate(resolve(STATE,`safe-batches/${index+1}-${name}.json`),batches[name]);
     console.log(JSON.stringify(batches.operations,null,2));break;
   }
-  case "basescan":{
-    // Publishes verified source to Basescan through the Etherscan v2 API.
-    const manifest=loadManifest(),record=loadRecord(),apiKey=env("RFQ_BASESCAN_API_KEY"),api="https://api.etherscan.io/v2/api?chainid=8453";
-    for(const item of basescanSubmissions(record,manifest)){
-      const body=new URLSearchParams({apikey:apiKey,module:"contract",action:"verifysourcecode",contractaddress:item.address,sourceCode:JSON.stringify(item.input),codeformat:"solidity-standard-json-input",contractname:item.contractName,compilerversion:item.compilerVersion,constructorArguements:item.constructorArguments});
-      const submitted=await (await fetch(api,{method:"POST",body})).json() as {status:string;result:string};
-      if(submitted.status!=="1"&&!/already verified/i.test(submitted.result)){console.error(`${item.step}: ${submitted.result}`);process.exitCode=1;continue;}
-      let result=submitted.result;
-      for(let attempt=0;attempt<20&&submitted.status==="1";attempt++){await new Promise(done=>setTimeout(done,3_000));const status=await (await fetch(`${api}&module=contract&action=checkverifystatus&guid=${submitted.result}&apikey=${apiKey}`)).json() as {result:string};result=status.result;if(!/pending/i.test(result))break;}
-      console.log(`${item.step} ${item.address}: ${result}`);if(!/pass|verified/i.test(result))process.exitCode=1;
-    }
-    break;
+  case "basescan":await submitBasescan(loadRecord(),loadManifest());break;
+  case "dev-identities":{
+    if(existsSync(DEV_IDENTITIES))throw new Error(`${DEV_IDENTITIES} already exists; refusing to overwrite keys`);
+    const {identities,manifest}=generateDevIdentities(target?getAddress(target):undefined);
+    writePrivate(DEV_IDENTITIES,identities);writePrivate(resolve(DEV_STATE,"dev-manifest.json"),manifest);
+    console.log(JSON.stringify({owner:identities.owner.address,emergency:identities.emergency.address,approvers:identities.approvers.map(item=>item.address),manifest:resolve(DEV_STATE,"dev-manifest.json"),next:"Fund the owner address with ~0.01 ETH on Base, then run dev-preflight."},null,2));break;
   }
-  default:throw new Error("usage: base-mainnet-cli candidate|preflight|deploy-timelock|deploy|verify|batches|basescan ...");
+  case "dev-preflight":{
+    const manifest=loadDevManifest(),provider=rpc(),report=await devPreflight(provider,manifest,devOwner(provider).address);
+    console.log(JSON.stringify({...report,balanceEth:formatEther(report.balanceWei),estimatedCostEth:formatEther(report.estimatedCostWei)},null,2));break;
+  }
+  case "dev-deploy":{
+    const manifest=loadDevManifest(),provider=rpc(),owner=devOwner(provider),candidateHash=identifyCandidate().candidateHash;
+    if(existsSync(DEV_RECORD))throw new Error(`${DEV_RECORD} already exists; use dev-upgrade, or move it aside to deploy a fresh dev proxy`);
+    console.error(JSON.stringify({preflight:await devPreflight(provider,manifest,owner.address)},null,2));
+    confirm("dev-deploy",owner.address,candidateHash.slice(0,12));
+    const resume=existsSync(DEV_PARTIAL)?JSON.parse(readFileSync(DEV_PARTIAL,"utf8")):undefined;
+    const record=await deployCore(owner,manifest,{candidateHash,launchProfile:"dev",resume,onStep:(step,address,partial)=>{writePrivate(DEV_PARTIAL,partial);console.error(`${step}: ${address}`);}});
+    writePrivate(DEV_RECORD,record);
+    const configured=await configureDev(owner,record,manifest,{unpause:flags.includes("--unpause")});
+    console.log(JSON.stringify({record,configurationTransactions:configured,verify:await verifyDev(provider,record,manifest)},null,2));break;
+  }
+  case "dev-configure":{
+    const manifest=loadDevManifest(),provider=rpc(),owner=devOwner(provider),record=loadRecord(DEV_RECORD);
+    confirm("dev-configure",owner.address,record.contracts.clearingProxy.slice(2,10).toLowerCase());
+    console.log(JSON.stringify({transactions:await configureDev(owner,record,manifest,{unpause:flags.includes("--unpause")}),verify:await verifyDev(provider,record,manifest)},null,2));break;
+  }
+  case "dev-upgrade":{
+    // The npm script runs validate:upgrades (storage layout) before this.
+    const manifest=loadDevManifest(),provider=rpc(),owner=devOwner(provider),candidateHash=identifyCandidate().candidateHash;await requireMainnet(provider);
+    confirm("dev-upgrade",owner.address,candidateHash.slice(0,12));
+    const record=await upgradeDev(owner,loadRecord(DEV_RECORD),{candidateHash});writePrivate(DEV_RECORD,record);
+    console.log(JSON.stringify({upgrade:record.upgrades!.at(-1),verify:await verifyDev(provider,record,manifest)},null,2));break;
+  }
+  case "dev-verify":{
+    const manifest=loadDevManifest(),record=loadRecord(DEV_RECORD),results=[];
+    for(const name of ["RFQ_BASE_MAINNET_RPC_URL","RFQ_BASE_MAINNET_SECONDARY_RPC_URL"])if(process.env[name]){const provider=rpc(name);await requireMainnet(provider);results.push({rpc:new URL(env(name)).hostname,...await verifyDev(provider,record,manifest)});}
+    console.log(JSON.stringify(results,null,2));break;
+  }
+  case "dev-basescan":await submitBasescan(loadRecord(DEV_RECORD),loadDevManifest());break;
+  default:throw new Error("usage: base-mainnet-cli candidate|preflight|deploy-timelock|deploy|verify|batches|basescan|dev-identities|dev-preflight|dev-deploy|dev-configure|dev-upgrade|dev-verify|dev-basescan ...");
 }

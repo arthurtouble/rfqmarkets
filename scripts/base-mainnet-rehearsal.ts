@@ -4,10 +4,11 @@
 import assert from "node:assert/strict";
 import "@nomicfoundation/hardhat-ethers";
 import { network } from "hardhat";
-import { Contract, ContractFactory, formatEther, getAddress, parseUnits, type Signer } from "ethers";
+import { Contract, ContractFactory, Wallet, formatEther, getAddress, parseUnits, type Signer } from "ethers";
+import { configureDev, devPreflight, generateDevIdentities, upgradeDev, verifyDev } from "./base-mainnet-dev.js";
 import { artifact, basescanSubmissions, deployCore, launchBatches, preflight, renounceTimelockAdminBatch, verifyDeployment } from "./base-mainnet.js";
 import { identifyCandidate } from "./candidate-identity.js";
-import { validateMainnetManifest } from "./mainnet-manifest.js";
+import { validateDevManifest, validateMainnetManifest } from "./mainnet-manifest.js";
 
 const BASE_USDC="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const {ethers,provider:rpc}=await network.create({network:"hardhatBaseRehearsal",chainType:"op"});
@@ -71,10 +72,29 @@ const submissions=basescanSubmissions(record,manifest);
 assert.equal(submissions.length,5);assert.ok(submissions.every(item=>item.compilerVersion.startsWith("v0.8.34+commit.")));
 assert.ok((submissions.find(item=>item.step==="clearingProxy")!.constructorArguments).length>0);
 assert.deepEqual(Object.keys((submissions.find(item=>item.step==="clearingImplementation")!.input.settings as {libraries:object}).libraries),["contracts/libraries/RFQRiskMath.sol","contracts/libraries/RFQSignatureVerifier.sol"]);
+// Development profile: owner EOA governs directly, caps apply at once, upgrades need no delay.
+const dev=generateDevIdentities(await pyth.getAddress()),devManifest=validateDevManifest(dev.manifest);
+const devOwner=new Wallet(dev.identities.owner.privateKey,provider);await (await ceremony.sendTransaction({to:devOwner.address,value:parseUnits("1","ether")})).wait();
+assert.throws(()=>validateDevManifest({...dev.manifest,policy:{...dev.manifest.policy,markets:{...dev.manifest.policy.markets,ETH:{...dev.manifest.policy.markets.ETH,grossUsdc:"20000000000"}}}}),/dev ceiling/);
+await assert.rejects(devPreflight(provider,devManifest,deployer.address),/owner key/);
+await devPreflight(provider,devManifest,devOwner.address);
+let devRecord=await deployCore(devOwner,devManifest,{candidateHash:manifest.candidateHash,launchProfile:"dev",confirmations:1});
+await configureDev(devOwner,devRecord,devManifest,{unpause:true,confirmations:1});
+const devLive=await verifyDev(provider,devRecord,devManifest);assert.equal(devLive.state.paused,false);assert.ok(devLive.state.markets.every(item=>item.enabled&&item.grossLimit==="200000000"));
+await (await usdc.mint(ceremony.address,amount)).wait();await (await usdc.approve(devRecord.contracts.clearingProxy,amount)).wait();
+const devClearing=new Contract(devRecord.contracts.clearingProxy,artifact("RFQClearing").abi,ceremony);await (await devClearing.getFunction("deposit")(amount)).wait();
+const collateralBefore=await devClearing.collateralOf(ceremony.address);
+const previousImplementation=devRecord.contracts.clearingImplementation;
+devRecord=await upgradeDev(devOwner,devRecord,{candidateHash:manifest.candidateHash,confirmations:1});
+assert.notEqual(devRecord.contracts.clearingImplementation,previousImplementation);assert.equal(devRecord.upgrades!.length,1);
+await verifyDev(provider,devRecord,devManifest);
+assert.equal(await usdc.balanceOf(devRecord.contracts.clearingProxy),amount,"custody survives the dev upgrade");
+assert.equal(await devClearing.collateralOf(ceremony.address),collateralBefore,"account collateral survives the dev upgrade");
+
 // Cost summary: libraries come from the preflight estimate because the resumed run did not redeploy them.
 const timelockReceipt=await (await ceremony.sendTransaction(await new ContractFactory(artifact("RFQTimelock").abi,artifact("RFQTimelock").bytecode).getDeployTransaction(manifest.governanceSafe))).wait();
 const gasUsed={riskMath:report.gas.riskMath,signatureVerifier:report.gas.signatureVerifier,...record.gasUsed,timelock:timelockReceipt!.gasUsed.toString()};
 const totalGas=Object.values(gasUsed).reduce((sum,value)=>sum+BigInt(value!),0n),cost=(gwei:string)=>formatEther(totalGas*parseUnits(gwei,"gwei"));
 assert.ok(BigInt(record.gasUsed.clearingProxy)<=1_200_000n,"proxy gas stays within the preflight bound");
-console.log(JSON.stringify({rehearsal:"passed",checks:live.checks.length,gasUsed,totalGas:totalGas.toString(),l1FeeUpperBoundWei:report.l1FeeUpperBoundWei,
+console.log(JSON.stringify({rehearsal:"passed",checks:live.checks.length,devChecks:devLive.checks.length,gasUsed,totalGas:totalGas.toString(),l1FeeUpperBoundWei:report.l1FeeUpperBoundWei,
   l2ExecutionCostEthAt:{"0.01 gwei":cost("0.01"),"0.05 gwei":cost("0.05"),"0.5 gwei":cost("0.5")}},null,2));

@@ -1,8 +1,44 @@
 # Base mainnet deployment
 
-Status 2026-10-06: tooling ready and rehearsed locally. **No mainnet transaction has been sent.** The deploy waits for an explicit go-ahead from the project owner.
+Status 2026-10-06: tooling ready and rehearsed locally. **No mainnet transaction has been sent.** Any deploy waits for an explicit go-ahead from the project owner.
 
-This guide covers deploying the core settlement contracts to Base mainnet (chain 8453) and taking them to a capped canary. It does not cover the off-chain runtime (API, approvers, keeper, hedger, indexer), which stays on Base Sepolia until its own gates pass.
+There are two profiles:
+
+- **Dev** (next): a development deployment on Base mainnet that replaces Base Sepolia for day-to-day testing, so real USDC and ETH can be used instead of faucet assets. One owner wallet controls everything directly: caps change immediately and upgrades land in a single transaction, with no Safe and no timelock. Caps are hard-limited by the tooling. It is planned for after the contract rewrite and bug fixes.
+- **Production** (later): a fresh deployment with Safes, a 72-hour timelock and canary caps. It does not reuse the dev proxy, because the clearing contract has no way to hand governance from the owner wallet to a timelock.
+
+## Dev profile
+
+### What the owner must supply
+
+1. **About 0.02 ETH on Base** sent to the owner address that `dev-identities` prints. That covers the deploy (~0.0001 ETH at normal fees) and many upgrades (~0.00008 ETH each).
+2. **Some USDC on Base** for testing: the maker capital floor (100 USDC in the generated manifest) plus whatever test trades need.
+3. **The Pyth Core address on Base mainnet**, confirmed on deploy day (see item 6 of the production list). The existing Hermes API key works for mainnet too.
+4. **A Base RPC URL.** A paid one (Alchemy, QuickNode) is better, but public `https://mainnet.base.org` works for a low-volume dev deployment.
+
+`dev-identities` generates the owner, emergency and three approver keys into `.local-state/base-mainnet-dev/identities.json` (mode 0600, never committed) and writes a ready `dev-manifest.json` that uses their addresses. To use a wallet you already hold as owner instead, set `owner` in the manifest and pass its key as `RFQ_MAINNET_DEPLOYER_KEY`.
+
+### Dev caps
+
+`validateDevManifest` refuses anything above 1,000 USDC per trade, 5,000 USDC net or 10,000 USDC gross per market, and a 50,000 USDC maker capital floor. The generated manifest uses 25 USDC per trade, 100 net, 200 gross and 150 per side, plus a 100 USDC maker floor. These caps bound trading exposure, not deposits: the contract is public, so anyone who finds it can deposit their own USDC and withdraw it again. Don't publicize the address.
+
+### Commands
+
+```bash
+npm run dev-identities:base-mainnet -- PYTH_CORE_ADDRESS   # once; prints the owner address to fund
+npm run dev-preflight:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.json
+npm run dev-deploy:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.json --unpause
+npm run dev-verify:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.json
+npm run dev-configure:base-mainnet -- MANIFEST [--unpause]  # after editing caps
+npm run dev-upgrade:base-mainnet -- MANIFEST                # after contract changes
+npm run dev-basescan:base-mainnet -- MANIFEST
+```
+
+`dev-deploy` deploys the same five contracts as production, then pauses, sets exposure and market caps, and (with `--unpause`) reopens trading, all from the owner key. `dev-upgrade` runs the storage-layout check, deploys fresh libraries and a fresh implementation from the current build, and points the proxy at them with one `upgradeAndCall` transaction. Balances and positions stay in place, which the rehearsal checks. Each broadcasting command still requires the `RFQ_MAINNET_DEPLOY_CONFIRM` string it prints, so a stray shell can't send mainnet transactions by accident.
+
+The storage check compares against the frozen `RFQClearingBaseline`, not the deployed implementation, and the layout has fixed `Market[2]` arrays and no storage gap. Rewrites that change storage layout need a fresh dev proxy (move `deployment.json` aside and run `dev-deploy` again) rather than an upgrade.
+
+# Production profile
 
 ## What gets deployed
 
@@ -72,6 +108,7 @@ Every broadcasting command refuses to run until `RFQ_MAINNET_DEPLOY_CONFIRM` equ
 - **Linked libraries are implementation authority.** `RFQRiskMath` writes proxy storage through delegatecall. Storage validation runs with `--unsafeAllowLinkedLibraries`, so library changes need the same review as implementation changes.
 - **Bytecode headroom is 5 bytes.** `RFQClearing` is 20,995 bytes against the project's 21,000-byte gate (EVM limit 24,576). Any post-deploy fix to the clearing will need logic moved into a library or a deliberate decision to raise the gate.
 - **`RFQTimelock` lives in `contracts/testnet/`** but is an unmodified OpenZeppelin `TimelockController` with a fixed 3-day delay. It is reused for mainnet as is; moving the file is left to the refactor track.
+- **Compiler target.** `evmVersion` is unpinned, so solc 0.8.34 defaults to `osaka`. A `prague` build of all four deployed contracts is byte-identical apart from metadata, so no Osaka-only opcode is emitted today. Pinning it is still worthwhile in the rewrite.
 - **Deployer is powerless after deploy.** Preflight and verify both check that it holds no Safe ownership, timelock role or clearing role.
 
 ## Blockers before real capital
@@ -86,4 +123,4 @@ The deploy itself is cheap and can be undone by redeploying. Accepting customer 
 
 ## Rehearsal
 
-`npm run rehearse:base-mainnet` runs the whole sequence on a local OP-stack chain that reports chain ID 8453, with the real USDC address planted with a mock token and stand-in Safes. It checks preflight refusals, an interrupted deploy and resume, all 32 verification checks, the emergency batch, timelock enforcement (early configure and out-of-order go-live both revert), the configured caps, unpause, a USDC deposit, and the Basescan payloads. It also runs as part of `npm run test:contracts`.
+`npm run rehearse:base-mainnet` runs both profiles. For production, it runs the whole sequence on a local OP-stack chain that reports chain ID 8453, with the real USDC address planted with a mock token and stand-in Safes. It checks preflight refusals, an interrupted deploy and resume, all 32 verification checks, the emergency batch, timelock enforcement (early configure and out-of-order go-live both revert), the configured caps, unpause, a USDC deposit, and the Basescan payloads. For dev, it covers the ceiling refusal, an owner-key requirement, deploy plus immediate caps and unpause, a deposit, an upgrade that preserves custody and collateral, and verification after the upgrade. It also runs as part of `npm run test:contracts`.
