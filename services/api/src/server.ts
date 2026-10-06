@@ -318,6 +318,10 @@ function staleOracleFailure(error: unknown) {
   return text.includes("staleprice") || text.includes("0xd7815800") || text.includes("0x45805f5d");
 }
 
+// Each approver makes about twenty single-request RPC reads per approval. One second was too tight
+// for the first trade after boot and for remote providers; every deployed profile already used 5 s.
+const DEFAULT_APPROVER_TIMEOUT_MS = 5_000;
+
 export function buildApi(options: ApiOptions = {}) {
   const app = Fastify({ logger: false, bodyLimit: 16_384, trustProxy: options.trustedProxy });
   const streamConnections = new ConnectionBudget(
@@ -723,7 +727,7 @@ export function buildApi(options: ApiOptions = {}) {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${approver.token}` },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(options.approverTimeoutMs ?? 1_000),
+          signal: AbortSignal.timeout(options.approverTimeoutMs ?? DEFAULT_APPROVER_TIMEOUT_MS),
         });
         if (!response.ok) throw new Error(`approver ${response.status}: ${await response.text()}`);
         const result = (await response.json()) as { digest: string; signer: string; signature: string };
@@ -1502,13 +1506,11 @@ export function buildApi(options: ApiOptions = {}) {
     if (route.destinationTxHash) {
       const existing = await provider.getTransactionReceipt(route.destinationTxHash);
       if (!existing)
-        return reply
-          .code(202)
-          .send({
-            status: "submitted",
-            routeId: parsed.data.routeId,
-            transaction: { hash: route.destinationTxHash },
-          });
+        return reply.code(202).send({
+          status: "submitted",
+          routeId: parsed.data.routeId,
+          transaction: { hash: route.destinationTxHash },
+        });
       if (existing.status === 1) {
         const collateral = await clearing.collateralOf(route.intent.account);
         route.status = "deposited";
@@ -1646,13 +1648,11 @@ export function buildApi(options: ApiOptions = {}) {
             BigInt(String(args.amount)) === intent.amount,
         ))
       )
-        return reply
-          .code(409)
-          .send({
-            status: "resolution_required",
-            error: "withdrawal not paid; inspect resolution state",
-            transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
-          });
+        return reply.code(409).send({
+          status: "resolution_required",
+          error: "withdrawal not paid; inspect resolution state",
+          transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
+        });
       return {
         status: "included",
         transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
@@ -1824,13 +1824,11 @@ export function buildApi(options: ApiOptions = {}) {
             Number(args.market) === intent.market,
         ))
       )
-        return reply
-          .code(409)
-          .send({
-            status: "resolution_required",
-            error: "position not closed; inspect resolution state",
-            transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
-          });
+        return reply.code(409).send({
+          status: "resolution_required",
+          error: "position not closed; inspect resolution state",
+          transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
+        });
       const position = await clearing.positionOf(intent.account, intent.market);
       return {
         status: "included",
@@ -2556,15 +2554,13 @@ export function buildApi(options: ApiOptions = {}) {
             .map((item) => item.value),
           distinct = new Map(approvals.map((item) => [item.signer.toLowerCase(), item]));
         if (distinct.size < 2)
-          return reply
-            .code(503)
-            .send({
-              error: "approver quorum unavailable",
-              details:
-                options.chain?.devFund || process.env.NODE_ENV === "test"
-                  ? responses.filter((item) => item.status === "rejected").map((item) => String(item.reason))
-                  : undefined,
-            });
+          return reply.code(503).send({
+            error: "approver quorum unavailable",
+            details:
+              options.chain?.devFund || process.env.NODE_ENV === "test"
+                ? responses.filter((item) => item.status === "rejected").map((item) => String(item.reason))
+                : undefined,
+          });
         selected = [...distinct.values()].slice(0, 2);
         const currentChainTime = provider ? await chainTimestamp() : versions.blockTimestamp;
         if (Number(approval.deadline) - currentChainTime < minimumBudget) {
@@ -2599,13 +2595,11 @@ export function buildApi(options: ApiOptions = {}) {
             });
           } catch (error) {
             if (attempt === 0 && staleOracleFailure(error)) continue;
-            return reply
-              .code(409)
-              .send({
-                error: "settlement simulation failed",
-                retriable: staleOracleFailure(error),
-                details: process.env.NODE_ENV === "test" ? errorText(error) : undefined,
-              });
+            return reply.code(409).send({
+              error: "settlement simulation failed",
+              retriable: staleOracleFailure(error),
+              details: process.env.NODE_ENV === "test" ? errorText(error) : undefined,
+            });
           }
         }
         break;
@@ -2704,13 +2698,11 @@ export function buildApi(options: ApiOptions = {}) {
             journal
               ?.prepare("UPDATE commitments SET status='ambiguous',updated_ms=? WHERE quote_id=?")
               .run(Date.now(), quote.quoteId);
-            return reply
-              .code(409)
-              .send({
-                status: (await clearing.resolutionRequired()) ? "resolution_required" : "ambiguous",
-                error: "transaction included without the authorized trade; reconcile before retrying",
-                transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
-              });
+            return reply.code(409).send({
+              status: (await clearing.resolutionRequired()) ? "resolution_required" : "ambiguous",
+              error: "transaction included without the authorized trade; reconcile before retrying",
+              transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
+            });
           }
           const collateral = await clearing.collateralOf(intent.account);
           const position = await clearing.positionOf(intent.account, intent.market);

@@ -166,15 +166,13 @@ export function buildApprover(options: ApproverOptions) {
       return reply.code(401).send({ error: "unauthorized" });
     const parsed = requestSchema.safeParse(request.body);
     if (!parsed.success)
-      return reply
-        .code(400)
-        .send({
-          error: "invalid request",
-          details:
-            process.env.NODE_ENV === "test"
-              ? parsed.error.issues.map((issue) => issue.path.join("."))
-              : undefined,
-        });
+      return reply.code(400).send({
+        error: "invalid request",
+        details:
+          process.env.NODE_ENV === "test"
+            ? parsed.error.issues.map((issue) => issue.path.join("."))
+            : undefined,
+      });
     const input = parsed.data;
     let domain: SigningDomain, intent: TradeIntent, approval: MakerApproval;
     try {
@@ -675,12 +673,10 @@ export function buildApprover(options: ApproverOptions) {
         )
           return reply.code(409).send({ error: "independent impact check rejected" });
       } catch (error) {
-        return reply
-          .code(503)
-          .send({
-            error: "independent chain read unavailable",
-            detail: process.env.NODE_ENV === "test" ? String(error) : undefined,
-          });
+        return reply.code(503).send({
+          error: "independent chain read unavailable",
+          detail: process.env.NODE_ENV === "test" ? String(error) : undefined,
+        });
       }
     }
     const grossId = approval.intentHash.toLowerCase(),
@@ -735,6 +731,23 @@ export function buildApprover(options: ApproverOptions) {
     }
     grossReservations.reserve(grossId, grossItem);
     return { digest, signer: wallet.address, signature };
+  });
+  // The first approval after boot otherwise pays for provider network detection, ABI coder setup and
+  // cold RPC connections, which can exceed the leader's approver timeout. Warm those paths before
+  // listening. Failures are ignored: every request still performs and checks its own reads.
+  app.addHook("onReady", async () => {
+    if (!clearing || !provider) return;
+    await Promise.allSettled([
+      provider.getNetwork(),
+      secondaryProvider?.getNetwork(),
+      provider.getBlock("latest"),
+      secondaryProvider?.getBlock("latest"),
+      clearing.leaderEpoch(),
+      clearing.markets(0),
+      clearing.exposureState(0),
+      clearing.positionOf(wallet.address, 0),
+      clearing.makerBacking(),
+    ]);
   });
   app.addHook("onClose", async () => database.close());
   return app;
