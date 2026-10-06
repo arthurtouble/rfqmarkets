@@ -25,7 +25,7 @@ jobs:
     environment: mainnet-dev
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       RFQ_DEV_OWNER_KEY: ${{ secrets.RFQ_DEV_OWNER_KEY }}
       RFQ_BASE_MAINNET_RPC_URL: ${{ secrets.RFQ_BASE_MAINNET_RPC_URL }}
       RFQ_BASESCAN_API_KEY: ${{ secrets.RFQ_BASESCAN_API_KEY }}
