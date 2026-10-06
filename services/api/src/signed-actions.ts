@@ -92,11 +92,19 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
     const invalid = { error: `invalid ${action.label} request` };
     const parsed = action.prepareSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send(invalid);
+    let chainFailed = false;
+    const chainTime = () =>
+      chain.chainTimestamp().catch((error: unknown) => {
+        chainFailed = true;
+        throw error;
+      });
     let intent: I;
     try {
-      intent = await action.build(parsed.data, () => chain.chainTimestamp());
-    } catch {
-      return reply.code(400).send(invalid);
+      intent = await action.build(parsed.data, chainTime);
+    } catch (error) {
+      return chainFailed
+        ? reply.code(503).send({ error: publicError(error, "chain unavailable") })
+        : reply.code(400).send(invalid);
     }
     return { domain: ctx.wireDomain, types: action.types, [action.messageKey]: action.toWire(intent) };
   });
