@@ -156,3 +156,42 @@ export class PythHermesSource implements OracleSource{
     const value=this.cached[market];if(!value)throw new Error(`Pyth ${market} settlement data unavailable`);return value;
   }
 }
+
+export interface SimulatedSourceOptions {prices?:Partial<Record<OracleMarket,number>>;spreadBps?:number;volatilityBpsPerMinute?:number;tickMs?:number;random?:()=>number;now?:()=>number}
+
+/** Offline random-walk prices for local development; same report encoding as the Coinbase source. */
+export class SimulatedMarketDataSource implements OracleSource {
+  private mids:Record<OracleMarket,number>;
+  private cached:Partial<Record<OracleMarket,{snapshot:PriceSnapshot;receivedAtMs:number}>>={};
+  private listeners=new Set<OracleListener>();
+  private signals=new MarketSignalTracker();
+  private timer?:ReturnType<typeof setInterval>;
+  constructor(private options:SimulatedSourceOptions={}){this.mids={BTC:options.prices?.BTC??100_000,ETH:options.prices?.ETH??4_000};}
+  private now(){return (this.options.now??Date.now)();}
+  private publish(market:OracleMarket){
+    const halfSpread=this.mids[market]*(this.options.spreadBps??1)/20_000;
+    const bid=parseUnits((this.mids[market]-halfSpread).toFixed(6),6),ask=parseUnits((this.mids[market]+halfSpread).toFixed(6),6);
+    const receivedAtMs=Math.max(this.now(),(this.cached[market]?.receivedAtMs??0)+1);
+    const volatility=this.signals.observe(market,(bid+ask)/2n,receivedAtMs);
+    this.cached[market]={snapshot:{market,bid,ask,observedAtMs:receivedAtMs,source:"simulated",volatilityBps:volatility.riskBps,volatility},receivedAtMs};
+    for(const listener of this.listeners)listener(market);
+  }
+  /** Moves both markets one random-walk step. */
+  step(){
+    const tickMs=this.options.tickMs??250,random=this.options.random??Math.random;
+    const sigma=(this.options.volatilityBpsPerMinute??20)/10_000*Math.sqrt(tickMs/60_000);
+    for(const market of ["BTC","ETH"] as const){const shock=(random()*2-1)*Math.sqrt(3)*sigma;this.mids[market]*=1+shock;this.publish(market);}
+  }
+  /** Sets a market's mid price, for scripted scenarios such as a crash before a liquidation. */
+  setPrice(market:OracleMarket,price:number){if(!(price>0))throw new Error("price must be positive");this.mids[market]=price;this.publish(market);}
+  prices(){return {...this.mids};}
+  async start(){this.publish("BTC");this.publish("ETH");if(!this.timer){this.timer=setInterval(()=>this.step(),this.options.tickMs??250);this.timer.unref?.();}}
+  subscribe(listener:OracleListener){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
+  async close(){if(this.timer)clearInterval(this.timer);this.timer=undefined;}
+  status(){const now=this.now();return {source:"simulated",transport:"local",agesMs:{BTC:this.cached.BTC?now-this.cached.BTC.receivedAtMs:null,ETH:this.cached.ETH?now-this.cached.ETH.receivedAtMs:null},prices:this.prices()};}
+  async latest(market:OracleMarket):Promise<OracleQuote>{
+    if(!this.cached[market])this.publish(market);
+    const item=this.cached[market]!,observedAt=Math.floor(item.receivedAtMs/1_000),validUntil=observedAt+15,marketId=market==="BTC"?0:1;
+    return {snapshot:item.snapshot,validUntil,report:AbiCoder.defaultAbiCoder().encode(["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],[[marketId,item.snapshot.bid,item.snapshot.ask,observedAt,validUntil]])};
+  }
+}
