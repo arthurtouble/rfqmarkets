@@ -2,6 +2,8 @@
 
 Architecture, executable economic models, a complete local clearing-system prototype and disposable Base Sepolia deployments. The rapid testnet profile has executed authenticated Pyth RFQs and a fully reconciled Hyperliquid testnet hedge lifecycle. No production or Base mainnet deployment exists.
 
+**Start here (2026-10-06):** the [takeover pack](docs/takeover/README.md) maps every product, deployment, decision and the plan to production. It supersedes the status statements in the older documents below.
+
 The [September 15 repository context and production review](REPO-CONTEXT-AND-PRODUCTION-REVIEW-2026-09-15.md) maps the executable system, records fresh validation, identifies implementation and operational gaps, and defines the ordered path from hosted testnet to a capped mainnet canary.
 
 Start with [the consolidated current architecture and status](CURRENT-ARCHITECTURE.md), covering every component, integrated attack defenses, proposed hosting and validation gates. The topology and version 0.1 economic/recovery specification are ready for modeling and prototyping; they are not yet validated for production capital.
