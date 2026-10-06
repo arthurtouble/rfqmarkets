@@ -77,6 +77,13 @@
     "deploy:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts deploy",
     "verify:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts verify",
     "batches:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts batches",
+    "dev-identities:base-mainnet": "node --import tsx scripts/base-mainnet-cli.ts dev-identities",
+    "dev-preflight:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-preflight",
+    "dev-deploy:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-deploy",
+    "dev-configure:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-configure",
+    "dev-upgrade:base-mainnet": "npm run validate:upgrades && node --import tsx scripts/base-mainnet-cli.ts dev-upgrade",
+    "dev-verify:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-verify",
+    "dev-basescan:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-basescan",
     "basescan:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts basescan",
     "check:operations-alerts": "node --import tsx scripts/operations-alerts.ts",
     "validate:production-topology": "node --import tsx scripts/production-topology.ts"
