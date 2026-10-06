@@ -1,3 +1,6 @@
+import type { Market } from "./markets.js";
+import { abs } from "./numeric.js";
+
 export type HedgeRiskMode = "normal" | "guarded" | "reduce_only";
 export type HedgeExecutionSignal = {
   estimatedCostBps: number;
@@ -11,7 +14,7 @@ export type HedgeRiskSnapshot = {
   healthy: boolean;
   indexedBlock: number;
   markets: Record<
-    "BTC" | "ETH",
+    Market,
     { mode: HedgeRiskMode; gapNotional: string; bandUsdc: string; execution?: HedgeExecutionSignal }
   >;
 };
@@ -32,8 +35,7 @@ export function hedgeAdmission(
   delta: bigint,
   maxTradeNotional: bigint,
 ): HedgeAdmission {
-  const magnitude = (value: bigint) => (value < 0n ? -value : value);
-  const reducing = currentExposure !== 0n && magnitude(currentExposure + delta) < magnitude(currentExposure);
+  const reducing = currentExposure !== 0n && abs(currentExposure + delta) < abs(currentExposure);
   const canBuy = mode !== "reduce_only" || currentExposure < 0n;
   const canSell = mode !== "reduce_only" || currentExposure > 0n;
   return {

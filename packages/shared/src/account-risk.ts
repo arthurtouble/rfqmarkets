@@ -1,8 +1,8 @@
-import { BASE } from "./pricing.js";
+import { BASE, abs } from "./numeric.js";
 
 /** Match RFQRiskMath's separate-leg integer rounding, including shorts. */
 export function positionPnl(size: bigint, entry: bigint, mark: bigint) {
-  const quantity = size < 0n ? -size : size;
+  const quantity = abs(size);
   return size >= 0n
     ? (quantity * mark) / BASE - (quantity * entry) / BASE
     : (quantity * entry) / BASE - (quantity * mark) / BASE;

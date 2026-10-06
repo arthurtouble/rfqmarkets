@@ -1,9 +1,16 @@
 import type { JsonRpcProvider } from "ethers";
+
+type RpcSender = Pick<JsonRpcProvider, "send">;
+
+/**
+ * The `finalized` header, bounded by the request's context block and, with a
+ * secondary RPC, confirmed there by hash. Undefined when unavailable or unsafe.
+ */
 export async function finalizedClock(
-  provider: JsonRpcProvider,
+  provider: RpcSender,
   contextBlock: number,
   contextTimestamp: number,
-  secondary?: JsonRpcProvider,
+  secondary?: RpcSender,
 ) {
   try {
     const raw = (await provider.send("eth_getBlockByNumber", ["finalized", false])) as null | {

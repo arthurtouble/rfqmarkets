@@ -1,12 +1,20 @@
 import { ExpiryIndex } from "./expiry-index.js";
-import type { ExposureBook } from "./exposure-admission.js";
-import { makerStress } from "./exposure-admission.js";
+import { makerStress, type ExposureBook } from "./exposure-admission.js";
+import { BASE, abs, high128, low128 } from "./numeric.js";
+
 export interface GrossReservation {
   market: 0 | 1;
   baseDelta: bigint;
   reduceOnly: boolean;
   deadline: number;
   makerDebit: bigint;
+}
+/** Settled net notional, packed net limit words and maker capital used for capital/stress admission. */
+export interface GrossRiskContext {
+  net: [bigint, bigint];
+  netLimits: [bigint, bigint];
+  backing: bigint;
+  floor: bigint;
 }
 export function assertGrossReservation(input: GrossReservation) {
   if (
@@ -21,8 +29,6 @@ export function assertGrossReservation(input: GrossReservation) {
   )
     throw new Error("invalid gross reservation");
 }
-const BASE = 10n ** 18n,
-  MASK = (1n << 128n) - 1n;
 /** Signatures retain capacity through inclusion; only finalized expiry releases it. */
 export class GrossReservationBook {
   private items = new Map<string, GrossReservation>();
@@ -105,7 +111,7 @@ export class GrossReservationBook {
     const old = exclude ? this.items.get(exclude) : undefined;
     if (old && !old.reduceOnly) {
       const side = old.baseDelta > 0n ? "longBase" : "shortBase";
-      result[old.market][side] -= old.baseDelta > 0n ? old.baseDelta : -old.baseDelta;
+      result[old.market][side] -= abs(old.baseDelta);
     }
     return result;
   }
@@ -119,7 +125,7 @@ export class GrossReservationBook {
     books: [ExposureBook, ExposureBook],
     asks: [bigint, bigint],
     blockNumber: number,
-    risk?: { net: [bigint, bigint]; netLimits: [bigint, bigint]; backing: bigint; floor: bigint },
+    risk?: GrossRiskContext,
   ) {
     assertGrossReservation(item);
     if (blockNumber < this.finalizedBlock) return false;
@@ -134,7 +140,7 @@ export class GrossReservationBook {
     if (item.reduceOnly) return true;
     const totals = this.bounds(id),
       side = item.baseDelta > 0n ? "longBase" : "shortBase";
-    totals[item.market][side] += item.baseDelta > 0n ? item.baseDelta : -item.baseDelta;
+    totals[item.market][side] += abs(item.baseDelta);
     for (let market = 0; market < 2; market++) {
       const book = books[market],
         long = book.longBase + totals[market].longBase,
@@ -142,9 +148,9 @@ export class GrossReservationBook {
         ask = asks[market];
       if (
         (long + short > 0n && ask <= 0n) ||
-        ((long + short) * ask) / BASE > (book.limits & MASK) ||
-        (long * ask) / BASE > book.limits >> 128n ||
-        (short * ask) / BASE > book.limits >> 128n
+        ((long + short) * ask) / BASE > low128(book.limits) ||
+        (long * ask) / BASE > high128(book.limits) ||
+        (short * ask) / BASE > high128(book.limits)
       )
         return false;
     }
@@ -156,12 +162,8 @@ export class GrossReservationBook {
       for (let market = 0; market < 2; market++) {
         low[market] -= (totals[market].shortBase * asks[market]) / BASE;
         high[market] += (totals[market].longBase * asks[market]) / BASE;
-        const cap = risk.netLimits[market] >> 128n;
-        if (
-          (low[market] < 0n ? -low[market] : low[market]) > cap ||
-          (high[market] < 0n ? -high[market] : high[market]) > cap
-        )
-          return false;
+        const cap = high128(risk.netLimits[market]);
+        if (abs(low[market]) > cap || abs(high[market]) > cap) return false;
       }
       for (const btc of [low[0], high[0]])
         for (const eth of [low[1], high[1]]) if (makerStress(btc, eth) > available / 4n) return false;
@@ -172,6 +174,6 @@ export class GrossReservationBook {
     this.totalMakerDebit += item.makerDebit * sign;
     if (item.reduceOnly) return;
     const side = item.baseDelta > 0n ? "longBase" : "shortBase";
-    this.totals[item.market][side] += (item.baseDelta > 0n ? item.baseDelta : -item.baseDelta) * sign;
+    this.totals[item.market][side] += abs(item.baseDelta) * sign;
   }
 }
