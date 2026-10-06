@@ -26,12 +26,12 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Optional: without it the owner key generated into the dev KV namespace is used.
       RFQ_DEV_OWNER_KEY: ${{ secrets.RFQ_DEV_OWNER_KEY }}
       RFQ_BASE_MAINNET_RPC_URL: ${{ secrets.RFQ_BASE_MAINNET_RPC_URL }}
       RFQ_BASESCAN_API_KEY: ${{ secrets.RFQ_BASESCAN_API_KEY }}
       RFQ_PYTH_CORE_ADDRESS: ${{ vars.RFQ_PYTH_CORE_ADDRESS }}
       RFQ_DEV_POLICY_JSON: ${{ vars.RFQ_DEV_POLICY_JSON }}
-      STATE: .local-state/base-mainnet-dev
       ACTION: ${{ inputs.action }}
       AMOUNT: ${{ inputs.amount }}
     steps:
@@ -42,40 +42,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run compile:contracts
-      - id: kv
-        run: echo "id=$(node scripts/cloudflare-kv-namespace.mjs rfq-markets-dev-state)" >> "$GITHUB_OUTPUT"
-      - name: Load dev deployment state
-        env:
-          KV: ${{ steps.kv.outputs.id }}
-        run: |
-          mkdir -p "$STATE/build-info-deployed"
-          get() { npx wrangler kv key get "$1" --namespace-id "$KV" --remote --text > "$2" 2>/dev/null && [ -s "$2" ] || rm -f "$2"; }
-          get deployment.json "$STATE/deployment.json"
-          get deployment.partial.json "$STATE/deployment.partial.json"
-          get build-info-deployed.json "$STATE/build-info-deployed/rfq-build.json"
-          get identities.json "$STATE/runtime-identities.json"
-          node --import tsx scripts/base-mainnet-dev-ci.ts prepare
       - name: Run ${{ inputs.action }}
-        run: |
-          ci() { node --import tsx scripts/base-mainnet-dev-ci.ts "$@"; }
-          case "$ACTION" in
-            identities) ci identities ;;
-            preflight) ci cli dev-preflight ;;
-            deploy) ci cli dev-deploy --unpause && ci fund-sponsor ;;
-            upgrade) ci cli dev-upgrade ;;
-            configure) ci cli dev-configure ;;
-            verify) ci cli dev-verify ;;
-            basescan) ci cli dev-basescan ;;
-            unpause) ci unpause ;;
-            fund-maker) ci fund-maker "${AMOUNT:-100}" ;;
-            fund-sponsor) ci fund-sponsor "${AMOUNT:-0.003}" ;;
-          esac
-      - name: Save dev deployment state
-        if: always()
-        env:
-          KV: ${{ steps.kv.outputs.id }}
-        run: |
-          put() { [ -f "$2" ] && npx wrangler kv key put "$1" --path "$2" --namespace-id "$KV" --remote || true; }
-          put deployment.json "$STATE/deployment.json"
-          put build-info-deployed.json "$STATE/build-info-deployed/rfq-build.json"
-          if [ -f "$STATE/deployment.json" ]; then npx wrangler kv key delete deployment.partial.json --namespace-id "$KV" --remote || true; else put deployment.partial.json "$STATE/deployment.partial.json"; fi
+        run: bash scripts/dev-contracts.sh "$ACTION" "$AMOUNT"

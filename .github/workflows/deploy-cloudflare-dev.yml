@@ -45,16 +45,4 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build:web && npm run build:docs && npm run validate:cloudflare-static
-      - id: kv
-        run: echo "id=$(node scripts/cloudflare-kv-namespace.mjs rfq-markets-dev-state)" >> "$GITHUB_OUTPUT"
-      - name: Deploy dev runtime
-        run: |
-          sed "s/REPLACED_AT_DEPLOY/${{ steps.kv.outputs.id }}/" deploy/cloudflare/runtime/wrangler.dev.jsonc > deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
-          npx wrangler deploy --config deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
-      - name: Give the dev runtime its RPC and Pyth settings
-        run: |
-          node -e 'const rpc=process.env.RFQ_BASE_MAINNET_RPC_URL||"https://mainnet.base.org";if(!process.env.PYTH_API_KEY)throw new Error("PYTH_API_KEY is required");process.stdout.write(JSON.stringify({rpcUrl:rpc,secondaryRpcUrl:process.env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||rpc,pythApiKey:process.env.PYTH_API_KEY}))' \
-            | npx wrangler secret put RFQ_DEV_RUNTIME_SECRETS --name rfq-markets-runtime-dev
-      - run: npx wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
-      - run: npx wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
+      - run: bash scripts/cloudflare-dev-deploy.sh

@@ -5,7 +5,8 @@ FROM node:24-bookworm-slim
 ENV NODE_ENV=production RFQ_DEV_RUNTIME_DIR=/tmp/rfq-dev-runtime
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --include=dev --ignore-scripts
+# The optional "ca" build secret (scripts/cloudflare-dev-deploy.sh) trusts a TLS-intercepting proxy during install only.
+RUN --mount=type=secret,id=ca,target=/tmp/build-ca.crt,required=false NODE_EXTRA_CA_CERTS=/tmp/build-ca.crt npm ci --include=dev --ignore-scripts
 COPY packages ./packages
 COPY services ./services
 COPY scripts ./scripts
