@@ -1,3 +1,4 @@
+import { QUOTE_MODEL_VERSION } from "../packages/shared/src/pricing.js";
 import { buildApprover } from "../services/approver/src/server.js";
 import type { OracleMode } from "../services/approver/src/options.js";
 
@@ -23,7 +24,7 @@ const app = buildApprover({
   databasePath: required("RFQ_APPROVER_DB"),
   expectedChainId: BigInt(required("RFQ_CHAIN_ID")),
   expectedVerifyingContract: required("RFQ_CLEARING_ADDRESS"),
-  expectedQuoteModelVersion: env.RFQ_QUOTE_MODEL_VERSION ?? "adaptive-v1",
+  expectedQuoteModelVersion: env.RFQ_QUOTE_MODEL_VERSION ?? QUOTE_MODEL_VERSION,
   rpcUrl,
   secondaryRpcUrl: env.RFQ_SECONDARY_RPC_URL ?? rpcUrl,
   rpcBatchMaxCount: integer("RFQ_RPC_BATCH_MAX_COUNT", 1),

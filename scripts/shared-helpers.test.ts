@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AbiCoder } from "ethers";
+import { USDC, marginRate } from "../packages/shared/src/pricing.js";
 import {
   marketMid,
   marketNotional,
@@ -95,4 +96,16 @@ test("clearing struct converters normalize ethers results to bigint models", () 
     }).marketMask,
     3,
   );
+});
+
+test("margin tiers keep the top tier above 5M notional, as the contract does", () => {
+  assert.deepEqual(
+    [marginRate(5_000_000n * USDC, true), marginRate(5_000_000n * USDC, false)],
+    [10_000n, 6_000n],
+  );
+  assert.deepEqual(
+    [marginRate(9_000_000n * USDC, true), marginRate(9_000_000n * USDC, false)],
+    [10_000n, 6_000n],
+  );
+  assert.deepEqual([marginRate(25_000n * USDC, true), marginRate(25_000n * USDC, false)], [2_000n, 1_200n]);
 });

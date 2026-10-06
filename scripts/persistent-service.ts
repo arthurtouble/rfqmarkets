@@ -10,6 +10,7 @@ import { buildHedger } from "../services/hedger/src/server.js";
 import { HyperliquidVenue } from "../services/hedger/src/hyperliquid.js";
 import { PythHermesSource } from "../services/api/src/oracle.js";
 import { HttpHedgeRiskSource } from "../services/api/src/hedge-risk.js";
+import { QUOTE_MODEL_VERSION } from "../packages/shared/src/pricing.js";
 import { buildKeeper } from "../services/keeper/src/server.js";
 import { validateRuntimeIdentity } from "./runtime-identity.js";
 import { hedgeVenueApiUrl, persistentConfigSchema } from "./persistent-config.js";
@@ -151,6 +152,7 @@ switch (role) {
       databasePath,
       expectedChainId: chainId,
       expectedVerifyingContract: config.clearingAddress,
+      expectedQuoteModelVersion: QUOTE_MODEL_VERSION,
       rpcUrl: config.rpcUrl,
       secondaryRpcUrl: config.secondaryRpcUrl,
       oracleMode: "pyth",

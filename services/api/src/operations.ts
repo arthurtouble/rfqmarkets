@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { QUOTE_MODEL_VERSION } from "../../../packages/shared/src/pricing.js";
 import type { ApiContext } from "./context.js";
 import type { MarketStream } from "./market-stream.js";
 import { MARKETS } from "./markets.js";
@@ -46,7 +47,7 @@ export function registerOperationsRoutes(
         finalizedTimestamp: grossReservations.finalizedTimestamp,
       },
       quoteModel: {
-        version: "adaptive-v1",
+        version: QUOTE_MODEL_VERSION,
         restoredPaidFills: flowRisk.entries().length,
         markets: Object.fromEntries(
           MARKETS.map((market) => [
