@@ -9,9 +9,23 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  validate:
+  # The same gates as `npm test`, split so they run in parallel.
+  checks:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: contracts
+            run: npm run test:contracts && npm run validate:upgrades
+          - name: services and simulator
+            run: npm run test:services && npm run test:python && npm run test:cloudflare-edge
+          - name: types, docs and builds
+            run: npm run check:docs && npm run typecheck && npm run build && npm run validate:cloudflare-static
+          - name: dependency audit
+            run: npm audit --omit=dev --audit-level=low
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -19,5 +33,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm audit --omit=dev --audit-level=low
-      - run: npm test
+      - run: ${{ matrix.run }}
+  # Single required check that stays stable however the jobs above are split.
+  validate:
+    needs: checks
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.checks.result }}" = success

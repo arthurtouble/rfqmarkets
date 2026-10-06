@@ -2,7 +2,7 @@
 
 2026-09-08. Current proposal, superseding the service separation and application database in SYSTEM-DESIGN.md. Confirmed topology: one active API leader, warm standbys, private approvers, and an API-held gas wallet with bounded automatic funding. No implementation or deployment has been performed.
 
-The [security and execution-quality review](ARCHITECTURE-REVIEW.md) supplies the economic approval, safe retry, sponsorship and validation requirements incorporated here. Its discussion of multiple active API replicas is superseded: contention is managed inside one leader, with fencing/reconciliation on failover. No customer ledger or separate coordinator service is added.
+The [security and execution-quality review](2026-09-08-architecture-review.md) supplies the economic approval, safe retry, sponsorship and validation requirements incorporated here. Its discussion of multiple active API replicas is superseded: contention is managed inside one leader, with fencing/reconciliation on failover. No customer ledger or separate coordinator service is added.
 
 ## Core decision
 
@@ -71,7 +71,7 @@ This adds an occasional on-chain transition, not a transaction per heartbeat or 
 
 ## Who can request approval?
 
-The [adversarial order-flow requirements](ADVERSARIAL-FLOW.md) extend this design with wallet-independent cumulative pricing, conservative treatment of optional pending orders, portfolio-wide admission, and a proposed current-state contract impact bound. These are necessary because a single API leader and two signatures alone do not prevent concurrent small-order mispricing by a malicious leader. The exact economic bound remains to be specified and tested before implementation.
+The [adversarial order-flow requirements](2026-09-08-adversarial-flow.md) extend this design with wallet-independent cumulative pricing, conservative treatment of optional pending orders, portfolio-wide admission, and a proposed current-state contract impact bound. These are necessary because a single API leader and two signatures alone do not prevent concurrent small-order mispricing by a malicious leader. The exact economic bound remains to be specified and tested before implementation.
 
 Approvers have no public approval endpoint or public application ingress. Only enrolled API nodes reach them through mutually authenticated private transport or outbound connections. Standbys may maintain warm connections, but only the current leader requests execution approvals. User browsers and arbitrary Internet clients cannot directly query the approvers.
 

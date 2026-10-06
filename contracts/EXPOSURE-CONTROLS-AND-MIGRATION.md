@@ -36,6 +36,6 @@ Local regressions cover maker funding below the floor, floor breach after realiz
 
 Legacy tiny testnet maker-funding defaults are below the configured opening floor and no longer qualify as a trade-ready setup. The funding script rejects such a target before allowance/funding transactions. Supply an explicit funded target with headroom under the reviewed configuration; the runtime does not silently lower the floor.
 
-The subsequent [gross approval reservation candidate](GROSS-APPROVAL-RESERVATIONS.md) journals escaped directional capacity independently at API/signers and retains it through finalized expiry.
+The subsequent [gross approval reservation candidate](../docs/architecture/gross-approval-reservations.md) journals escaped directional capacity independently at API/signers and retains it through finalized expiry.
 
 Outstanding work includes Byzantine peer reservation coordination, conservative pending net/stress/capital envelopes, full independent differential qualification over admission/funding edge cases, calibrated gross liquidity reserves, venue hedge and policy parity, operator migration rehearsal, independent module/economic audits and sustained testnet evidence. Canonical serialization caps accepted trades; rejected overcommitted approvals must not be described as guaranteed fills.

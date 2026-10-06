@@ -1,56 +1,50 @@
 # RFQ Markets
 
-Architecture, executable economic models, a complete local clearing-system prototype and disposable Base Sepolia deployments. The rapid testnet profile has executed authenticated Pyth RFQs and a fully reconciled Hyperliquid testnet hedge lifecycle. No production or Base mainnet deployment exists.
+A leveraged perpetual RFQ venue on Base. Customers hold USDC collateral in an on-chain clearing contract; one operator prices trades, three private approvers co-sign them (two of three), and the operator hedges its inventory on Hyperliquid. The contract is the ledger: every balance and position can be rebuilt from chain events.
 
-The [September 15 repository context and production review](REPO-CONTEXT-AND-PRODUCTION-REVIEW-2026-09-15.md) maps the executable system, records fresh validation, identifies implementation and operational gaps, and defines the ordered path from hosted testnet to a capped mainnet canary.
+## Where it runs today
 
-Start with [the consolidated current architecture and status](CURRENT-ARCHITECTURE.md), covering every component, integrated attack defenses, proposed hosting and validation gates. The topology and version 0.1 economic/recovery specification are ready for modeling and prototyping; they are not yet validated for production capital.
+| Surface | Location |
+| --- | --- |
+| Trading UI (dev) | https://rfq-markets-dev.rfq-markets.workers.dev |
+| Public docs | https://rfq-markets-docs-testnet.rfq-markets.workers.dev |
+| Clearing proxy, Base mainnet (dev) | `0x6e67c66f955D88EBD6D69eD3343359651C6f45a1` |
 
-The [economic and resolution specification](ECONOMIC-SPECIFICATION.md) now supplies a complete version 0.1 candidate for capital allocation, quoting, margin, funding, oracle modes, liquidation, insolvency, hedging, governance and recovery. Its values remain simulation inputs until they pass the documented launch gates.
+The Base mainnet deployment is a **development** deployment: owner-controlled, no timelock, capped at 25 USDC per trade and 100 USDC per market. Services run in a Cloudflare container with the hedger simulated. Production governance (Safes, timelock, independent review) comes later and is tracked in the [release checklist](docs/release/release-checklist.md). The earlier Base Sepolia deployments are retired; their record is in [docs/history](docs/history/base-sepolia-deployment.md).
 
-The [trading UX and intent specification](UX-AND-INTENT.md) keeps the default ticket to amount plus Buy/Sell, while generating price protection and protocol fields automatically. It also defines optional popup-free scoped sessions and sponsored deposit/withdrawal paths.
+## Repository layout
 
-The [design research synthesis](DESIGN-RESEARCH-SYNTHESIS.md) records which methods were adopted from market-making literature and existing protocols, and which assumptions were intentionally excluded.
+| Path | What lives there |
+| --- | --- |
+| `contracts/` | Solidity clearing contract, oracle adapter, libraries, mocks and tests |
+| `services/` | `api` (pricing and execution leader), `approver`, `gateway` (SSE fan-out), `indexer`, `keeper`, `hedger` (TypeScript plus a Python Hyperliquid bridge) |
+| `packages/` | Shared TypeScript (`shared`) and design tokens (`design-system`) |
+| `apps/` | React apps: `web` (trading), `admin` (operations), `exit` (direct withdrawal), `docs` (public guide), `internal-docs` (this repository's `docs/` as a private manual), `design-system` (specimen) |
+| `deploy/` | Cloudflare Workers and container config, host units, alert rules and the incident runbook |
+| `scripts/` | Local stack, deployment, smoke, soak and release-evidence tooling |
+| `simulator/` | Python economic model, replay, calibration and fault harness |
+| `docs/` | Architecture, product, operations and release documentation ([index](docs/README.md)) |
 
-The [contract implementation guide](CONTRACT-IMPLEMENTATION.md) explains the clearing state, settlement order, oracle adapter, liquidation, resolution and authority boundaries. The [validation report](VALIDATION-REPORT.md) records what has actually run and what remains before testnet or capital. The [research simulator](simulator/README.md) contains fixed-point and floating-point economics, stateful lifecycle tests, historical replay and deterministic service-fault drills. The [market-flow calibration laboratory](MARKET-FLOW-CALIBRATION.md) records normalized Coinbase/Binance trade flow, derives causal volatility, imbalance, basis and multi-horizon markouts, and performs purged walk-forward calibration across explicit toxicity mixtures. Candidates remain research-only until real RFQ fill and hedge evidence passes the documented promotion gates.
+## Working on it
 
-The [local application guide](LOCAL-DEVELOPMENT.md) covers the Fastify API leader, three durable-log approvers, signed-before-broadcast sender, chain indexer, hedge worker and React ticket.
+```sh
+npm ci
+npm run compile:contracts
+npm run dev:chain        # terminal 1: local OP-compatible Hardhat chain
+npm run deploy:local     # terminal 2: deploy contracts and mocks
+npm run dev:services     # terminal 2: API, approvers, gateway, indexer, hedger
+npm run dev:web          # terminal 3: trading UI
+```
 
-The [local readiness review](LOCAL-READINESS-REVIEW.md) states what is complete, what remains simulated, which boundaries should stay separate and the shortest safe path to a Base testnet pilot.
+The full walkthrough is in [local development](docs/operations/local-development.md). Before opening a pull request, run the narrowest relevant check, then `npm test`:
 
-The [current whole-system audit](SYSTEM-AUDIT-2026-09-10.md) records the release-candidate assessment, fixes made, residual trust boundaries and the exact testnet/mainnet promotion gates. The [September 9 audit](SYSTEM-AUDIT-2026-09-09.md) remains as historical evidence.
+| Change | Check |
+| --- | --- |
+| TypeScript anywhere | `npm run typecheck` |
+| Services and scripts | `npm run test:services` |
+| Contracts | `npm run test:contracts` and `npm run validate:upgrades` |
+| Simulator | `npm run test:python` |
+| Cloudflare edge | `npm run test:cloudflare-edge` |
+| Documentation | `npm run check:docs` |
 
-The [production release checklist](PRODUCTION-RELEASE-CHECKLIST.md) is the evidence-based promotion gate for an eventual capped Base mainnet canary.
-
-The [market lifecycle playbook](MARKET-LIFECYCLE-PLAYBOOK.md) defines the on-chain source of truth, safe limit changes, emergency tightening, and the coordinated procedures for enabling, retiring, and adding markets.
-
-The [Base Sepolia deployment gate](BASE-SEPOLIA-DEPLOYMENT.md) defines the validated environment, deterministic oracle/proxy deployment, post-deployment assertions and external credentials still required before a testnet transaction.
-
-The [Cloudflare deployment plan](CLOUDFLARE-DEPLOYMENT.md) defines the test-stage edge topology, security boundaries, GitHub delivery flow, environments, rollback procedure and the few account-level inputs still needed. Checked-in Wrangler configurations package the customer UI and both documentation sites as Workers static assets; deployment remains gated until Cloudflare credentials and the repository environment switch are configured.
-
-The UI now shares the tokens and semantic rules in [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md). Run `npm run dev:docs` for the public trading, margin, security and transparency guide on port 4175. Run `npm run dev:internal-docs` for the operations manual on port 4176. The internal site contains operational topology and launch gates and must be deployed only behind authenticated private access; its `noindex` tag is not an access control.
-
-The [indexer design](INDEXER-DESIGN.md) defines the chain-derived account/history schema, query surface, reorg behavior and current Ponder dependency gate.
-
-The [wallet and deposit design](WALLET-AND-DEPOSITS.md) defines the provider-neutral wallet boundary, signed cross-chain route intent, local route simulator and the production rule that only confirmed Base clearing state creates collateral.
-
-The [hedging and operations design](HEDGING-OPERATIONS.md) defines separate venue capital and API-wallet authority, finalized exposure targeting, retry/reconciliation rules, the private operations dashboard and Chainlink Data Streams credential boundary.
-
-Run the current local gate with `npm test`; run the fault report with `python3 -B simulator/fault_harness.py`.
-
-The executable product-system specimen lives at [`apps/design-system/index.html`](apps/design-system/index.html). Run `npm run dev:design-system` to review the typography, spacing, colors, controls, trading tables and interaction states that govern customer UI work.
-
-[The simplified design](SIMPLIFIED-DESIGN.md) supplies detailed API and recovery discussion. [The earlier system design](SYSTEM-DESIGN.md) retains financial background, with its superseded service layout clearly marked. The consolidated overview takes precedence where earlier documents differ.
-
-Supporting discussion:
-
-- [Trading UX and intent](UX-AND-INTENT.md): amount plus Buy/Sell interface, automatic price protection, optional session keys and precise reservation behavior.
-- [Adversarial order flow](ADVERSARIAL-FLOW.md): wallet splitting, pending-order optionality, correlated exposure and required economic simulations.
-
-- [Security and execution-quality review](ARCHITECTURE-REVIEW.md): gas sponsorship, prioritized design gaps and the low-rejection execution path.
-
-- [RFQ protocol research](RFQ-PROTOCOL-RESEARCH.md): existing exchange patterns and two-of-three authorization.
-- [Authorization and upgrades](AUTHORIZATION-AND-UPGRADES.md): design alternatives and governance tradeoffs.
-- [Initial architecture review](ARCHITECTURE.md): critique of the original brainstorming notes; superseded where the consolidated design differs.
-
-Implementation status and remaining work: [Production implementation plan](PRODUCTION-IMPLEMENTATION-PLAN.md).
+[AGENTS.md](AGENTS.md) lists the safety boundaries for automated contributors. The most important: never weaken signature, quorum, replay, oracle-freshness, exposure or fail-closed checks to make a test pass, and never broadcast mainnet transactions without the owner's explicit go-ahead.

@@ -1,6 +1,6 @@
 # Product design system
 
-The executable specimen is [`apps/design-system/index.html`](apps/design-system/index.html). Run `npm run dev:design-system` and open `http://127.0.0.1:4177`. It renders the actual foundations, typography, spacing, controls, tabular trading data and system states used by the product. Shared values live in `packages/design-system/tokens.css`; changes to either file must update the other in the same review.
+The executable specimen is [`apps/design-system/index.html`](../../apps/design-system/index.html). Run `npm run dev:design-system` and open `http://127.0.0.1:4177`. It renders the actual foundations, typography, spacing, controls, tabular trading data and system states used by the product. Shared values live in `packages/design-system/tokens.css`; changes to either file must update the other in the same review.
 
 Customer surfaces use near-black neutral layers, saturated periwinkle selection, aqua buy/healthy states and coral sell/danger states. Private operations surfaces use graphite, cyan and amber so screenshots cannot be confused with the trading product. IBM Plex Sans and IBM Plex Mono are bundled locally; no third-party font request is made at runtime.
 
