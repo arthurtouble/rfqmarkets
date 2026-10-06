@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AbiCoder } from "ethers";
-import { ChainlinkDataStreamsSource, CoinbaseMarketDataSource, PythHermesSource } from "./oracle.js";
+import { ChainlinkDataStreamsSource, CoinbaseMarketDataSource, PythHermesSource, SimulatedMarketDataSource } from "./oracle.js";
 
 const feedId=`0x0003${"11".repeat(30)}`;
 function report(observedAt=1_800_000_000){
@@ -79,4 +79,22 @@ test("uses a complete REST batch for settlement after partial stream updates",as
 test("rejects stale or incomplete Pyth Hermes observations",async()=>{
   const id=`0x${"33".repeat(32)}`,stale=Math.floor(Date.now()/1_000)-30,fetchImpl=async()=>new Response(JSON.stringify({binary:{encoding:"hex",data:["abcd"]},parsed:[{id,price:{price:"100000000",conf:"1",expo:-8,publish_time:stale}}]}));
   const source=new PythHermesSource({apiKey:"trial-secret",feedIds:{BTC:id,ETH:`0x${"44".repeat(32)}`},fetchImpl});await assert.rejects(source.latest("BTC"),/observation rejected|feed missing/);
+});
+
+test("simulated source encodes mock-oracle reports and accepts scripted prices",async()=>{
+  let now=1_800_000_000_000;
+  const source=new SimulatedMarketDataSource({prices:{BTC:100_000,ETH:4_000},spreadBps:2,random:()=>1,now:()=>now});
+  const first=await source.latest("BTC");
+  assert.equal(first.snapshot.source,"simulated");
+  assert.equal(first.snapshot.bid,99_990_000_000n);
+  assert.equal(first.snapshot.ask,100_010_000_000n);
+  const [market,bid,ask,observedAt,validUntil]=AbiCoder.defaultAbiCoder().decode(["tuple(uint8,uint256,uint256,uint64,uint64)"],first.report)[0];
+  assert.deepEqual([market,bid,ask,observedAt,validUntil],[0n,99_990_000_000n,100_010_000_000n,1_800_000_000n,1_800_000_015n]);
+  now+=1_000;source.step();
+  assert.ok(source.prices().BTC>100_000,"an up-shock raises the mid");
+  source.setPrice("ETH",3_000);
+  const eth=await source.latest("ETH");
+  assert.equal((eth.snapshot.bid+eth.snapshot.ask)/2n,3_000_000_000n);
+  assert.throws(()=>source.setPrice("BTC",0));
+  await source.close();
 });
