@@ -1,16 +1,15 @@
-export type ExposureMarket = "BTC" | "ETH";
-
+import type { Market } from "./markets.js";
 import { ExpiryIndex } from "../../../packages/shared/src/expiry-index.js";
 export { ExpiryIndex } from "../../../packages/shared/src/expiry-index.js";
 
-type PendingItem = { market: ExposureMarket; delta: bigint; expiresAtMs: number };
+type PendingItem = { market: Market; delta: bigint; expiresAtMs: number };
 
 /** Constant-time reservation totals used by the pricing path. */
 export class PendingExposureBook {
   revision = 0;
   private items = new Map<string, PendingItem>();
   private expiries = new ExpiryIndex();
-  private totals: Record<ExposureMarket, { low: bigint; high: bigint }> = {
+  private totals: Record<Market, { low: bigint; high: bigint }> = {
     BTC: { low: 0n, high: 0n },
     ETH: { low: 0n, high: 0n },
   };
@@ -48,7 +47,7 @@ export class PendingExposureBook {
   }
   exposure(excludeId?: string) {
     const excluded = excludeId ? this.items.get(excludeId) : undefined,
-      result: Array<{ market: ExposureMarket; delta: bigint }> = [];
+      result: Array<{ market: Market; delta: bigint }> = [];
     for (const market of ["BTC", "ETH"] as const) {
       const value = this.totals[market],
         low = value.low - (excluded?.market === market && excluded.delta < 0n ? excluded.delta : 0n),
