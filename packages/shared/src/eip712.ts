@@ -164,6 +164,34 @@ export const recoverCloseSigner = (domain: SigningDomain, intent: CloseIntent, s
 export const recoverSessionGrantSigner = (domain: SigningDomain, grant: SessionGrant, signature: string) =>
   getAddress(verifyTypedData(domain, sessionGrantTypes, grant, signature));
 
+type Wire<T> = { [K in keyof T]: T[K] extends bigint ? string : T[K] };
+
+/** Inverse of the `*ToWire` serializers; throws on malformed integers or addresses. */
+export const domainFromWire = (domain: Wire<SigningDomain>): SigningDomain => ({
+  ...domain,
+  chainId: BigInt(domain.chainId),
+  verifyingContract: getAddress(domain.verifyingContract),
+});
+export const intentFromWire = (intent: Wire<TradeIntent>): TradeIntent => ({
+  ...intent,
+  account: getAddress(intent.account),
+  baseDelta: BigInt(intent.baseDelta),
+  limitPrice: BigInt(intent.limitPrice),
+  maxFee: BigInt(intent.maxFee),
+  nonce: BigInt(intent.nonce),
+  deadline: BigInt(intent.deadline),
+});
+export const approvalFromWire = (approval: Wire<MakerApproval>): MakerApproval => ({
+  ...approval,
+  executionPrice: BigInt(approval.executionPrice),
+  impactCharge: BigInt(approval.impactCharge),
+  fee: BigInt(approval.fee),
+  deadline: BigInt(approval.deadline),
+  leaderEpoch: BigInt(approval.leaderEpoch),
+  signerSetVersion: BigInt(approval.signerSetVersion),
+  policyVersion: BigInt(approval.policyVersion),
+});
+
 export const intentToWire = (intent: TradeIntent) => ({
   ...intent,
   baseDelta: intent.baseDelta.toString(),

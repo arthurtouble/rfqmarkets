@@ -1,8 +1,10 @@
-export const USDC = 1_000_000n;
-export const RATE = 1_000_000_000_000n;
-export const BASE = 1_000_000_000_000_000_000n;
+import { BASE, RATE, USDC, abs, ceilDiv } from "./numeric.js";
+import type { Market } from "./markets.js";
+
+export { BASE, RATE, USDC, ceilDiv } from "./numeric.js";
+export type { Market } from "./markets.js";
+
 const K = { BTC: 10_000n, ETH: 12_000n, CROSS: 6_573n } as const;
-export type Market = "BTC" | "ETH";
 export type Exposure = Record<Market, bigint>;
 export type QuoteRequest = { market: Market; side: "buy" | "sell"; amount: string };
 
@@ -12,7 +14,7 @@ export function parseUsdc(value: string): bigint {
 }
 export function formatUsdc(value: bigint): string {
   const sign = value < 0n ? "-" : "",
-    absolute = value < 0n ? -value : value;
+    absolute = abs(value);
   return `${sign}${absolute / USDC}.${(absolute % USDC).toString().padStart(6, "0")}`;
 }
 function floorDiv(numerator: bigint, denominator: bigint): bigint {
@@ -57,9 +59,6 @@ export function requiredPendingImpact(
       if (greatest === undefined || cost > greatest) greatest = cost;
     }
   return greatest ?? impactCost(settled, market, delta);
-}
-export function ceilDiv(numerator: bigint, denominator: bigint): bigint {
-  return numerator / denominator + (numerator % denominator === 0n ? 0n : 1n);
 }
 export interface PriceSnapshot {
   market: Market;
@@ -177,7 +176,7 @@ export function constructQuote(
       exactBaseDelta ?? (request.side === "buy" ? (requested * BASE) / mid : (-requested * BASE) / mid);
   if (baseDelta === 0n || baseDelta > 0n !== (request.side === "buy"))
     throw new Error("invalid exact base direction");
-  const absoluteBase = baseDelta < 0n ? -baseDelta : baseDelta,
+  const absoluteBase = abs(baseDelta),
     notional = exactBaseDelta === undefined ? requested : (absoluteBase * mid) / BASE;
   if (notional <= 0n || notional > parameters.maxNotional) throw new Error("amount exceeds market limit");
   const delta = baseDelta > 0n ? notional : -notional,

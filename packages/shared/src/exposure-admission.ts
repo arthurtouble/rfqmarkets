@@ -1,9 +1,6 @@
 import { positionPnl } from "./account-risk.js";
-const BASE = 10n ** 18n,
-  RATE = 10n ** 12n,
-  MASK = (1n << 128n) - 1n,
-  YEAR = 365n * 86400n;
-const abs = (value: bigint) => (value < 0n ? -value : value);
+import { BASE, RATE, YEAR_SECONDS, abs, high128, low128 } from "./numeric.js";
+
 export interface ExposureMarket {
   aggregateBase: bigint;
   fundingIndex: bigint;
@@ -18,6 +15,22 @@ export interface ExposureBook {
   shortBase: bigint;
   limits: bigint;
   ready: boolean;
+}
+export interface PositionState {
+  size: bigint;
+  entryPrice: bigint;
+  lastFundingIndex: bigint;
+}
+/**
+ * Funding index projected to `timestamp` with the contract's APR clamp. Callers
+ * must reject `netCap === 0n` and `market.fundingTime > timestamp` first.
+ */
+export function projectedFundingIndex(market: ExposureMarket, netCap: bigint, timestamp: bigint) {
+  const mid = (market.lastBid + market.lastAsk) / 2n;
+  let apr = (((market.aggregateBase * mid) / BASE) * RATE) / netCap;
+  apr = apr > RATE ? RATE : apr < -RATE ? -RATE : apr;
+  const change = (mid * abs(apr) * (timestamp - market.fundingTime)) / (RATE * YEAR_SECONDS);
+  return market.fundingIndex + (apr < 0n ? -change : change);
 }
 export function isPositionReduction(previous: bigint, delta: bigint) {
   const next = previous + delta;
@@ -46,7 +59,7 @@ export function makerStress(btc: bigint, eth: bigint) {
  * full delta while the certificate remains executable.
  */
 export function pendingMakerDebit(input: {
-  position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
+  position: PositionState;
   market: ExposureMarket;
   delta: bigint;
   executionPrice: bigint;
@@ -56,13 +69,10 @@ export function pendingMakerDebit(input: {
 }) {
   const { position, market, delta, executionPrice, timestamp, deadline, netLimit } = input,
     mid = (market.lastBid + market.lastAsk) / 2n,
-    cap = netLimit >> 128n;
+    cap = high128(netLimit);
   if (cap === 0n || market.fundingTime > timestamp || deadline < timestamp)
     throw new Error("invalid capital reservation policy");
-  let apr = (((market.aggregateBase * mid) / BASE) * RATE) / cap;
-  apr = apr > RATE ? RATE : apr < -RATE ? -RATE : apr;
-  const change = (mid * abs(apr) * (timestamp - market.fundingTime)) / (RATE * YEAR),
-    index = market.fundingIndex + (apr < 0n ? -change : change),
+  const index = projectedFundingIndex(market, cap, timestamp),
     payment = (position.size * (index - position.lastFundingIndex)) / BASE;
   const currentFundingDebit = payment < 0n ? -payment : 0n,
     quantity = abs(delta),
@@ -70,7 +80,7 @@ export function pendingMakerDebit(input: {
     entryNotional = (quantity * position.entryPrice) / BASE,
     existingNotional = (abs(position.size) * mid) / BASE;
   const seconds = deadline - timestamp,
-    futureFunding = ((existingNotional + executionNotional) * seconds + YEAR - 1n) / YEAR;
+    futureFunding = ((existingNotional + executionNotional) * seconds + YEAR_SECONDS - 1n) / YEAR_SECONDS;
   return currentFundingDebit + executionNotional + entryNotional + futureFunding;
 }
 /** Independent integer model of selected-market funding, realized PnL and canonical exposure bounds. */
@@ -79,7 +89,7 @@ export function exposureAdmission(input: {
   books: [ExposureBook, ExposureBook];
   netLimits: [bigint, bigint];
   market: 0 | 1;
-  position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
+  position: PositionState;
   delta: bigint;
   executionPrice: bigint;
   timestamp: bigint;
@@ -93,13 +103,9 @@ export function exposureAdmission(input: {
   const reject = (reason: string) => ({ allowed: false, reason, reduction });
   if (!books.every((book) => book.ready)) return reject("exposure_migration_required");
   const selected = markets[market],
-    mid = (selected.lastBid + selected.lastAsk) / 2n,
-    cap = netLimits[market] >> 128n;
+    cap = high128(netLimits[market]);
   if (cap === 0n || selected.fundingTime > timestamp) return reject("invalid_policy");
-  let apr = (((selected.aggregateBase * mid) / BASE) * RATE) / cap;
-  apr = apr > RATE ? RATE : apr < -RATE ? -RATE : apr;
-  const change = (mid * abs(apr) * (timestamp - selected.fundingTime)) / (RATE * YEAR),
-    index = selected.fundingIndex + (apr < 0n ? -change : change),
+  const index = projectedFundingIndex(selected, cap, timestamp),
     payment = (previous * (index - position.lastFundingIndex)) / BASE;
   let backing = input.backing + payment;
   if (backing < 0n) return reject("maker_settlement_incident");
@@ -140,12 +146,12 @@ export function exposureAdmission(input: {
     }
     if (longs < 0n || shorts < 0n) return reject("inconsistent_exposure_book");
     if (
-      !within(((longs + shorts) * state.lastAsk) / BASE, book.limits & MASK, gross) ||
-      !within((longs * state.lastAsk) / BASE, book.limits >> 128n, long) ||
-      !within((shorts * state.lastAsk) / BASE, book.limits >> 128n, short)
+      !within(((longs + shorts) * state.lastAsk) / BASE, low128(book.limits), gross) ||
+      !within((longs * state.lastAsk) / BASE, high128(book.limits), long) ||
+      !within((shorts * state.lastAsk) / BASE, high128(book.limits), short)
     )
       return reject("gross_or_side_cap");
-    if (!within(abs(newNet[i]), netLimits[i] >> 128n, abs(oldNet[i]))) return reject("net_cap");
+    if (!within(abs(newNet[i]), high128(netLimits[i]), abs(oldNet[i]))) return reject("net_cap");
   }
   if (!within(makerStress(newNet[0], newNet[1]), backing / 4n, makerStress(oldNet[0], oldNet[1])))
     return reject("maker_stress");

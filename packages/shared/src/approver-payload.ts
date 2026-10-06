@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MARKETS } from "./markets.js";
 
 const unsigned = z.string().regex(/^\d+$/),
   signed = z.string().regex(/^-?\d+$/),
@@ -36,7 +37,7 @@ export const approverPayloadSchema = z.object({
   }),
   quote: z.object({
     quoteId: z.string().uuid(),
-    market: z.enum(["BTC", "ETH"]),
+    market: z.enum(MARKETS),
     side: z.enum(["buy", "sell"]),
     amount: unsigned,
     baseDelta: signed,
