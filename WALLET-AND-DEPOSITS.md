@@ -2,7 +2,7 @@
 
 ## Wallet boundary
 
-The frontend consumes a small `WalletProvider` interface: connect an account, select the destination chain and sign typed data. The local implementation uses an injected EIP-1193 provider and has no vendor dependency. A production shell can implement the same interface with Privy or Dynamic after recovery, export, session-key, passkey and account-linking policies are chosen.
+The frontend consumes a small trader interface (`apps/web/src/wallet/trader.tsx`): connect an account, switch to the settlement chain from `GET /v1/config`, sign typed data and send transactions. Browser wallets connect through wagmi/viem with EIP-6963 discovery; the local stack's funded dev key implements the same interface. A production shell can implement the same interface with Privy or Dynamic after recovery, export, session-key, passkey and account-linking policies are chosen.
 
 Both hosted-wallet products require project credentials. Privy uses an app ID and client ID in its React provider, while Dynamic uses an environment ID. Those are public application identifiers rather than signing secrets, but selecting either service creates an operational and recovery dependency. The clearing and API protocols therefore must never accept provider-specific identity as authority: the recovered EVM signature and the on-chain account remain authoritative.
 
