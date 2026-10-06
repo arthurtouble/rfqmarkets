@@ -69,7 +69,9 @@ contract OracleMonotonicTest is ClearingFixture {
         vm.expectRevert(Stale.selector);
         clearing.refreshOracle(report(0, 100_000e6, block.timestamp - 16));
 
-        bytes memory wide = abi.encode(uint8(0), uint256(99_000e6), uint256(101_100e6), uint64(block.timestamp), uint64(block.timestamp + 60));
+        bytes memory wide = abi.encode(
+            uint8(0), uint256(99_000e6), uint256(101_100e6), uint64(block.timestamp), uint64(block.timestamp + 60)
+        );
         vm.expectRevert(OracleInvalid.selector);
         clearing.refreshOracle(wide);
 
