@@ -1,6 +1,8 @@
 # Base mainnet dev runtime for Cloudflare Containers (deploy/cloudflare/runtime/wrangler.dev.jsonc).
 # Hedging is simulated, so the Python Hyperliquid bridge is not installed.
-FROM node:24-bookworm-slim
+# NODE_IMAGE lets a build use a Docker Hub mirror (scripts/cloudflare-dev-deploy.sh, RFQ_DOCKER_NODE_IMAGE).
+ARG NODE_IMAGE=node:24-bookworm-slim
+FROM ${NODE_IMAGE}
 
 ENV NODE_ENV=production RFQ_DEV_RUNTIME_DIR=/tmp/rfq-dev-runtime
 WORKDIR /app
