@@ -19,6 +19,7 @@
 - Run `npm run test:services` for service and script unit tests.
 - Run `npm run test:python` for simulator changes.
 - Run `npm run test:cloudflare-edge` for Cloudflare edge/runtime changes.
+- Run `npm run check:docs` after moving or renaming Markdown files.
 - Run the narrowest relevant test first, then `npm test` before declaring a
   cross-cutting or release-sensitive change complete.
 
@@ -35,9 +36,10 @@
 
 ## Architecture pointers
 
-- Start with `README.md`, `CURRENT-ARCHITECTURE.md`, and
-  `LOCAL-DEVELOPMENT.md`.
-- Cloudflare deployment details live in `CLOUDFLARE-DEPLOYMENT.md` and
+- Start with `README.md`, `docs/README.md`, `docs/architecture/overview.md`
+  and `docs/operations/local-development.md`.
+- Cloudflare deployment details live in `docs/operations/cloudflare.md` and
   `deploy/cloudflare/`.
 - Production readiness and unresolved controls are tracked in
-  `PRODUCTION-IMPLEMENTATION-PLAN.md` and `PRODUCTION-RELEASE-CHECKLIST.md`.
+  `docs/release/implementation-plan.md` and `docs/release/release-checklist.md`.
+- `docs/history/` is superseded material; current docs win where they differ.

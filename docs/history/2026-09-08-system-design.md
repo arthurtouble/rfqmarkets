@@ -2,7 +2,7 @@
 
 Design revision: 2026-09-08. Status: proposed architecture, not deployed infrastructure or an audited implementation.
 
-The subsequent [simplified design](SIMPLIFIED-DESIGN.md) is the current proposal and supersedes this file's separate coordinator/quoter/relayer deployment, duplicated application data and API-held gas credentials. This file retains financial-contract and failure-model detail as supporting background. RFQ-PROTOCOL-RESEARCH.md retains the supporting comparison with existing protocols.
+The subsequent [simplified design](2026-09-08-simplified-design.md) is the current proposal and supersedes this file's separate coordinator/quoter/relayer deployment, duplicated application data and API-held gas credentials. This file retains financial-contract and failure-model detail as supporting background. RFQ-PROTOCOL-RESEARCH.md retains the supporting comparison with existing protocols.
 
 ## 1. Product and decisions
 

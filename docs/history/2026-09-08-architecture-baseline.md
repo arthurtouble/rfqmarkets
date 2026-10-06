@@ -1,8 +1,8 @@
 # RFQ Markets — architecture discussion baseline
 
-For the current consolidated proposal, see [SYSTEM-DESIGN.md](SYSTEM-DESIGN.md). This file retains the initial review and supporting rationale.
+For the current consolidated proposal, see [2026-09-08-system-design.md](2026-09-08-system-design.md). This file retains the initial review and supporting rationale.
 
-Status: proposal for iteration, not an implementation or security-reviewed specification. The follow-up [authorization and upgrade options](AUTHORIZATION-AND-UPGRADES.md) supersedes the original preference for full immutability and rotating quoter keys below.
+Status: proposal for iteration, not an implementation or security-reviewed specification. The follow-up [authorization and upgrade options](2026-09-08-authorization-and-upgrades.md) supersedes the original preference for full immutability and rotating quoter keys below.
 Reviewed: 2026-09-08. Based on the supplied brainstorming notes; later corrections in those notes take precedence over earlier proposals unless challenged below.
 
 ## Product direction

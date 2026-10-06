@@ -1,6 +1,6 @@
 # Production implementation plan
 
-2026-09-15. Execution baseline: `6c04310` and existing Cloudflare changes. Findings and rationale: `REPO-CONTEXT-AND-PRODUCTION-REVIEW-2026-09-15.md`.
+2026-09-15. Execution baseline: `6c04310` and existing Cloudflare changes. Findings and rationale: [2026-09-15 production review](../history/2026-09-15-production-review.md).
 
 Status vocabulary: pending, implementing, locally verified, externally verified. Local verification does not satisfy independent audit, provisioning or capital qualification.
 
@@ -115,7 +115,7 @@ Validation for this pass: current compile passes at 20,865 bytes; all six local 
 - Added one-block independent approver reads and an integer model for the controls. API quote refresh now considers gross exposure, and exact owner close quotes can bypass opening size limits. Local API settlement uses three real approver services and exercises a full RFQ exit after net/trade limits tighten and the market is disabled.
 - Updated rapid-iteration testnet upgrade tooling to require a reviewed BTC/ETH exposure policy file, pause before upgrading, persist the active implementation before multi-transaction migration, scan at most 200 accounts per call and leave the candidate paused.
 - To retain the bytecode gate, RFQRiskMath now performs explicitly scoped bookkeeping writes through typed storage references as well as valuation: exposure tracking, signer rotation, exact token pulls, portfolio clearing, funding index recording and bounded resolution crystallization. Core authorization/reentrancy/PnL affordability and scalar ledgers remain in clearing. This replaces the prior read-only risk-library boundary and requires independent module review.
-- Added [exposure/migration specification](contracts/EXPOSURE-CONTROLS-AND-MIGRATION.md). Existing slot ordering and owner typed-data formats are retained; migration pause/policy changes fence old maker approvals, while still-valid old owner intents can receive new approval signatures.
+- Added [exposure/migration specification](../../contracts/EXPOSURE-CONTROLS-AND-MIGRATION.md). Existing slot ordering and owner typed-data formats are retained; migration pause/policy changes fence old maker approvals, while still-valid old owner intents can receive new approval signatures.
 
 R6 remains implementing: commitment-aware gross reservation, complete independent differential/venue parity, cap calibration and operator migration rehearsal are unfinished. R5 maker-incident entry, keeper, production provisioning and audits/soak remain unfinished. No deployment or live venue order was performed.
 
@@ -127,7 +127,7 @@ Validation for this pass: full `npm test` succeeds on 2026-09-15 (`/tmp/rfq-expo
 - API payload/commitment/gross publication and each signer signature/payload/gross publication are atomic SQLite transactions. Reservations survive lost replies, minority approvals, failed simulation, inclusion, restart and orphaned fills.
 - Expiry requires finalized chain time strictly past the signature deadline. Persisted finalized height/timestamp/hash prevent regression or older snapshots after restart; journal chain/proxy/signing identity binding and independent RPC chain checks reject context reuse. Missing/divergent finality keeps capacity reserved. Null legacy signer payloads close readiness/signing until proved expired.
 - Reused the shared expiry index with an indexed heap that retains one entry per active ID. Rescheduling/cancellation cannot accumulate stale entries; expiry drains bounded batches and leaves excess risk conservatively reserved. Private recovery exports use the finalized boundary; API metrics report capacity/checkpoint.
-- Added [gross reservation specification](contracts/GROSS-APPROVAL-RESERVATIONS.md), 65,536 execution subset/order checks, journal rollback/restart/checkpoint/identity tests and an actual linked-clearing/Pyth/signature fault fixture with two API instances and three independent persistent signer journals.
+- Added [gross reservation specification](../architecture/gross-approval-reservations.md), 65,536 execution subset/order checks, journal rollback/restart/checkpoint/identity tests and an actual linked-clearing/Pyth/signature fault fixture with two API instances and three independent persistent signer journals.
 - Honest quorum intersection prevents hidden conflicting capacity across API processes. A compromised intersecting signer can still create conflicting certificates: the new adversarial fixture verifies that clearing's canonical gross cap rejects the excess trade without customer/maker ledger changes. Byzantine peer reservation coordination is explicitly unfinished, alongside pending net/stress/realized-capital envelopes, short admission locking, independent keeper and calibration/production qualification.
 
 No deployment, authority rotation or live venue order was performed. Contract bytecode and storage remain those of the preceding candidate (20,842 / 21,000 bytes).
