@@ -146,17 +146,19 @@ export function adaptiveSpread(inputs: AdaptiveSpreadInputs = {}): SpreadBreakdo
     basisBps,
     uncertaintyBps,
     totalBps,
-    modelVersion: "adaptive-v1",
+    modelVersion: QUOTE_MODEL_VERSION,
   };
 }
+/** Spread model the leader quotes with; approvers reject quotes from any other model. */
+export const QUOTE_MODEL_VERSION = "adaptive-v1";
 export function marginRate(notional: bigint, initial: boolean) {
   if (notional <= 25_000n * USDC) return initial ? 2_000n : 1_200n;
   if (notional <= 100_000n * USDC) return initial ? 2_500n : 1_500n;
   if (notional <= 250_000n * USDC) return initial ? 3_300n : 2_000n;
   if (notional <= 1_000_000n * USDC) return initial ? 5_000n : 3_000n;
   if (notional <= 2_500_000n * USDC) return initial ? 6_700n : 4_000n;
-  if (notional <= 5_000_000n * USDC) return initial ? 10_000n : 6_000n;
-  return 10_000n;
+  // Matches RFQRiskMath.marginRate: the top tier also applies above 5M notional.
+  return initial ? 10_000n : 6_000n;
 }
 export function constructQuote(
   request: QuoteRequest,
