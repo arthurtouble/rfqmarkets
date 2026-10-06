@@ -74,9 +74,7 @@ export function buildKeeper(options: KeeperOptions) {
       reconcile: async () => {
         await validateChain();
         await sender.reconcile();
-        return !sender
-          .status()
-          .some((row) => ["signed", "submitted", "ambiguous", "reorged"].includes(String(row.status)));
+        return !sender.hasUnresolved();
       },
       state: async () => {
         const blockNumber = Number(BigInt(await provider.send("eth_blockNumber", []))),
