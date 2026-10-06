@@ -13,6 +13,7 @@ const files = [
   "contracts/mocks/MockPriceOracle.sol",
   "contracts/mocks/MockStreamsVerifier.sol",
   "contracts/mocks/MockPythCore.sol",
+  "contracts/mocks/MockSafe.sol",
   "contracts/oracle/ChainlinkDataStreamsV3Adapter.sol",
   "contracts/oracle/PythCoreAdapter.sol",
   "contracts/testnet/RFQTimelock.sol",
@@ -74,6 +75,7 @@ for (const [source, contracts] of Object.entries(output.contracts)) {
       bytecode: `0x${artifact.evm.bytecode.object}`,
       deployedBytecode: `0x${artifact.evm.deployedBytecode.object}`,
       linkReferences: artifact.evm.bytecode.linkReferences,
+      immutableReferences: artifact.evm.deployedBytecode.immutableReferences,
     }, null, 2));
   }
 }
