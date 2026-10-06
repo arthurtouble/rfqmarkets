@@ -28,7 +28,7 @@ import { abs, unixSeconds } from "./markets.js";
 import { validOwnerSignature } from "./owner-signature.js";
 import { publicError } from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
-import type { QuoteEngine } from "./quoting.js";
+import type { CreatedQuote, QuoteEngine } from "./quoting.js";
 import { archiveApiCommitments } from "./recovery.js";
 import { approvalRequestSchema, intentRequestSchema, type ApprovalRequest } from "./schemas.js";
 import { settlementEvent } from "./settlement-event.js";
@@ -413,7 +413,7 @@ export class ExecutionService {
     // Optimistic reads precede a synchronous durable admission section. Remote
     // quorum and simulation run after publication and outside the lock.
     for (let attempt = 0, conflicts = 0; attempt < 2; attempt++) {
-      let refreshed: Awaited<ReturnType<QuoteEngine["createQuote"]>>;
+      let refreshed: CreatedQuote;
       try {
         refreshed = await this.quoting.createQuote(
           { market: quote.market, side: quote.side, amount: formatUsdc(quote.notional) },
