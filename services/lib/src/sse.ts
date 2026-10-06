@@ -10,18 +10,25 @@ export function sseFrame(event: string, data: unknown, id?: number) {
 
 export const SSE_HEARTBEAT = ": heartbeat\n\n";
 
+/** The allowed origin to echo for a request: its own origin when listed, otherwise the first one. */
+export function allowedOrigin(allowed: string | readonly string[], requestOrigin: string | undefined) {
+  const origins = typeof allowed === "string" ? [allowed] : allowed;
+  return requestOrigin && origins.includes(requestOrigin) ? requestOrigin : origins[0];
+}
+
 /**
  * Takes the response over from Fastify and writes event-stream headers. Fastify's CORS plugin does
- * not run for hijacked replies, so the caller passes the origin to allow.
+ * not run for hijacked replies, so the caller passes the allowed origin(s).
  */
-export function openSse(reply: FastifyReply, corsOrigin?: string): ServerResponse {
+export function openSse(reply: FastifyReply, corsOrigin?: string | readonly string[]): ServerResponse {
+  const origin = corsOrigin && allowedOrigin(corsOrigin, reply.request.headers.origin);
   reply.hijack();
   reply.raw.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache, no-transform",
     connection: "keep-alive",
     "x-accel-buffering": "no",
-    ...(corsOrigin ? { "access-control-allow-origin": corsOrigin, vary: "origin" } : {}),
+    ...(origin ? { "access-control-allow-origin": origin, vary: "origin" } : {}),
   });
   return reply.raw;
 }
