@@ -30,7 +30,7 @@ library RFQSettlement {
             revert InvalidTrade();
         }
         IPriceOracle.Observation memory observation = RFQLedger.touchOracle(report, intent.market);
-        RFQLedger.settleFunding(intent.account, intent.market);
+        RFQLedger.settleAllFunding(intent.account);
         if ($.resolutionRequired) return;
 
         (bytes32 intentHash, address sessionSigner) =
@@ -42,13 +42,18 @@ library RFQSettlement {
             RFQRiskMath.validateEconomics(intent, approval, observation.bid, observation.ask, sessionSigner);
         RFQRiskMath.checkExposureTrade(intent, approval.executionPrice);
 
+        int256 previousSize = $.accounts[intent.account].positions[intent.market].size;
         RFQLedger.applyPosition(intent.account, intent.market, intent.baseDelta, approval.executionPrice);
         if ($.resolutionRequired) return;
 
         $.nonceUsed[intent.account][intent.nonce] = true;
         if (sessionSigner != address(0)) $.sessions[sessionSigner].usedNotional += uint128(notional);
         chargeFee(intent.account, approval.fee);
-        RFQLedger.requireInitialMargin(intent.account);
+        if (RFQRiskMath.isReduction(previousSize, previousSize + intent.baseDelta)) {
+            RFQLedger.requireMaintenanceMargin(intent.account);
+        } else {
+            RFQLedger.requireInitialMargin(intent.account);
+        }
         emit IRFQClearingEvents.TradeExecuted(
             intentHash, intent.account, intent.market, intent.baseDelta, approval.executionPrice, approval.fee
         );
@@ -60,7 +65,6 @@ library RFQSettlement {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if ($.resolutionRequired || recipient == address(0) || amount == 0) revert InvalidTrade();
         RFQLedger.requireFreshPositions(account);
-        RFQLedger.updateAllFunding();
         RFQLedger.settleAllFunding(account);
         if ($.resolutionRequired) return;
         RFQLedger.changeCollateral(account, -int256(amount));

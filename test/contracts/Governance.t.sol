@@ -127,9 +127,7 @@ contract GovernanceTest is ClearingFixture {
         timelock.schedule(address(clearing), 0, "", bytes32(0), bytes32(0), 1 days);
     }
 
-    function schedule(RFQTimelock timelock, address target, bytes memory data, bytes32 salt, uint256 delay)
-        internal
-    {
+    function schedule(RFQTimelock timelock, address target, bytes memory data, bytes32 salt, uint256 delay) internal {
         vm.prank(safe);
         timelock.schedule(target, 0, data, bytes32(0), salt, delay);
         vm.warp(vm.getBlockTimestamp() + delay);

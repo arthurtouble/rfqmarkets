@@ -40,6 +40,7 @@ library RFQResolution {
     /// @param caller The account asking; governance may resolve a paused venue without an incident.
     function declareResolution(address caller) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        if ($.resolutionRequired) revert InvalidTrade();
         if (caller == $.governance) {
             if (!$.paused) revert InvalidTrade();
         } else {
@@ -95,7 +96,9 @@ library RFQResolution {
             r.claim[owner] = owed;
             claims += owed;
             $.accounts[owner].collateral = 0;
-            for (uint8 m; m < MARKET_COUNT; ++m) delete $.accounts[owner].positions[m];
+            for (uint8 m; m < MARKET_COUNT; ++m) {
+                delete $.accounts[owner].positions[m];
+            }
         }
         r.totalClaims += claims;
         r.cursor = end;
@@ -111,6 +114,7 @@ library RFQResolution {
             $.exposure[i].longBase = 0;
             $.exposure[i].shortBase = 0;
             $.markets[i].aggregateBase = 0;
+            $.costBasis[i] = 0;
         }
         emit IRFQClearingEvents.ResolutionFinalized(r.totalClaims, r.assets);
     }
@@ -158,8 +162,8 @@ library RFQResolution {
         value = $.accounts[owner].collateral;
         for (uint8 i; i < MARKET_COUNT; ++i) {
             Position storage p = $.accounts[owner].positions[i];
-            value += RFQRiskMath.positionPnl(p.size, p.entryPrice, $.resolution.price[i])
-                - p.size * ($.markets[i].fundingIndex - p.lastFundingIndex) / int256(BASE_UNIT);
+            value += RFQRiskMath.positionPnl(p.size, p.entryPrice, $.resolution.price[i]) - p.size
+            * ($.markets[i].fundingIndex - p.lastFundingIndex) / int256(BASE_UNIT);
         }
     }
 }
