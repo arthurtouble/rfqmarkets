@@ -4,7 +4,11 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { keccak256, toUtf8Bytes } from "ethers";
 import { z } from "zod";
-import type { HedgeExecutionSignal, HedgeRiskSnapshot } from "../../../packages/shared/src/hedge-risk.js";
+import type {
+  HedgeExecutionSignal,
+  HedgeMarketRisk,
+  HedgeRiskSnapshot,
+} from "../../../packages/shared/src/hedge-risk.js";
 import { marketRegistry } from "../../../packages/shared/src/markets.js";
 import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 
@@ -335,6 +339,8 @@ export function buildHedger(options: HedgeOptions) {
               bandUsdc: band.toString(),
               coin: coin ?? null,
               state: !coin ? "unhedged" : gapNotional <= band ? "within_band" : "hedge_required",
+              /** What the API currently allows in this market (`/internal/risk`'s mode). */
+              tradingMode: marketRisk(market).mode,
               execution: lastExecution[market],
               executionError: executionErrors[market],
             },
@@ -381,39 +387,39 @@ export function buildHedger(options: HedgeOptions) {
   const effectivelyHealthy = () => !lastFailureCritical && Date.now() - lastSuccessAtMs <= riskStaleMs;
   const authorized = (request: { headers: { authorization?: string } }) =>
     request.headers.authorization === `Bearer ${options.healthToken}`;
-  async function riskSnapshot(): Promise<HedgeRiskSnapshot> {
+  /** The trading mode the API enforces for `market`: the same rules /internal/risk reports. */
+  function marketRisk(market: HedgeMarket, healthy = effectivelyHealthy()): HedgeMarketRisk {
     const minOrder = options.minOrderUsdc ?? 0n,
       executableBand = minOrder > band ? minOrder : band,
-      healthy = effectivelyHealthy(),
-      markets = {} as HedgeRiskSnapshot["markets"];
-    for (const market of exposureMarkets()) {
-      const { gapNotional } = marketGap(lastExposure, market, lastVenuePositions[market] ?? 0n);
-      if (!coinOf(market)) {
-        // Unhedgeable: only exposure-reducing trades, as when the venue is down.
-        markets[market] = {
-          mode: "reduce_only",
-          gapNotional: gapNotional.toString(),
-          bandUsdc: band.toString(),
-          reason: NO_HEDGE_MAPPING,
-        };
-        continue;
-      }
-      const execution = lastExecution[market],
-        executionHealthy =
-          !venue.execution || (execution !== undefined && Date.now() - execution.observedAtMs <= riskStaleMs),
-        mode =
-          !healthy || !executionHealthy || gapNotional > executableBand * 2n
-            ? "reduce_only"
-            : gapNotional > executableBand
-              ? "guarded"
-              : "normal";
-      markets[market] = {
-        mode,
+      { gapNotional } = marketGap(lastExposure, market, lastVenuePositions[market] ?? 0n);
+    // Unhedgeable: only exposure-reducing trades, as when the venue is down.
+    if (!coinOf(market))
+      return {
+        mode: "reduce_only",
         gapNotional: gapNotional.toString(),
         bandUsdc: band.toString(),
-        ...(execution ? { execution } : {}),
+        reason: NO_HEDGE_MAPPING,
       };
-    }
+    const execution = lastExecution[market],
+      executionHealthy =
+        !venue.execution || (execution !== undefined && Date.now() - execution.observedAtMs <= riskStaleMs),
+      mode =
+        !healthy || !executionHealthy || gapNotional > executableBand * 2n
+          ? "reduce_only"
+          : gapNotional > executableBand
+            ? "guarded"
+            : "normal";
+    return {
+      mode,
+      gapNotional: gapNotional.toString(),
+      bandUsdc: band.toString(),
+      ...(execution ? { execution } : {}),
+    };
+  }
+  async function riskSnapshot(): Promise<HedgeRiskSnapshot> {
+    const healthy = effectivelyHealthy(),
+      markets = {} as HedgeRiskSnapshot["markets"];
+    for (const market of exposureMarkets()) markets[market] = marketRisk(market, healthy);
     return { observedAtMs: lastSuccessAtMs, healthy, indexedBlock: lastIndexedBlock, markets };
   }
   app.get("/health", async () => ({

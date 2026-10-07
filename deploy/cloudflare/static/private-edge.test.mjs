@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resetAccessCacheForTests, verifyAccess } from "./access.mjs";
 import { handlePrivateRequest, runtimeRead } from "./private-edge.mjs";
+import { admitAtEdge } from "../runtime/edge-admission.mjs";
 
 const DOMAIN = "team.cloudflareaccess.com", AUD = "aud-tag";
 const pair = await crypto.subtle.generateKey(
@@ -77,7 +78,7 @@ test("forwards only the dashboard's reads to the runtime, without the Access tok
   const RUNTIME = { fetch: async (forwarded) => (seen.push(forwarded), Response.json({ ok: true })) };
   const jwt = await token();
   const response = await handlePrivateRequest(
-    request("/v1/risk?finalized=true", jwt, { headers: { cookie: "CF_Authorization=x", accept: "application/json" } }),
+    request("/v1/risk?finalized=true", jwt, { headers: { cookie: "CF_Authorization=x", accept: "application/json", "cf-connecting-ip": "203.0.113.7" } }),
     env({ RUNTIME }),
     { fetcher },
   );
@@ -86,6 +87,11 @@ test("forwards only the dashboard's reads to the runtime, without the Access tok
   assert.equal(seen[0].headers.get("cookie"), null);
   assert.equal(seen[0].headers.get("cf-access-jwt-assertion"), null);
   assert.equal(seen[0].headers.get("accept"), "application/json");
+  // The runtime's edge admission refuses indexer reads without a client IP.
+  assert.equal(seen[0].headers.get("cf-connecting-ip"), "203.0.113.7");
+  const limiter = { limit: async () => ({ success: true }) };
+  const limits = { PUBLIC_READ_LIMIT: limiter, GLOBAL_READ_LIMIT: limiter, PUBLIC_WRITE_LIMIT: limiter, GLOBAL_WRITE_LIMIT: limiter };
+  assert.equal(await admitAtEdge(seen[0], limits), null, "the runtime admits the forwarded read");
   assert.equal((await handlePrivateRequest(request("/v1/quote", jwt), env({ RUNTIME }), { fetcher })).status, 404);
   assert.equal((await handlePrivateRequest(request("/ops/hedger/v1/tick", jwt), env({ RUNTIME }), { fetcher })).status, 404);
   assert.equal((await handlePrivateRequest(request("/v1/risk", jwt, { method: "POST" }), env({ RUNTIME }), { fetcher })).status, 405);
