@@ -44,8 +44,10 @@ export function oracleWorkerMarkets(env) {
 
 /**
  * The container's market env. With an ORACLE_RPC_URL secret and a clearing proxy in the deployment, the
- * node reads the clearing registry and prices every market it has a symbol table entry for
- * (ORACLE_MARKETS, when set, restricts that list); otherwise it prices exactly the configured markets.
+ * node reads the clearing registry; otherwise it prices exactly the configured markets. ORACLE_MARKETS
+ * (the worker var, else the launch markets) is always passed: with the registry it is the id:symbol
+ * allowlist, so a node never signs for an index whose on-chain symbol differs from it (the signed price
+ * carries only the index). A market governance adds is priced once it is added to the worker var.
  */
 export function oracleNodeMarketEnv(env, deployment) {
   const markets = oracleWorkerMarkets(env),
@@ -55,8 +57,6 @@ export function oracleNodeMarketEnv(env, deployment) {
   if (rpcUrl && clearing) {
     vars.ORACLE_RPC_URL = rpcUrl;
     vars.ORACLE_CLEARING_ADDRESS = clearing;
-    // Only an explicit list restricts the registry.
-    if (!env.ORACLE_MARKETS?.trim()) delete vars.ORACLE_MARKETS;
   }
   return vars;
 }

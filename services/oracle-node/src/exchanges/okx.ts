@@ -18,7 +18,8 @@ export const okx: ExchangeAdapter = {
     for (const item of Array.isArray(message.data) ? message.data : []) {
       const bid = item?.bids?.[0]?.[0],
         ask = item?.asks?.[0]?.[0];
-      if (bid && ask) updates.push(...quote(message.arg.instId, parseDecimal(bid), parseDecimal(ask)));
+      // An empty side clears the stored quote (quote() returns a cleared marker for a 0 side).
+      updates.push(...quote(message.arg.instId, bid ? parseDecimal(bid) : 0n, ask ? parseDecimal(ask) : 0n));
     }
     return updates;
   },

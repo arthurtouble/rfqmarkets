@@ -133,7 +133,11 @@ test("gemini removes the best level and finds the next one", () => {
     ),
     [{ ticker: "BTCUSD", ...pair("50", "51") }],
   );
-  assert.deepEqual(parse(message([["sell", "51", "0"]])), [], "one-sided book yields no quote");
+  assert.deepEqual(
+    parse(message([["sell", "51", "0"]])),
+    [{ ticker: "BTCUSD", bid: 0n, ask: 0n, cleared: true }],
+    "a one-sided book clears the quote",
+  );
 });
 
 test("okx bbo-tbt messages and REST tickers", () => {
@@ -194,7 +198,16 @@ test("parsers ignore control messages and reject crossed or malformed books", ()
     assert.deepEqual(parse('{"event":"subscribe"}'), [], exchange);
   }
   const crossed = JSON.stringify({ stream: "x", data: { s: "BTCUSDT", b: "101", a: "100" } });
-  assert.deepEqual(ADAPTERS.binance.createParser()(crossed), []);
+  assert.deepEqual(ADAPTERS.binance.createParser()(crossed), [
+    { ticker: "BTCUSDT", bid: 0n, ask: 0n, cleared: true },
+  ]);
+  const okxEmpty = JSON.stringify({
+    arg: { channel: "bbo-tbt", instId: "BTC-USDT" },
+    data: [{ bids: [["100", "1"]], asks: [] }],
+  });
+  assert.deepEqual(ADAPTERS.okx.createParser()(okxEmpty), [
+    { ticker: "BTC-USDT", bid: 0n, ask: 0n, cleared: true },
+  ]);
   assert.throws(() =>
     ADAPTERS.binance.createParser()(JSON.stringify({ data: { s: "BTCUSDT", b: "-1", a: "2" } })),
   );

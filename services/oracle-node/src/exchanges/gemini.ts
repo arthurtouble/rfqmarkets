@@ -67,7 +67,8 @@ export const gemini: ExchangeAdapter = {
       }
       const bid = book.bids.top(),
         ask = book.asks.top();
-      return bid !== undefined && ask !== undefined ? quote(message.symbol, bid, ask) : [];
+      // A one-sided book clears the stored quote (quote() returns a cleared marker for a 0 side).
+      return quote(message.symbol, bid ?? 0n, ask ?? 0n);
     };
   },
   restRequests: (tickers) =>

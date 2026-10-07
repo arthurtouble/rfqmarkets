@@ -5,6 +5,11 @@ export interface QuoteUpdate {
   ticker: string;
   bid: bigint;
   ask: bigint;
+  /**
+   * The venue reported a crossed, one-sided or empty book for this ticker: there is no usable quote,
+   * so the feed drops what it had stored (bid and ask are 0) rather than keep serving the last one.
+   */
+  cleared?: true;
 }
 
 export interface RestRequest {
@@ -37,8 +42,9 @@ export interface ExchangeAdapter {
   restRequests(tickers: readonly string[]): RestRequest[];
 }
 
+/** A valid quote, or a `cleared` marker when the book is crossed or one-sided (bid or ask 0). */
 export function quote(ticker: string, bid: bigint, ask: bigint): QuoteUpdate[] {
-  return bid > 0n && ask >= bid ? [{ ticker, bid, ask }] : [];
+  return bid > 0n && ask >= bid ? [{ ticker, bid, ask }] : [{ ticker, bid: 0n, ask: 0n, cleared: true }];
 }
 
 /** Splits tickers into subscription batches (venues rate-limit subscribe messages). */

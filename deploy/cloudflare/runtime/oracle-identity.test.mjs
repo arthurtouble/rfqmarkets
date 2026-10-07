@@ -22,7 +22,9 @@ test("oracle workers price configured markets or the clearing registry", () => {
   assert.throws(() => oracleWorkerMarkets({ ORACLE_MARKETS: "128:SOL" }), /invalid ORACLE_MARKETS/);
   const deployment = { contracts: { clearingProxy: "0x000000000000000000000000000000000000bEEF" } };
   assert.deepEqual(oracleNodeMarketEnv({}, deployment), { ORACLE_MARKETS: "0:BTC,1:ETH" });
+  // With the registry the launch list still goes along as the id:symbol allowlist.
   assert.deepEqual(oracleNodeMarketEnv({ ORACLE_RPC_URL: "https://rpc" }, deployment), {
+    ORACLE_MARKETS: "0:BTC,1:ETH",
     ORACLE_RPC_URL: "https://rpc",
     ORACLE_CLEARING_ADDRESS: deployment.contracts.clearingProxy,
   });

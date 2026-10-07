@@ -14,8 +14,9 @@ import {
 // from wrangler.oracle.jsonc. The Durable Object owns the node's signer key (oracle-identity.mjs), starts
 // the container only for the adapter recorded in KV `deployment.json` when this node is one of its
 // signers, and keeps price history in its SQLite storage (oracle-history.mjs).
-// Markets: the ORACLE_MARKETS var, or with an ORACLE_RPC_URL secret every market the clearing registry
-// lists (oracleNodeMarketEnv; docs/operations/adding-a-market.md).
+// Markets: the ORACLE_MARKETS var (wrangler.oracle.jsonc). With an ORACLE_RPC_URL secret the node also
+// checks the clearing registry and prices only the listed markets whose on-chain index and symbol match
+// (oracleNodeMarketEnv; docs/operations/adding-a-market.md).
 const PORT = 4900,
   CHAIN_ID = "8453";
 const json = (value, status = 200, headers = {}) =>

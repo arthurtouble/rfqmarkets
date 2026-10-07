@@ -33,7 +33,8 @@ export const bybit: ExchangeAdapter = {
       if (bid !== undefined) book.bid = bid ?? undefined;
       if (ask !== undefined) book.ask = ask ?? undefined;
       books.set(ticker, book);
-      return book.bid !== undefined && book.ask !== undefined ? quote(ticker, book.bid, book.ask) : [];
+      // A one-sided book clears the stored quote (quote() returns a cleared marker for a 0 side).
+      return quote(ticker, book.bid ?? 0n, book.ask ?? 0n);
     };
   },
   restRequests: (tickers) =>
