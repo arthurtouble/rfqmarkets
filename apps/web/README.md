@@ -6,7 +6,7 @@ Router and Query, wagmi/viem.
 
 ```
 npm run dev:stack -- --web   # local chain, services and this app on :4173
-npm run test:web             # unit tests for the pure modules in src/lib
+npm run test:web             # unit tests for the pure modules in src/lib and src/wallet
 npm run build:web            # production bundle in dist/web
 ```
 
@@ -110,3 +110,13 @@ The connect dialog lists three kinds of wallet:
 
 The Base Account and WalletConnect SDKs load only when someone picks them, or on
 reload when one was the last wallet used (`lazyConnector` in `src/wallet/chain.ts`).
+
+The connect sheet is the shared `Sheet`, so it is a bottom sheet on phones.
+Wallet errors (cancelled, unknown network, a request already open) go through
+`walletErrorMessage` in `src/wallet/wallets.ts`. When the wallet is on another
+network, `SwitchNetworkButton` sits next to the account button and the Account
+page shows `WrongNetworkBanner`; both use `useSwitchNetwork`, which toasts a refusal.
+
+`test/e2e/wallet-connect.spec.ts` drives all of this at phone and desktop sizes
+with `test/e2e/mock-wallet.js`, an EIP-6963 wallet that signs through the local
+Hardhat node (`npm run test:e2e -- wallet-connect`).
