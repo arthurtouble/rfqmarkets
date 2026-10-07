@@ -47,34 +47,3 @@ export function decodeLocalReport(report: BytesLike): OracleObservation[] {
   const [values] = AbiCoder.defaultAbiCoder().decode([`${ORACLE_OBSERVATION_TUPLE}[]`], report);
   return Array.from(values as OracleObservationInput[], toOracleObservation);
 }
-
-/** ABI tuple of one node's signed batch inside a signed-oracle report (`abi.encode(SignedPriceBatch[])`). */
-export const SIGNED_PRICE_BATCH_TUPLE =
-  "tuple(uint64 observedAt,tuple(uint8 market,uint256 bid,uint256 ask)[] prices,bytes signature)";
-
-export interface SignedPriceBatch {
-  observedAt: bigint;
-  prices: { market: bigint; bid: bigint; ask: bigint }[];
-  signature: string;
-}
-
-export function encodeSignedReport(batches: SignedPriceBatch[]): string {
-  return AbiCoder.defaultAbiCoder().encode(
-    [`${SIGNED_PRICE_BATCH_TUPLE}[]`],
-    [batches.map((batch) => [batch.observedAt, batch.prices.map((p) => [p.market, p.bid, p.ask]), batch.signature])],
-  );
-}
-
-export function decodeSignedReport(report: BytesLike): SignedPriceBatch[] {
-  const [values] = AbiCoder.defaultAbiCoder().decode([`${SIGNED_PRICE_BATCH_TUPLE}[]`], report);
-  return Array.from(values as { observedAt: bigint; prices: { market: bigint; bid: bigint; ask: bigint }[]; signature: string }[], (batch) => ({
-    observedAt: BigInt(batch.observedAt),
-    prices: Array.from(batch.prices, (p) => ({ market: BigInt(p.market), bid: BigInt(p.bid), ask: BigInt(p.ask) })),
-    signature: String(batch.signature),
-  }));
-}
-
-/** Markets priced by at least one batch of a signed report; the adapter decides which survive consensus. */
-export function signedReportMarkets(report: BytesLike): Set<bigint> {
-  return new Set(decodeSignedReport(report).flatMap((batch) => batch.prices.map((p) => p.market)));
-}

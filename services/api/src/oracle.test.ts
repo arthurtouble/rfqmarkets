@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AbiCoder } from "ethers";
+import { AbiCoder, Wallet } from "ethers";
 import { decodeLocalReport } from "../../../packages/shared/src/oracle-report.js";
+import {
+  decodeSignedReport,
+  priceBatchToWire,
+  signPriceBatch,
+} from "../../../packages/shared/src/signed-oracle.js";
 import {
   ChainlinkDataStreamsSource,
   CoinbaseMarketDataSource,
   PythHermesSource,
   SimulatedMarketDataSource,
+  SignedOracleSource,
 } from "./oracle.js";
 
 const feedId = `0x0003${"11".repeat(30)}`;
@@ -406,14 +412,15 @@ test("simulated source encodes mock-oracle reports and accepts scripted prices",
   assert.equal(first.snapshot.source, "simulated");
   assert.equal(first.snapshot.bid, 99_990_000_000n);
   assert.equal(first.snapshot.ask, 100_010_000_000n);
-  const [market, bid, ask, observedAt, validUntil] = AbiCoder.defaultAbiCoder().decode(
-    ["tuple(uint8,uint256,uint256,uint64,uint64)"],
-    first.report,
-  )[0];
-  assert.deepEqual(
-    [market, bid, ask, observedAt, validUntil],
-    [0n, 99_990_000_000n, 100_010_000_000n, 1_800_000_000n, 1_800_000_015n],
-  );
+  assert.deepEqual(decodeLocalReport(first.report), [
+    {
+      market: 0n,
+      bid: 99_990_000_000n,
+      ask: 100_010_000_000n,
+      observedAt: 1_800_000_000n,
+      validUntil: 1_800_000_015n,
+    },
+  ]);
   now += 1_000;
   source.step();
   assert.ok(source.prices().BTC > 100_000, "an up-shock raises the mid");
@@ -509,5 +516,54 @@ test("a rejected Pyth stream update is counted and later updates still flow", as
   assert.equal(await changed, "BTC");
   assert.equal(source.status().rejectedUpdates, 1);
   assert.equal(source.status().streamFailures, 0);
+  await source.close();
+});
+
+test("signed oracle source serves the node majority's report per market", async () => {
+  const wallets = [0, 1, 2].map(() => Wallet.createRandom()),
+    domain = { chainId: 8453n, verifyingContract: "0x000000000000000000000000000000000000dEaD" },
+    observedAt = Math.floor(Date.now() / 1_000),
+    nodePrices = [
+      [100_000_000_000n, 100_010_000_000n],
+      [100_005_000_000n, 100_015_000_000n],
+      [100_002_000_000n, 100_012_000_000n],
+    ];
+  const batches = await Promise.all(
+    wallets.map(async (wallet, index) =>
+      priceBatchToWire(
+        await signPriceBatch(wallet, domain, {
+          observedAt,
+          prices: [{ market: 0, bid: nodePrices[index][0], ask: nodePrices[index][1] }],
+        }),
+        wallet.address,
+      ),
+    ),
+  );
+  const fetchImpl = (async (input: string | URL) => {
+    const url = String(input),
+      index = Number(url.match(/node-(\d)/)?.[1]);
+    if (url.endsWith("/v1/batch/latest")) return Response.json(batches[index]);
+    return new Response("no stream", { status: 404 });
+  }) as typeof fetch;
+  const source = new SignedOracleSource({
+    nodes: ["https://node-0.example", "https://node-1.example", "https://node-2.example"],
+    signers: wallets.map((wallet) => wallet.address),
+    threshold: 2,
+    maxDeviationBps: 50,
+    maxSkewSeconds: 5,
+    chainId: domain.chainId,
+    adapter: domain.verifyingContract,
+    fetchImpl,
+  });
+  const quote = await source.latest("BTC");
+  assert.equal(quote.snapshot.bid, 100_002_000_000n);
+  assert.equal(quote.snapshot.ask, 100_012_000_000n);
+  assert.equal(quote.validUntil, observedAt + 15);
+  assert.equal(decodeSignedReport(quote.report).length, 3);
+  await assert.rejects(source.latest("ETH"), /no oracle consensus for ETH/);
+  assert.throws(
+    () => new SignedOracleSource({ ...source["options"], nodes: ["http://node.example"] }),
+    /TLS/,
+  );
   await source.close();
 });

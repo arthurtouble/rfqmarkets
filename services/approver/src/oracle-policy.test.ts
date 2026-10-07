@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { encodeSignedReport } from "../../../packages/shared/src/oracle-report.js";
+import { encodeSignedReport } from "../../../packages/shared/src/signed-oracle.js";
 import { AbiCoder, keccak256 } from "ethers";
 import {
   checkChainTimeOracle,
@@ -87,9 +87,11 @@ test("checkSubmittedReport rejects non-positive prices even when they match the 
 });
 
 test("signed reports only need to cover the market until verified on chain", () => {
-  const batch = (market: bigint) => [{ observedAt: 1n, prices: [{ market, bid: 10n, ask: 11n }], signature: "0x01" }],
-    report = encodeSignedReport(batch(0n)),
-    other = encodeSignedReport(batch(1n));
+  const batch = (market: number) => [
+      { observedAt: 1, prices: [{ market, bid: 10n, ask: 11n }], signature: "0x01" },
+    ],
+    report = encodeSignedReport(batch(0)),
+    other = encodeSignedReport(batch(1));
   const signed = { oracle: { oracleMode: "signed" as const } };
   assert.deepEqual(submitted({}, { ...signed, report, oracleReportHash: keccak256(report) }), {});
   assert.equal(

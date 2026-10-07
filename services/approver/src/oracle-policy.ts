@@ -1,11 +1,8 @@
 import { keccak256 } from "ethers";
 import type { ApproverPayload } from "../../../packages/shared/src/approver-payload.js";
 import type { MarketIndex } from "../../../packages/shared/src/markets.js";
-import {
-  decodeLocalReport,
-  signedReportMarkets,
-  type OracleObservation,
-} from "../../../packages/shared/src/oracle-report.js";
+import { decodeLocalReport, type OracleObservation } from "../../../packages/shared/src/oracle-report.js";
+import { decodeSignedReport } from "../../../packages/shared/src/signed-oracle.js";
 import type { OracleMode } from "./options.js";
 import { reject, type Rejection } from "./rejection.js";
 
@@ -40,7 +37,8 @@ export function decodeReportObservation(
   oracle: { oracleMode?: OracleMode },
 ): OracleObservation | undefined {
   if (oracle.oracleMode === "signed") {
-    if (!signedReportMarkets(report).has(BigInt(market))) throw new Error("signed report lacks market");
+    if (!decodeSignedReport(report).some((batch) => batch.prices.some((price) => price.market === market)))
+      throw new Error("signed report lacks market");
     return undefined;
   }
   return decodeLocalReport(report).find((observation) => observation.market === BigInt(market));

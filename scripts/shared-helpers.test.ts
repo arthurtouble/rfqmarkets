@@ -22,9 +22,6 @@ import {
 } from "../packages/shared/src/numeric.js";
 import {
   decodeLocalReport,
-  decodeSignedReport,
-  encodeSignedReport,
-  signedReportMarkets,
   encodeLocalReport,
   ORACLE_OBSERVATION_TUPLE,
 } from "../packages/shared/src/oracle-report.js";
@@ -63,16 +60,6 @@ test("local oracle report codec round-trips the adapter tuple array", () => {
     decodeLocalReport(pair).map((item) => item.market),
     [0n, 1n],
   );
-});
-
-test("signed oracle report codec round-trips node batches", () => {
-  const batches = [
-    { observedAt: 5n, prices: [{ market: 0n, bid: 1n, ask: 2n }], signature: "0x01" },
-    { observedAt: 6n, prices: [{ market: 0n, bid: 1n, ask: 2n }, { market: 1n, bid: 3n, ask: 4n }], signature: "0x02" },
-  ];
-  const report = encodeSignedReport(batches);
-  assert.deepEqual(decodeSignedReport(report), batches);
-  assert.deepEqual([...signedReportMarkets(report)], [0n, 1n]);
 });
 
 test("clearing struct converters normalize ethers results to bigint models", () => {

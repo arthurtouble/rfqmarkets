@@ -4,6 +4,7 @@ import { decodeStreamsV3Envelope } from "../../../packages/shared/src/streams.js
 import type { PriceSnapshot } from "../../../packages/shared/src/policy.js";
 import { readSseEvents } from "../../lib/src/sse.js";
 import { encodeLocalReport } from "../../../packages/shared/src/oracle-report.js";
+import { SignedOracleClient } from "../../../packages/shared/src/signed-oracle.js";
 import { MarketSignalTracker } from "./market-signals.js";
 
 export type OracleMarket = "BTC" | "ETH";
@@ -492,6 +493,98 @@ export class PythHermesSource extends BaseOracleSource {
     const value = this.cached[market];
     if (!value) throw new Error(`Pyth ${market} settlement data unavailable`);
     return value;
+  }
+}
+
+export interface SignedOracleSourceOptions {
+  /** Oracle node base URLs (three in production, each in its own region). */
+  nodes: readonly string[];
+  /** Authorized node signer addresses, as configured on the SignedPriceOracle adapter. */
+  signers: readonly string[];
+  threshold: number;
+  maxDeviationBps: number;
+  maxSkewSeconds: number;
+  chainId: bigint | number;
+  /** The SignedPriceOracle adapter address (the EIP-712 verifying contract). */
+  adapter: string;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+}
+
+/**
+ * Prices from our own oracle nodes: each node streams signed batches, and the client combines a
+ * majority into the report the SignedPriceOracle adapter verifies. A market without node consensus
+ * has no quote, so trading on it stops instead of using a doubtful price.
+ */
+export class SignedOracleSource extends BaseOracleSource {
+  private client: SignedOracleClient;
+  private unsubscribe?: () => void;
+  private lastObservedAt = 0;
+  constructor(private options: SignedOracleSourceOptions) {
+    super("signed-oracle");
+    for (const node of options.nodes)
+      if (!node.startsWith("https://") && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(node))
+        throw new Error("oracle nodes must use TLS");
+    this.client = new SignedOracleClient({
+      nodes: options.nodes,
+      signers: options.signers,
+      threshold: options.threshold,
+      maxDeviationBps: options.maxDeviationBps,
+      maxSkewSeconds: options.maxSkewSeconds,
+      domain: { chainId: options.chainId, verifyingContract: options.adapter },
+      fetchImpl: options.fetchImpl,
+      now: options.now,
+    });
+  }
+  protected now() {
+    return (this.options.now ?? Date.now)();
+  }
+  protected transport() {
+    const transports = this.client.status().map((node) => node.transport);
+    return transports.includes("sse") ? "sse" : transports.includes("rest") ? "rest" : "down";
+  }
+  async start() {
+    this.unsubscribe = this.client.subscribe(() => this.refresh());
+    await this.client.start();
+    this.refresh();
+  }
+  async close() {
+    this.unsubscribe?.();
+    await this.client.close();
+  }
+  nodeStatus() {
+    return this.client.status();
+  }
+  /** Rebuilds the per-market quotes when the combined report moves forward. */
+  private refresh() {
+    const combined = this.client.latest();
+    if (!combined || combined.observedAt <= this.lastObservedAt) return;
+    this.lastObservedAt = combined.observedAt;
+    for (const market of MARKETS) {
+      const price = combined.prices.find((item) => item.market === marketId(market));
+      if (!price) {
+        delete this.cached[market];
+        continue;
+      }
+      this.cached[market] = {
+        snapshot: this.snapshot(market, price.bid, price.ask, combined.observedAt * 1_000),
+        report: combined.report,
+        validUntil: combined.validUntil,
+      };
+      this.emit(market);
+    }
+  }
+  async latest(market: OracleMarket): Promise<OracleQuote> {
+    this.refresh();
+    let quote = this.cached[market];
+    if (!quote || quote.validUntil * 1_000 <= this.now()) {
+      await this.coalesce("poll", () => this.client.poll());
+      this.refresh();
+      quote = this.cached[market];
+    }
+    if (!quote || quote.validUntil * 1_000 <= this.now())
+      throw new Error(`no oracle consensus for ${market}`);
+    return quote;
   }
 }
 

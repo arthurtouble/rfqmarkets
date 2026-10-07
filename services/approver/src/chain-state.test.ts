@@ -114,7 +114,9 @@ test("verifySignedReport dry-runs the adapter and returns the market's observati
   state.signedObservations = [btc, { ...btc, market: 1n }];
   const chain = fakeChain(state);
   assert.deepEqual(await verifySignedReport(chain, "0x01", CLEARING, 100, 0), btc);
-  await assert.rejects(verifySignedReport(fakeChain({ ...state, signedObservations: [] }), "0x01", CLEARING, 100, 0));
+  await assert.rejects(
+    verifySignedReport(fakeChain({ ...state, signedObservations: [] }), "0x01", CLEARING, 100, 0),
+  );
   assert.deepEqual(
     chain.calls.filter((call) => call === "oracle" || call === "eth_call"),
     ["oracle", "eth_call", "eth_call"],

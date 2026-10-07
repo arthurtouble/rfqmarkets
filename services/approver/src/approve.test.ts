@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { encodeSignedReport } from "../../../packages/shared/src/oracle-report.js";
+import { encodeSignedReport } from "../../../packages/shared/src/signed-oracle.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -228,7 +228,11 @@ test("signed mode validates the adapter's consensus observation", async () => {
   const fixture = buildFixture(),
     nowSeconds = BigInt(Math.floor(fixture.nowMs / 1000)),
     report = encodeSignedReport([
-      { observedAt: nowSeconds, prices: [{ market: 0n, bid: PRICES.BTC, ask: PRICES.BTC }], signature: "0x01" },
+      {
+        observedAt: Number(nowSeconds),
+        prices: [{ market: 0, bid: PRICES.BTC, ask: PRICES.BTC }],
+        signature: "0x01",
+      },
     ]);
   const payload = {
     ...fixture.payload,
