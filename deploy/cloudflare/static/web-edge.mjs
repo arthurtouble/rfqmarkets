@@ -7,6 +7,7 @@ const READS = [
   [new RegExp(`^/v1/funding/${ADDRESS}$`), "INDEXER"],
   [/^\/v1\/leaderboard$/, "INDEXER"],
   [new RegExp(`^/v1/points/${ADDRESS}$`), "INDEXER"],
+  [new RegExp(`^/v1/referrals/${ADDRESS}$`), "INDEXER"],
   [/^\/v1\/markets\/(stream|history|stats)$/, "MARKET_GATEWAY"],
   [/^\/v1\/candles$/, "MARKET_GATEWAY"],
   [/^\/v1\/(config|markets)$/, "API"],
@@ -23,10 +24,12 @@ const WRITES = [
   /^\/v1\/orders\/(?:(?:trigger|tpsl)\/)?prepare$/,
   /^\/v1\/orders\/[A-Za-z0-9_-]{1,128}\/cancel(?:\/prepare)?$/,
 ];
+/** The only write the indexer takes: a user-signed referral binding. */
+const INDEXER_WRITES = [/^\/v1\/referrals$/];
 export function serviceForPath(pathname, method) {
   const path=pathname.split("?",1)[0];
   if(!method || method === "GET" || method === "OPTIONS")for(const [pattern,service] of READS)if(pattern.test(path))return service;
-  if(!method || method === "POST" || method === "OPTIONS")if(WRITES.some(pattern=>pattern.test(path)))return "API";
+  if(!method || method === "POST" || method === "OPTIONS"){if(WRITES.some(pattern=>pattern.test(path)))return "API";if(INDEXER_WRITES.some(pattern=>pattern.test(path)))return "INDEXER";}
   return null;
 }
 

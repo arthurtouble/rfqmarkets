@@ -320,6 +320,38 @@ export class RfqClient {
     });
   }
 
+  // ---- Referrals ----
+
+  /** Names `referrer` as the account that referred the signer. Permanent: an account has one referrer. */
+  async setReferrer(referrer: string) {
+    const config = await this.request<{ chainId: string; clearingAddress: string }>("/v1/config"),
+      referral = {
+        account: await this.accountOf(),
+        referrer: getAddress(referrer),
+        issuedAt: Math.floor(Date.now() / 1_000),
+      },
+      signature = await this.signer().signTypedData(
+        {
+          name: "RFQ Markets",
+          version: "1",
+          chainId: BigInt(config.chainId),
+          verifyingContract: config.clearingAddress,
+        },
+        {
+          Referral: [
+            { name: "account", type: "address" },
+            { name: "referrer", type: "address" },
+            { name: "issuedAt", type: "uint64" },
+          ],
+        },
+        referral,
+      );
+    return this.request("/v1/referrals", { ...referral, signature });
+  }
+  async referrals(address?: string) {
+    return this.request(`/v1/referrals/${await this.accountOf(address)}`);
+  }
+
   // ---- Streams ----
 
   /**

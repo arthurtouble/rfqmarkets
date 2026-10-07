@@ -25,6 +25,10 @@ test("routes public reads to the indexer and market streams to the gateway", () 
   assert.equal(serviceForPath(`/v1/points/${account}`), "INDEXER");
   assert.equal(serviceForPath("/v1/points/0x12"), null);
   assert.equal(serviceForPath("/v1/leaderboard", "POST"), null);
+  assert.equal(serviceForPath("/v1/referrals", "POST"), "INDEXER");
+  assert.equal(serviceForPath("/v1/referrals", "GET"), null);
+  assert.equal(serviceForPath(`/v1/referrals/${account}`), "INDEXER");
+  assert.equal(serviceForPath(`/v1/referrals/${account}`, "POST"), null);
   assert.equal(serviceForPath("/v1/quote"), "API");
   assert.equal(serviceForPath("/v1/quote/ladder", "GET"), "API");
   assert.equal(serviceForPath("/v1/quote/ladder", "POST"), null);
