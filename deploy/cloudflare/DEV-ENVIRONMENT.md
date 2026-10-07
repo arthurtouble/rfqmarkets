@@ -1,6 +1,6 @@
 # Hosted dev environment (Base mainnet)
 
-A development deployment people can open in a browser: the trading UI and docs on Cloudflare, every backend service in one Cloudflare Container, and the dev-profile contracts on Base mainnet (owner wallet, no timelock, dev caps; see [BASE-MAINNET-DEPLOYMENT.md](../../BASE-MAINNET-DEPLOYMENT.md)). It is for development only. It is not the production trust layout, and it must not hold customer funds.
+A development deployment people can open in a browser: the trading UI and docs on Cloudflare, every backend service in one Cloudflare Container, and the dev-profile contracts on Base mainnet (owner wallet, no timelock, dev caps; see [Base mainnet deployment](../../docs/operations/base-mainnet.md)). It is for development only. It is not the production trust layout, and it must not hold customer funds.
 
 | Piece | Where | Updated by |
 | --- | --- | --- |

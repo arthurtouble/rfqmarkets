@@ -1,23 +1,38 @@
-import React, { useState } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { RouterProvider } from "@tanstack/react-router";
+import { WagmiProvider } from "wagmi";
 import "@fontsource-variable/ibm-plex-sans/wght.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
-import { MarketsPage } from "./MarketsPage.js";
-import { TradePage } from "./TradePage.js";
+import { MarketFeedProvider } from "./data/market-feed.js";
+import { TradingProvider } from "./data/actions.js";
+import { router } from "./router.js";
+import { ToastProvider } from "./ui/toasts.js";
+import { createWagmiConfig, loadSettlement } from "./wallet/chain.js";
+import { TraderProvider } from "./wallet/trader.js";
 import "./styles.css";
 
-type View = "trade" | "markets";
-const initialView = (): View => new URLSearchParams(window.location.search).get("view") === "markets" ? "markets" : "trade";
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 5_000, retry: 2, refetchOnWindowFocus: true } },
+});
 
-function App() {
-  const [view, setView] = useState<View>(initialView);
-  const [account,setAccount]=useState<string|null>(null);
-  const navigate = (next: View) => { setView(next); history.replaceState({}, "", next === "trade" ? location.pathname : `${location.pathname}?view=markets`); };
-  return <main className="wide"><div className="app-frame">
-    <header className="topbar"><button className="brand" onClick={() => navigate("trade")} aria-label="RFQ Markets home"><span className="wordmark">RFQ<span>/</span></span><span><strong>MARKETS</strong><small>Perpetuals on Base</small></span></button><nav aria-label="Main navigation"><button className={view === "trade" ? "active" : ""} onClick={() => navigate("trade")}>Trade</button><button className={view === "markets" ? "active" : ""} onClick={() => navigate("markets")}>Markets</button></nav><div className="network"><i/>BASE</div><button className="header-wallet" onClick={()=>{navigate("trade");requestAnimationFrame(()=>document.querySelector<HTMLButtonElement>(".trade-wallet")?.click());}}>{account?`${account.slice(0,6)}…${account.slice(-4)}`:"Connect wallet"}</button></header>
-    {view === "trade" ? <TradePage onWalletChange={setAccount} /> : <MarketsPage />}
-  </div></main>;
-}
+const settlement = await loadSettlement();
+const wagmiConfig = createWagmiConfig(settlement.chain);
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(<StrictMode>
+  <WagmiProvider config={wagmiConfig}>
+    <QueryClientProvider client={queryClient}>
+      <TraderProvider chain={settlement.chain} settlement={settlement.config}>
+        <ToastProvider>
+          <TradingProvider>
+            <MarketFeedProvider>
+              <RouterProvider router={router} />
+            </MarketFeedProvider>
+          </TradingProvider>
+        </ToastProvider>
+      </TraderProvider>
+    </QueryClientProvider>
+  </WagmiProvider>
+</StrictMode>);

@@ -8,7 +8,7 @@ import { identifyCandidate } from "./candidate-identity.js";
 import { validateDevManifest, validateMainnetManifest } from "./mainnet-manifest.js";
 import { checkReleaseEvidence } from "./release-evidence.js";
 
-// Usage (see BASE-MAINNET-DEPLOYMENT.md):
+// Usage (see docs/operations/base-mainnet.md):
 //   candidate         (prints this checkout's candidate hash for the manifest)
 //   preflight         MANIFEST
 //   deploy-timelock   GOVERNANCE_SAFE [DELAY_SECONDS=259200]
