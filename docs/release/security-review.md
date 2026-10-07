@@ -10,6 +10,7 @@ A full pass over the contracts, backend services, Cloudflare edge, CI and fronte
 
 | Medium | Oracle | A node trusted one RPC for the index-to-symbol mapping, and the signed price carries only the index, so a compromised RPC could make nodes sign one market's price for another. Feed freshness tracked the connection, not the ticker. | #40: each index is pinned to its symbol through `ORACLE_MARKETS`, RPC must be https, quotes older than 30s are not live, crossed books clear. |
 | Low | Services | Bearer tokens compared with `===`; the approver accepted an empty token; hedger `/health` leaked raw bridge errors; no total hedge position cap; edge asset fallback skipped security headers. | #40. |
+| High | Trading app | The app signed whatever EIP-712 payload the API's prepare endpoints returned and took the clearing, token and chain from `/v1/config`. A compromised API or edge could redirect a withdrawal, flip a trade, authorise an attacker session key, or point a deposit approval at another contract. | Branch `claude/project-thread-mss3gf-web-signing`: every payload is checked against what the user asked for before signing, the signed typed data is rebuilt from the trusted domain and bundled types, and deployed builds pin `VITE_CHAIN_ID`, `VITE_CLEARING_ADDRESS` and `VITE_TOKEN_ADDRESS`. |
 
 Further fixes are tracked in the pull requests linked from the project thread; this table is updated as they merge.
 
