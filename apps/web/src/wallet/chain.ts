@@ -1,33 +1,18 @@
-// The settlement chain comes from GET /v1/config, so one build serves the
-// local stack, Base Sepolia and Base. Without an API we assume Base.
+// The settlement chain and contracts: GET /v1/config, checked against the
+// build-time pins in settlement.ts. Without an API we assume Base (or the
+// pinned chain).
 import { createConfig, http, type CreateConnectorFn } from "wagmi";
 import { baseAccount, injected, walletConnect } from "wagmi/connectors";
-import { base, baseSepolia } from "wagmi/chains";
-import { defineChain, type Chain } from "viem";
+import type { Chain } from "viem";
 import { API, WALLETCONNECT_PROJECT_ID } from "../lib/env.js";
 import { getJson } from "../lib/http.js";
 import type { ChainConfig } from "../lib/types.js";
+import { KNOWN_CHAINS, resolveSettlement, type Settlement } from "./settlement.js";
 
-export type Settlement = { chain: Chain; config: ChainConfig | null };
+export { chainFor, type Settlement } from "./settlement.js";
 
-const KNOWN: Record<number, Chain> = { [base.id]: base, [baseSepolia.id]: baseSepolia };
-
-export function chainFor(config: ChainConfig): Chain {
-  const id = Number(BigInt(config.chainId));
-  const known = KNOWN[id];
-  const rpc = config.rpcUrl ? [config.rpcUrl] : known?.rpcUrls.default.http ?? [];
-  if (known) return { ...known, rpcUrls: { default: { http: rpc } } };
-  return defineChain({ id, name: config.chainName, nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: rpc } } });
-}
-
-export async function loadSettlement(): Promise<Settlement> {
-  try {
-    const config = await getJson<ChainConfig>(`${API}/v1/config`, AbortSignal.timeout(3_000));
-    return { chain: chainFor(config), config };
-  } catch {
-    return { chain: base, config: null };
-  }
-}
+export const loadSettlement = (): Promise<Settlement> =>
+  resolveSettlement(import.meta.env, () => getJson<ChainConfig>(`${API}/v1/config`, AbortSignal.timeout(3_000)));
 
 /** Defers a heavy wallet SDK until someone picks that wallet. wagmi asks every
  * connector for its provider on page load to restore sessions; this answers
@@ -59,7 +44,7 @@ const APP = { name: "RFQ Markets", url: "https://dev.rfq-markets.workers.dev" };
  * WalletConnect for phone and QR wallets. */
 export function walletConnectors(chain: Chain) {
   const connectors: CreateConnectorFn[] = [injected()];
-  if (chain.id in KNOWN) connectors.push(lazyConnector(baseAccount({ appName: APP.name, preference: { telemetry: false } })));
+  if (chain.id in KNOWN_CHAINS) connectors.push(lazyConnector(baseAccount({ appName: APP.name, preference: { telemetry: false } })));
   const origin = typeof location === "undefined" ? APP.url : location.origin;
   connectors.push(lazyConnector(walletConnect({
     projectId: WALLETCONNECT_PROJECT_ID,

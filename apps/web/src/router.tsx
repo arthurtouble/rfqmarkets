@@ -43,6 +43,7 @@ function ShellLayout() {
         <WalletMenu />
       </div>
     </header>
+    {trader.settlementError && <div className="notice warn settlement-error" role="alert">{trader.settlementError}</div>}
     <main><Outlet /></main>
     <nav className="rfq-tabbar tabbar" aria-label="Main">
       <Link to="/trade/$market" params={{ market: lastMarket() }} aria-current={current("trade")}>{NavIcons.trade}<span>Trade</span></Link>
