@@ -15,6 +15,14 @@ A full pass over the contracts, backend services, Cloudflare edge, CI and fronte
 
 Further fixes are tracked in the pull requests linked from the project thread; this table is updated as they merge.
 
+### Rotate keys exposed by the deploy workflow hole
+
+The same pattern existed in every earlier version of the deploy workflows: `deploy-cloudflare.yml` (testnet docs, `CLOUDFLARE_API_TOKEN`) since 11 September 2026, and `deploy-cloudflare-dev.yml` (Cloudflare token, RPC URLs, later the Alchemy key) since 6 October 2026. The earlier versions used GitHub environments (`testnet`, `cloudflare-dev`), which only stop this if they had required reviewers or a `main`-only branch rule. The previous public repository deployed from Actions with these secrets set, so a fork PR from a branch named `main` could have run code with them. Whether one did can only be seen in that repository's Actions history: look for deploy runs whose triggering CI run came from a fork. Unless that history shows none, rotate, in this order:
+
+1. The Cloudflare API token (and review recent Workers and container deployments in the Cloudflare audit log).
+2. The approver, sponsor and emergency keys held by the dev runtime Durable Object, and the oracle signer keys, then update the signer sets on chain. A token holder could have redeployed those workers to read them.
+3. The Alchemy key and the RPC URLs stored as secrets.
+
 ## Needs a decision
 
 These need a contract upgrade (a mainnet broadcast) or an operator choice, so they were not changed in code.
