@@ -1,0 +1,27 @@
+// Base mainnet dev runtime. Reachable only through the dev web worker's service bindings (no public route).
+// The DEV_STATE id is filled in by .github/workflows/deploy-cloudflare-dev.yml, which creates the namespace.
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "rfq-markets-runtime-dev",
+  "main": "dev-worker.mjs",
+  "compatibility_date": "2026-09-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "containers": [{
+    "class_name": "RFQDevRuntime",
+    "image": "../../../Dockerfile.cloudflare-dev",
+    "max_instances": 1,
+    "instance_type": "basic"
+  }],
+  "durable_objects": {"bindings": [{"name": "RFQ_DEV_RUNTIME", "class_name": "RFQDevRuntime"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["RFQDevRuntime"]}],
+  "kv_namespaces": [{"binding": "DEV_STATE", "id": "REPLACED_AT_DEPLOY"}],
+  "triggers": {"crons": ["* * * * *"]},
+  "ratelimits": [
+    {"name":"PUBLIC_READ_LIMIT","namespace_id":"8453001","simple":{"limit":600,"period":60}},
+    {"name":"PUBLIC_WRITE_LIMIT","namespace_id":"8453002","simple":{"limit":120,"period":60}},
+    {"name":"GLOBAL_READ_LIMIT","namespace_id":"8453003","simple":{"limit":12000,"period":60}},
+    {"name":"GLOBAL_WRITE_LIMIT","namespace_id":"8453004","simple":{"limit":2400,"period":60}}
+  ],
+  "observability": {"enabled": true, "head_sampling_rate": 1}
+}
