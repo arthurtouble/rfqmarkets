@@ -7,7 +7,7 @@ import {DurableSender,type SenderOptions} from '../../api/src/sender.js';
 import type {OracleSource} from '../../api/src/oracle.js';
 import {KeeperEngine,type KeeperAction,type KeeperDependencies} from './engine.js';
 
-const keeperAbi=[...clearingStateAbi,'function usdc() view returns(address)','function liquidate(address,uint8,bytes) payable','function submitResolutionObservation(bytes) payable','function processResolution(uint256)','function resolutionPricesReady() view returns(bool)','function resolutionFinalized() view returns(bool)','function resolutionCursor() view returns(uint256)','function resolutionSampleCount(uint256) view returns(uint8)'];
+const keeperAbi=[...clearingStateAbi,'function usdc() view returns(address)','function liquidate(address,uint8,bytes) payable','function submitResolutionObservation(bytes) payable','function processResolution(uint256)','function resolutionPricesReady() view returns(bool)','function resolutionFinalized() view returns(bool)','function resolutionCursor() view returns(uint256)','function resolutionSampleCount(uint256) view returns(uint8)','function makerIncidentSince() view returns(uint64)','function reportMakerIncident()'];
 export interface KeeperOptions {rpcUrl:string;chainId:bigint;clearingAddress:string;tokenAddress:string;sponsorKey:string;databasePath:string;oracleSource:OracleSource;indexerUrl:string;operationsToken:string;budget:SenderOptions;pollMs?:number;provider?:JsonRpcProvider;fetchImpl?:typeof fetch;dependencies?:KeeperDependencies}
 export function buildKeeper(options:KeeperOptions){
  if(!options.operationsToken||!options.budget.dailyBudgetWei||!options.budget.maxGasLimit||!options.budget.maxFeePerGas||options.budget.maxValue===undefined)throw new Error('keeper requires explicit sponsor budgets and private operations token');
@@ -23,7 +23,7 @@ export function buildKeeper(options:KeeperOptions){
   execute:async(id,action:KeeperAction)=>{
    let data:string,value=0n;
    if(action.kind==='process')data=clearing.interface.encodeFunctionData('processResolution',[action.maxAccounts]);
-   else if(action.kind==='incident')data=clearing.interface.encodeFunctionData('declareResolution');
+   else if(action.kind==='incident')data=clearing.interface.encodeFunctionData(BigInt(await clearing.makerIncidentSince())===0n?'reportMakerIncident':'declareResolution'); // report starts the grace period; declare resolves once it has passed
    else {const adapter=new Contract(await clearing.oracle(),['function updateFee(bytes) view returns(uint256)'],provider);value=BigInt(await adapter.updateFee(action.proof.report));data=action.kind==='liquidate'?clearing.interface.encodeFunctionData('liquidate',[action.account,action.market,action.proof.report]):clearing.interface.encodeFunctionData(action.kind==='sample'?'submitResolutionObservation':'refreshOracle',[action.proof.report]);}
    const request:TransactionRequest={from:wallet.address,to:options.clearingAddress,data,value};
    let gas:bigint;try{await provider.call(request);gas=await provider.estimateGas(request);}catch(error){if((error as {code?:string}).code==='CALL_EXCEPTION'||action.kind==='incident'&&String(error).includes('0xfc220038'))return false;throw error;}

@@ -28,11 +28,13 @@ The fifteen-second Pyth window is a maximum observation age at block inclusion, 
 
 ## Rapid-iteration profile
 
+The v1 contracts (namespaced storage and linked modules) are not storage-compatible with the proxies below, so the in-place iteration upgrade script was removed. Deploy a fresh profile with `npm run deploy:base-sepolia-iteration` to run v1 on Base Sepolia. The addresses and transactions below record the pre-v1 history.
+
 Feature development uses a separate disposable Base Sepolia proxy at [`0x35eDDFfF04296dae1564f4C33518C57C87b91D90`](https://sepolia.basescan.org/address/0x35eDDFfF04296dae1564f4C33518C57C87b91D90). Its Pyth adapter at [`0x0d8B76cc87B8289A74021E33E13C9F97Aa2e1873`](https://sepolia.basescan.org/address/0x0d8B76cc87B8289A74021E33E13C9F97Aa2e1873) uses direct bounded parsing now. A disposable deployer owns this profile's governance and ProxyAdmin, allowing immediate policy changes and storage-compatible upgrades while features are changing. It is never a production authority model. The governed stack above remains intact as the Safe, timelock, emergency-role and delayed-upgrade rehearsal.
 
 The 2026-09-10 release candidate is implementation [`0xb44Ca37EE72C39a81CCC872C3b9A9c2f000572e4`](https://sepolia.basescan.org/address/0xb44Ca37EE72C39a81CCC872C3b9A9c2f000572e4), linked to risk library [`0x78eA651dA386EC910C8e434097B95e53b7A4D0Fb`](https://sepolia.basescan.org/address/0x78eA651dA386EC910C8e434097B95e53b7A4D0Fb). Upgrade transaction [`0x8d5f…7307`](https://sepolia.basescan.org/tx/0x8d5f3c8ef8a3c0c9da0c645af6bc4181241dedccc9c719d51f0747b4d5a7307d) activated it after the storage-layout gate. It adds all-open-market freshness to cross-margin liquidation without changing storage.
 
-The iteration manifest is `.local-state/base-sepolia-iteration.json`. `npm run deploy:base-sepolia-iteration` creates the profile; `npm run upgrade:base-sepolia-iteration` runs contract compilation and OpenZeppelin storage-layout validation before immediately upgrading the stable proxy; `npm run verify:base-sepolia-iteration` verifies its code, ownership, roles, feeds and versions. The immediate upgrade path passed on-chain in transaction [`0xb42d…95d1`](https://sepolia.basescan.org/tx/0xb42dfe25f50bc17670bfad0b7c6406005af263f38a63962059aba88b884795d1). Oracle-only validation also passed for both Pyth feeds. A fresh environment uses one 20-USDC faucet request for 15 USDC maker and 5 USDC insurance backing, then a second request to the disposable trader for 10 USDC collateral and the additional 10 USDC maker backing required by the live 50% correlated-crash scenario.
+The iteration manifest is `.local-state/base-sepolia-iteration.json`. `npm run deploy:base-sepolia-iteration` creates the profile; `npm run verify:base-sepolia-iteration` verifies its code, ownership, roles, feeds and versions. The immediate upgrade path passed on-chain in transaction [`0xb42d…95d1`](https://sepolia.basescan.org/tx/0xb42dfe25f50bc17670bfad0b7c6406005af263f38a63962059aba88b884795d1). Oracle-only validation also passed for both Pyth feeds. A fresh environment uses one 20-USDC faucet request for 15 USDC maker and 5 USDC insurance backing, then a second request to the disposable trader for 10 USDC collateral and the additional 10 USDC maker backing required by the live 50% correlated-crash scenario.
 
 The rapid profile passed its full cross-system lifecycle on 2026-09-10. A customer opened 11.5 USDC of ETH in Base transaction [`0xd92b…cdf1`](https://sepolia.basescan.org/tx/0xd92b41024cb35b695e732db5b1f9549561d52b330f9aeb22f4c3dbd3671ecdf1), Hyperliquid testnet filled the 0.0044 ETH hedge as order `59807181314`, the exact customer position closed in [`0xe7d7…b977`](https://sepolia.basescan.org/tx/0xe7d70d4afc5dedaa8165526883796bf64517874c608f97ac8a3b0d311171b977), and venue order `59807194950` flattened the hedge. Final customer and venue ETH base were both zero. Approval-to-Base-inclusion was 3.801 seconds with the refreshed authenticated Pyth proof.
 
@@ -65,7 +67,6 @@ For rapid iteration, use the corresponding commands without waiting for governan
 
 ```bash
 npm run deploy:base-sepolia-iteration
-npm run upgrade:base-sepolia-iteration
 npm run verify:base-sepolia-iteration
 npm run fund:base-sepolia-iteration
 npm run bootstrap:base-sepolia-iteration-user

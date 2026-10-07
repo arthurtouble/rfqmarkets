@@ -1,21 +1,21 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { network } from "hardhat";
-import { linkArtifact } from "./link-artifact.mjs";
+import { MAX_MARKET_CONFIG, deployLinked } from "./lib/contract-fixture.mjs";
 
 const { ethers } = await network.create({ network:"hardhatOp", chainType:"op" });
 const [governance, emergency, approverA, approverB, approverC, maker, relayer, ...users] = await ethers.getSigners();
 const traders=users.slice(0,4),artifact=name=>JSON.parse(fs.readFileSync(`artifacts/${name}.json`,"utf8"));
 const libraries={};
-const deploy=async(name,args=[])=>{const item=linkArtifact(artifact(name),libraries);const instance=await new ethers.ContractFactory(item.abi,item.bytecode,governance).deploy(...args);await instance.waitForDeployment();return instance;};
+const deploy=(name,args=[])=>deployLinked(governance,name,args,libraries);
 const token=await deploy("MockUSDC"),oracle=await deploy("MockPriceOracle"),risk=await deploy("RFQRiskMath");libraries.RFQRiskMath=await risk.getAddress();const signatureVerifier=await deploy("RFQSignatureVerifier");libraries.RFQSignatureVerifier=await signatureVerifier.getAddress();
 const implementation=await deploy("RFQClearing");
 const init=new ethers.Interface(artifact("RFQClearing").abi).encodeFunctionData("initialize",[
   await token.getAddress(),await oracle.getAddress(),governance.address,emergency.address,
-  [approverA.address,approverB.address,approverC.address],600_000_000_000n,
+  [approverA.address,approverB.address,approverC.address],600_000_000_000n,[MAX_MARKET_CONFIG,MAX_MARKET_CONFIG],
 ]);
 const proxy=await deploy("TestProxy",[await implementation.getAddress(),governance.address,init]);
-const clearing=new ethers.Contract(await proxy.getAddress(),artifact("RFQClearing").abi,governance);
+const clearing=new ethers.Contract(await proxy.getAddress(),artifact("RFQClearing").abi,governance);await (await clearing.unpause()).wait();
 await (await token.mint(maker.address,900_000_000_000n)).wait();await (await token.connect(maker).approve(await clearing.getAddress(),ethers.MaxUint256)).wait();
 await (await clearing.connect(maker).fundMaker(750_000_000_000n)).wait();await (await clearing.connect(maker).fundInsurance(150_000_000_000n)).wait();
 for(const trader of traders){await (await token.mint(trader.address,100_000_000_000n)).wait();await (await token.connect(trader).approve(await clearing.getAddress(),ethers.MaxUint256)).wait();await (await clearing.connect(trader).deposit(100_000_000_000n)).wait();}
