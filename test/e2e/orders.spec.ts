@@ -231,7 +231,7 @@ test.describe("stop orders from the ticket", () => {
     if (isMobile) await page.getByRole("button", { name: "Long", exact: true }).click();
     const ticket = isMobile ? dialog(page) : page.getByRole("region", { name: "Order ticket" });
     await ticket.getByRole("button", { name: "Stop", exact: true }).click();
-    await ticket.getByLabel("Position size in USDC").fill("250");
+    await ticket.getByLabel("Amount to pay in USDC").fill("50");
     await ticket.getByLabel(/Trigger price/).fill(String(PRICE - 200));
     await expect(
       ticket.getByRole("button", { name: "Trigger must be above the current price" }),
