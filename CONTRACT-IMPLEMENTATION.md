@@ -1,6 +1,6 @@
 # Clearing contract implementation
 
-`contracts/RFQClearing.sol` is the v1 clearing contract. It has not been externally audited. v1 is a fresh deployment: its storage is not compatible with the earlier Base Sepolia proxies, so those cannot be upgraded to it.
+`contracts/RFQClearing.sol` is the v1 clearing contract. It has not been externally audited. v1 is a fresh deployment: its storage is not compatible with the earlier Base Sepolia proxies, so those cannot be upgraded to it. Later v1 changes only append to the namespace (the per-market `costBasis` was appended after the first deployment), so a v1 proxy can be upgraded in place; a proxy that already holds open positions needs a fresh deployment instead, because its cost basis would start at zero.
 
 ## Layout
 
@@ -29,17 +29,17 @@ The global state separately records customer collateral, maker backing and insur
 
 ```mermaid
 flowchart LR
-    R[Verified oracle report] --> F[Accrue global funding]
-    F --> A[Settle account funding]
-    A --> U[Verify user EIP-712 or ERC-1271]
-    U --> Q[Verify two distinct approvers]
-    Q --> B[Check report hash, price and fee bounds]
-    B --> I[Check current inventory impact]
-    I --> P[Realize PnL and update position]
-    P --> M[Check account margin]
-    M --> S[Check maker stress and market caps]
-    S --> E[Commit events and state]
+    R[Verified oracle report] --> F[Accrue funding, settle both legs]
+    F --> U[Verify user EIP-712, ERC-1271 or session key]
+    U --> Q[Verify two distinct approvers and fencing versions]
+    Q --> B[Check report hash, limit price and fee ceiling]
+    B --> I[Check trade/session limits and inventory impact]
+    I --> S[Check capital floor, gross/side/net caps and stress]
+    S --> P[Realize PnL, update position, charge fee]
+    P --> M[Check margin: initial to add risk, maintenance to reduce]
 ```
+
+Exposure admission (`RFQRiskMath.checkExposureTrade`) values gross and per-side books at the ask and net skew and the six stress scenarios at mid. A trade that adds risk needs an enabled market, maker backing (after the trade's realized PnL) of at least `baseRiskCapitalTarget`, every cap satisfied and stress loss at most a quarter of backing. A reduction may run on a disabled market or above a tightened cap as long as it does not make any of those metrics worse. Any market with open positions must have a price no older than 15 seconds.
 
 The transaction sender has no authority in this flow. The API gas wallet, another sponsor or the user can submit the identical signed payload. The user signature binds account, market, base delta, limit price, fee ceiling, nonce, deadline and reduce-only flag. The maker approval binds exact execution price, impact charge, oracle report hash, leader epoch, signer-set version and policy version. Operator versions are deliberately absent from customer authorization: a failover invalidates every old maker approval while a still-valid customer intent can receive a fresh approval under the current policy. Users may cancel any unused nonce directly or through an exact EIP-712 cancellation signed for a sponsor.
 
@@ -57,15 +57,15 @@ The adapter follows Chainlink's published v3 fields and `verifier.verify(unverif
 
 ## Margin, liquidation and resolution
 
-Initial and maintenance requirements add across markets using the version 0.1 tiers. Opening and withdrawals count negative unrealized PnL but no positive unrealized PnL. A paused market still allows a margin-safe withdrawal; global resolution does not.
+Initial and maintenance requirements add across markets using the version 0.1 tiers; the top tier (100% initial, 60% maintenance) also applies above $5M, so a leg that grows past the tiers through price moves can still be valued and liquidated. Trades that add risk and withdrawals need opening equity (negative unrealized PnL only) of at least initial margin. A reduction only needs the account to stay above maintenance margin afterwards, so a trader between the two can always cut risk. Every margin check first settles funding on both legs. A paused market still allows a margin-safe withdrawal; global resolution does not.
 
-Liquidation values longs at bid and shorts at ask. It closes a small enough amount to target 22% equity, capped at 25% per transaction; positions at or below $10,000 or accounts with nonpositive equity close fully. The penalty is capped by positive collateral. The keeper receives the smaller of 10 bps of closed notional and 20% of the collected penalty; the remainder goes to insurance. Deficits consume insurance and then maker backing. Any remainder atomically pauses the system and starts resolution.
+Liquidation values longs at bid and shorts at ask. It closes enough to bring equity back to the leg's maintenance rate plus a 10-point buffer after the penalty (22% in the first tier), capped at 25% per transaction; positions at or below $10,000 or accounts with nonpositive equity close fully. Accounts with nonpositive equity have every leg closed and netted against the maker once, so the keeper's choice of market cannot change the loss. The penalty is capped by positive collateral. The keeper receives the smaller of 10 bps of closed notional and 20% of the collected penalty; the remainder goes to insurance. Deficits consume insurance and then maker backing. Any remainder atomically pauses the system and starts resolution.
 
 Stored oracle prices are monotonic: a report is recorded only if its observation time is later than the stored one. Liquidations and owner closes value positions at the stored price after the report is applied, so a keeper cannot submit an older, still-fresh, more adverse report than the one already on chain.
 
 A maker incident (portfolio stress above a quarter of maker backing) no longer resolves the venue immediately. Anyone may call `reportMakerIncident()` while the incident holds, which starts a grace period (72 hours by default; governance may set 1 hour to 30 days). `clearMakerIncident()` resets it once the maker has recapitalized. Anyone may call `declareResolution()` only after the grace period has elapsed and the incident still holds; governance can declare resolution of a paused venue at any time.
 
-Resolution cannot iterate an unbounded account set in one transaction. New depositors are registered on-chain, with a $10 minimum first deposit to make dust-account expansion costly. After resolution begins, anyone may submit verified observations. The contract uses the first three monotonically timed observations for each market spanning at least 30 seconds and fixes each median. Anyone can then crystallize the account registry in bounded batches. Once complete, each account can withdraw its pro-rata entitlement. Later recoveries increase entitlements without changing claim priority, and payouts never exceed the original claim when assets are abundant. After finalization, governance may withdraw any assets beyond 100% of claims with `withdrawResolutionSurplus(recipient)`; outstanding claims stay fully payable.
+Resolution cannot iterate an unbounded account set in one transaction. New depositors are registered on-chain, with a $10 minimum first deposit to make dust-account expansion costly. Deposits, top-ups, trading, liquidation and withdrawals stop. Governance may still replace the oracle adapter until both resolution prices are fixed, so a broken feed cannot strand the wind-down. After resolution begins, anyone may submit verified observations. The contract uses the first three monotonically timed observations for each market spanning at least 30 seconds and fixes each median. Anyone can then crystallize the account registry in bounded batches. Once complete, each account can withdraw its pro-rata entitlement. Later recoveries increase entitlements without changing claim priority, and payouts never exceed the original claim when assets are abundant. After finalization, governance may withdraw any assets beyond 100% of claims with `withdrawResolutionSurplus(recipient)`; outstanding claims stay fully payable.
 
 ## Upgrades and authority
 
@@ -85,15 +85,15 @@ Approver rotation replaces all three addresses atomically and increments both si
 
 Owner withdrawals can be direct or sponsored. A sponsored `WithdrawalIntent` binds the account, recipient, exact amount, nonce and deadline; the sponsor cannot redirect or increase it. Both paths settle funding, reject stale marks for open positions and preserve opening margin. When governance or the emergency council pauses trading, an owner can directly or indirectly close an entire position at the conservative verified oracle side without maker approvals. This path is unavailable while ordinary trading is live, which prevents it from bypassing RFQ inventory pricing.
 
-Governance can withdraw maker capital only when the remaining backing stays above the configured capital target and four times the live portfolio stress loss. It cannot withdraw maker capital during resolution, only the surplus after finalization.
+Governance can withdraw maker capital only when the remaining backing, less customers' unrealized gains at mid (`customerUnrealizedGain()`), still covers the configured capital target and four times the live portfolio stress loss. The contract keeps a per-market cost basis (the sum of size times entry price) next to the net skew, so this needs no loop over accounts. Customer losses are never counted as maker capital. It cannot withdraw maker capital during resolution, only the surplus after finalization.
 
 ## Tests
 
-- `test/contracts/*.t.sol` (Foundry, `npm run test:foundry`): launch configuration, oracle monotonicity, maker incident grace period, resolution surplus, governance handover to the timelock, session-key ownership, funding accrual on policy changes, and stateful invariants (custody equals the collateral, maker and insurance buckets; market aggregates and exposure books equal the sum of positions) driven through the real signing path.
+- `test/contracts/*.t.sol` (Foundry, `npm run test:foundry`): launch configuration, trade authorization and fencing, collateral flows, margin and liquidation, funding settlement, maker capital, oracle monotonicity, maker incident grace period, resolution claims, recovery and surplus, governance handover to the timelock, session-key ownership, and stateful invariants (custody equals the collateral, maker and insurance buckets; market aggregates, exposure books and cost basis match the sum of positions) driven through the real signing path. In a cloud session without Foundry installed, use `forge test --offline` once forge and solc 0.8.34 are on the path.
 - `scripts/*-e2e.mjs`, `risk-differential.mjs` and `stateful-clearing-e2e.mjs` (Node, part of `npm run test:contracts`): end-to-end clearing, bankruptcy, exposure, API settlement, gross reservation, keeper and account-response flows against a local chain, and a differential check of the linked math against a JavaScript reference.
 
 ## Current engineering limits
 
-Runtime sizes with the IR pipeline at `optimizer_runs = 1`: RFQClearing 18,687 bytes, RFQRiskMath 9,370, RFQResolution 6,690, RFQSettlement 6,223, RFQLiquidation 5,901, RFQSignatureVerifier 2,700. `scripts/compile-contracts.mjs` fails the build if any contract exceeds EIP-170. Library addresses are recorded in the deployment manifest and must be verified with the implementation and proxy.
+Runtime sizes with the IR pipeline at `optimizer_runs = 1`: RFQClearing 18,706 bytes, RFQRiskMath 9,799, RFQResolution 6,776, RFQSettlement 6,582, RFQLiquidation 5,804, RFQSignatureVerifier 2,700. `scripts/compile-contracts.mjs` fails the build if any contract exceeds EIP-170. Library addresses are recorded in the deployment manifest and must be verified with the implementation and proxy.
 
 Production still needs the timelock handover above, live Chainlink or Pyth validation on Base, and an external audit. The browser prototype keeps the limited session secret in tab-scoped storage; production requires a strict content-security policy, no unreviewed third-party scripts and a provider/session design chosen after wallet testing.
