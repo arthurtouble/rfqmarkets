@@ -240,8 +240,13 @@ function verifyTrade(message: Record<string, unknown>, expectation: Extract<Expe
       check(notional * 10_000n <= expectation.amountMicro * 10_001n + 10_000n, "size is larger than you asked for");
     }
     // Mirrors services/api execution.ts makeIntent, plus an absolute ceiling because quote.fee is the server's.
+    // A sell has no upper price bound, so its fee cap lets the notional rise by as much as its protection
+    // lets the price fall.
     const protectedNotional = (abs(baseDelta) * quote.worstPrice) / BASE;
-    const feeNotional = protectedNotional > quote.amount ? protectedNotional : quote.amount;
+    const feeNotional =
+      baseDelta < 0n
+        ? ceilDiv(quote.amount * (2n * quote.expectedPrice - quote.worstPrice), quote.expectedPrice)
+        : protectedNotional > quote.amount ? protectedNotional : quote.amount;
     check(maxFee <= ceilDiv(feeNotional * quote.fee, quote.amount), "fee cap is higher than the quote's fee");
     check(maxFee <= ceilDiv(feeNotional * MAX_TRADE_FEE_BPS, 10_000n), "fee cap is unreasonably high");
     return;
