@@ -20,7 +20,8 @@ function exhaustive(
   for (let mask = 0; mask < 2 ** pending.length; mask++) {
     const state = { ...settled };
     for (let index = 0; index < pending.length; index++)
-      if ((mask & (1 << index)) !== 0) state[pending[index].market] += pending[index].delta;
+      if ((mask & (1 << index)) !== 0)
+        state[pending[index].market] = (state[pending[index].market] ?? 0n) + pending[index].delta;
     const cost = impactCost(state, market, delta);
     if (greatest === undefined || cost > greatest) greatest = cost;
   }
@@ -94,13 +95,13 @@ test("splitting an order across wallets cannot reduce quadratic inventory impact
     current = { ...start };
   for (let index = 0; index < 10; index++) {
     sequential += impactCost(current, "BTC", part);
-    current.BTC += part;
+    current.BTC = (current.BTC ?? 0n) + part;
   }
   assert.equal(sequential, bulk);
   const pending = Array.from({ length: 10 }, () => ({ market: "BTC" as const, delta: part }));
   assert(
     requiredPendingImpact(start, pending, "BTC", part) >=
-      impactCost({ ...start, BTC: start.BTC + part * 10n }, "BTC", part),
+      impactCost({ ...start, BTC: start.BTC! + part * 10n }, "BTC", part),
   );
 });
 

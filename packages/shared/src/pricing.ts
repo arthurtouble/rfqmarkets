@@ -1,16 +1,26 @@
 import { BASE, RATE, USDC, abs, ceilDiv } from "./numeric.js";
-import type { Market } from "./markets.js";
+import { marketRegistry, type Market } from "./markets.js";
 
 export { BASE, RATE, USDC, ceilDiv } from "./numeric.js";
 export type { Market } from "./markets.js";
 
 /**
- * Inventory-impact coefficients the launch markets are registered with on chain (`marketParams(id).impactK`).
- * The charge is per market: there is no cross-market term.
+ * A market's inventory-impact coefficient, as registered on chain (`marketParams(id).impactK`, kept in
+ * the market registry). The charge is per market: there is no cross-market term.
  */
-export const IMPACT_K = { BTC: 10_000n, ETH: 12_000n } as const;
-export type Exposure = Record<Market, bigint>;
-export type QuoteRequest = { market: Market; side: "buy" | "sell"; amount: string };
+export const impactK = (market: Market) => marketRegistry.get(market).impactK;
+/** Settled maker inventory notional per market; a market with no entry has none. */
+export type Exposure = Partial<Record<Market, bigint>>;
+export type QuoteRequest = {
+  market: Market;
+  side: "buy" | "sell";
+  amount: string;
+  /** Price protection the intent's limit price allows beyond the expected price; defaults to `toleranceBps`. */
+  slippageBps?: number;
+};
+/** Bounds for a caller-chosen market-order slippage tolerance. */
+export const MIN_SLIPPAGE_BPS = 1;
+export const MAX_SLIPPAGE_BPS = 500;
 
 export function parseUsdc(value: string): bigint {
   const [whole, fraction = ""] = value.split(".");
@@ -31,39 +41,39 @@ export function marketPotential(impactK: bigint, skew: bigint): bigint {
   return floorDiv(impactK * skew * skew, 2n * RATE * USDC);
 }
 export function potential(exposure: Exposure): bigint {
-  return marketPotential(IMPACT_K.BTC, exposure.BTC) + marketPotential(IMPACT_K.ETH, exposure.ETH);
+  let total = 0n;
+  for (const [market, skew] of Object.entries(exposure))
+    total += marketPotential(impactK(market), skew ?? 0n);
+  return total;
 }
 /** Mirrors `RFQRiskMath.impactCost(impactK, skew, delta)` for the market being traded. */
 export function impactCost(exposure: Exposure, market: Market, delta: bigint): bigint {
-  const skew = exposure[market];
-  return marketPotential(IMPACT_K[market], skew + delta) - marketPotential(IMPACT_K[market], skew);
+  const skew = exposure[market] ?? 0n,
+    k = impactK(market);
+  return marketPotential(k, skew + delta) - marketPotential(k, skew);
 }
+/**
+ * The greatest impact charge over every subset of pending reservations that may settle first. The
+ * charge depends only on the traded market's skew, so the extremes are its settled skew plus all
+ * pending sells or plus all pending buys.
+ */
 export function requiredPendingImpact(
   settled: Exposure,
   pending: Array<{ market: Market; delta: bigint }>,
   market: Market,
   delta: bigint,
 ): bigint {
-  let btcLow = settled.BTC,
-    btcHigh = settled.BTC,
-    ethLow = settled.ETH,
-    ethHigh = settled.ETH;
+  const settledSkew = settled[market] ?? 0n;
+  let low = settledSkew,
+    high = settledSkew;
   for (const item of pending) {
-    if (item.market === "BTC") {
-      if (item.delta < 0n) btcLow += item.delta;
-      else btcHigh += item.delta;
-    } else {
-      if (item.delta < 0n) ethLow += item.delta;
-      else ethHigh += item.delta;
-    }
+    if (item.market !== market) continue;
+    if (item.delta < 0n) low += item.delta;
+    else high += item.delta;
   }
-  let greatest: bigint | undefined;
-  for (const btc of [btcLow, btcHigh])
-    for (const eth of [ethLow, ethHigh]) {
-      const cost = impactCost({ BTC: btc, ETH: eth }, market, delta);
-      if (greatest === undefined || cost > greatest) greatest = cost;
-    }
-  return greatest ?? impactCost(settled, market, delta);
+  const lowCost = impactCost({ [market]: low }, market, delta),
+    highCost = impactCost({ [market]: high }, market, delta);
+  return lowCost > highCost ? lowCost : highCost;
 }
 export interface PriceSnapshot {
   market: Market;
@@ -165,6 +175,41 @@ export function marginRate(notional: bigint, initial: boolean) {
   // Matches RFQRiskMath.marginRate: the top tier also applies above 5M notional.
   return initial ? 10_000n : 6_000n;
 }
+/** Base tiers of `RFQRiskMath.marginRate`: notional ceiling (USDC units) and initial/maintenance bps. */
+export const MARGIN_TIERS = [
+  { maxNotional: 25_000n * USDC, initialBps: 2_000n, maintenanceBps: 1_200n },
+  { maxNotional: 100_000n * USDC, initialBps: 2_500n, maintenanceBps: 1_500n },
+  { maxNotional: 250_000n * USDC, initialBps: 3_300n, maintenanceBps: 2_000n },
+  { maxNotional: 1_000_000n * USDC, initialBps: 5_000n, maintenanceBps: 3_000n },
+  { maxNotional: 2_500_000n * USDC, initialBps: 6_700n, maintenanceBps: 4_000n },
+  { maxNotional: undefined, initialBps: 10_000n, maintenanceBps: 6_000n },
+] as const;
+/** Per-market margin multiplier of the base tiers (`marketParams(id).marginScaleBps`); 10_000 = 1x. */
+export const DEFAULT_MARGIN_SCALE_BPS = 10_000;
+export const MIN_MARGIN_SCALE_BPS = 2_500;
+export const MAX_MARGIN_SCALE_BPS = 50_000;
+/** Mirrors `RFQRiskMath.scaledMarginRate`: the base tier rate times the market multiplier, capped at 100%. */
+export function scaledMarginRate(notional: bigint, initial: boolean, scaleBps: bigint | number) {
+  const rate = (marginRate(notional, initial) * BigInt(scaleBps)) / 10_000n;
+  return rate < 10_000n ? rate : 10_000n;
+}
+/** Margin a leg of `notional` requires, as `RFQRiskMath.accountMargin` adds it per leg. */
+export function legMargin(notional: bigint, initial: boolean, scaleBps: bigint | number) {
+  return (notional * scaledMarginRate(notional, initial, scaleBps)) / 10_000n;
+}
+/** Leverage the first tier's scaled initial margin allows, rounded down to 0.01x (20 at 2_500). */
+export function maxLeverage(scaleBps: bigint | number) {
+  return Number(1_000_000n / scaledMarginRate(0n, true, scaleBps)) / 100;
+}
+/** The margin parameters a client needs to show leverage presets for one market. */
+export function marketMarginView(scaleBps: bigint | number) {
+  return {
+    marginScaleBps: Number(scaleBps),
+    maxLeverage: maxLeverage(scaleBps),
+    initialMarginBps: Number(scaledMarginRate(0n, true, scaleBps)),
+    maintenanceMarginBps: Number(scaledMarginRate(0n, false, scaleBps)),
+  };
+}
 export function constructQuote(
   request: QuoteRequest,
   snapshot: PriceSnapshot,
@@ -196,7 +241,8 @@ export function constructQuote(
     anchor = request.side === "buy" ? snapshot.ask : snapshot.bid,
     premium = ceilDiv(anchor * (baseSpread + impactCharge), notional),
     expectedPrice = request.side === "buy" ? anchor + premium : anchor - premium,
-    tolerance = ceilDiv(expectedPrice * parameters.toleranceBps, 10_000n),
+    toleranceBps = request.slippageBps === undefined ? parameters.toleranceBps : BigInt(request.slippageBps),
+    tolerance = ceilDiv(expectedPrice * toleranceBps, 10_000n),
     worstPrice = request.side === "buy" ? expectedPrice + tolerance : expectedPrice - tolerance;
   return {
     quoteId,

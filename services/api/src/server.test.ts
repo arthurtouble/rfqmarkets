@@ -1322,3 +1322,275 @@ test("limit-order execution does not spend the public write budget", async () =>
     mock.timers.reset();
   }
 });
+
+test("market quotes accept a bounded custom slippage and keep the 8 bps default", async () => {
+  const target = buildApi();
+  await target.ready();
+  try {
+    const quote = async (payload: Record<string, unknown>) =>
+      target.inject({ method: "POST", url: "/v1/quote", payload });
+    const base = { market: "BTC", side: "buy", amount: "1000" };
+    const fallback = (await quote(base)).json(),
+      wide = (await quote({ ...base, slippageBps: 50 })).json(),
+      selling = (await quote({ ...base, side: "sell", slippageBps: 1 })).json();
+    const expected = BigInt(fallback.expectedPrice);
+    assert.equal(BigInt(fallback.worstPrice), expected + (expected * 8n + 9_999n) / 10_000n);
+    assert.equal(
+      BigInt(wide.worstPrice),
+      BigInt(wide.expectedPrice) + (BigInt(wide.expectedPrice) * 50n + 9_999n) / 10_000n,
+    );
+    assert.equal(
+      BigInt(selling.worstPrice),
+      BigInt(selling.expectedPrice) - (BigInt(selling.expectedPrice) + 9_999n) / 10_000n,
+    );
+    for (const slippageBps of [0, 501, 1.5])
+      assert.equal((await quote({ ...base, slippageBps })).statusCode, 400, String(slippageBps));
+  } finally {
+    await target.close();
+  }
+});
+
+test("config and market snapshots expose per-market margin multipliers and leverage", async () => {
+  const target = buildApi();
+  await target.ready();
+  try {
+    const config = (await target.inject("/v1/config")).json();
+    assert.deepEqual(config.markets.BTC, {
+      marginScaleBps: 10_000,
+      maxLeverage: 5,
+      initialMarginBps: 2_000,
+      maintenanceMarginBps: 1_200,
+    });
+    assert.equal(config.marginTiers[0].maxNotional, "25000000000");
+    assert.equal(config.marginTiers.at(-1).maxNotional, null);
+    const markets = (await target.inject("/v1/markets")).json();
+    assert.equal(markets.markets.ETH.marginScaleBps, 10_000);
+    assert.equal(markets.markets.ETH.maxLeverage, 5);
+  } finally {
+    await target.close();
+  }
+});
+
+/** An API whose oracle mid the test moves; `tick` notifies subscribers as a live feed would. */
+function triggerApi(options: { journalPath?: string; approverFetch?: typeof fetch } = {}) {
+  const prices: Record<string, bigint> = { BTC: 100_000n * 1_000_000n, ETH: 4_000n * 1_000_000n },
+    listeners: Array<(market: string) => void> = [];
+  const observation = (market: string) => {
+    const now = Math.floor(Date.now() / 1_000),
+      price = prices[market];
+    return {
+      snapshot: { market, bid: price, ask: price, observedAtMs: Date.now() },
+      report: AbiCoder.defaultAbiCoder().encode(
+        ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)[]"],
+        [[[market === "BTC" ? 0 : 1, price, price, now, now + 15]]],
+      ),
+      validUntil: now + 15,
+    };
+  };
+  const app = buildApi({
+    journalPath: options.journalPath,
+    approvers: apps.map((_, index) => ({ url: `http://approver-${index}`, token: `transport-${index}` })),
+    fetchImpl: options.approverFetch ?? routedFetch,
+    oracleSource: {
+      latest: async (market) => observation(market),
+      subscribe: (listener: (market: string) => void) => {
+        listeners.push(listener);
+        return () => {};
+      },
+    },
+  });
+  return {
+    app,
+    prices,
+    tick: () => {
+      for (const listener of listeners) listener("BTC");
+    },
+  };
+}
+
+async function placeTrigger(
+  target: ReturnType<typeof buildApi>,
+  payload: Record<string, unknown>,
+  signer = user,
+) {
+  const prepared = await target.inject({ method: "POST", url: "/v1/orders/trigger/prepare", payload });
+  assert.equal(prepared.statusCode, 200, prepared.body);
+  const body = prepared.json(),
+    userSignature = await signer.signTypedData(body.domain, body.types, body.intent),
+    placed = await target.inject({
+      method: "POST",
+      url: "/v1/orders",
+      payload: { orderId: body.orderId, userSignature },
+    });
+  assert.equal(placed.statusCode, 200, placed.body);
+  return body;
+}
+
+test("trigger orders sign a TriggeredTradeIntent with a slippage-bounded limit and validate their kind", async () => {
+  const { app: target } = triggerApi();
+  await target.ready();
+  try {
+    const base = {
+      account: user.address,
+      market: "BTC",
+      amount: "950",
+      durationSeconds: 3600,
+      nonce: "424242",
+    };
+    const prepare = (payload: Record<string, unknown>) =>
+      target.inject({ method: "POST", url: "/v1/orders/trigger/prepare", payload: { ...base, ...payload } });
+    const stop = await prepare({ kind: "stop-loss", side: "sell", triggerPrice: "95000", slippageBps: 200 });
+    assert.equal(stop.statusCode, 200, stop.body);
+    const prepared = stop.json();
+    assert.equal(prepared.type, "stop-loss");
+    assert.deepEqual(Object.keys(prepared.types), ["TriggeredTradeIntent"]);
+    assert.equal(prepared.intent.triggerPrice, "95000000000");
+    assert.equal(prepared.intent.triggerAbove, false);
+    assert.equal(prepared.intent.reduceOnly, true);
+    assert.equal(prepared.intent.baseDelta, "-10000000000000000");
+    // 95,000 less 2%. A sell has no upper price bound, so the fee cap is 2 bps of the notional at twice
+    // the trigger, enough for a take-profit that gaps far through its trigger to still fill.
+    assert.equal(prepared.intent.limitPrice, "93100000000");
+    assert.equal(prepared.intent.maxFee, "380000");
+    assert.deepEqual(prepared.trigger, { triggerPrice: "95000000000", triggerAbove: false });
+
+    const entry = (
+      await prepare({ kind: "stop-entry", side: "buy", triggerPrice: "101000", nonce: "424243" })
+    ).json();
+    assert.equal(entry.intent.triggerAbove, true);
+    assert.equal(entry.intent.reduceOnly, false);
+    assert.equal(entry.intent.limitPrice, "102010000000");
+    const profit = (
+      await prepare({ kind: "take-profit", side: "sell", triggerPrice: "110000", nonce: "424244" })
+    ).json();
+    assert.equal(profit.intent.triggerAbove, true);
+
+    const rejected: Array<[Record<string, unknown>, number]> = [
+      [{ kind: "stop-loss", side: "sell", triggerPrice: "100500" }, 409], // already reached
+      [{ kind: "stop-entry", side: "buy", triggerPrice: "99000" }, 409],
+      [{ kind: "stop-loss", side: "sell", triggerPrice: "95000", triggerAbove: true }, 400],
+      [{ kind: "stop-loss", side: "sell", triggerPrice: "95000", reduceOnly: false }, 400],
+      [{ kind: "stop-loss", triggerPrice: "95000" }, 400], // amount sizing needs a side
+      [{ kind: "stop-loss", sizing: "position", triggerPrice: "95000" }, 503], // needs the chain
+      [{ kind: "stop-loss", side: "sell", triggerPrice: "95000", slippageBps: 501 }, 400],
+      [{ kind: "trailing", side: "sell", triggerPrice: "95000" }, 400],
+    ];
+    for (const [payload, status] of rejected)
+      assert.equal((await prepare(payload)).statusCode, status, JSON.stringify(payload));
+    const pair = await target.inject({
+      method: "POST",
+      url: "/v1/orders/tpsl/prepare",
+      payload: { ...base, takeProfitPrice: "110000", stopLossPrice: "95000" },
+    });
+    assert.equal(pair.statusCode, 503, pair.body);
+
+    // A plain TradeIntent signature over the same fields does not place a triggered order.
+    const { triggerPrice: _price, triggerAbove: _above, ...plain } = prepared.intent;
+    const wrong = await user.signTypedData(
+      prepared.domain,
+      { TradeIntent: prepared.types.TriggeredTradeIntent.slice(0, 8) },
+      plain,
+    );
+    assert.equal(
+      (
+        await target.inject({
+          method: "POST",
+          url: "/v1/orders",
+          payload: { orderId: prepared.orderId, userSignature: wrong },
+        })
+      ).statusCode,
+      401,
+    );
+  } finally {
+    await target.close();
+  }
+});
+
+test("an armed stop-loss fires through the approvers once the oracle mid crosses its trigger", async () => {
+  const triggered: Array<{ status: number; triggerPrice?: string }> = [];
+  const approverFetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const response = await routedFetch(input, init),
+      payload = JSON.parse(String(init?.body ?? "{}"));
+    triggered.push({ status: response.status, triggerPrice: payload.trigger?.triggerPrice });
+    return response;
+  }) as typeof fetch;
+  const { app: target, prices, tick } = triggerApi({ approverFetch });
+  await target.ready();
+  try {
+    const signer = Wallet.createRandom();
+    const order = await placeTrigger(
+      target,
+      {
+        account: signer.address,
+        market: "BTC",
+        kind: "stop-loss",
+        side: "sell",
+        amount: "950",
+        triggerPrice: "95000",
+        slippageBps: 100,
+        durationSeconds: 3600,
+        nonce: "777001",
+      },
+      signer,
+    );
+    const list = async () => (await target.inject(`/v1/orders/${signer.address}`)).json().items;
+    const [armed] = await list();
+    assert.equal(armed.type, "stop-loss");
+    assert.equal(armed.triggerPrice, "95000000000");
+    assert.equal(armed.triggerAbove, false);
+    assert.equal(armed.reduceOnly, true);
+    assert.equal(armed.status, "open");
+    tick();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(triggered.length, 0, "an unreached trigger must not reach the approvers");
+
+    prices.BTC = 94_900n * 1_000_000n;
+    tick();
+    let current = armed;
+    for (let poll = 0; poll < 300 && !current.lastError && current.status === "open"; poll++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      [current] = await list();
+    }
+    const signed = triggered.filter((item) => item.status === 200);
+    assert(signed.length >= 2, JSON.stringify({ triggered, current }));
+    assert(signed.every((item) => item.triggerPrice === "95000000000"));
+    assert.equal(current.orderId, order.orderId);
+  } finally {
+    await target.close();
+  }
+});
+
+test("an armed trigger order survives API restart with its type and trigger", async () => {
+  const journalPath = join(directory, "trigger-restart.sqlite"),
+    first = triggerApi({ journalPath });
+  await first.app.ready();
+  const signer = Wallet.createRandom();
+  const prepared = await placeTrigger(
+    first.app,
+    {
+      account: signer.address,
+      market: "ETH",
+      kind: "stop-entry",
+      side: "buy",
+      amount: "500",
+      triggerPrice: "4200",
+      durationSeconds: 3600,
+      nonce: "880001",
+    },
+    signer,
+  );
+  await first.app.close();
+  const restarted = triggerApi({ journalPath });
+  await restarted.app.ready();
+  try {
+    const items = (await restarted.app.inject(`/v1/orders/${signer.address}`)).json().items;
+    assert.equal(items.length, 1);
+    assert.equal(items[0].orderId, prepared.orderId);
+    assert.equal(items[0].type, "stop-entry");
+    assert.equal(items[0].triggerPrice, "4200000000");
+    assert.equal(items[0].triggerAbove, true);
+    assert.equal(items[0].status, "open");
+  } finally {
+    await restarted.app.close();
+  }
+});

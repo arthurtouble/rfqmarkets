@@ -1,5 +1,6 @@
-// Every user action (trade, order, close, funds, quick trading) as one async
-// function: prepare with the API, sign, submit, toast the outcome and refresh.
+// Every user action (trade, order, trigger/TP-SL, close, funds, quick trading)
+// as one async function: prepare with the API, sign, submit, toast the outcome
+// and refresh.
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfig } from "wagmi";
@@ -9,25 +10,40 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
 import { errorMessage, postJson, randomNonce } from "../lib/http.js";
 import { microToInput, shortHash, usdc } from "../lib/format.js";
-import type { Market, Prepared, Quote, RestingOrder, Side, Transaction } from "../lib/types.js";
-import { QUICK_LIMITS, sessionCovers, useQuickSession, type QuickSession } from "../wallet/quick-session.js";
+import { LIMIT_ORDER_DURATION_SECONDS, tpslPrepareBody, triggerPrepareBody, type TpslInput, type TriggerOrderInput } from "../lib/orders.js";
+import { clampSlippageBps } from "../lib/slippage.js";
+import type { CancelResult, Market, Prepared, PreparedTpsl, PreparedTrigger, Quote, RestingOrder, Side, Transaction } from "../lib/types.js";
+import { QUICK_LIMITS, quickSessionRequest, sessionCovers, useQuickSession, type QuickSession } from "../wallet/quick-session.js";
 import { typedData, useTrader } from "../wallet/trader.js";
 import { useToasts } from "../ui/toasts.js";
+import { useMarketList } from "./markets.js";
 import { keys } from "./queries.js";
 
 const clearingAbi = parseAbi(["function deposit(uint256 amount)", "function revokeSession(address session)"]);
 type Settled = { transaction?: Transaction; status?: string };
 
-export type MarketOrder = { market: Market; side: Side; amountMicro: bigint; reduceOnly: boolean };
+/** `slippageBps` (1..500, default 8) sets the signed worst price beyond the expected price. */
+export type MarketOrder = { market: Market; side: Side; amountMicro: bigint; reduceOnly: boolean; slippageBps?: number };
 export type LimitOrder = MarketOrder & { limitPrice: string };
+export type { TpslInput, TriggerOrderInput };
+/** Outcome of closeAll: markets closed, and markets whose close failed (with why). */
+export type CloseAllResult = { closed: Market[]; failed: Array<{ market: Market; error: string }> };
 
 type Trading = {
   busy: string | null;
   quickSession: QuickSession | null;
   marketOrder(order: MarketOrder): Promise<void>;
   limitOrder(order: LimitOrder): Promise<void>;
+  /** Places a stop-loss, take-profit or stop-entry order; resolves to its orderId. Signed with the wallet. */
+  triggerOrder(order: TriggerOrderInput): Promise<string | undefined>;
+  /** Places a TP and/or SL for the whole position (two legs, one nonce, one wallet prompt per leg). Resolves to the placed orderIds. */
+  placeTpsl(input: TpslInput): Promise<string[] | undefined>;
+  /** Cancels an order by its nonce; for a TP/SL leg this cancels both legs. */
   cancelOrder(order: RestingOrder): Promise<void>;
-  closePosition(market: Market): Promise<void>;
+  /** Closes `fractionBps` of the position (1..10_000, default all) at a firm reduce-only quote. */
+  closePosition(market: Market, fractionBps?: number): Promise<void>;
+  /** Closes `fractionBps` of every open position, one quote each. Quick trading signs within its limits without prompts. */
+  closeAll(fractionBps?: number): Promise<CloseAllResult | undefined>;
   emergencyClose(market: Market): Promise<void>;
   deposit(amountMicro: bigint): Promise<boolean>;
   withdraw(amountMicro: bigint): Promise<boolean>;
@@ -38,10 +54,18 @@ type Trading = {
 const TradingContext = createContext<Trading | null>(null);
 const sideLabel = (side: Side) => (side === "buy" ? "Buy" : "Sell");
 const blockLine = (tx?: Transaction) => (tx ? `Block ${tx.blockNumber} · ${shortHash(tx.hash)}` : undefined);
+const TRIGGER_LABELS = { "stop-loss": "Stop-loss", "take-profit": "Take-profit", "stop-entry": "Stop entry" } as const;
+const triggerLabel = (kind: keyof typeof TRIGGER_LABELS) => TRIGGER_LABELS[kind];
+const triggerLine = ({ summary }: PreparedTrigger) =>
+  `${sideLabel(summary.side)} ${summary.amount} USDC ${summary.market} when price ${summary.triggerAbove ? "≥" : "≤"} ${usdc(summary.triggerPrice)}`;
+const fractionLabel = (fractionBps: number, market: Market) => (fractionBps < 10_000 ? `${fractionBps / 100}% of ${market} position` : `${market} position`);
+/** Re-quote a close-all leg when less than this remains on its quote. */
+const QUOTE_EXPIRY_MARGIN_MS = 1_500;
 
 export function TradingProvider({ children }: { children: ReactNode }) {
   const trader = useTrader(), config = useConfig(), client = useQueryClient(), { notify } = useToasts();
   const quick = useQuickSession(trader.address);
+  const marketList = useMarketList();
   const [busy, setBusy] = useState<string | null>(null);
   const api = <T,>(path: string, body: unknown) => postJson<T>(`${API}${path}`, body);
 
@@ -67,6 +91,11 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
   const account = () => trader.address as Address;
 
+  /** Whether the quick-trading key may sign a trade of `amountMicro` in `market` (limits and market mask). */
+  const quickCovers = (market: Market, amountMicro: bigint | null) =>
+    amountMicro !== null && sessionCovers(quick.session, amountMicro, marketList.get(market)?.index ?? Number.MAX_SAFE_INTEGER);
+  const quoteAmount = (quote: Quote) => (quote.amount === undefined ? null : BigInt(quote.amount));
+
   async function settleTrade(quote: Quote, reduceOnly: boolean, progress: (detail: string) => void, sessionAllowed: boolean) {
     const nonce = randomNonce();
     const prepared = await api<Prepared>("/v1/prepare", { quoteId: quote.quoteId, account: account(), nonce, reduceOnly });
@@ -85,8 +114,11 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     marketOrder: order => run("Trade", `${sideLabel(order.side)} ${order.market}`, async progress => {
       progress("Getting a firm quote");
-      const quote = await api<Quote>("/v1/quote", { market: order.market, side: order.side, amount: microToInput(order.amountMicro) });
-      const result = await settleTrade(quote, order.reduceOnly, progress, sessionCovers(quick.session, order.amountMicro));
+      const quote = await api<Quote>("/v1/quote", {
+        market: order.market, side: order.side, amount: microToInput(order.amountMicro),
+        ...(order.slippageBps === undefined ? {} : { slippageBps: clampSlippageBps(order.slippageBps) }),
+      });
+      const result = await settleTrade(quote, order.reduceOnly, progress, quickCovers(order.market, order.amountMicro));
       return {
         title: `${sideLabel(order.side)} ${usdc(order.amountMicro)} ${order.market} ${result.transaction ? "filled" : "approved"}`,
         detail: [`at ${usdc(quote.expectedPrice)}`, blockLine(result.transaction)].filter(Boolean).join(" · "),
@@ -97,7 +129,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     limitOrder: order => run("Limit order", `Place ${order.side} limit`, async progress => {
       const prepared = await api<Prepared & { orderId: string }>("/v1/orders/prepare", {
         account: account(), market: order.market, side: order.side, amount: microToInput(order.amountMicro),
-        limitPrice: order.limitPrice, durationSeconds: 86_400, nonce: randomNonce(), reduceOnly: order.reduceOnly,
+        limitPrice: order.limitPrice, durationSeconds: LIMIT_ORDER_DURATION_SECONDS, nonce: randomNonce(), reduceOnly: order.reduceOnly,
       });
       progress("Confirm in your wallet");
       const userSignature = await trader.signIntent(prepared, "TradeIntent");
@@ -105,19 +137,71 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       return { title: `${sideLabel(order.side)} limit open`, detail: `${usdc(order.amountMicro)} ${order.market} at ${usdc((prepared.intent as { limitPrice: string }).limitPrice)}, good for 24 hours`, value: undefined };
     }),
 
-    cancelOrder: order => run("Cancel", "Cancel order", async progress => {
-      const prepared = await api<Prepared>(`/v1/orders/${order.orderId}/cancel/prepare`, {});
+    // POST /v1/orders verifies the owner's signature (EOA or ERC-1271) only, so resting trigger
+    // orders are always signed with the wallet, never the quick-trading key.
+    triggerOrder: order => run("Trigger order", `Place ${triggerLabel(order.kind).toLowerCase()}`, async progress => {
+      const prepared = await api<PreparedTrigger>("/v1/orders/trigger/prepare", triggerPrepareBody(order, account(), randomNonce()));
       progress("Confirm in your wallet");
-      const userSignature = await trader.signIntent(prepared, "CancelIntent");
-      const result = await api<Settled>(`/v1/orders/${order.orderId}/cancel`, { intent: prepared.intent, userSignature });
-      return { title: "Order cancelled", detail: blockLine(result.transaction), txHash: result.transaction?.hash, value: undefined };
+      const userSignature = await trader.signIntent(prepared, "TriggeredTradeIntent");
+      await api("/v1/orders", { orderId: prepared.orderId, userSignature });
+      return { title: `${triggerLabel(prepared.type)} set`, detail: triggerLine(prepared), value: prepared.orderId };
     }),
 
-    closePosition: market => run("Close", `Close ${market}`, async progress => {
+    placeTpsl: input => run("TP/SL", `Protect ${input.market}`, async progress => {
+      const pair = await api<PreparedTpsl>("/v1/orders/tpsl/prepare", tpslPrepareBody(input, account(), randomNonce()));
+      // Sign every leg before placing any, so a rejected prompt leaves nothing half-placed.
+      const signatures: Hex[] = [];
+      for (const [index, leg] of pair.orders.entries()) {
+        progress(pair.orders.length > 1 ? `Confirm the ${triggerLabel(leg.type).toLowerCase()} in your wallet (${index + 1} of ${pair.orders.length})` : "Confirm in your wallet");
+        signatures.push(await trader.signIntent(leg, "TriggeredTradeIntent"));
+      }
+      progress("Placing orders");
+      for (const [index, leg] of pair.orders.entries()) await api("/v1/orders", { orderId: leg.orderId, userSignature: signatures[index] });
+      return { title: `${input.market} ${pair.orders.map(leg => triggerLabel(leg.type).toLowerCase()).join(" and ")} set`, detail: pair.orders.map(triggerLine).join(" · "), value: pair.orders.map(leg => leg.orderId) };
+    }),
+
+    cancelOrder: order => run("Cancel", order.pairId ? "Cancel TP/SL" : "Cancel order", async progress => {
+      const prepared = await api<Prepared & { orderIds?: string[] }>(`/v1/orders/${order.orderId}/cancel/prepare`, {});
+      const affected = prepared.orderIds?.length ?? 1;
+      progress(affected > 1 ? `Confirm in your wallet (cancels ${affected} orders)` : "Confirm in your wallet");
+      const userSignature = await trader.signIntent(prepared, "CancelIntent");
+      const result = await api<CancelResult>(`/v1/orders/${order.orderId}/cancel`, { intent: prepared.intent, userSignature });
+      const count = result.cancelledOrderIds?.length ?? 1;
+      return { title: count > 1 ? `${count} orders cancelled` : "Order cancelled", detail: blockLine(result.transaction), txHash: result.transaction?.hash, value: undefined };
+    }),
+
+    closePosition: (market, fractionBps = 10_000) => run("Close", `Close ${fractionLabel(fractionBps, market)}`, async progress => {
       progress("Getting an exact close quote");
-      const quote = await api<Quote>("/v1/close/quote", { account: account(), market });
-      const result = await settleTrade(quote, true, progress, false);
-      return { title: `${market} position closed`, detail: [`at ${usdc(quote.expectedPrice)}`, blockLine(result.transaction)].filter(Boolean).join(" · "), txHash: result.transaction?.hash, value: undefined };
+      const quote = await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps });
+      const result = await settleTrade(quote, true, progress, quickCovers(market, quoteAmount(quote)));
+      return { title: `${fractionLabel(fractionBps, market)} closed`, detail: [`at ${usdc(quote.expectedPrice)}`, blockLine(result.transaction)].filter(Boolean).join(" · "), txHash: result.transaction?.hash, value: undefined };
+    }),
+
+    closeAll: (fractionBps = 10_000) => run("Close all", fractionBps < 10_000 ? `Close ${fractionBps / 100}% of every position` : "Close all positions", async progress => {
+      progress("Getting close quotes");
+      const { quotes } = await api<{ quotes: Quote[] }>("/v1/close/all/quote", { account: account(), fraction: fractionBps });
+      const outcome: CloseAllResult = { closed: [], failed: [] };
+      if (!quotes.length) return { title: "No open positions", value: outcome };
+      let lastTx: Transaction | undefined;
+      for (const [index, first] of quotes.entries()) {
+        const market = first.market!;
+        try {
+          // Quotes live seconds; wallet prompts for earlier positions can outlast later quotes.
+          const quote = Date.now() < first.expiresAtMs - QUOTE_EXPIRY_MARGIN_MS ? first
+            : await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps });
+          const step = (detail: string) => progress(`${market} (${index + 1} of ${quotes.length}): ${detail}`);
+          const result = await settleTrade(quote, true, step, quickCovers(market, quoteAmount(quote)));
+          lastTx = result.transaction ?? lastTx;
+          outcome.closed.push(market);
+        } catch (error) {
+          outcome.failed.push({ market, error: errorMessage(error, "Unavailable") });
+        }
+      }
+      if (!outcome.closed.length) throw new Error(outcome.failed.map(item => `${item.market}: ${item.error}`).join("; "));
+      return {
+        title: outcome.failed.length ? `Closed ${outcome.closed.join(", ")}; ${outcome.failed.map(item => item.market).join(", ")} still open` : `Closed ${outcome.closed.join(", ")}`,
+        detail: outcome.failed.map(item => `${item.market}: ${item.error}`).join(" · ") || blockLine(lastTx), txHash: lastTx?.hash, value: outcome,
+      };
     }),
 
     emergencyClose: market => run("Emergency close", `Close ${market} at oracle`, async progress => {
@@ -155,14 +239,16 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     enableQuickTrading: () => run("Quick trading", "Enable quick trading", async progress => {
       const privateKey = generatePrivateKey(), sessionAddress = privateKeyToAccount(privateKey).address;
+      // Covers every registered market; one added later needs a new session (sessionCovers checks the mask).
+      const request = quickSessionRequest(Math.max(1, marketList.markets.length));
       const prepared = await api<Omit<Prepared, "intent"> & { grant: Record<string, unknown> }>("/v1/session/prepare", {
-        account: account(), session: sessionAddress, ...QUICK_LIMITS, nonce: randomNonce(),
+        account: account(), session: sessionAddress, ...request, nonce: randomNonce(),
       });
       progress("Confirm the session in your wallet");
       const userSignature = await trader.signIntent({ ...prepared, intent: prepared.grant }, "SessionGrant");
       progress("Activating sponsored session");
       const result = await api<{ validUntil: string; transaction?: Transaction }>("/v1/session/execute", { grant: prepared.grant, userSignature });
-      quick.save({ account: account(), sessionAddress, privateKey, validUntil: Number(result.validUntil) * 1_000 });
+      quick.save({ account: account(), sessionAddress, privateKey, validUntil: Number(result.validUntil) * 1_000, marketMask: String(request.marketMask) });
       return { title: "Quick trading on", detail: `Trades up to ${QUICK_LIMITS.maxTradeAmount} USDC sign instantly in this tab for 8 hours`, txHash: result.transaction?.hash, value: undefined };
     }),
 

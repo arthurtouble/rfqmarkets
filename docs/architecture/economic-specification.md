@@ -113,6 +113,8 @@ Initial per-market tiers:
 | 1,000,000–2,500,000 | 67% | 40% |
 | 2,500,000–5,000,000 | 100% | 60% |
 
+Each market scales these base tiers by its governance-set `marginScaleBps` (`marketParams(id)`, bounds 2,500–50,000; 10,000 is the table above). The rate is `min(tierRate × marginScaleBps / 10,000, 100%)`, truncated like `RFQRiskMath.scaledMarginRate`, and applies to liquidation sizing too. At 2,500 the first tier is 5% initial / 3% maintenance, so up to 20x opening leverage. The local Hardhat stack (`npm run deploy:local`) runs both markets at 2,500; the mainnet launch manifest defaults (`LAUNCH_RISK`) stay at 10,000. Off-chain risk code (API account view, liquidation estimates, `GET /v1/config`) reads the per-market value from chain and uses the shared `scaledMarginRate`.
+
 Requirements add across positions; there is no user correlation offset in v1. Orders increasing absolute exposure require post-fill equity at or above initial margin. Reduce-only orders must reduce absolute base size and cannot flip direction. A withdrawal requires the zero-positive-uPnL equity calculation to remain above initial margin plus pending user-authorized obligations. Maker withdrawals separately preserve customer withdrawal liquidity, all recognized liabilities, Base maker backing target and both stress limits.
 
 Size-dependent margin is established practice on major venues: Hyperliquid documents continuous margin tiers, and Drift documents an IMF factor and restricted positive unrealized-PnL credit for initial margin. We adopt the conservative principles, not their leverage levels. [Hyperliquid margin tiers](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/margin-tiers), [Drift margin requirements](https://docs.drift.trade/protocol/trading/margin).

@@ -8,6 +8,7 @@ import {
   type OracleMarket,
 } from "../services/api/src/oracle.js";
 import { startServiceStack, stopOnSignals } from "./lib/service-stack.js";
+import { isKnownMarket } from "../packages/shared/src/markets.js";
 
 const deployment = JSON.parse(readFileSync(resolve(".local-state", "deployment.json"), "utf8")) as {
   deploymentId?: string;
@@ -61,7 +62,7 @@ if (simulated) {
     request.on("end", () => {
       try {
         const { market, price } = JSON.parse(body) as { market: OracleMarket; price: number };
-        if (market !== "BTC" && market !== "ETH") throw new Error("market must be BTC or ETH");
+        if (!isKnownMarket(market)) throw new Error("unknown market");
         simulated.setPrice(market, Number(price));
         send(200, simulated.prices());
       } catch (error) {

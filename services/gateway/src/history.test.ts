@@ -30,3 +30,17 @@ test("market history ignores malformed frames without poisoning later data", () 
   assert.deepEqual(history.get("BTC"), [{ observedAtMs: 10, mid: "99", bid: "99", ask: "99" }]);
   assert.deepEqual(history.get("ETH", 2), [{ observedAtMs: 10, mid: "99", bid: "99", ask: "99" }]);
 });
+test("history keeps any market the stream carries and ignores malformed symbols", () => {
+  const history = new MarketHistory(10, 0);
+  history.record(
+    JSON.stringify({
+      markets: {
+        SOL: { observedAtMs: 10, mid: "150", bid: "149", ask: "151" },
+        "not a market": { observedAtMs: 10, mid: "1", bid: "1", ask: "1" },
+      },
+    }),
+  );
+  assert.equal(history.has("SOL"), true);
+  assert.deepEqual(history.get("SOL"), [{ observedAtMs: 10, mid: "150", bid: "149", ask: "151" }]);
+  assert.deepEqual(history.status().points, { SOL: 1 });
+});

@@ -48,7 +48,11 @@ export const persistentConfigSchema = z
     hedgeRiskUrl: z.string().url(),
     indexerUrl: z.string().url(),
     apiUrl: z.string().url(),
-    feedIds: z.tuple([z.string(), z.string()]),
+    /** Pyth feed ids: `[BTC, ETH]`, or a map from market symbol to feed id for any registered market. */
+    feedIds: z.union([
+      z.tuple([z.string(), z.string()]),
+      z.record(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,30}$/), z.string()),
+    ]),
     approvers: z
       .array(z.object({ url: z.string().url(), token: z.string() }).strict())
       .length(3)
@@ -76,5 +80,8 @@ export const persistentConfigSchema = z
   });
 
 export type PersistentConfig = z.infer<typeof persistentConfigSchema>;
+/** Feed ids keyed by market symbol (the legacy `[BTC, ETH]` tuple maps to the launch markets). */
+export const feedIdsByMarket = (feedIds: PersistentConfig["feedIds"]): Record<string, string> =>
+  Array.isArray(feedIds) ? { BTC: feedIds[0], ETH: feedIds[1] } : { ...feedIds };
 export const hedgeVenueApiUrl = (environment: PersistentConfig["environment"]) =>
   environment === "base-mainnet" ? "https://api.hyperliquid.xyz" : "https://api.hyperliquid-testnet.xyz";

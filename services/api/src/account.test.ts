@@ -41,6 +41,35 @@ test("liquidation estimates sit below the mid for longs and above it for shorts"
   assert.equal(long.liquidatable, false);
 });
 
+test("margin and liquidation estimates use each market's margin multiplier", () => {
+  const position = {
+      BTC: { size: BASE / 10n, entryPrice: 100_000n * USDC, lastFundingIndex: 0n },
+      ETH: flat,
+    },
+    base = accountView(1_000n * USDC, position, markets),
+    scaled = accountView(1_000n * USDC, position, {
+      BTC: { ...markets.BTC, marginScaleBps: 2_500 },
+      ETH: { ...markets.ETH, marginScaleBps: 2_500 },
+    });
+  // 0.1 BTC at the 100,010 ask: 10,001 USDC in the first tier (20% / 12%, or 5% / 3% at 0.25x).
+  assert.equal(base.initialMargin, "2000200000");
+  assert.equal(scaled.initialMargin, "500050000");
+  assert.equal(scaled.maintenanceMargin, "300030000");
+  assert.equal(scaled.positions.BTC.initialMargin, "500050000");
+  assert.deepEqual(scaled.marginParameters.BTC, {
+    marginScaleBps: 2_500,
+    maxLeverage: 20,
+    initialMarginBps: 500,
+    maintenanceMarginBps: 300,
+  });
+  assert.equal(base.marginParameters.ETH.maxLeverage, 5);
+  // Lower maintenance margin moves a long's liquidation price further below the mid.
+  assert(
+    BigInt(scaled.positions.BTC.estimatedLiquidationPrice!) <
+      BigInt(base.positions.BTC.estimatedLiquidationPrice!),
+  );
+});
+
 class UnavailableChain extends JsonRpcProvider {
   override async send(): Promise<never> {
     throw new Error("connect ECONNREFUSED 10.0.0.1:8545");

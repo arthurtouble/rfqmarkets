@@ -1,6 +1,6 @@
 # Market policy and lifecycle playbook
 
-Status: executable v1 procedure, 2026-09-09. V1 has two compiled market slots: BTC (0) and ETH (1). Enabling a slot is not permission to assign it a different asset. Adding a third asset requires a reviewed contract upgrade because the oracle mapping, correlation matrix, account loops, resolution observations, indexer schema, and UI types are deliberately fixed to two markets.
+Status: executable v1 procedure, 2026-09-09; market listing updated 2026-10. Markets live in the clearing registry: BTC (0) and ETH (1) at launch, and governance adds more with `addMarket` (up to 128) without an upgrade. A market index is permanent and is never reassigned to a different asset. See [Adding a market](adding-a-market.md).
 
 ## Source of truth
 
@@ -30,12 +30,11 @@ For planned retirement: announce the reduce-only date; stop new risk off-chain; 
 
 ## Add a market
 
-1. Allocate a new permanent market ID and define base units, collateral conversion, oracle feed ID, fallback, freshness/width rules, margin tiers, stress returns, correlations, funding scale, liquidation depth, hedge venue mapping, and resolution source.
-2. Extend the generalized risk matrix and prove it positive semidefinite. Test correlation breaks and the market's interaction with every existing pending envelope.
-3. Upgrade the clearing implementation through the timelock with the new slot disabled. Validate storage layout with open BTC/ETH positions.
-4. Add the feed to both independent approver configurations, the API discovery response, indexer schema, hedger, public dashboard, and client. None of those components may infer identity from a mutable ticker string.
-5. Run shadow quoting, testnet settlement, liquidation, oracle outage, indexer rebuild, API failover, hedge credential fencing, and global resolution.
-6. Fund backing and hedge margin before enabling. Enable with minimal caps, then follow the staged limit procedure.
+[Adding a market](adding-a-market.md) covers the steps: the `addMarket` call, oracle coverage, the hedger's coin mapping, and caps. Before you enable a new market:
+
+1. Choose its impact coefficient, stress shock and margin scale from the asset's volatility and the hedge venue's depth.
+2. Run shadow quoting, testnet settlement, liquidation, oracle outage, hedge outage and global resolution with the market listed.
+3. Fund backing and hedge margin, enable with minimal caps, then follow the staged limit procedure above.
 
 ## Local commands
 

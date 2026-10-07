@@ -2,7 +2,43 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Wallet } from "ethers";
 import { ensureOracleSigner, oracleDomainFor, publicOracleSigner } from "./oracle-identity.mjs";
-import { oracleRequestRoute, oracleWorkerSettings } from "./oracle-worker-routes.mjs";
+import {
+  oracleNodeMarketEnv,
+  oracleRequestRoute,
+  oracleSyncMarkets,
+  oracleWorkerMarkets,
+  oracleWorkerSettings,
+} from "./oracle-worker-routes.mjs";
+
+test("oracle workers price configured markets or the clearing registry", () => {
+  assert.deepEqual(oracleWorkerMarkets({}), [
+    { id: 0, symbol: "BTC" },
+    { id: 1, symbol: "ETH" },
+  ]);
+  assert.deepEqual(oracleWorkerMarkets({ ORACLE_MARKETS: "0:BTC, 1:ETH, 2:SOL" }).at(-1), {
+    id: 2,
+    symbol: "SOL",
+  });
+  assert.throws(() => oracleWorkerMarkets({ ORACLE_MARKETS: "128:SOL" }), /invalid ORACLE_MARKETS/);
+  const deployment = { contracts: { clearingProxy: "0x000000000000000000000000000000000000bEEF" } };
+  assert.deepEqual(oracleNodeMarketEnv({}, deployment), { ORACLE_MARKETS: "0:BTC,1:ETH" });
+  assert.deepEqual(oracleNodeMarketEnv({ ORACLE_RPC_URL: "https://rpc" }, deployment), {
+    ORACLE_RPC_URL: "https://rpc",
+    ORACLE_CLEARING_ADDRESS: deployment.contracts.clearingProxy,
+  });
+  assert.equal(
+    oracleNodeMarketEnv({ ORACLE_RPC_URL: "https://rpc", ORACLE_MARKETS: "0:BTC" }, deployment)
+      .ORACLE_MARKETS,
+    "0:BTC",
+    "an explicit list restricts the registry",
+  );
+  const fallback = oracleWorkerMarkets({});
+  assert.deepEqual(oracleSyncMarkets(null, fallback), fallback);
+  assert.deepEqual(
+    oracleSyncMarkets({ markets: [{ market: 2, symbol: "SOL", included: true }, { market: "x" }] }, fallback),
+    [{ id: 2, symbol: "SOL" }],
+  );
+});
 
 const memory = () => {
   const map = new Map();

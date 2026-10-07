@@ -34,6 +34,8 @@ Deploy the local contracts in a second terminal:
 npm run deploy:local
 ```
 
+The local deployment sets `marginScaleBps` to 2,500 on BTC and ETH, so the first margin tier is 5% initial / 3% maintenance (up to 20x). Live manifests keep their own values.
+
 Run the services:
 
 ```bash

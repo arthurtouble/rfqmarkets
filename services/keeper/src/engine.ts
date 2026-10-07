@@ -1,17 +1,26 @@
 import { getAddress, keccak256, toUtf8Bytes } from "ethers";
+import { marketRegistry } from "../../../packages/shared/src/markets.js";
 
 export interface KeeperState {
   resolutionRequired: boolean;
   resolutionPricesReady: boolean;
   resolutionFinalized: boolean;
   resolutionCursor: bigint;
-  sampleCounts: [number, number];
-  priceTimes: [number, number];
+  /** Per market index, for every market the chain has. */
+  sampleCounts: number[];
+  priceTimes: number[];
+  /**
+   * Per market index: customers hold gross exposure there. Only such markets need fresh prices and
+   * resolution samples, so a market without exposure (e.g. one just added, not yet priced) never
+   * blocks the keeper. Missing means every market counts as open.
+   */
+  openInterest?: boolean[];
   timestamp: number;
 }
 export interface KeeperAccount {
   account: string;
-  positions: { BTC: { size: string }; ETH: { size: string } };
+  /** Per market symbol, as the indexer reports them (`market #i` for one its registry lacks). */
+  positions: Record<string, { size: string }>;
 }
 export interface KeeperProof {
   report: string;
@@ -19,20 +28,43 @@ export interface KeeperProof {
   validUntil: number;
 }
 export type KeeperAction =
-  | { kind: "refresh" | "sample"; market: 0 | 1; proof: KeeperProof }
-  | { kind: "liquidate"; market: 0 | 1; account: string; proof: KeeperProof }
+  | { kind: "refresh" | "sample"; market: number; proof: KeeperProof }
+  | { kind: "liquidate"; market: number; account: string; proof: KeeperProof }
   | { kind: "process"; cursor: bigint; maxAccounts: number }
   | { kind: "incident" };
 export interface KeeperDependencies {
   reconcile(): Promise<boolean>;
   state(): Promise<KeeperState>;
-  proof(market: 0 | 1): Promise<KeeperProof>;
+  proof(market: number): Promise<KeeperProof>;
   accounts(
     cursor: string | undefined,
     limit: number,
   ): Promise<{ items: KeeperAccount[]; nextCursor: string | null }>;
   // False means an explicit canonical simulation revert. Transport failures throw.
   execute(id: string, action: KeeperAction): Promise<boolean>;
+}
+
+/** Index of a market label: a registry symbol, or `market #i` for one the indexer's registry lacked. */
+export function marketIndexOf(label: string): number | undefined {
+  if (marketRegistry.has(label)) return marketRegistry.index(label);
+  const match = /^market #(\d+)$/.exec(label);
+  return match ? Number(match[1]) : undefined;
+}
+
+/** The lowest-index market where the account holds a position; it must be a known market. */
+function firstOpenMarket(item: KeeperAccount) {
+  let first: number | undefined;
+  for (const [label, position] of Object.entries(item.positions)) {
+    if (BigInt(position.size) === 0n) continue;
+    const index = marketIndexOf(label);
+    if (index === undefined) {
+      // A market added after this keeper's last registry refresh: refresh and retry next cycle.
+      marketRegistry.requestRefresh(0);
+      throw new Error(`keeper cannot map market ${label}`);
+    }
+    if (first === undefined || index < first) first = index;
+  }
+  return first;
 }
 
 /** One writer, bounded work, with chain state re-read after every financial write. */
@@ -103,7 +135,7 @@ export class KeeperEngine {
       }
       return accepted;
     };
-    const proof = async (market: 0 | 1) => {
+    const proof = async (market: number) => {
       const item = await this.deps.proof(market);
       if (
         item.observedAt > state.timestamp + 2 ||
@@ -113,6 +145,7 @@ export class KeeperEngine {
         throw new Error("keeper proof lacks safe inclusion time");
       return item;
     };
+    const open = (market: number) => state.openInterest?.[market] ?? true;
     if (state.resolutionFinalized) return;
     if (state.resolutionRequired) {
       if (state.resolutionPricesReady) {
@@ -125,22 +158,23 @@ export class KeeperEngine {
       }
       // Prices are ready once every market with open interest has its samples; a further
       // sample for an idle market would revert.
-      for (const market of [0, 1] as const) {
+      for (let market = 0; market < state.sampleCounts.length; market++) {
         if (state.resolutionPricesReady) return;
+        if (!open(market)) continue;
         if (state.sampleCounts[market] < 3 && writes < this.limits.maxTransactions)
           await execute({ kind: "sample", market, proof: await proof(market) });
       }
       return;
     }
-    // Both legs must be fresh before cross-margin liquidation, including at zero net.
-    for (const market of [0, 1] as const) {
-      if (state.timestamp - state.priceTimes[market] > 5) {
+    // Every leg with open interest must be fresh before cross-margin liquidation, including at zero net.
+    for (let market = 0; market < state.priceTimes.length; market++) {
+      if (open(market) && state.timestamp - state.priceTimes[market] > 5) {
         await execute({ kind: "refresh", market, proof: await proof(market) });
         if (state.resolutionRequired || this.stopped) return;
       }
     }
     if (writes >= this.limits.maxTransactions) return;
-    if (state.priceTimes.some((time) => state.timestamp - time > 15))
+    if (state.priceTimes.some((time, market) => open(market) && state.timestamp - time > 15))
       throw new Error("keeper could not refresh cross-market prices");
     await execute({ kind: "incident" });
     if (state.resolutionRequired || this.stopped) return;
@@ -151,8 +185,7 @@ export class KeeperEngine {
       const item = page.items[index],
         account = getAddress(item.account);
       if (this.cursor && account <= this.cursor) throw new Error("nonmonotonic keeper page");
-      const market =
-        BigInt(item.positions.BTC.size) !== 0n ? 0 : BigInt(item.positions.ETH.size) !== 0n ? 1 : undefined;
+      const market = firstOpenMarket(item);
       if (market !== undefined)
         await execute({ kind: "liquidate", account, market, proof: await proof(market) });
       this.cursor = account;

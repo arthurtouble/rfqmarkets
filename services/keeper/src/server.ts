@@ -7,6 +7,12 @@ import {
   bindGrossContext,
   initializeGrossJournal,
 } from "../../../packages/shared/src/gross-reservation-journal.js";
+import {
+  marketName,
+  marketRefreshIntervalMs,
+  watchMarketRegistry,
+  type MarketRegistryWatch,
+} from "../../../packages/shared/src/markets.js";
 import { DurableSender, type SenderOptions } from "../../api/src/sender.js";
 import type { OracleSource } from "../../api/src/oracle.js";
 import { KeeperEngine, type KeeperAction, type KeeperDependencies } from "./engine.js";
@@ -19,7 +25,7 @@ const positionsPage = z.object({
   items: z.array(
     z.object({
       account: z.string(),
-      positions: z.object({ BTC: z.object({ size: signedInteger }), ETH: z.object({ size: signedInteger }) }),
+      positions: z.record(z.string(), z.object({ size: signedInteger })),
     }),
   ),
   nextCursor: z.string().nullable(),
@@ -60,6 +66,8 @@ export interface KeeperOptions {
   provider?: JsonRpcProvider;
   fetchImpl?: typeof fetch;
   dependencies?: KeeperDependencies;
+  /** Market registry refresh interval (default 60 s; `RFQ_MARKET_REFRESH_MS`). */
+  marketRefreshMs?: number;
 }
 export function buildKeeper(options: KeeperOptions) {
   if (
@@ -111,31 +119,32 @@ export function buildKeeper(options: KeeperOptions) {
         const blockNumber = Number(BigInt(await provider.send("eth_blockNumber", []))),
           block = await provider.getBlock(blockNumber);
         if (!block) throw new Error("missing keeper block");
-        const tag = { blockTag: blockNumber };
-        const [required, ready, finalized, cursor, btcCount, ethCount, btc, eth] = await Promise.all([
+        const tag = { blockTag: blockNumber },
+          indexes = Array.from({ length: Number(await clearing.marketCount(tag)) }, (_, index) => index);
+        const [required, ready, finalized, cursor, sampleCounts, markets, books] = await Promise.all([
           clearing.resolutionRequired(tag),
           clearing.resolutionPricesReady(tag),
           clearing.resolutionFinalized(tag),
           clearing.resolutionCursor(tag),
-          clearing.resolutionSampleCount(0, tag),
-          clearing.resolutionSampleCount(1, tag),
-          clearing.markets(0, tag),
-          clearing.markets(1, tag),
+          Promise.all(indexes.map((index) => clearing.resolutionSampleCount(index, tag))),
+          Promise.all(indexes.map((index) => clearing.markets(index, tag))),
+          Promise.all(indexes.map((index) => clearing.exposureState(index, tag))),
         ]);
         return {
           resolutionRequired: required,
           resolutionPricesReady: ready,
           resolutionFinalized: finalized,
           resolutionCursor: BigInt(cursor),
-          sampleCounts: [Number(btcCount), Number(ethCount)],
-          priceTimes: [Number(btc.lastPriceTime), Number(eth.lastPriceTime)],
+          sampleCounts: sampleCounts.map(Number),
+          priceTimes: markets.map((market) => Number(market.lastPriceTime)),
+          openInterest: books.map((book) => BigInt(book.longBase) + BigInt(book.shortBase) !== 0n),
           timestamp: block.timestamp,
         };
       },
       proof: async (market) => {
         const source = options.oracleSource,
-          quote = await (source.settlement?.(market === 0 ? "BTC" : "ETH") ??
-            source.latest(market === 0 ? "BTC" : "ETH"));
+          symbol = marketName(market),
+          quote = await (source.settlement?.(symbol) ?? source.latest(symbol));
         return {
           report: quote.report,
           observedAt: Math.floor(quote.snapshot.observedAtMs / 1000),
@@ -214,14 +223,23 @@ export function buildKeeper(options: KeeperOptions) {
       return reply.code(401).send({ error: "unauthorized" });
     return { ...engine.status(), sender: sender.status() };
   });
+  let registryWatch: MarketRegistryWatch | undefined;
   app.addHook("onReady", async () => {
-    if (!options.dependencies) await validateChain();
+    if (!options.dependencies) {
+      await validateChain();
+      registryWatch = await watchMarketRegistry(clearing, {
+        intervalMs: options.marketRefreshMs ?? marketRefreshIntervalMs(),
+        requireInitial: false,
+        onError: (error) => (options.logError ?? console.error)(error),
+      });
+    }
     await engine.cycle();
     timer = setInterval(() => void engine.cycle(), options.pollMs ?? 2000);
     timer.unref();
   });
   app.addHook("onClose", async () => {
     if (timer) clearInterval(timer);
+    registryWatch?.stop();
     await engine.close();
     await options.oracleSource.close?.();
     db.close();

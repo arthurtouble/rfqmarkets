@@ -51,20 +51,24 @@ export class LimitTriggerBook {
   private expiries = new Heap(
     (a, b) => a.price < b.price || (a.price === b.price && a.sequence < b.sequence),
   );
-  private books: Record<Market, Record<Side, Heap>> = {
-    BTC: {
-      buy: new Heap((a, b) => a.price > b.price || (a.price === b.price && a.sequence < b.sequence)),
-      sell: new Heap((a, b) => a.price < b.price || (a.price === b.price && a.sequence < b.sequence)),
-    },
-    ETH: {
-      buy: new Heap((a, b) => a.price > b.price || (a.price === b.price && a.sequence < b.sequence)),
-      sell: new Heap((a, b) => a.price < b.price || (a.price === b.price && a.sequence < b.sequence)),
-    },
-  };
+  /** Per-market books, created on a market's first order. */
+  private books = new Map<Market, Record<Side, Heap>>();
+  private book(market: Market) {
+    let book = this.books.get(market);
+    if (!book)
+      this.books.set(
+        market,
+        (book = {
+          buy: new Heap((a, b) => a.price > b.price || (a.price === b.price && a.sequence < b.sequence)),
+          sell: new Heap((a, b) => a.price < b.price || (a.price === b.price && a.sequence < b.sequence)),
+        }),
+      );
+    return book;
+  }
   add(id: string, market: Market, side: Side, price: bigint, deadlineMs = Number.MAX_SAFE_INTEGER) {
     const entry = { market, side, price, deadlineMs, sequence: ++this.sequence };
     this.active.set(id, entry);
-    this.books[market][side].push({ id, price, sequence: entry.sequence });
+    this.book(market)[side].push({ id, price, sequence: entry.sequence });
     this.expiries.push({ id, price: BigInt(deadlineMs), sequence: entry.sequence });
   }
   remove(id: string) {
@@ -91,8 +95,10 @@ export class LimitTriggerBook {
   }
   takeMarketable(market: Market, bid: bigint, ask: bigint, limit = 64) {
     const ids: string[] = [];
+    const book = this.books.get(market);
+    if (!book) return ids;
     for (const side of ["buy", "sell"] as const) {
-      const heap = this.books[market][side];
+      const heap = book[side];
       while (ids.length < limit) {
         const top = heap.peek();
         if (!top) break;
@@ -109,5 +115,33 @@ export class LimitTriggerBook {
       }
     }
     return ids;
+  }
+}
+
+/**
+ * Armed trigger orders, indexed by trigger price. An order with `triggerAbove` fires once the mid is
+ * at or above its price, otherwise once it is at or below. It reuses the limit book: a below-trigger
+ * behaves like a resting buy against an ask equal to the mid, an above-trigger like a sell against
+ * a bid equal to the mid.
+ */
+export class StopTriggerBook {
+  private readonly book = new LimitTriggerBook();
+  add(id: string, market: Market, triggerAbove: boolean, price: bigint, deadlineMs?: number) {
+    this.book.add(id, market, triggerAbove ? "sell" : "buy", price, deadlineMs);
+  }
+  remove(id: string) {
+    this.book.remove(id);
+  }
+  has(id: string) {
+    return this.book.has(id);
+  }
+  get size() {
+    return this.book.size;
+  }
+  takeExpired(now = Date.now(), limit = 256) {
+    return this.book.takeExpired(now, limit);
+  }
+  takeTriggered(market: Market, mid: bigint, limit = 64) {
+    return this.book.takeMarketable(market, mid, mid, limit);
   }
 }

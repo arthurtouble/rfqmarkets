@@ -9,6 +9,10 @@ export interface OracleNodeConfig {
   chainId: bigint;
   verifyingContract: string;
   markets: OracleMarketDefinition[];
+  /** True when ORACLE_MARKETS was set (with a chain source it is an allowlist). */
+  marketsConfigured: boolean;
+  /** Read the market list from the clearing registry (ORACLE_RPC_URL + ORACLE_CLEARING_ADDRESS). */
+  registry?: { rpcUrl: string; clearing: string; refreshMs: number };
   exchanges: ExchangeName[];
   tickMs: number;
   aggregation: AggregationConfig;
@@ -23,7 +27,9 @@ export interface OracleNodeConfig {
  * Reads the node configuration from the environment:
  *
  * ORACLE_SIGNER_KEY (required), ORACLE_CHAIN_ID (required), ORACLE_VERIFYING_CONTRACT (required),
- * ORACLE_MARKETS (`0:BTC,1:ETH` or JSON), ORACLE_EXCHANGES (comma list, default all),
+ * ORACLE_MARKETS (`0:BTC,1:ETH` or JSON), ORACLE_RPC_URL + ORACLE_CLEARING_ADDRESS (price every
+ * market the clearing registry lists; ORACLE_MARKETS then restricts it), ORACLE_MARKET_REFRESH_MS
+ * (60000), ORACLE_EXCHANGES (comma list, default all),
  * ORACLE_TICK_MS (1000), ORACLE_MAX_SOURCE_AGE_MS (2000), ORACLE_MAX_DEVIATION_BPS (50),
  * ORACLE_MIN_SOURCES (3), ORACLE_MAX_WIDTH_BPS (100), ORACLE_STABLE_MIN_SOURCES (2),
  * ORACLE_STABLE_MAX_DEPEG_BPS (500), ORACLE_USDC_PAR_BPS (10), ORACLE_CANDLE_RETENTION_HOURS (24),
@@ -57,11 +63,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): OracleNodeConf
   for (const exchange of exchanges)
     if (!(EXCHANGES as readonly string[]).includes(exchange)) throw new Error(`unknown exchange ${exchange}`);
   const maxAgeMs = integer("ORACLE_MAX_SOURCE_AGE_MS", 2_000, 1);
+  const rpcUrl = env.ORACLE_RPC_URL?.trim(),
+    clearingText = env.ORACLE_CLEARING_ADDRESS?.trim();
+  if (Boolean(rpcUrl) !== Boolean(clearingText))
+    throw new Error("ORACLE_RPC_URL and ORACLE_CLEARING_ADDRESS must be set together");
+  let registry: OracleNodeConfig["registry"];
+  if (rpcUrl && clearingText) {
+    let clearing: string;
+    try {
+      clearing = getAddress(clearingText);
+    } catch {
+      throw new Error("invalid ORACLE_CLEARING_ADDRESS");
+    }
+    registry = { rpcUrl, clearing, refreshMs: integer("ORACLE_MARKET_REFRESH_MS", 60_000, 1_000) };
+  }
   return {
     signerKey,
     chainId: BigInt(chainIdText),
     verifyingContract,
     markets: parseMarkets(env.ORACLE_MARKETS),
+    marketsConfigured: Boolean(env.ORACLE_MARKETS?.trim()),
+    registry,
     exchanges: exchanges as ExchangeName[],
     tickMs: integer("ORACLE_TICK_MS", 1_000, 100),
     aggregation: {

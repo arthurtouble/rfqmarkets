@@ -13,7 +13,9 @@ import { HttpHedgeRiskSource } from "../services/api/src/hedge-risk.js";
 import { QUOTE_MODEL_VERSION } from "../packages/shared/src/pricing.js";
 import { buildKeeper } from "../services/keeper/src/server.js";
 import { validateRuntimeIdentity } from "./runtime-identity.js";
-import { hedgeVenueApiUrl, persistentConfigSchema } from "./persistent-config.js";
+import { feedIdsByMarket, hedgeVenueApiUrl, persistentConfigSchema } from "./persistent-config.js";
+import { clearingStateAbi } from "../packages/shared/src/abi.js";
+import { marketRegistry, syncMarketRegistry } from "../packages/shared/src/markets.js";
 const role = z.enum(["api", "approver", "indexer", "gateway", "hedger", "keeper"]).parse(process.argv[2]);
 const config = persistentConfigSchema.parse(JSON.parse(readFileSync(process.argv[3], "utf8")));
 // Separate secret files and host users are required for every signing role.
@@ -77,16 +79,19 @@ if ((await provider.getCode(config.clearingAddress)) === "0x") throw new Error("
 const clearing = new Contract(
   config.clearingAddress,
   [
+    ...clearingStateAbi,
     "function usdc() view returns(address)",
     "function isApprover(address) view returns(bool)",
-    "function exposureState(uint8) view returns(uint256 longBase,uint256 shortBase,uint256 limits,uint256 cursor,bool ready)",
   ],
   provider,
 );
 if (String(await clearing.usdc()).toLowerCase() !== config.tokenAddress.toLowerCase())
   throw new Error("Settlement token mismatch");
+// The market list comes from the clearing registry (markets governance added included); every
+// service then refreshes it while running.
+if (role !== "gateway" && role !== "hedger") await syncMarketRegistry(clearing);
 if (role === "api" || role === "approver") {
-  for (let market = 0; market < 2; market++)
+  for (let market = 0; market < marketRegistry.count; market++)
     if (!(await clearing.exposureState(market)).ready)
       throw new Error("Exposure migration must finish before starting financial admission services");
 }
@@ -125,7 +130,7 @@ switch (role) {
       },
       oracleSource: new PythHermesSource({
         apiKey: secrets.oracleKey,
-        feedIds: { BTC: config.feedIds[0], ETH: config.feedIds[1] },
+        feedIds: feedIdsByMarket(config.feedIds),
       }),
     });
     break;
@@ -173,7 +178,7 @@ switch (role) {
       },
       oracleSource: new PythHermesSource({
         apiKey: secrets.oracleKey,
-        feedIds: { BTC: config.feedIds[0], ETH: config.feedIds[1] },
+        feedIds: feedIdsByMarket(config.feedIds),
       }),
       hedgeRiskSource: new HttpHedgeRiskSource(config.hedgeRiskUrl, secrets.operationsToken),
       operationsToken: secrets.operationsToken,

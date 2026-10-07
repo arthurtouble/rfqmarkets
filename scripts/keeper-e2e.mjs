@@ -52,10 +52,11 @@ try{
  const snapshot=await ethers.provider.send('evm_snapshot',[]);
  prices[0]=50_000_000_000n;await ethers.provider.send('evm_increaseTime',[10]);await ethers.provider.send('evm_mine',[]);
  await runKeeper('liquidation');assert.equal((await clearing.positionOf(user.address,0)).size,0n);assert.equal(await clearing.resolutionRequired(),false);
- const liquidationDb=new DatabaseSync(join(directory,'liquidation.sqlite'));const raw=liquidationDb.prepare('SELECT raw_tx FROM sender_transactions WHERE operation_id LIKE ?').all('keeper:%');assert(raw.length>=3);for(const row of raw)assert.equal(ethers.Transaction.from(row.raw_tx).value,0n);liquidationDb.close();
+ const liquidationDb=new DatabaseSync(join(directory,'liquidation.sqlite'));const raw=liquidationDb.prepare('SELECT raw_tx FROM sender_transactions WHERE operation_id LIKE ?').all('keeper:%');// BTC refresh and liquidation; ETH has no open interest, so the keeper no longer refreshes it.
+ assert(raw.length>=2);for(const row of raw)assert.equal(ethers.Transaction.from(row.raw_tx).value,0n);liquidationDb.close();
  await runKeeper('liquidation');assert.equal((await clearing.positionOf(user.address,0)).size,0n);
  await ethers.provider.send('evm_revert',[snapshot]);prices[0]=10_000_000_000_000n;await (await clearing.pause()).wait();const incident=await oracle('BTC');await (await clearing.connect(user).closePosition(0,incident.report)).wait();assert.equal(await clearing.resolutionRequired(),true);
- await runKeeper('resolution');assert.equal(await clearing.resolutionSampleCount(0),1n);assert.equal(await clearing.resolutionSampleCount(1),1n);
+ await runKeeper('resolution');assert.equal(await clearing.resolutionSampleCount(0),1n);assert.equal(await clearing.resolutionSampleCount(1),0n,'ETH has no open exposure, so it needs no resolution samples');
  await ethers.provider.send('evm_increaseTime',[15]);await ethers.provider.send('evm_mine',[]);await runKeeper('resolution');assert.equal(await clearing.resolutionSampleCount(0),2n);
  await ethers.provider.send('evm_increaseTime',[30]);await ethers.provider.send('evm_mine',[]);await runKeeper('resolution');assert.equal(await clearing.resolutionPricesReady(),true);
  await runKeeper('resolution');assert.equal(await clearing.resolutionFinalized(),true);assert((await clearing.resolutionClaim(user.address))>0n);

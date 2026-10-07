@@ -39,7 +39,7 @@ test("checkUserAuthorization accepts account signatures and bounded sessions onl
     session = {
       account: intent.account,
       validUntil: intent.deadline,
-      marketMask: 1,
+      marketMask: 1n,
       maxTradeNotional: notional,
       maxCumulativeNotional: 2n * notional,
       usedNotional: notional,
@@ -55,7 +55,7 @@ test("checkUserAuthorization accepts account signatures and bounded sessions onl
     undefined,
     { ...session, account: Wallet.createRandom().address },
     { ...session, validUntil: intent.deadline - 1n },
-    { ...session, marketMask: 2 },
+    { ...session, marketMask: 2n },
     { ...session, maxFee: approval.fee - 1n },
     { ...session, usedNotional: notional + 1n },
     { ...session, maxTradeNotional: notional - 1n },

@@ -65,7 +65,7 @@ Governance lists markets with `RFQClearing.addMarket`, which accepts at most 128
 - a stress shock;
 - a margin scale.
 
-`setMarketRisk` retunes a market. Neither needs an upgrade. The nodes price whatever markets they are configured for (`ORACLE_MARKETS`). A new market goes live once at least two nodes cover it on enough venues.
+`setMarketRisk` retunes a market. Neither needs an upgrade. The nodes price every registered market in their symbol table when given the clearing registry (`ORACLE_RPC_URL`, `ORACLE_CLEARING_ADDRESS`), or exactly `ORACLE_MARKETS` otherwise. A new market goes live once at least two nodes cover it on enough venues. See [Adding a market](../operations/adding-a-market.md).
 
 ## Price history
 

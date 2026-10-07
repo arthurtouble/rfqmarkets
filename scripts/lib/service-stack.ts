@@ -5,13 +5,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Wallet } from "ethers";
+import { Contract, JsonRpcProvider, Wallet } from "ethers";
+import { clearingStateAbi } from "../../packages/shared/src/abi.js";
+import { syncMarketRegistry } from "../../packages/shared/src/markets.js";
 import { childEnvironment } from "../../packages/shared/src/process-environment.js";
 import { buildApi, type ApiOptions } from "../../services/api/src/server.js";
 import { HttpHedgeRiskSource } from "../../services/api/src/hedge-risk.js";
 import type { OracleSource } from "../../services/api/src/oracle.js";
 import type { SenderOptions } from "../../services/api/src/sender.js";
-import { buildGateway } from "../../services/gateway/src/server.js";
+import { buildGateway, type GatewayOptions } from "../../services/gateway/src/server.js";
 import { buildHedger, type HedgeVenue } from "../../services/hedger/src/server.js";
 import { buildIndexer } from "../../services/indexer/src/server.js";
 import { buildKeeper, type KeeperOptions } from "../../services/keeper/src/server.js";
@@ -101,6 +103,8 @@ export interface ServiceStackConfig {
     oracleFee?: KeeperOptions["oracleFee"];
     pollMs?: number;
   };
+  /** Stream gateway chart options: candle retention and oracle-node candle backfill. */
+  gateway?: Pick<GatewayOptions, "candleRetentionMs" | "candleBackfill">;
   /** Stop the whole stack when an approver dies. Local scenarios kill approvers on purpose, so it is opt-in. */
   stopOnApproverExit?: boolean;
 }
@@ -207,6 +211,15 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     }
 
     const { chain: apiChain, ...apiOptions } = config.api ?? {};
+    // Load the clearing registry before the API rebuilds journaled quotes for markets beyond BTC/ETH.
+    {
+      const provider = new JsonRpcProvider(config.rpcUrl, undefined, { staticNetwork: true });
+      try {
+        await syncMarketRegistry(new Contract(config.clearingAddress, clearingStateAbi, provider));
+      } finally {
+        provider.destroy();
+      }
+    }
     const api = buildApi({
       ...apiOptions,
       approvers,
@@ -228,7 +241,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     await api.listen({ host: bindHost, port: ports.api });
     servers.push(api);
 
-    const gateway = buildGateway({ upstreamUrl: `http://127.0.0.1:${ports.api}` });
+    const gateway = buildGateway({ ...config.gateway, upstreamUrl: `http://127.0.0.1:${ports.api}` });
     await gateway.listen({ host: bindHost, port: ports.gateway });
     servers.push(gateway);
 

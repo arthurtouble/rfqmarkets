@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { QUOTE_MODEL_VERSION } from "../../../packages/shared/src/pricing.js";
+import { MARGIN_TIERS, QUOTE_MODEL_VERSION, marketMarginView } from "../../../packages/shared/src/pricing.js";
+import type { ChainReader } from "./chain.js";
 import type { ApiContext } from "./context.js";
 import type { MarketStream } from "./market-stream.js";
-import { MARKETS } from "./markets.js";
+import { marketRegistry, marketSymbols } from "./markets.js";
 import type { RuntimeMetrics } from "./metrics.js";
 import type { LimitOrders } from "./orders.js";
 import type { QuoteEngine } from "./quoting.js";
@@ -12,6 +13,8 @@ import type { QuoteEngine } from "./quoting.js";
  * `included`, `reverted` and `superseded` are final, so none of those make the leader unhealthy.
  */
 const UNRESOLVED_SENDER_STATUSES = new Set(["ambiguous", "reorged"]);
+/** Longest `/v1/config` waits on the margin parameter read before answering without it. */
+const CONFIG_CHAIN_READ_MS = 1_500;
 
 export function senderHealthy(rows: ReadonlyArray<Record<string, unknown>> | undefined) {
   return !rows?.some((row) => UNRESOLVED_SENDER_STATUSES.has(String(row.status)));
@@ -21,7 +24,13 @@ export function senderHealthy(rows: ReadonlyArray<Record<string, unknown>> | und
 export function registerOperationsRoutes(
   app: FastifyInstance,
   ctx: ApiContext,
-  services: { quoting: QuoteEngine; stream: MarketStream; orders: LimitOrders; metrics: RuntimeMetrics },
+  services: {
+    chain: ChainReader;
+    quoting: QuoteEngine;
+    stream: MarketStream;
+    orders: LimitOrders;
+    metrics: RuntimeMetrics;
+  },
 ) {
   const { options, domain } = ctx;
 
@@ -50,13 +59,17 @@ export function registerOperationsRoutes(
         version: QUOTE_MODEL_VERSION,
         restoredPaidFills: flowRisk.entries().length,
         markets: Object.fromEntries(
-          MARKETS.map((market) => [
-            market,
-            {
-              toxicityScoreBps: flowRisk.score(market, prices[market]),
-              volatility: prices[market].volatility ?? null,
-            },
-          ]),
+          marketSymbols().flatMap((market) => {
+            const price = prices[market];
+            return price
+              ? [
+                  [
+                    market,
+                    { toxicityScoreBps: flowRisk.score(market, price), volatility: price.volatility ?? null },
+                  ],
+                ]
+              : [];
+          }),
         ),
       },
       shadowModel: services.quoting.shadowTelemetry.snapshot(),
@@ -74,5 +87,28 @@ export function registerOperationsRoutes(
     rpcUrl: options.publicRpcUrl,
     clearingAddress: domain.verifyingContract,
     tokenAddress: options.chain?.tokenAddress,
+    // Margin per market for leverage presets and liquidation estimates; null if the chain read fails.
+    markets: await Promise.race([
+      services.chain
+        .marginScales()
+        .then((scales) =>
+          Object.fromEntries(
+            marketSymbols().map((market) => [
+              market,
+              marketMarginView(scales[market] ?? marketRegistry.get(market).marginScaleBps),
+            ]),
+          ),
+        )
+        .catch(() => null),
+      // Boot config must stay fast when the chain is slow; clients then fall back to /v1/markets.
+      new Promise<null>((resolve) => setTimeout(resolve, CONFIG_CHAIN_READ_MS, null).unref()),
+    ]),
+    // Registered markets in on-chain index order (`marketMask` bit = index), refreshed from chain.
+    marketList: marketRegistry.all().map(({ index, symbol, enabled }) => ({ index, symbol, enabled })),
+    marginTiers: MARGIN_TIERS.map((tier) => ({
+      maxNotional: tier.maxNotional?.toString() ?? null,
+      initialBps: Number(tier.initialBps),
+      maintenanceBps: Number(tier.maintenanceBps),
+    })),
   }));
 }

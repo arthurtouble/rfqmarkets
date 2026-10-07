@@ -261,3 +261,81 @@ test("signed mode validates the adapter's consensus observation", async () => {
     "chain-time oracle rejected",
   );
 });
+
+test("development mode signs a triggered intent only once the report mid reaches the trigger", async () => {
+  // Fixture reports bid = ask = 100,000 USDC.
+  const reached = buildFixture({ trigger: { triggerPrice: 100_500_000_000n, triggerAbove: false } });
+  const signed = await approve(context(), reached.payload);
+  assert(!("status" in signed), JSON.stringify(signed));
+  assert.equal(signed.digest, hashApproval(reached.domain, reached.approval));
+
+  const above = buildFixture({ trigger: { triggerPrice: 100_000_000_001n, triggerAbove: true } });
+  assert.equal(errorOf(await approve(context(), above.payload)), "trigger not reached");
+  const below = buildFixture({ trigger: { triggerPrice: 99_999_999_999n, triggerAbove: false } });
+  assert.equal(errorOf(await approve(context(), below.payload)), "trigger not reached");
+
+  // The trigger is part of the signed message: dropping or moving it breaks the binding.
+  const { trigger: _dropped, ...plain } = reached.payload;
+  assert.equal(errorOf(await approve(context(), plain)), "invalid user signature");
+  const moved = { ...reached.payload, trigger: { triggerPrice: "100600000000", triggerAbove: false } };
+  assert.equal(errorOf(await approve(context(), moved)), "invalid user signature");
+  // A plain intent signature cannot be replayed as a triggered approval.
+  const replayed = buildFixture({ user: reached.user, nowMs: reached.nowMs });
+  assert.equal(
+    errorOf(await approve(context(), { ...replayed.payload, trigger: reached.payload.trigger })),
+    "invalid user signature",
+  );
+  // Without a chain the position, and so a reduce-only clamp, cannot be verified.
+  const clamped = buildFixture({
+    side: "sell",
+    reduceOnly: true,
+    signedBaseDelta: -2n * 10n ** 16n,
+    trigger: { triggerPrice: 100_500_000_000n, triggerAbove: false },
+  });
+  assert.equal(errorOf(await approve(context(), clamped.payload)), "triggered fill unverifiable");
+  // A fill may only shrink a reduce-only intent in its own direction.
+  const grown = buildFixture({
+    side: "sell",
+    reduceOnly: true,
+    signedBaseDelta: -(10n ** 15n),
+    trigger: { triggerPrice: 100_500_000_000n, triggerAbove: false },
+  });
+  assert.equal(errorOf(await approve(context(), grown.payload)), "invalid typed data");
+});
+
+test("chain mode prices a reduce-only trigger on the fill clamped to the position", async () => {
+  // A stop-loss signed for 0.02 BTC; the position is now 0.01 BTC long, so the fill is -0.01 BTC.
+  const fixture = buildFixture({
+      side: "sell",
+      reduceOnly: true,
+      signedBaseDelta: -2n * 10n ** 16n,
+      trigger: { triggerPrice: 100_500_000_000n, triggerAbove: false },
+    }),
+    fill = BigInt(fixture.payload.quote.baseDelta);
+  assert.equal(fill, -(10n ** 16n));
+  const state = chainState(fixture.nowMs);
+  state.position = { size: 10n ** 16n, entryPrice: PRICES.BTC, lastFundingIndex: 0n };
+  state.books[0].longBase = 10n ** 16n;
+  state.markets[0].aggregateBase = 10n ** 16n;
+  const target = context({}, state);
+  const result = await approve(target, fixture.payload);
+  assert(!("status" in result), JSON.stringify(result));
+  assert.equal(target.journal.gross.get(fixture.approval.intentHash.toLowerCase())?.baseDelta, fill);
+
+  for (const size of [0n, 3n * 10n ** 16n, -(10n ** 16n)]) {
+    const moved = chainState(fixture.nowMs);
+    moved.position = { size, entryPrice: PRICES.BTC, lastFundingIndex: 0n };
+    assert.equal(
+      errorOf(await approve(context({}, moved), fixture.payload)),
+      "triggered fill does not match position",
+      `position ${size}`,
+    );
+  }
+  const unreached = buildFixture({
+    side: "sell",
+    reduceOnly: true,
+    signedBaseDelta: -2n * 10n ** 16n,
+    trigger: { triggerPrice: 99_000_000_000n, triggerAbove: false },
+  });
+  assert.equal(errorOf(await approve(context({}, state), unreached.payload)), "trigger not reached");
+});
