@@ -99,3 +99,41 @@ export function encodeObservation(observations) {
     [list.map(({ market, bid, ask = bid, observedAt, validUntil }) => [market, bid, ask, observedAt, validUntil])],
   );
 }
+
+export const PRICE_BATCH_TYPES = {
+  PriceBatch: [{ name: "observedAt", type: "uint64" }, { name: "prices", type: "Price[]" }],
+  Price: [{ name: "market", type: "uint8" }, { name: "bid", type: "uint256" }, { name: "ask", type: "uint256" }],
+};
+
+/**
+ * Deploys a SignedPriceOracle owned by `owner` with `nodes` (wallets or addresses) as signers: majority
+ * threshold, 1% deviation, 5 s skew and the jump guard off unless overridden.
+ */
+export async function deploySignedOracle(deployer, owner, nodes, {
+  threshold = Math.floor(nodes.length / 2) + 1, maxDeviationBps = 100, maxSkew = 5, maxJumpBps = 0, jumpWindow = 0,
+  libraries = {},
+} = {}) {
+  const signers = await Promise.all(nodes.map((node) => (typeof node === "string" ? node : node.getAddress())));
+  return deployLinked(deployer, "SignedPriceOracle", [
+    typeof owner === "string" ? owner : await owner.getAddress(), signers, threshold, maxDeviationBps, maxSkew,
+    maxJumpBps, jumpWindow,
+  ], libraries);
+}
+
+/**
+ * A SignedPriceOracle report: every node signs the same `prices` (ascending `{market, bid, ask}`) at
+ * `observedAt`, as the oracle nodes do when their exchange medians agree.
+ */
+export async function signedOracleReport({ adapter, chainId, nodes, observedAt, prices }) {
+  const domain = { name: "RFQ Markets Oracle", version: "1", chainId, verifyingContract: await adapter.getAddress() };
+  const list = (Array.isArray(prices) ? prices : [prices]).map(({ market, bid, ask = bid }) => ({ market, bid, ask }));
+  const batches = await Promise.all(nodes.map(async (node) => [
+    observedAt,
+    list.map(({ market, bid, ask }) => [market, bid, ask]),
+    await node.signTypedData(domain, PRICE_BATCH_TYPES, { observedAt, prices: list }),
+  ]));
+  return AbiCoder.defaultAbiCoder().encode(
+    ["tuple(uint64 observedAt,tuple(uint8 market,uint256 bid,uint256 ask)[] prices,bytes signature)[]"],
+    [batches],
+  );
+}

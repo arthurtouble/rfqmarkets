@@ -69,7 +69,6 @@ try {
     chainId: BigInt(config.chainId),
     clearingAddress: config.clearingAddress,
     tokenAddress: config.tokenAddress,
-    feedIds: config.feedIds,
   });
 } finally {
   secondary.destroy();

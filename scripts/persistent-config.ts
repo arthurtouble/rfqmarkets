@@ -13,7 +13,8 @@ export const persistentConfigSchema = z
     runtimeIdentity: z
       .object({
         oracleAddress: z.string(),
-        oracleSource: z.string(),
+        oracleSigners: z.array(z.string()).min(1).max(16),
+        oracleThreshold: z.number().int().min(1),
         governance: z.string(),
         emergencyCouncil: z.string(),
         implementationAddress: z.string(),
@@ -22,7 +23,7 @@ export const persistentConfigSchema = z
         approvers: z.tuple([z.string(), z.string(), z.string()]),
         code: z
           .array(z.object({ address: z.string(), hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/) }).strict())
-          .min(7),
+          .min(6),
       })
       .strict(),
     rpcUrl: z

@@ -274,4 +274,23 @@ contract SignedPriceOracleTest is ClearingFixture {
         execute(alice, intent, approval, proof);
         assertEq(clearing.positionOf(alice.account, 0).size, 1e16);
     }
+
+    /// @dev Same vector as packages/shared/src/signed-oracle.test.ts, so node signatures and the adapter agree.
+    function test_digestMatchesTheOracleNodeVector() public {
+        vm.chainId(8453);
+        address[] memory one = new address[](1);
+        one[0] = address(1);
+        deployCodeTo(
+            "SignedPriceOracle.sol:SignedPriceOracle",
+            abi.encode(governance, one, uint8(1), uint16(10), uint64(5), uint16(0), uint64(0)),
+            address(0xdEaD)
+        );
+        SignedPriceOracle.Price[] memory p = new SignedPriceOracle.Price[](2);
+        p[0] = SignedPriceOracle.Price(0, 60_000_000_000, 60_010_000_000);
+        p[1] = SignedPriceOracle.Price(1, 3_000_000_000, 3_001_000_000);
+        assertEq(
+            SignedPriceOracle(address(0xdEaD)).batchDigest(1_700_000_000, p),
+            0xfa5f674f239e7f1ef584d02a4a987a5af9bfd307847fd9a50276624f4707f4be
+        );
+    }
 }
