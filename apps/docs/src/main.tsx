@@ -1,10 +1,127 @@
-import React,{useState}from"react";import{createRoot}from"react-dom/client";import"@fontsource-variable/ibm-plex-sans/wght.css";import"@fontsource/ibm-plex-mono/500.css";import"./styles.css";
-const pages={
-  Overview:<><h1>Trade perpetuals with one clear price</h1><p className="lead">RFQ Markets combines live size-aware quotes, sponsored Base settlement and cross-margin accounts. Enter an amount, review the estimate, then sign once.</p><div className="cards"><article><b>Fast</b><span>Streaming prices and one firm quote at click time.</span></article><article><b>Protected</b><span>Your signed maximum or minimum price is enforced on-chain.</span></article><article><b>Gasless</b><span>The protocol sponsors supported trading and account actions.</span></article></div><h2>Price vocabulary</h2><dl><div><dt>Oracle price</dt><dd>Independent market observation used for safety and accounting.</dd></div><div><dt>Indicative quote</dt><dd>Live estimate for the amount in your ticket.</dd></div><div><dt>Firm quote</dt><dd>Short-lived maker commitment requested when you submit.</dd></div><div><dt>Mark price</dt><dd>Directional conservative price used for PnL and margin.</dd></div></dl></>,
-  Trading:<><h1>Trading</h1><p className="lead">Choose BTC or ETH, enter a USDC amount and buy or sell. Market orders execute all-or-none within your signed price protection. Limit orders wait until the maker quote reaches your limit.</p><h2>Before signing</h2><ul><li>Check the estimated execution price and maximum fee.</li><li>Use Reduce only when a trade must never increase or flip a position.</li><li>Review available margin and the estimated liquidation price.</li></ul><h2>Closing</h2><p>Close requests use the exact base size of the open position. During a market pause, a separate conservative oracle-bound exit remains available.</p></>,
-  Margin:<><h1>Cross margin and liquidation</h1><p className="lead">USDC collateral supports both markets in one account. Position size increases initial and maintenance requirements through conservative tiers.</p><dl><div><dt>Equity</dt><dd>Collateral plus unrealized PnL and accrued funding.</dd></div><div><dt>Available margin</dt><dd>Opening equity less initial margin.</dd></div><div><dt>Margin usage</dt><dd>Maintenance requirement divided by equity.</dd></div><div><dt>Liquidation buffer</dt><dd>Equity remaining above maintenance margin.</dd></div></dl><aside>Positive unrealized PnL does not fund new risk or withdrawals in the initial design.</aside></>,
-  Security:<><h1>Security model</h1><p className="lead">Customer collateral and accounting live in the Base clearing contract. The API cannot authorize a trade by itself.</p><ol><li>The wallet signs exact account, market, size, price, fee, nonce, deadline and reduce-only terms.</li><li>Two of three separately keyed approvers validate chain state, oracle evidence, policy versions and portfolio impact.</li><li>The contract verifies the wallet, approvals, oracle report, limits, margin and replay protection.</li></ol><h2>Trust and dependencies</h2><p>Base sequencing, native USDC, the selected oracle, upgrade governance and external hedge venues remain explicit dependencies. Contract upgrades require delayed governance; a narrow emergency authority can pause risk.</p></>,
-  Transparency:<><h1>Transparency</h1><p className="lead">Positions, collateral events, trades and aggregate market exposure are public on Base and presented through a rebuildable index.</p><ul><li>The chain is the customer ledger.</li><li>Indexer data can be independently rebuilt from canonical events.</li><li>Public positions are pseudonymous wallet addresses.</li><li>Private hedge orders and venue credentials are excluded from public surfaces.</li></ul></>
-};type Page=keyof typeof pages;
-function App(){const[page,setPage]=useState<Page>("Overview");return <div className="shell"><aside className="sidebar"><div className="brand"><i>R</i><span><b>RFQ Markets</b><small>Documentation</small></span></div><nav>{(Object.keys(pages)as Page[]).map(name=><button className={page===name?"active":""}onClick={()=>setPage(name)}key={name}>{name}</button>)}</nav><footer>Base · USDC · RFQ perps</footer></aside><main><header><span>PUBLIC DOCUMENTATION</span><a href="/">Open app ↗</a></header><article className="content">{pages[page]}</article></main></div>}
-createRoot(document.getElementById("root")!).render(<App/>);
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import "@fontsource-variable/ibm-plex-sans/wght.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import { Markdown } from "./Markdown.js";
+import { pages, resolveLink, sections } from "./pages.js";
+import "./styles.css";
+
+const APP_URL = "https://dev.rfq-markets.workers.dev";
+
+const normalize = (path: string) => (path.length > 1 ? path.replace(/\/+$/, "") : path);
+
+function useRoute() {
+  const [route, setRoute] = useState(() => normalize(window.location.pathname));
+  useEffect(() => {
+    const onPop = () => setRoute(normalize(window.location.pathname));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const go = (target: string) => {
+    const [path, hash] = target.split("#");
+    if (!path) { document.getElementById(hash)?.scrollIntoView(); history.replaceState(null, "", `#${hash}`); return; }
+    history.pushState(null, "", target);
+    setRoute(normalize(path));
+    requestAnimationFrame(() => (hash ? document.getElementById(hash)?.scrollIntoView() : window.scrollTo(0, 0)));
+  };
+  return [route, go] as const;
+}
+
+function snippet(body: string, query: string) {
+  const text = body.replace(/```[\s\S]*?```/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[#*`>|]/g, "").replace(/\s+/g, " ");
+  const at = text.toLowerCase().indexOf(query);
+  if (at < 0) return "";
+  const start = Math.max(0, at - 50);
+  return `${start ? "…" : ""}${text.slice(start, at + query.length + 70).trim()}…`;
+}
+
+function App() {
+  const [route, go] = useRoute();
+  const [query, setQuery] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const page = pages.find((item) => item.route === route);
+  const index = page ? pages.indexOf(page) : -1;
+  const needle = query.trim().toLowerCase();
+  const results = useMemo(
+    () => (needle.length < 2 ? [] : pages.filter((item) => `${item.title} ${item.body}`.toLowerCase().includes(needle)).slice(0, 12)),
+    [needle],
+  );
+
+  useEffect(() => {
+    document.title = page ? (page.route === "/" ? "RFQ Markets Docs" : `${page.title} · RFQ Markets Docs`) : "Not found · RFQ Markets Docs";
+  }, [page]);
+  useEffect(() => {
+    const hash = decodeURIComponent(window.location.hash.slice(1));
+    if (hash) requestAnimationFrame(() => document.getElementById(hash)?.scrollIntoView());
+  }, []);
+
+  const open = (target: string) => { setQuery(""); setMenuOpen(false); go(target); };
+  const link = (target: string, label: React.ReactNode, className?: string) => (
+    <a href={target} className={className} onClick={(event) => { if (event.metaKey || event.ctrlKey) return; event.preventDefault(); open(target); }}>{label}</a>
+  );
+
+  return (
+    <div className="shell">
+      <aside className={`sidebar${menuOpen ? " open" : ""}`}>
+        <div className="brand-row">
+          {link("/", <><i>R</i><span><b>RFQ Markets</b><small>Documentation</small></span></>, "brand")}
+          <button className="menu" aria-expanded={menuOpen} aria-label="Toggle navigation" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? "Close" : "Menu"}</button>
+        </div>
+        <input className="search" type="search" aria-label="Search the docs" placeholder="Search the docs" value={query} onChange={(event) => setQuery(event.target.value)} />
+        {needle.length >= 2 ? (
+          <nav className="results" aria-label="Search results">
+            {results.length ? results.map((item) => (
+              <a key={item.route} href={item.route} onClick={(event) => { event.preventDefault(); open(item.route); }}>
+                <b>{item.title}</b><span>{snippet(item.body, needle) || item.summary}</span>
+              </a>
+            )) : <p className="empty">Nothing matches “{query.trim()}”.</p>}
+          </nav>
+        ) : (
+          <nav aria-label="Documentation">
+            {sections.map((section) => (
+              <section key={section.id}>
+                <h2>{section.title}</h2>
+                {pages.filter((item) => item.path.startsWith(`${section.id}/`)).map((item) => (
+                  <React.Fragment key={item.route}>{link(item.route, item.title, item.route === route ? "active" : undefined)}</React.Fragment>
+                ))}
+              </section>
+            ))}
+          </nav>
+        )}
+      </aside>
+      <main>
+        <header className="topbar">
+          <span>{page?.section ?? "Docs"}</span>
+          <a href={APP_URL}>Open the app ↗</a>
+        </header>
+        <div className="page">
+          <article className="content">
+            {page ? (
+              <>
+                <Markdown source={page.body} resolve={(href) => resolveLink(page.path, href)} go={open} />
+                <footer className="pager">
+                  {index > 0 ? link(pages[index - 1].route, <><small>Previous</small>{pages[index - 1].title}</>, "prev") : <span />}
+                  {index < pages.length - 1 ? link(pages[index + 1].route, <><small>Next</small>{pages[index + 1].title}</>, "next") : <span />}
+                </footer>
+              </>
+            ) : (
+              <>
+                <h1>Page not found</h1>
+                <p>There is no page at <code>{route}</code>. It may have moved when the docs were reorganised.</p>
+                <p>{link("/", "Go to the introduction")}</p>
+              </>
+            )}
+          </article>
+          {page && page.headings.length > 1 ? (
+            <nav className="toc" aria-label="On this page">
+              <h2>On this page</h2>
+              {page.headings.map((heading) => <a key={heading.id} href={`#${heading.id}`}>{heading.title}</a>)}
+            </nav>
+          ) : null}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(<App />);
