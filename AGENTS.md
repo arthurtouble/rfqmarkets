@@ -18,6 +18,8 @@
 ## Validation
 
 - Run `npm run typecheck` after TypeScript changes.
+- Run `npm run format` before pushing changes to services, packages, scripts,
+  deploy runtime or e2e files. CI runs `npm run format:check` on them.
 - Run `npm run test:foundry` after contract changes, then
   `npm run test:contracts` for the compile gate and local-chain e2e suites.
 - Run `npm run test:services` for service and script unit tests and
