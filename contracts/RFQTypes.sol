@@ -30,6 +30,11 @@ uint256 constant ABSOLUTE_MAX_MARKET_NOTIONAL = 5_000_000e6;
 uint16 constant MIN_MARGIN_SCALE_BPS = 2_500;
 uint16 constant MAX_MARGIN_SCALE_BPS = 50_000;
 
+/// @dev Bounds of a market's base quote spread. The quoting services add volatility, hedge and toxicity
+/// components on top and cap the total at 100 bps.
+uint16 constant MIN_BASE_SPREAD_BPS = 2;
+uint16 constant MAX_BASE_SPREAD_BPS = 50;
+
 uint256 constant MIN_FIRST_DEPOSIT = 10e6;
 uint256 constant MAX_SESSION_DURATION = 30 days;
 
@@ -129,6 +134,17 @@ struct MarketConfig {
     uint32 impactK;
     uint16 shockBps;
     uint16 marginScaleBps;
+}
+
+/// @notice The envelope governance gives the risk operator. The operator may always tighten a market; it may
+/// loosen one only up to these ceilings and down to these floors. All zero lets it tighten and nothing else.
+struct RiskOperatorBounds {
+    uint128 maxTradeNotional;
+    uint128 maxMarketNotional;
+    uint128 maxGrossLimit; // also bounds the per-side limit, which may not exceed the gross limit
+    uint32 minImpactK;
+    uint16 minShockBps;
+    uint16 minMarginScaleBps;
 }
 
 // ---------------------------------------------------------------------------

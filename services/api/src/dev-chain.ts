@@ -121,6 +121,9 @@ export function registerDevRoutes(app: FastifyInstance, ctx: ApiContext, dev: De
   if (!ctx.devFund) return;
   const wallet = ctx.options.chain?.devWallet;
   if (wallet) app.get("/v1/dev/wallet", async () => ({ mode: "local-development", ...wallet }));
+  const riskOperator = ctx.options.chain?.riskOperator;
+  if (riskOperator)
+    app.get("/v1/dev/risk-operator", async () => ({ mode: "local-development", ...riskOperator }));
 
   /** Local faucet for smoke tests and fresh browser wallets. Never registered off the local chain. */
   app.post("/v1/dev/fund", async (request, reply) => {

@@ -22,6 +22,7 @@ import {
   type Quote,
   type QuoteRequest,
 } from "../../../packages/shared/src/policy.js";
+import { baseSpreadOf } from "../../../packages/shared/src/markets.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import { decodeLimits, encodeLocalReport, type ChainMarketState, type ChainReader } from "./chain.js";
 import type { ApiContext } from "./context.js";
@@ -132,6 +133,10 @@ function quoteSpread(
   volatilityScale = 1,
 ) {
   return adaptiveSpread({
+    // The base component is the market's on-chain spread, set by governance or the risk operator.
+    baseBps: marketRegistry.has(snapshot.market)
+      ? baseSpreadOf(marketRegistry.get(snapshot.market))
+      : undefined,
     volatilityBps: (snapshot.volatilityBps ?? 0) * volatilityScale,
     riskMode,
     toxicityScoreBps,

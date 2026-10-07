@@ -23,6 +23,8 @@ export const clearingStateAbi = [
   "function marketCount() view returns(uint8)",
   "function marketParams(uint8) view returns((bytes32 symbol,uint32 impactK,uint16 shockBps,uint16 marginScaleBps))",
   "function openMarketsOf(address) view returns(uint256)",
+  "function defaultSpread() view returns(uint16)",
+  "function marketSpread(uint8) view returns(uint16)",
 ] as const;
 
 export const clearingApiAbi = [

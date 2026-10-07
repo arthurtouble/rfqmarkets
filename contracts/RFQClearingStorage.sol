@@ -50,6 +50,11 @@ abstract contract RFQClearingNamespace {
         uint64 makerIncidentSince;
         uint64 makerIncidentGracePeriod;
         ResolutionState resolution;
+        // v1.2: risk operator, a fast role that lists and tunes markets within governance's bounds
+        address riskOperator;
+        RiskOperatorBounds riskOperatorBounds;
+        uint16 defaultSpreadBps; // base quote spread for markets without their own; 0 = the services' built-in default
+        mapping(uint8 => uint16) marketSpreadBps; // 0 = use the default
     }
 }
 

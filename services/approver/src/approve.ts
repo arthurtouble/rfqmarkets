@@ -4,6 +4,7 @@ import type { GrossReservation } from "../../../packages/shared/src/gross-reserv
 import { hashApproval, intentDigest } from "../../../packages/shared/src/eip712.js";
 import { triggerReached, triggeredFillDelta } from "../../../packages/shared/src/trigger.js";
 import {
+  baseSpreadOf,
   marketIndex,
   marketName,
   marketRegistry,
@@ -100,7 +101,11 @@ export async function approve(
       signerSetVersion: options.expectedSignerSetVersion,
     }) ??
     checkQuoteModel(input.quote.spread, options.expectedQuoteModelVersion) ??
-    checkQuoteSpread(input.quote, fill.baseDelta.toString()) ??
+    checkQuoteSpread(
+      input.quote,
+      fill.baseDelta.toString(),
+      baseSpreadOf(marketRegistry.get(input.quote.market)),
+    ) ??
     checkEnvelopeConsistency(input.quote, fill, approval);
   if (offChain) return offChain;
 

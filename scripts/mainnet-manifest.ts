@@ -154,6 +154,7 @@ export function createMainnetDeploymentPlan(input: unknown, root = process.cwd()
       "RFQSettlement",
       "RFQLiquidation",
       "RFQResolution",
+      "RFQMarketAdmin",
       "RFQClearing implementation",
       "SignedPriceOracle (owned by governance)",
       "TransparentUpgradeableProxy (initialized paused with the canary caps)",

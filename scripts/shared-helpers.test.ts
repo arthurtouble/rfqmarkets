@@ -19,6 +19,8 @@ import {
   marketSymbols,
   readMarketsFromChain,
   watchMarketRegistry,
+  baseSpreadOf,
+  DEFAULT_BASE_SPREAD_BPS,
   type MarketDefinition,
 } from "../packages/shared/src/markets.js";
 import { maskAllows } from "../packages/shared/src/clearing-structs.js";
@@ -106,6 +108,46 @@ test("the registry loads from chain, grows append-only and notifies listeners", 
     () => registry.replace([{ ...sol, index: 0, symbol: "bad symbol" }]),
     /invalid market symbol/,
   );
+});
+
+test("market spreads load from chain: own spread, then the default, and none on older contracts", async () => {
+  const markets = [...new MarketRegistry().all()],
+    own: Record<number, bigint> = { 0: 8n, 1: 0n };
+  let defaultSpread = 5n;
+  const clearing = {
+    ...fakeClearing(markets),
+    defaultSpread: async () => defaultSpread,
+    marketSpread: async (index: number) => own[index],
+  };
+  const read = await readMarketsFromChain(clearing);
+  assert.deepEqual(
+    read.map((market) => [market.symbol, market.baseSpreadBps, baseSpreadOf(market)]),
+    [
+      ["BTC", 8, 8],
+      ["ETH", 5, 5],
+    ],
+  );
+  defaultSpread = 0n;
+  assert.deepEqual(
+    (await readMarketsFromChain(clearing)).map((market) => baseSpreadOf(market)),
+    [8, DEFAULT_BASE_SPREAD_BPS],
+  );
+  // A contract without the views (empty return data) quotes the built-in default.
+  const missing = Object.assign(new Error("could not decode result data"), { code: "BAD_DATA" });
+  const legacy = { ...clearing, defaultSpread: async () => Promise.reject(missing) };
+  assert.deepEqual(
+    (await readMarketsFromChain(legacy)).map((market) => market.baseSpreadBps),
+    [undefined, undefined],
+  );
+  // A network failure is not mistaken for an older contract.
+  const down = { ...clearing, defaultSpread: async () => Promise.reject(new Error("socket hang up")) };
+  await assert.rejects(readMarketsFromChain(down), /socket hang up/);
+  // A spread change is a registry change listeners hear about.
+  const registry = new MarketRegistry(read);
+  let changes = 0;
+  registry.onChange(() => changes++);
+  assert.equal(registry.replace(read.map((market) => ({ ...market, baseSpreadBps: 12 }))), true);
+  assert.equal(changes, 1);
 });
 
 test("an unknown symbol triggers a rate-limited early refresh", async () => {

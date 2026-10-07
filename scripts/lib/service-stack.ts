@@ -89,7 +89,7 @@ export interface ServiceStackConfig {
     | "hedgeRiskMaxAgeMs"
     | "chain"
   > & {
-    chain?: Pick<NonNullable<ApiOptions["chain"]>, "devFund" | "devWallet">;
+    chain?: Pick<NonNullable<ApiOptions["chain"]>, "devFund" | "devWallet" | "riskOperator">;
   };
   /**
    * Liquidation and resolution keeper. It signs with its own sponsor key (never the API's), reads

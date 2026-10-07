@@ -140,7 +140,7 @@ const bounded = (value: number, min: number, max: number) =>
 const bps = (value: number) => BigInt(Math.ceil(Math.max(0, value)));
 /** Deterministic market-wide quote-risk decomposition. */
 export function adaptiveSpread(inputs: AdaptiveSpreadInputs = {}): SpreadBreakdown {
-  const baseBps = bps(bounded(inputs.baseBps ?? 2, 1, 20));
+  const baseBps = bps(bounded(inputs.baseBps ?? 2, 1, 50));
   const observedVol = bounded(inputs.volatilityBps ?? 0, 0, 2_000);
   const volatilityBps = bps(Math.min(40, observedVol / 5));
   const toxicityBps = bps(Math.min(35, (bounded(inputs.toxicityScoreBps ?? 0, 0, 10_000) * 35) / 10_000));

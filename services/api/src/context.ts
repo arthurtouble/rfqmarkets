@@ -35,6 +35,8 @@ export interface ApiOptions {
     tokenAddress: string;
     devFund?: boolean;
     devWallet?: { account: string; privateKey: string };
+    /** Local development only: the risk operator key the operations console signs market changes with. */
+    riskOperator?: { account: string; privateKey: string };
   };
   journalPath?: string;
   oracleSource?: OracleSource;
