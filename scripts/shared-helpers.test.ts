@@ -102,7 +102,10 @@ test("the registry loads from chain, grows append-only and notifies listeners", 
   assert.deepEqual(registry.symbols(), ["BTC", "ETH", "SOL"], "a failed refresh keeps the last list");
   watch.stop();
   assert.throws(() => registry.replace([{ ...sol, index: 0 }, sol]), /index 2, expected 1/);
-  assert.throws(() => registry.replace([{ ...sol, index: 0, symbol: "bad symbol" }]), /invalid market symbol/);
+  assert.throws(
+    () => registry.replace([{ ...sol, index: 0, symbol: "bad symbol" }]),
+    /invalid market symbol/,
+  );
 });
 
 test("an unknown symbol triggers a rate-limited early refresh", async () => {

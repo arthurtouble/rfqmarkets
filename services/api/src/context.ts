@@ -144,7 +144,7 @@ export class ApiContext {
       this.clearing = new Contract(options.chain.clearingAddress, clearingApiAbi, this.provider);
       this.token = new Contract(
         options.chain.tokenAddress,
-        ["function mint(address,uint256)"],
+        ["function mint(address,uint256)", "function balanceOf(address) view returns (uint256)"],
         this.provider,
       );
     }

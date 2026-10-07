@@ -15,8 +15,7 @@ const clients=Array.from({length:count},(_,index)=>({wallet:Wallet.createRandom(
 // intentionally implemented as two extra sponsored transactions and would test
 // fixture setup throughput rather than settlement throughput here.
 for(const client of clients){
-  const route=await post("/v1/deposit/quote",{account:client.wallet.address,fromChainId:1,fromToken:"ETH",amount:"1"});assert(route.response.ok,JSON.stringify(route.payload));
-  const signature=await client.wallet.signTypedData(route.payload.domain,route.payload.types,route.payload.intent),deposit=await post("/v1/deposit/execute",{routeId:route.payload.routeId,userSignature:signature});assert(deposit.response.ok,JSON.stringify(deposit.payload));
+  const deposit=await post("/v1/dev/fund",{account:client.wallet.address,amount:"2500"});assert(deposit.response.ok,JSON.stringify(deposit.payload));
 }
 const prepared=await Promise.all(clients.map(async client=>{
   const quote=await post("/v1/quote",{market:client.market,side:client.side,amount:client.amount});assert(quote.response.ok,JSON.stringify(quote.payload));

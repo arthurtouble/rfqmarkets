@@ -1,71 +1,419 @@
-import {buildApprover} from "../services/approver/src/server.ts";
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import {network} from 'hardhat';
-import {JsonRpcProvider} from 'ethers';
-import {buildApi} from '../services/api/src/server.ts';
-import {approvalTypes} from '../packages/shared/src/eip712.ts';
-import {deployLinked,deploySignedOracle,launchMarkets,signedOracleReport} from './lib/contract-fixture.mjs';
-const {ethers}=await network.create({network:'hardhatOp',chainType:'op'}),[governance,emergency,a,b,c,maker,user]=await ethers.getSigners(),libraries={};
-const artifact=name=>JSON.parse(fs.readFileSync(`artifacts/${name}.json`,'utf8')),deploy=(name,args=[])=>deployLinked(governance,name,args,libraries);
-const risk=await deploy('RFQRiskMath'),signatures=await deploy('RFQSignatureVerifier');libraries.RFQRiskMath=await risk.getAddress();libraries.RFQSignatureVerifier=await signatures.getAddress();
-const token=await deploy('MockUSDC'),implementation=await deploy('RFQClearing'),oracleNodes=[0,1,2].map(()=>ethers.Wallet.createRandom()),adapter=await deploySignedOracle(governance,governance,oracleNodes,{libraries});
-const init=new ethers.Interface(artifact('RFQClearing').abi).encodeFunctionData('initialize',[await token.getAddress(),await adapter.getAddress(),governance.address,emergency.address,[a.address,b.address,c.address],600_000_000_000n,launchMarkets()]),proxy=await deploy('TestProxy',[await implementation.getAddress(),governance.address,init]),clearing=new ethers.Contract(await proxy.getAddress(),artifact('RFQClearing').abi,governance);await (await clearing.unpause()).wait();await (await adapter.setClearing(await proxy.getAddress())).wait();
-await (await token.mint(maker.address,1_000_000_000_000n)).wait();await (await token.connect(maker).approve(await proxy.getAddress(),ethers.MaxUint256)).wait();await (await clearing.connect(maker).fundMaker(800_000_000_000n)).wait();await (await clearing.connect(maker).fundInsurance(200_000_000_000n)).wait();
-await (await token.mint(user.address,4_000_000_000n)).wait();await (await token.connect(user).approve(await proxy.getAddress(),ethers.MaxUint256)).wait();await (await clearing.connect(user).deposit(4_000_000_000n)).wait();
-const prices=[100_000_000_000n,4_000_000_000n];
-async function oracle(market){const index=market==='BTC'?0:1,block=await ethers.provider.getBlock('latest');return {snapshot:{market,bid:prices[index],ask:prices[index],observedAtMs:Date.now(),source:'signed'},report:await signedOracleReport({adapter,chainId:(await ethers.provider.getNetwork()).chainId,nodes:oracleNodes,observedAt:block.timestamp,prices:{market:index,bid:prices[index]}}),validUntil:block.timestamp+15};}
-for(const market of ['BTC','ETH']){const observation=await oracle(market);await (await clearing.refreshOracle(observation.report)).wait();}
-class Chain extends JsonRpcProvider {async send(method,params){return ethers.provider.send(method,params);}async getNetwork(){return ethers.provider.getNetwork();}async getBlockNumber(){return ethers.provider.getBlockNumber();}async getBlock(tag){return ethers.provider.getBlock(tag);}async call(request){return ethers.provider.call(request);}}
-const provider=new Chain(),sponsor=ethers.Wallet.createRandom();await (await governance.sendTransaction({to:sponsor.address,value:ethers.parseEther('1')})).wait();
-const domainChainId=(await ethers.provider.getNetwork()).chainId,proxyAddress=await proxy.getAddress();
-const approverApps=[a,b,c].map((signer,index)=>{const key=ethers.HDNodeWallet.fromPhrase('test test test test test test test test test test test junk',undefined,`m/44'/60'/0'/0/${index+2}`);assert.equal(key.address,signer.address);return buildApprover({provider,privateKey:key.privateKey,transportToken:'private',databasePath:':memory:',expectedChainId:domainChainId,expectedVerifyingContract:proxyAddress,oracleMode:'signed'});});
-let approvals=0;const oracleListeners=[];
-const app=buildApi({provider,chainId:(await ethers.provider.getNetwork()).chainId,verifyingContract:await proxy.getAddress(),chain:{rpcUrl:'http://127.0.0.1:8545',sponsorPrivateKey:sponsor.privateKey,clearingAddress:await proxy.getAddress(),tokenAddress:await token.getAddress()},oracleSource:{latest:oracle,subscribe:listener=>{oracleListeners.push(listener);return()=>{};}},approvers:[a,b,c].map((signer,index)=>({url:`http://approver-${index}`,token:'private'})),fetchImpl:async(url,request)=>{const index=Number(String(url).match(/approver-(\d)/)[1]),payload=JSON.parse(request.body);approvals++;const response=await approverApps[index].inject({method:'POST',url:'/approve',headers:{authorization:'Bearer private'},payload});return new Response(response.body,{status:response.statusCode});},sender:{reconcile:async()=>{},status:()=>[],submit:async(_id,request)=>{const tx=await governance.sendTransaction(request),receipt=await tx.wait();return {hash:receipt.hash,blockNumber:receipt.blockNumber,blockHash:receipt.blockHash,status:1};}}});
-async function post(url,payload){const response=await app.inject({method:'POST',url,payload});assert.equal(response.statusCode,200,response.body);return response.json();}
-try{await app.ready();const quote=await post('/v1/quote',{market:'BTC',side:'buy',amount:'100'}),prepared=await post('/v1/prepare',{quoteId:quote.quoteId,account:user.address,nonce:'100'}),signature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent),executed=await post('/v1/approve',{quoteId:quote.quoteId,account:user.address,nonce:'100',userSignature:signature});assert.match(executed.transaction.hash,/^0x[0-9a-f]{64}$/i);assert(approvals>=2);assert((await clearing.positionOf(user.address,0)).size>0n);await (await clearing.pause()).wait();const close=await post('/v1/close/prepare',{account:user.address,market:'BTC',nonce:'101'}),closeSignature=await user.signTypedData(close.domain,close.types,close.intent);await post('/v1/close/execute',{intent:close.intent,userSignature:closeSignature});assert.equal((await clearing.positionOf(user.address,0)).size,0n);const withdrawn=await post('/v1/withdraw/prepare',{account:user.address,amount:'1',nonce:'102'}),withdrawSignature=await user.signTypedData(withdrawn.domain,withdrawn.types,withdrawn.intent),before=await token.balanceOf(user.address);await post('/v1/withdraw/execute',{intent:withdrawn.intent,userSignature:withdrawSignature});assert.equal(await token.balanceOf(user.address),before+1_000_000n);await (await clearing.unpause()).wait();await new Promise(resolve=>setTimeout(resolve,250));
-const incidentQuote=await post('/v1/quote',{market:'BTC',side:'buy',amount:'10000'}),incidentPrepared=await post('/v1/prepare',{quoteId:incidentQuote.quoteId,account:user.address,nonce:'200'}),incidentSignature=await user.signTypedData(incidentPrepared.domain,incidentPrepared.types,incidentPrepared.intent);
-await post('/v1/approve',{quoteId:incidentQuote.quoteId,account:user.address,nonce:'200',userSignature:incidentSignature});
-await (await clearing.setMarketPolicy(0,false,100_000_000n,1_000_000_000n)).wait();await new Promise(resolve=>setTimeout(resolve,250));
-const reducingQuote=await post('/v1/close/quote',{account:user.address,market:'BTC'}),reducingPrepared=await post('/v1/prepare',{quoteId:reducingQuote.quoteId,account:user.address,nonce:'202'}),reducingSignature=await user.signTypedData(reducingPrepared.domain,reducingPrepared.types,reducingPrepared.intent);
-await post('/v1/approve',{quoteId:reducingQuote.quoteId,account:user.address,nonce:'202',userSignature:reducingSignature});
-assert.equal((await clearing.positionOf(user.address,0)).size,0n,'API must permit genuine full reductions above tightened limits');assert.equal((await clearing.exposureState(0)).longBase,0n);
-await (await clearing.setMarketPolicy(0,true,1_000_000_000_000n,5_000_000_000_000n)).wait();await new Promise(resolve=>setTimeout(resolve,250));
-const reopenedQuote=await post('/v1/quote',{market:'BTC',side:'buy',amount:'10000'}),reopenedPrepared=await post('/v1/prepare',{quoteId:reopenedQuote.quoteId,account:user.address,nonce:'203'}),reopenedSignature=await user.signTypedData(reopenedPrepared.domain,reopenedPrepared.types,reopenedPrepared.intent);
-await post('/v1/approve',{quoteId:reopenedQuote.quoteId,account:user.address,nonce:'203',userSignature:reopenedSignature});
-// Close-all quotes one reduce-only close per open position.
-const closeAll=await post('/v1/close/all/quote',{account:user.address});assert.equal(closeAll.quotes.length,1);assert.equal(closeAll.quotes[0].market,'BTC');assert.equal(BigInt(closeAll.quotes[0].baseDelta),-(await clearing.positionOf(user.address,0)).size);
-// Trigger orders on chain: open an ETH long with custom slippage, protect it with a TP/SL pair sharing
-// one nonce, close half of it, then drop the oracle mid through the stop: the stop-loss settles through
-// executeTriggeredTrade clamped to the remaining position and the take-profit leg is closed.
-const ethQuote=await post('/v1/quote',{market:'ETH',side:'buy',amount:'2000',slippageBps:50}),ethPrepared=await post('/v1/prepare',{quoteId:ethQuote.quoteId,account:user.address,nonce:'300'});
-assert.equal(BigInt(ethPrepared.intent.limitPrice),BigInt(ethQuote.expectedPrice)+(BigInt(ethQuote.expectedPrice)*50n+9_999n)/10_000n,'custom slippage sets the signed limit price');
-await post('/v1/approve',{quoteId:ethQuote.quoteId,account:user.address,nonce:'300',userSignature:await user.signTypedData(ethPrepared.domain,ethPrepared.types,ethPrepared.intent)});
-const ethSize=(await clearing.positionOf(user.address,1)).size;assert(ethSize>0n);
-const pair=await post('/v1/orders/tpsl/prepare',{account:user.address,market:'ETH',takeProfitPrice:'4400',stopLossPrice:'3800',slippageBps:300,durationSeconds:3600,nonce:'301'});
-assert.deepEqual(pair.orders.map(order=>[order.type,order.intent.nonce,order.intent.baseDelta,order.intent.reduceOnly]),[['take-profit','301',(-ethSize).toString(),true],['stop-loss','301',(-ethSize).toString(),true]]);
-for(const order of pair.orders)await post('/v1/orders',{orderId:order.orderId,userSignature:await user.signTypedData(order.domain,order.types,order.intent)});
-const halfQuote=await post('/v1/close/quote',{account:user.address,market:'ETH',fraction:5000}),halfPrepared=await post('/v1/prepare',{quoteId:halfQuote.quoteId,account:user.address,nonce:'302'});
-assert.equal(BigInt(halfQuote.baseDelta),-(ethSize*5000n/10000n));assert.equal(halfPrepared.intent.reduceOnly,true);
-await post('/v1/approve',{quoteId:halfQuote.quoteId,account:user.address,nonce:'302',userSignature:await user.signTypedData(halfPrepared.domain,halfPrepared.types,halfPrepared.intent)});
-const remaining=(await clearing.positionOf(user.address,1)).size;assert.equal(remaining,ethSize-ethSize*5000n/10000n);
-prices[1]=3_790_000_000n;for(const listener of oracleListeners)listener('ETH');
-let triggerOrders=[];for(let poll=0;poll<400;poll++){triggerOrders=(await (await app.inject(`/v1/orders/${user.address}`)).json()).items.filter(item=>item.pairId===pair.pairId);if(triggerOrders.some(item=>item.status==='filled'))break;await new Promise(resolve=>setTimeout(resolve,25));}
-const stopLeg=triggerOrders.find(item=>item.type==='stop-loss'),profitLeg=triggerOrders.find(item=>item.type==='take-profit');
-assert.equal(stopLeg?.status,'filled',JSON.stringify(triggerOrders));assert.equal(profitLeg?.status,'cancelled');assert.equal(stopLeg.triggerPrice,'3800000000');
-assert.equal((await clearing.positionOf(user.address,1)).size,0n,'the stop-loss closes the remaining position');assert.equal(await clearing.nonceUsed(user.address,301n),true);
-const stopFill=(await ethers.provider.getTransactionReceipt(stopLeg.transactionHash)).logs.map(log=>{try{return clearing.interface.parseLog(log);}catch{return null;}}).find(event=>event?.name==='TradeExecuted');
-assert.equal(stopFill.args.baseDelta,-remaining,'the reduce-only trigger is clamped to the open position');
-const filledCancel=await app.inject({method:'POST',url:`/v1/orders/${stopLeg.orderId}/cancel/prepare`,payload:{}});assert.equal(filledCancel.statusCode,409,'a filled order cannot be cancelled');
-// Cancelling either leg of a TP/SL pair spends the shared nonce on chain and closes both legs.
-const btcMid=prices[0]/1_000_000n,btcPair=await post('/v1/orders/tpsl/prepare',{account:user.address,market:'BTC',takeProfitPrice:String(btcMid*2n),stopLossPrice:String(btcMid/2n),durationSeconds:3600,nonce:'303'});
-for(const order of btcPair.orders)await post('/v1/orders',{orderId:order.orderId,userSignature:await user.signTypedData(order.domain,order.types,order.intent)});
-const cancelPrepared=await post(`/v1/orders/${btcPair.orders[0].orderId}/cancel/prepare`,{});assert.deepEqual([...cancelPrepared.orderIds].sort(),btcPair.orders.map(order=>order.orderId).sort());
-const cancelled=await post(`/v1/orders/${btcPair.orders[0].orderId}/cancel`,{intent:cancelPrepared.intent,userSignature:await user.signTypedData(cancelPrepared.domain,cancelPrepared.types,cancelPrepared.intent)});
-assert.equal(cancelled.cancelledOrderIds.length,2);assert.equal(await clearing.nonceUsed(user.address,303n),true);
-assert((await (await app.inject(`/v1/orders/${user.address}`)).json()).items.filter(item=>item.pairId===btcPair.pairId).every(item=>item.status==='cancelled'));assert((await clearing.positionOf(user.address,0)).size>0n,'cancelling TP/SL leaves the position open');
-prices[1]=4_000_000_000n;
-await (await clearing.pause()).wait();prices[0]=10_000_000_000_000n;
-const incidentClose=await post('/v1/close/prepare',{account:user.address,market:'BTC',nonce:'201'}),incidentCloseSignature=await user.signTypedData(incidentClose.domain,incidentClose.types,incidentClose.intent),incidentResponse=await app.inject({method:'POST',url:'/v1/close/execute',payload:{intent:incidentClose.intent,userSignature:incidentCloseSignature}});
-assert.equal(incidentResponse.statusCode,409,incidentResponse.body);assert.equal(incidentResponse.json().status,'resolution_required');assert.equal(await clearing.resolutionRequired(),true);assert((await clearing.positionOf(user.address,0)).size>0n,'API falsely reported unpaid close as completed');
-console.log('API settlement E2E passed: three real independent approvers, linked clearing/signed oracle, tightened disabled-market RFQ exit, fill and owner-close events');}finally{await app.close();for(const approver of approverApps)await approver.close();}
+import { buildApprover } from "../services/approver/src/server.ts";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { network } from "hardhat";
+import { JsonRpcProvider } from "ethers";
+import { buildApi } from "../services/api/src/server.ts";
+import { approvalTypes } from "../packages/shared/src/eip712.ts";
+import {
+  deployLinked,
+  deploySignedOracle,
+  launchMarkets,
+  signedOracleReport,
+} from "./lib/contract-fixture.mjs";
+const { ethers } = await network.create({ network: "hardhatOp", chainType: "op" }),
+  [governance, emergency, a, b, c, maker, user] = await ethers.getSigners(),
+  libraries = {};
+const artifact = (name) => JSON.parse(fs.readFileSync(`artifacts/${name}.json`, "utf8")),
+  deploy = (name, args = []) => deployLinked(governance, name, args, libraries);
+const risk = await deploy("RFQRiskMath"),
+  signatures = await deploy("RFQSignatureVerifier");
+libraries.RFQRiskMath = await risk.getAddress();
+libraries.RFQSignatureVerifier = await signatures.getAddress();
+const token = await deploy("MockUSDC"),
+  implementation = await deploy("RFQClearing"),
+  oracleNodes = [0, 1, 2].map(() => ethers.Wallet.createRandom()),
+  adapter = await deploySignedOracle(governance, governance, oracleNodes, { libraries });
+const init = new ethers.Interface(artifact("RFQClearing").abi).encodeFunctionData("initialize", [
+    await token.getAddress(),
+    await adapter.getAddress(),
+    governance.address,
+    emergency.address,
+    [a.address, b.address, c.address],
+    600_000_000_000n,
+    launchMarkets(),
+  ]),
+  proxy = await deploy("TestProxy", [await implementation.getAddress(), governance.address, init]),
+  clearing = new ethers.Contract(await proxy.getAddress(), artifact("RFQClearing").abi, governance);
+await (await clearing.unpause()).wait();
+await (await adapter.setClearing(await proxy.getAddress())).wait();
+await (await token.mint(maker.address, 1_000_000_000_000n)).wait();
+await (await token.connect(maker).approve(await proxy.getAddress(), ethers.MaxUint256)).wait();
+await (await clearing.connect(maker).fundMaker(800_000_000_000n)).wait();
+await (await clearing.connect(maker).fundInsurance(200_000_000_000n)).wait();
+await (await token.mint(user.address, 4_000_000_000n)).wait();
+await (await token.connect(user).approve(await proxy.getAddress(), ethers.MaxUint256)).wait();
+await (await clearing.connect(user).deposit(4_000_000_000n)).wait();
+const prices = [100_000_000_000n, 4_000_000_000n];
+async function oracle(market) {
+  const index = market === "BTC" ? 0 : 1,
+    block = await ethers.provider.getBlock("latest");
+  return {
+    snapshot: { market, bid: prices[index], ask: prices[index], observedAtMs: Date.now(), source: "signed" },
+    report: await signedOracleReport({
+      adapter,
+      chainId: (await ethers.provider.getNetwork()).chainId,
+      nodes: oracleNodes,
+      observedAt: block.timestamp,
+      prices: { market: index, bid: prices[index] },
+    }),
+    validUntil: block.timestamp + 15,
+  };
+}
+for (const market of ["BTC", "ETH"]) {
+  const observation = await oracle(market);
+  await (await clearing.refreshOracle(observation.report)).wait();
+}
+class Chain extends JsonRpcProvider {
+  async send(method, params) {
+    return ethers.provider.send(method, params);
+  }
+  async getNetwork() {
+    return ethers.provider.getNetwork();
+  }
+  async getBlockNumber() {
+    return ethers.provider.getBlockNumber();
+  }
+  async getBlock(tag) {
+    return ethers.provider.getBlock(tag);
+  }
+  async call(request) {
+    return ethers.provider.call(request);
+  }
+}
+const provider = new Chain(),
+  sponsor = ethers.Wallet.createRandom();
+await (await governance.sendTransaction({ to: sponsor.address, value: ethers.parseEther("1") })).wait();
+const domainChainId = (await ethers.provider.getNetwork()).chainId,
+  proxyAddress = await proxy.getAddress();
+const approverApps = [a, b, c].map((signer, index) => {
+  const key = ethers.HDNodeWallet.fromPhrase(
+    "test test test test test test test test test test test junk",
+    undefined,
+    `m/44'/60'/0'/0/${index + 2}`,
+  );
+  assert.equal(key.address, signer.address);
+  return buildApprover({
+    provider,
+    privateKey: key.privateKey,
+    transportToken: "private",
+    databasePath: ":memory:",
+    expectedChainId: domainChainId,
+    expectedVerifyingContract: proxyAddress,
+    oracleMode: "signed",
+  });
+});
+let approvals = 0;
+const oracleListeners = [];
+const app = buildApi({
+  provider,
+  chainId: (await ethers.provider.getNetwork()).chainId,
+  verifyingContract: await proxy.getAddress(),
+  chain: {
+    rpcUrl: "http://127.0.0.1:8545",
+    sponsorPrivateKey: sponsor.privateKey,
+    clearingAddress: await proxy.getAddress(),
+    tokenAddress: await token.getAddress(),
+  },
+  oracleSource: {
+    latest: oracle,
+    subscribe: (listener) => {
+      oracleListeners.push(listener);
+      return () => {};
+    },
+  },
+  approvers: [a, b, c].map((signer, index) => ({ url: `http://approver-${index}`, token: "private" })),
+  fetchImpl: async (url, request) => {
+    const index = Number(String(url).match(/approver-(\d)/)[1]),
+      payload = JSON.parse(request.body);
+    approvals++;
+    const response = await approverApps[index].inject({
+      method: "POST",
+      url: "/approve",
+      headers: { authorization: "Bearer private" },
+      payload,
+    });
+    return new Response(response.body, { status: response.statusCode });
+  },
+  sender: {
+    reconcile: async () => {},
+    status: () => [],
+    submit: async (_id, request) => {
+      const tx = await governance.sendTransaction(request),
+        receipt = await tx.wait();
+      return {
+        hash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        blockHash: receipt.blockHash,
+        status: 1,
+      };
+    },
+  },
+});
+async function post(url, payload) {
+  const response = await app.inject({ method: "POST", url, payload });
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json();
+}
+try {
+  await app.ready();
+  const quote = await post("/v1/quote", { market: "BTC", side: "buy", amount: "100" }),
+    prepared = await post("/v1/prepare", { quoteId: quote.quoteId, account: user.address, nonce: "100" }),
+    signature = await user.signTypedData(prepared.domain, prepared.types, prepared.intent),
+    executed = await post("/v1/approve", {
+      quoteId: quote.quoteId,
+      account: user.address,
+      nonce: "100",
+      userSignature: signature,
+    });
+  assert.match(executed.transaction.hash, /^0x[0-9a-f]{64}$/i);
+  assert(approvals >= 2);
+  assert((await clearing.positionOf(user.address, 0)).size > 0n);
+  await (await clearing.pause()).wait();
+  const close = await post("/v1/close/prepare", { account: user.address, market: "BTC", nonce: "101" }),
+    closeSignature = await user.signTypedData(close.domain, close.types, close.intent);
+  await post("/v1/close/execute", { intent: close.intent, userSignature: closeSignature });
+  assert.equal((await clearing.positionOf(user.address, 0)).size, 0n);
+  const withdrawn = await post("/v1/withdraw/prepare", { account: user.address, amount: "1", nonce: "102" }),
+    withdrawSignature = await user.signTypedData(withdrawn.domain, withdrawn.types, withdrawn.intent),
+    before = await token.balanceOf(user.address);
+  await post("/v1/withdraw/execute", { intent: withdrawn.intent, userSignature: withdrawSignature });
+  assert.equal(await token.balanceOf(user.address), before + 1_000_000n);
+  await (await clearing.unpause()).wait();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const incidentQuote = await post("/v1/quote", { market: "BTC", side: "buy", amount: "10000" }),
+    incidentPrepared = await post("/v1/prepare", {
+      quoteId: incidentQuote.quoteId,
+      account: user.address,
+      nonce: "200",
+    }),
+    incidentSignature = await user.signTypedData(
+      incidentPrepared.domain,
+      incidentPrepared.types,
+      incidentPrepared.intent,
+    );
+  await post("/v1/approve", {
+    quoteId: incidentQuote.quoteId,
+    account: user.address,
+    nonce: "200",
+    userSignature: incidentSignature,
+  });
+  await (await clearing.setMarketPolicy(0, false, 100_000_000n, 1_000_000_000n)).wait();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const reducingQuote = await post("/v1/close/quote", { account: user.address, market: "BTC" }),
+    reducingPrepared = await post("/v1/prepare", {
+      quoteId: reducingQuote.quoteId,
+      account: user.address,
+      nonce: "202",
+    }),
+    reducingSignature = await user.signTypedData(
+      reducingPrepared.domain,
+      reducingPrepared.types,
+      reducingPrepared.intent,
+    );
+  await post("/v1/approve", {
+    quoteId: reducingQuote.quoteId,
+    account: user.address,
+    nonce: "202",
+    userSignature: reducingSignature,
+  });
+  assert.equal(
+    (await clearing.positionOf(user.address, 0)).size,
+    0n,
+    "API must permit genuine full reductions above tightened limits",
+  );
+  assert.equal((await clearing.exposureState(0)).longBase, 0n);
+  await (await clearing.setMarketPolicy(0, true, 1_000_000_000_000n, 5_000_000_000_000n)).wait();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const reopenedQuote = await post("/v1/quote", { market: "BTC", side: "buy", amount: "10000" }),
+    reopenedPrepared = await post("/v1/prepare", {
+      quoteId: reopenedQuote.quoteId,
+      account: user.address,
+      nonce: "203",
+    }),
+    reopenedSignature = await user.signTypedData(
+      reopenedPrepared.domain,
+      reopenedPrepared.types,
+      reopenedPrepared.intent,
+    );
+  await post("/v1/approve", {
+    quoteId: reopenedQuote.quoteId,
+    account: user.address,
+    nonce: "203",
+    userSignature: reopenedSignature,
+  });
+  // Close-all quotes one reduce-only close per open position.
+  const closeAll = await post("/v1/close/all/quote", { account: user.address });
+  assert.equal(closeAll.quotes.length, 1);
+  assert.equal(closeAll.quotes[0].market, "BTC");
+  assert.equal(BigInt(closeAll.quotes[0].baseDelta), -(await clearing.positionOf(user.address, 0)).size);
+  // Trigger orders on chain: open an ETH long with custom slippage, protect it with a TP/SL pair sharing
+  // one nonce, close half of it, then drop the oracle mid through the stop: the stop-loss settles through
+  // executeTriggeredTrade clamped to the remaining position and the take-profit leg is closed.
+  const ethQuote = await post("/v1/quote", { market: "ETH", side: "buy", amount: "2000", slippageBps: 50 }),
+    ethPrepared = await post("/v1/prepare", {
+      quoteId: ethQuote.quoteId,
+      account: user.address,
+      nonce: "300",
+    });
+  assert.equal(
+    BigInt(ethPrepared.intent.limitPrice),
+    BigInt(ethQuote.expectedPrice) + (BigInt(ethQuote.expectedPrice) * 50n + 9_999n) / 10_000n,
+    "custom slippage sets the signed limit price",
+  );
+  await post("/v1/approve", {
+    quoteId: ethQuote.quoteId,
+    account: user.address,
+    nonce: "300",
+    userSignature: await user.signTypedData(ethPrepared.domain, ethPrepared.types, ethPrepared.intent),
+  });
+  const ethSize = (await clearing.positionOf(user.address, 1)).size;
+  assert(ethSize > 0n);
+  const pair = await post("/v1/orders/tpsl/prepare", {
+    account: user.address,
+    market: "ETH",
+    takeProfitPrice: "4400",
+    stopLossPrice: "3800",
+    slippageBps: 300,
+    durationSeconds: 3600,
+    nonce: "301",
+  });
+  assert.deepEqual(
+    pair.orders.map((order) => [
+      order.type,
+      order.intent.nonce,
+      order.intent.baseDelta,
+      order.intent.reduceOnly,
+    ]),
+    [
+      ["take-profit", "301", (-ethSize).toString(), true],
+      ["stop-loss", "301", (-ethSize).toString(), true],
+    ],
+  );
+  for (const order of pair.orders)
+    await post("/v1/orders", {
+      orderId: order.orderId,
+      userSignature: await user.signTypedData(order.domain, order.types, order.intent),
+    });
+  const halfQuote = await post("/v1/close/quote", { account: user.address, market: "ETH", fraction: 5000 }),
+    halfPrepared = await post("/v1/prepare", {
+      quoteId: halfQuote.quoteId,
+      account: user.address,
+      nonce: "302",
+    });
+  assert.equal(BigInt(halfQuote.baseDelta), -((ethSize * 5000n) / 10000n));
+  assert.equal(halfPrepared.intent.reduceOnly, true);
+  await post("/v1/approve", {
+    quoteId: halfQuote.quoteId,
+    account: user.address,
+    nonce: "302",
+    userSignature: await user.signTypedData(halfPrepared.domain, halfPrepared.types, halfPrepared.intent),
+  });
+  const remaining = (await clearing.positionOf(user.address, 1)).size;
+  assert.equal(remaining, ethSize - (ethSize * 5000n) / 10000n);
+  prices[1] = 3_790_000_000n;
+  for (const listener of oracleListeners) listener("ETH");
+  let triggerOrders = [];
+  for (let poll = 0; poll < 400; poll++) {
+    triggerOrders = (await (await app.inject(`/v1/orders/${user.address}`)).json()).items.filter(
+      (item) => item.pairId === pair.pairId,
+    );
+    if (triggerOrders.some((item) => item.status === "filled")) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const stopLeg = triggerOrders.find((item) => item.type === "stop-loss"),
+    profitLeg = triggerOrders.find((item) => item.type === "take-profit");
+  assert.equal(stopLeg?.status, "filled", JSON.stringify(triggerOrders));
+  assert.equal(profitLeg?.status, "cancelled");
+  assert.equal(stopLeg.triggerPrice, "3800000000");
+  assert.equal(
+    (await clearing.positionOf(user.address, 1)).size,
+    0n,
+    "the stop-loss closes the remaining position",
+  );
+  assert.equal(await clearing.nonceUsed(user.address, 301n), true);
+  const stopFill = (await ethers.provider.getTransactionReceipt(stopLeg.transactionHash)).logs
+    .map((log) => {
+      try {
+        return clearing.interface.parseLog(log);
+      } catch {
+        return null;
+      }
+    })
+    .find((event) => event?.name === "TradeExecuted");
+  assert.equal(
+    stopFill.args.baseDelta,
+    -remaining,
+    "the reduce-only trigger is clamped to the open position",
+  );
+  const filledCancel = await app.inject({
+    method: "POST",
+    url: `/v1/orders/${stopLeg.orderId}/cancel/prepare`,
+    payload: {},
+  });
+  assert.equal(filledCancel.statusCode, 409, "a filled order cannot be cancelled");
+  // Cancelling either leg of a TP/SL pair spends the shared nonce on chain and closes both legs.
+  const btcMid = prices[0] / 1_000_000n;
+  const btcPair = await post("/v1/orders/tpsl/prepare", {
+    account: user.address,
+    market: "BTC",
+    takeProfitPrice: String(btcMid * 2n),
+    stopLossPrice: String(btcMid / 2n),
+    durationSeconds: 3600,
+    nonce: "303",
+  });
+  for (const order of btcPair.orders)
+    await post("/v1/orders", {
+      orderId: order.orderId,
+      userSignature: await user.signTypedData(order.domain, order.types, order.intent),
+    });
+  const cancelPrepared = await post(`/v1/orders/${btcPair.orders[0].orderId}/cancel/prepare`, {});
+  assert.deepEqual([...cancelPrepared.orderIds].sort(), btcPair.orders.map((order) => order.orderId).sort());
+  const cancelled = await post(`/v1/orders/${btcPair.orders[0].orderId}/cancel`, {
+    intent: cancelPrepared.intent,
+    userSignature: await user.signTypedData(
+      cancelPrepared.domain,
+      cancelPrepared.types,
+      cancelPrepared.intent,
+    ),
+  });
+  assert.equal(cancelled.cancelledOrderIds.length, 2);
+  assert.equal(await clearing.nonceUsed(user.address, 303n), true);
+  assert(
+    (await (await app.inject(`/v1/orders/${user.address}`)).json()).items
+      .filter((item) => item.pairId === btcPair.pairId)
+      .every((item) => item.status === "cancelled"),
+  );
+  assert((await clearing.positionOf(user.address, 0)).size > 0n, "cancelling TP/SL leaves the position open");
+  prices[1] = 4_000_000_000n;
+  await (await clearing.pause()).wait();
+  prices[0] = 10_000_000_000_000n;
+  const incidentClose = await post("/v1/close/prepare", {
+      account: user.address,
+      market: "BTC",
+      nonce: "201",
+    }),
+    incidentCloseSignature = await user.signTypedData(
+      incidentClose.domain,
+      incidentClose.types,
+      incidentClose.intent,
+    ),
+    incidentResponse = await app.inject({
+      method: "POST",
+      url: "/v1/close/execute",
+      payload: { intent: incidentClose.intent, userSignature: incidentCloseSignature },
+    });
+  assert.equal(incidentResponse.statusCode, 409, incidentResponse.body);
+  assert.equal(incidentResponse.json().status, "resolution_required");
+  assert.equal(await clearing.resolutionRequired(), true);
+  assert(
+    (await clearing.positionOf(user.address, 0)).size > 0n,
+    "API falsely reported unpaid close as completed",
+  );
+  console.log(
+    "API settlement E2E passed: three real independent approvers, linked clearing/signed oracle, tightened disabled-market RFQ exit, fill and owner-close events",
+  );
+} finally {
+  await app.close();
+  for (const approver of approverApps) await approver.close();
+}

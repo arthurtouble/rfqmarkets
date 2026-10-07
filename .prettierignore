@@ -1,0 +1,6 @@
+# Open work on the funds flow edits these; format them once it lands.
+scripts/deploy-local.ts
+scripts/leader-failover-smoke.ts
+scripts/limit-order-smoke.ts
+scripts/live-smoke.ts
+scripts/settlement-concurrency-smoke.ts

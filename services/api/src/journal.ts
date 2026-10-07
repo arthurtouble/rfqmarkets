@@ -21,11 +21,6 @@ CREATE TABLE IF NOT EXISTS commitments (
   quote_id TEXT PRIMARY KEY, market TEXT NOT NULL, delta TEXT NOT NULL, expires_ms INTEGER NOT NULL,
   status TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, approval_json TEXT,
   tx_hash TEXT, updated_ms INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS deposit_routes (
-  route_id TEXT PRIMARY KEY, account TEXT NOT NULL, from_chain TEXT NOT NULL, from_token TEXT NOT NULL,
-  source_amount TEXT NOT NULL, expected_usdc TEXT NOT NULL, minimum_usdc TEXT NOT NULL,
-  deadline INTEGER NOT NULL, nonce TEXT NOT NULL, status TEXT NOT NULL, destination_tx TEXT,
-  updated_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS resting_orders (
   order_id TEXT PRIMARY KEY, account TEXT NOT NULL, market TEXT NOT NULL, side TEXT NOT NULL,
   amount TEXT NOT NULL, intent_json TEXT NOT NULL, user_signature TEXT NOT NULL, status TEXT NOT NULL,
