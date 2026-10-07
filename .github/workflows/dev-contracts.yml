@@ -8,9 +8,22 @@ on:
         description: What to do
         required: true
         type: choice
-        options: [identities, preflight, deploy, upgrade, unpause, fund-maker, fund-sponsor, configure, verify, basescan]
+        options:
+          [
+            identities,
+            preflight,
+            deploy,
+            upgrade,
+            unpause,
+            fund-maker,
+            fund-sponsor,
+            configure,
+            verify,
+            basescan,
+            risk-operator,
+          ]
       amount:
-        description: USDC for fund-maker (default 100), ETH for fund-sponsor (default 0.003)
+        description: USDC for fund-maker (default 100), ETH for fund-sponsor (default 0.003), operator address for risk-operator
         required: false
         type: string
 permissions:
