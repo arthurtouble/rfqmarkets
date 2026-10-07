@@ -9,6 +9,7 @@ One command compiles the contracts, starts the chain, deploys v1 and runs every 
 ```bash
 npm run dev:stack            # add -- --web for the trade UI, -- --coinbase for live Coinbase prices
 npm run dev:scenario         # in a second terminal: scripted end-to-end scenarios
+npm run e2e:funds            # with --web running: deposit and withdraw in a browser, desktop and mobile
 ```
 
 By default prices come from an offline random walk around BTC 100,000 and ETH 4,000. To script a move, such as a crash before a liquidation, post to the loopback price control:
@@ -62,10 +63,11 @@ The local market-data adapter subscribes to Coinbase Advanced Trade's unauthenti
 
 The Base Sepolia path now uses authenticated Pyth Core data instead. After sourcing the ignored `base-sepolia.env`, run `npm run dev:testnet-services` to start the API, three approvers, indexer, simulated hedge worker and SSE gateway against the deployed contracts. Pyth's signed BTC/ETH bundles arrive at the API over authenticated SSE and remain usable after an authenticated REST recovery fetch. Use `npm run smoke:base-sepolia-pyth` for oracle-only verification and `npm run smoke:base-sepolia-e2e` for a real 1 USDC testnet RFQ.
 
-With the services running, exercise the real HTTP signature path using an ephemeral local EOA. The smoke test signs and settles a simulated Ethereum-to-Base deposit before trading against that collateral:
+With the services running, exercise the real HTTP signature path using an ephemeral local EOA. The smoke test funds the wallet from the local faucet before trading against that collateral, and `npm run smoke:funds` covers deposits and withdrawals on their own:
 
 ```bash
 npm run smoke:local
+npm run smoke:funds
 npm run smoke:live-market
 npm run smoke:quote-load
 ```
@@ -78,11 +80,11 @@ npm run smoke:quote-load
 4. `POST /v1/approve` requires that exact prepared account and nonce, then verifies that the typed signature belongs to the stated EOA, an ERC-1271 account at the pinned block, or a valid limited session before reserving any shared portfolio capacity. An unsigned or incorrectly signed request cannot move subsequent prices.
 5. The API constructs the contract-shaped `MakerApproval` and queries all three approvers in parallel. Each approver pins its own RPC, chain ID and clearing address; compares the pinned block hash with its configured secondary RPC; reads a block-consistent on-chain epoch, signer membership, pause state, market state and exposure snapshot; independently checks the report against chain time and recomputes the current-state impact floor; verifies the user and exact intent/quote binding; commits its signature to SQLite WAL; and only then responds.
 6. The API verifies every returned signature cryptographically, rejects signer-name spoofing, de-duplicates signer addresses and succeeds with two valid responses. One unavailable approver does not interrupt the flow.
-7. The deposit panel accepts a source chain, token and amount. `/v1/deposit/quote` returns deterministic local route economics and a `DepositIntent` binding the beneficiary, source terms, minimum Base USDC, expiry and nonce. `/v1/deposit/execute` verifies the wallet signature, journals submission and invokes the real clearing deposit through the gas sponsor. This is a local simulator, not a live bridge.
+7. Deposits are ordinary wallet transactions: approve USDC for the exact amount, then `deposit(amount)` on the clearing contract. The local dev wallet starts with 5,000,000 USDC deposited and 50,000 USDC in its wallet with no standing allowance, so the app's approve-and-deposit path runs. Scripts and fresh wallets get funds from `POST /v1/dev/fund {"account","amount","to":"collateral"|"wallet"}`, which exists only on the local chain.
 8. The durable sponsor serializes nonce allocation, signs the complete raw transaction and journals it before broadcast. A retry first reconciles every same-nonce attempt; after a bounded wait it can journal and broadcast one 15% fee-bumped replacement. Direct receipt polling avoids false timeouts from delayed provider block events, inclusion records its canonical block hash, and startup reconciliation detects a missing/reorganized receipt.
 9. The indexer follows clearing events, records block hashes and exposes account, global activity, open-position, protocol and finalized exposure endpoints. The public Markets page reads finalized aggregate risk, pseudonymous open positions and trade history from this disposable projection. The trading ticket reads the connected account projection and falls back to direct API chain reads while it catches up.
 10. The hedge worker reads finalized aggregate exposure only. Outside its configured band it writes a stable client order ID before sending a capped marketable-limit order to the local venue adapter. Repeated ticks and restarts reconcile the same order instead of duplicating it. Partial fills update venue position before the next slice, and any still-open order blocks additional orders in that market.
-11. Before each quote, the API refreshes settled aggregate exposure from the clearing contract. Signed commitments and deposit routes are written to the API SQLite WAL. Still-executable reservations and completed deposit identities reload after an API restart.
+11. Before each quote, the API refreshes settled aggregate exposure from the clearing contract. Signed commitments are written to the API SQLite WAL. Still-executable reservations reload after an API restart.
 12. Withdrawals, nonce cancellations, session grants and paused-market closes use separate exact EIP-712 messages. The API verifies the owner signature before spending sponsor gas; the contract independently verifies it and consumes the shared nonce. A session is limited on-chain by market, single and cumulative notional, fee and expiry and has no withdrawal authority. Each fresh local deployment receives an isolated runtime journal directory so stale sender or hedge state cannot cross deployments.
 
 The trading app (`apps/web`, see its README) connects the local stack's funded dev wallet automatically; any EIP-6963 browser wallet can be picked from the wallet menu instead. The ticket prices every tick from the market stream and fetches a firm quote at submit. Each action (trade, limit order, cancel, close, deposit, withdraw, quick trading) is single-flight and reports progress and the included transaction in a toast. Quick trading asks for one owner signature to grant an eight-hour session key; eligible trades then sign without wallet prompts. The key stays in memory, and session storage keeps only the public session address so a reloaded tab can still revoke the grant. While the protocol is paused, positions offer a conservative close at the oracle price. The Markets page shows finalized aggregate exposure, open wallet positions and recent trades.

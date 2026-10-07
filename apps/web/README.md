@@ -7,6 +7,7 @@ Router and Query, wagmi/viem.
 ```
 npm run dev:stack -- --web   # local chain, services and this app on :4173
 npm run test:web             # unit tests for the pure modules in src/lib
+npm run e2e:funds            # browser test of Deposit / Withdraw against the running stack (e2e/)
 npm run build:web            # production bundle in dist/web
 ```
 
@@ -21,6 +22,7 @@ npm run build:web            # production bundle in dist/web
 | `src/data/` | The shared market stream, TanStack Query hooks and every user action. |
 | `src/trade/`, `src/markets/` | Pages and their components. |
 | `src/ui/` | Small shared primitives and toasts. |
+| `e2e/` | Browser tests against `dev:stack --web`, run with Playwright. |
 
 ## How data flows
 

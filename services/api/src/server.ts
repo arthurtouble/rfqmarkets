@@ -8,7 +8,6 @@ import {
 import { registerAccountRoutes } from "./account.js";
 import { ChainReader } from "./chain.js";
 import { ApiContext, DEFAULT_CORS_ORIGIN, type ApiOptions } from "./context.js";
-import { DepositSimulator } from "./deposit-simulator.js";
 import { DevChain, registerDevRoutes } from "./dev-chain.js";
 import { ExecutionService } from "./execution.js";
 import { registerHttpGuards } from "./http.js";
@@ -36,15 +35,13 @@ export function buildApi(options: ApiOptions = {}) {
     quoting = new QuoteEngine(ctx, chain, dev),
     stream = new MarketStream(options, quoting),
     execution = new ExecutionService(ctx, chain, dev, quoting, stream),
-    orders = new LimitOrders(ctx, chain, quoting, execution),
-    deposits = new DepositSimulator(ctx, dev);
+    orders = new LimitOrders(ctx, chain, quoting, execution);
 
   registerOperationsRoutes(app, ctx, { chain, quoting, stream, orders, metrics });
-  registerDevRoutes(app, ctx);
+  registerDevRoutes(app, ctx, dev);
   quoting.register(app, guards);
   stream.register(app);
   registerAccountRoutes(app, ctx, quoting);
-  deposits.register(app);
   registerSignedActions(app, ctx, chain, dev, quoting);
   orders.register(app, guards);
   execution.register(app);

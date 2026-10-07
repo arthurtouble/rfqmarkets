@@ -10,23 +10,25 @@ If your USDC is on another chain, bridge or withdraw it to Base first. The venue
 
 ## Depositing
 
-1. Click **Deposit** on the Account card.
-2. Enter an amount or click **Max**. The dialog shows your wallet's USDC balance.
-3. Click **Approve and deposit** and confirm the two wallet prompts:
+1. Click **Deposit** in the top bar or on the Account card. On a phone, open **Portfolio** and tap **Deposit**.
+2. Enter an amount, or tap **25%**, **50%**, **75%** or **Max** of your wallet's USDC balance, which the sheet shows under the amount.
+3. Click **Deposit** and confirm the wallet prompts:
    - **Approve USDC** for exactly the amount you are depositing. The app never asks for an unlimited approval. If your existing allowance already covers the amount, this prompt is skipped.
    - **Confirm the deposit**, which moves the USDC into the contract.
 
 Both steps are ordinary Base transactions and you pay their gas in ETH, usually a fraction of a cent each. Your collateral is credited as soon as the deposit is included in a block.
 
-Your **first deposit must be at least 10 USDC**. The contract registers a new account on its first deposit, and the minimum exists so the account registry cannot be flooded with dust. Later top-ups can be any amount.
+Your **first deposit must be at least 10 USDC**. The contract registers a new account on its first deposit, and the minimum exists so the account registry cannot be flooded with dust. Later top-ups can be any amount, even after you have withdrawn everything. The app checks this before asking your wallet, and warns you if your wallet has no ETH on Base for gas.
+
+Deposits stay open while trading is paused, so you can always add margin to a position.
 
 > **Note.** The contract also accepts gasless deposits signed with USDC's built-in transfer authorization (EIP-3009), so a sponsor can pay the gas. The app does not offer this route yet.
 
 ## Withdrawing
 
-1. Click **Withdraw** on the Account card.
-2. Enter an amount up to the **Available** figure, or click **Max**.
-3. Click **Sign and withdraw** and sign the *WithdrawalIntent* in your wallet.
+1. Click **Withdraw** on the Account card, or on **Portfolio**. If the sheet is already open, switch it to **Withdraw**.
+2. Enter an amount up to **Available to withdraw**, or tap a percentage or **Max**. While positions are open, **Max** leaves 1% of that figure behind so a small price move between signing and inclusion cannot fail the withdrawal.
+3. Click **Withdraw** and sign the *WithdrawalIntent* in your wallet.
 
 The message you sign names your account, the recipient (your own wallet), the exact amount, a one-time nonce and a deadline two minutes away. The venue submits it and pays the gas. It cannot change the amount or the recipient, because the contract checks your signature over both.
 
@@ -34,7 +36,7 @@ The message you sign names your account, the recipient (your own wallet), the ex
 
 With no open positions, you can withdraw all of your collateral.
 
-With open positions, you can withdraw as long as your account still meets its **initial margin** afterwards, calculated without counting any unrealized gains. That is the **Available margin** figure on the Account card. To withdraw more, close or reduce positions first; closing turns an unrealized gain into collateral you can withdraw.
+With open positions, you can withdraw as long as your account still meets its **initial margin** afterwards, calculated without counting any unrealized gains. That is the **Available to trade** figure on the Account card, and the **Available to withdraw** figure in the sheet. To withdraw more, close or reduce positions first; closing turns an unrealized gain into collateral you can withdraw.
 
 A withdrawal with open positions also needs a fresh oracle price on chain, no more than 15 seconds old. The venue keeps prices fresh while it is running. If you withdraw directly from the contract while the venue is down, a stale price will block a withdrawal that depends on your open positions; with no open positions it is never needed.
 

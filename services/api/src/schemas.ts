@@ -36,17 +36,6 @@ const closeFraction = z.number().int().min(1).max(10_000).default(10_000);
 export const closeQuoteSchema = z.object({ account: z.string(), market, fraction: closeFraction });
 export const closeAllQuoteSchema = z.object({ account: z.string(), fraction: closeFraction });
 
-export const depositQuoteSchema = z.object({
-  account: z.string(),
-  fromChainId: z.number().int().positive(),
-  fromToken: z.enum(["USDC", "USDT", "ETH"]),
-  amount: z.string().regex(/^\d+(\.\d{1,18})?$/),
-});
-export const depositExecuteSchema = z.object({
-  routeId: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
-  userSignature: signature,
-});
-
 const actionBaseSchema = z.object({ account: z.string(), nonce: integer });
 const signedActionSchema = z.object({ userSignature: signature });
 
