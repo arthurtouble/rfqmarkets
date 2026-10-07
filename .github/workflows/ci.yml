@@ -22,7 +22,7 @@ jobs:
             foundry: true
             run: npm run test:contracts && npm run validate:upgrades
           - name: services and simulator
-            run: npm run test:services && npm run test:python && npm run test:cloudflare-edge
+            run: npm run test:services && npm run test:web && npm run test:python && npm run test:cloudflare-edge
           - name: types, docs and builds
             run: npm run format:check && npm run check:docs && npm run typecheck && npm run build && npm run validate:cloudflare-static
           - name: dependency audit

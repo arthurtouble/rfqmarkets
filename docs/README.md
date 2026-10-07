@@ -2,6 +2,10 @@
 
 Every file under `docs/` is published to the private internal manual (`npm run dev:internal-docs`); the folder becomes its section. Start with the overview, then read whichever area you are changing.
 
+## Takeover pack
+
+[takeover/](takeover/README.md) is the October 2026 handover: product and architecture summary, deployment inventory, decisions review, tech stack, refactor plan, flowcharts and roadmap, plus per-area code reviews.
+
 ## Architecture: how the system works
 
 - [Overview](architecture/overview.md): components, trust boundaries, request paths and launch gates. Read this first.
