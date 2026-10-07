@@ -29,13 +29,14 @@ async function deploySafe(label:string,owners:Identity[],saltNonce:string){
 
 const governanceSafe=await deploySafe("governance",bundle.governanceOwners,"84532001");
 const emergencySafe=await deploySafe("emergency",bundle.emergencyOwners,"84532002");
+const timelockDelaySeconds=259_200;
 const artifact=JSON.parse(readFileSync(resolve("artifacts/RFQTimelock.json"),"utf8")) as {abi:InterfaceAbi;bytecode:string};
 let timelock:string;
 if(existsOutput()){
   const prior=JSON.parse(readFileSync(outputPath,"utf8")) as {timelock?:string};timelock=prior.timelock&&await provider.getCode(prior.timelock)!=="0x"?getAddress(prior.timelock):"";
 }else timelock="";
-if(!timelock){const deployed=await new ContractFactory(artifact.abi,artifact.bytecode,deployer).deploy(governanceSafe);await deployed.waitForDeployment();timelock=getAddress(await deployed.getAddress());}
-const output={network:"base-sepolia",chainId:"84532",governanceSafe,emergencySafe,timelock,governanceOwners:bundle.governanceOwners.map(item=>item.address),emergencyOwners:bundle.emergencyOwners.map(item=>item.address),threshold:2,timelockDelaySeconds:259200,deployedAt:new Date().toISOString()};
+if(!timelock){const deployed=await new ContractFactory(artifact.abi,artifact.bytecode,deployer).deploy(timelockDelaySeconds,governanceSafe);await deployed.waitForDeployment();timelock=getAddress(await deployed.getAddress());}
+const output={network:"base-sepolia",chainId:"84532",governanceSafe,emergencySafe,timelock,governanceOwners:bundle.governanceOwners.map(item=>item.address),emergencyOwners:bundle.emergencyOwners.map(item=>item.address),threshold:2,timelockDelaySeconds,deployedAt:new Date().toISOString()};
 writeFileSync(outputPath,JSON.stringify(output,null,2),{mode:0o600});chmodSync(outputPath,0o600);
 let env=readFileSync(envPath,"utf8");env=replaceEnv(env,"RFQ_GOVERNANCE_ADDRESS",timelock);env=replaceEnv(env,"RFQ_EMERGENCY_COUNCIL_ADDRESS",emergencySafe);writeFileSync(envPath,env,{mode:0o600});chmodSync(envPath,0o600);
 console.log(JSON.stringify(output,null,2));

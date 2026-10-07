@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {network} from 'hardhat';
-import {linkArtifact} from './link-artifact.mjs';
+import {MAX_MARKET_CONFIG,deployLinked} from './lib/contract-fixture.mjs';
 const {ethers}=await network.create({network:'hardhatOp',chainType:'op'});
 const [gov,emergency,a,b,c,maker,long,short,third]=await ethers.getSigners(),libraries={};
 const artifact=name=>JSON.parse(fs.readFileSync(`artifacts/${name}.json`,'utf8'));
-const deploy=async(name,args=[])=>{const item=linkArtifact(artifact(name),libraries),contract=await new ethers.ContractFactory(item.abi,item.bytecode,gov).deploy(...args);await contract.waitForDeployment();return contract;};
+const deploy=(name,args=[])=>deployLinked(gov,name,args,libraries);
 const token=await deploy('MockUSDC'),oracle=await deploy('MockPriceOracle'),risk=await deploy('RFQRiskMath');libraries.RFQRiskMath=await risk.getAddress();const signatures=await deploy('RFQSignatureVerifier');libraries.RFQSignatureVerifier=await signatures.getAddress();
-const implementation=await deploy('RFQClearing'),init=new ethers.Interface(artifact('RFQClearing').abi).encodeFunctionData('initialize',[await token.getAddress(),await oracle.getAddress(),gov.address,emergency.address,[a.address,b.address,c.address],100_000_000_000n]);
-const proxy=await deploy('TestProxy',[await implementation.getAddress(),gov.address,init]),clearing=new ethers.Contract(await proxy.getAddress(),artifact('RFQClearing').abi,gov);
+const implementation=await deploy('RFQClearing'),init=new ethers.Interface(artifact('RFQClearing').abi).encodeFunctionData('initialize',[await token.getAddress(),await oracle.getAddress(),gov.address,emergency.address,[a.address,b.address,c.address],100_000_000_000n,[MAX_MARKET_CONFIG,MAX_MARKET_CONFIG]]);
+const proxy=await deploy('TestProxy',[await implementation.getAddress(),gov.address,init]),clearing=new ethers.Contract(await proxy.getAddress(),artifact('RFQClearing').abi,gov);await (await clearing.unpause()).wait();
 await (await token.mint(maker.address,200_000_000_000n)).wait();await (await token.connect(maker).approve(await proxy.getAddress(),ethers.MaxUint256)).wait();await (await clearing.connect(maker).fundMaker(99_999_000_000n)).wait();
 for(const user of [long,short,third]){await (await token.mint(user.address,100_000_000_000n)).wait();await (await token.connect(user).approve(await proxy.getAddress(),ethers.MaxUint256)).wait();await (await clearing.connect(user).deposit(100_000_000_000n)).wait();}
 const prices=[100_000_000_000n,4_000_000_000n],BASE=10n**18n;
@@ -44,5 +44,17 @@ await trade(long,-BASE/20n,0,true);assert.equal((await clearing.exposureState(0)
 await (await clearing.setMarketPolicy(0,true,1_000_000_000_000n,5_000_000_000_000n)).wait();await configure(50_000_000_000n,20_000_000_000n);await refresh();await trade(long,BASE/10n);await trade(short,-BASE/100n);
 prices[0]=150_000_000_000n;await refresh();await trade(long,-BASE/10n,0,true);
 assert((await clearing.makerBacking())<100_000_000_000n);await assert.rejects(trade(third,BASE/100n),'realized maker losses must enforce capital floor on later opening');
-await (await clearing.connect(third).declareResolution()).wait();assert.equal(await clearing.resolutionRequired(),true,'objective undercapitalization must permit permissionless incident entry');
-console.log('Exposure E2E passed: capital floor, opposing gross, independent sides, stale gross marks, reductions and permissionless incident entry');
+await assert.rejects(clearing.connect(third).declareResolution(),'an unreported incident must not resolve the venue');
+await (await clearing.connect(third).reportMakerIncident()).wait();assert(await clearing.makerIncidentSince()>0n);
+await assert.rejects(clearing.connect(third).reportMakerIncident(),'an incident is reported once');
+await assert.rejects(clearing.connect(third).declareResolution(),'resolution must wait for the incident grace period');
+const grace=Number(await clearing.makerIncidentGracePeriod());
+const recovery=await ethers.provider.send('evm_snapshot',[]);
+await (await clearing.connect(maker).fundMaker(50_000_000_000n)).wait();await refresh();
+await (await clearing.connect(third).clearMakerIncident()).wait();assert.equal(await clearing.makerIncidentSince(),0n,'recapitalization clears the incident');
+await ethers.provider.send('evm_increaseTime',[grace]);await ethers.provider.send('evm_mine',[]);await refresh();
+await assert.rejects(clearing.connect(third).declareResolution(),'a cleared incident cannot resolve the venue');
+await ethers.provider.send('evm_revert',[recovery]);
+await ethers.provider.send('evm_increaseTime',[grace]);await ethers.provider.send('evm_mine',[]);await refresh();
+await (await clearing.connect(third).declareResolution()).wait();assert.equal(await clearing.resolutionRequired(),true,'a persistent objective undercapitalization must permit permissionless resolution');
+console.log('Exposure E2E passed: capital floor, opposing gross, independent sides, stale gross marks, reductions and permissionless incident entry after the grace period');

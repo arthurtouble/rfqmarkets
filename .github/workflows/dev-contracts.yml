@@ -1,0 +1,46 @@
+name: Dev contracts (Base mainnet)
+# Deploys, upgrades and operates the Base mainnet dev contracts. Runs in the mainnet-dev environment,
+# whose required reviewer approves each run; that approval is the go-ahead for any mainnet transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        required: true
+        type: choice
+        options: [identities, preflight, deploy, upgrade, unpause, fund-maker, fund-sponsor, configure, verify, basescan]
+      amount:
+        description: USDC for fund-maker (default 100), ETH for fund-sponsor (default 0.003)
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: dev-contracts
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: mainnet-dev
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Optional: without it the owner key generated into the dev KV namespace is used.
+      RFQ_DEV_OWNER_KEY: ${{ secrets.RFQ_DEV_OWNER_KEY }}
+      RFQ_BASE_MAINNET_RPC_URL: ${{ secrets.RFQ_BASE_MAINNET_RPC_URL }}
+      RFQ_BASESCAN_API_KEY: ${{ secrets.RFQ_BASESCAN_API_KEY }}
+      RFQ_PYTH_CORE_ADDRESS: ${{ vars.RFQ_PYTH_CORE_ADDRESS }}
+      RFQ_DEV_POLICY_JSON: ${{ vars.RFQ_DEV_POLICY_JSON }}
+      ACTION: ${{ inputs.action }}
+      AMOUNT: ${{ inputs.amount }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run compile:contracts
+      - name: Run ${{ inputs.action }}
+        run: bash scripts/dev-contracts.sh "$ACTION" "$AMOUNT"
