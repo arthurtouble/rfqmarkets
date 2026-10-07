@@ -43,5 +43,12 @@ export function deploySignedOracle(
   deployer: Signer,
   owner: Signer | string,
   nodes: Array<Signer | string>,
-  options?: { threshold?: number; maxDeviationBps?: number; maxSkew?: number; maxJumpBps?: number; jumpWindow?: number; libraries?: Record<string, string> },
+  options?: {
+    threshold?: number;
+    maxDeviationBps?: number;
+    maxSkew?: number;
+    maxJumpBps?: number;
+    jumpWindow?: number;
+    libraries?: Record<string, string>;
+  },
 ): Promise<BaseContract & Record<string, any>>;
