@@ -20,7 +20,15 @@ export const randomNonce = () => {
   return BigInt(`0x${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`).toString();
 };
 
+/** EIP-1193 4001, which viem wraps as UserRejectedRequestError somewhere in the cause chain. */
+const userRejected = (error: unknown): boolean => {
+  for (let current = error, depth = 0; current && typeof current === "object" && depth < 5; current = (current as { cause?: unknown }).cause, depth++)
+    if ((current as { code?: unknown }).code === 4001 || (current as { name?: unknown }).name === "UserRejectedRequestError") return true;
+  return false;
+};
+
 export const errorMessage = (error: unknown, fallback: string) => {
+  if (userRejected(error)) return "You cancelled in your wallet";
   if (error && typeof error === "object" && "shortMessage" in error && typeof error.shortMessage === "string") return error.shortMessage;
   return error instanceof Error && error.message ? error.message : fallback;
 };

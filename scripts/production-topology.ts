@@ -1,5 +1,112 @@
-import {readFileSync} from 'node:fs';import {resolve} from 'node:path';import {z} from 'zod';
-const service=z.object({role:z.enum(['api-active','api-standby','approver','keeper','indexer','hedger','gateway']),hostId:z.string().min(1),provider:z.string().min(1),region:z.string().min(1),privateIngress:z.boolean(),persistentVolume:z.boolean(),failureDomain:z.string().min(1)}).strict();
-export const productionTopologySchema=z.object({version:z.literal(1),services:z.array(service).min(9),rpcProviders:z.tuple([z.object({name:z.string().min(1),url:z.string().url().refine(value=>value.startsWith('https://'))}).strict(),z.object({name:z.string().min(1),url:z.string().url().refine(value=>value.startsWith('https://'))}).strict()]),edge:z.object({provider:z.string().min(1),authenticatedOrigins:z.boolean(),directExitSeparateOrigin:z.boolean()}).strict(),backup:z.object({provider:z.string().min(1),encrypted:z.boolean(),immutableRetentionDays:z.number().int().min(30),restoreHostId:z.string().min(1)}).strict(),monitoring:z.object({provider:z.string().min(1),independentFromRuntime:z.boolean(),pagerConfigured:z.boolean()}).strict()}).strict();
-export function validateProductionTopology(input:unknown){const value=productionTopologySchema.parse(input),byRole=(role:string)=>value.services.filter(item=>item.role===role);if(byRole('api-active').length!==1||byRole('api-standby').length<1)throw new Error('Exactly one active API and at least one standby are required');const approvers=byRole('approver');if(approvers.length!==3||new Set(approvers.map(item=>item.hostId)).size!==3||new Set(approvers.map(item=>item.failureDomain)).size!==3||new Set(approvers.map(item=>item.provider)).size!==3)throw new Error('Approvers require three independent hosts, providers and failure domains');const writers=value.services.filter(item=>['api-active','api-standby','approver','keeper','indexer','hedger'].includes(item.role));if(writers.some(item=>!item.privateIngress||!item.persistentVolume))throw new Error('Financial services require private ingress and persistent volumes');const api=byRole('api-active')[0],keeper=byRole('keeper')[0];if(!keeper||api.hostId===keeper.hostId||api.failureDomain===keeper.failureDomain)throw new Error('Keeper must be independent from the API writer');if(value.rpcProviders[0].name===value.rpcProviders[1].name||new URL(value.rpcProviders[0].url).hostname===new URL(value.rpcProviders[1].url).hostname)throw new Error('RPC providers must be independent');if(!value.edge.authenticatedOrigins||!value.edge.directExitSeparateOrigin)throw new Error('Edge origins and direct exit must be isolated');if(!value.backup.encrypted||!value.monitoring.independentFromRuntime||!value.monitoring.pagerConfigured)throw new Error('Encrypted backup and independent paging are required');if(value.services.some(item=>item.hostId===value.backup.restoreHostId))throw new Error('Restore rehearsal host must be clean and separate');return value;}
-if(process.argv[1]&&resolve(process.argv[1])===resolve(new URL(import.meta.url).pathname)){if(!process.argv[2])throw new Error('Usage: production-topology TOPOLOGY_JSON');const value=validateProductionTopology(JSON.parse(readFileSync(process.argv[2],'utf8')));console.log(JSON.stringify({valid:true,services:value.services.length,approverFailureDomains:3,rpcProviders:2},null,2));}
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { z } from "zod";
+const service = z
+  .object({
+    role: z.enum(["api-active", "api-standby", "approver", "keeper", "indexer", "hedger", "gateway"]),
+    hostId: z.string().min(1),
+    provider: z.string().min(1),
+    region: z.string().min(1),
+    privateIngress: z.boolean(),
+    persistentVolume: z.boolean(),
+    failureDomain: z.string().min(1),
+  })
+  .strict();
+export const productionTopologySchema = z
+  .object({
+    version: z.literal(1),
+    services: z.array(service).min(9),
+    rpcProviders: z.tuple([
+      z
+        .object({
+          name: z.string().min(1),
+          url: z
+            .string()
+            .url()
+            .refine((value) => value.startsWith("https://")),
+        })
+        .strict(),
+      z
+        .object({
+          name: z.string().min(1),
+          url: z
+            .string()
+            .url()
+            .refine((value) => value.startsWith("https://")),
+        })
+        .strict(),
+    ]),
+    edge: z
+      .object({
+        provider: z.string().min(1),
+        authenticatedOrigins: z.boolean(),
+        directExitSeparateOrigin: z.boolean(),
+      })
+      .strict(),
+    backup: z
+      .object({
+        provider: z.string().min(1),
+        encrypted: z.boolean(),
+        immutableRetentionDays: z.number().int().min(30),
+        restoreHostId: z.string().min(1),
+      })
+      .strict(),
+    monitoring: z
+      .object({
+        provider: z.string().min(1),
+        independentFromRuntime: z.boolean(),
+        pagerConfigured: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+export function validateProductionTopology(input: unknown) {
+  const value = productionTopologySchema.parse(input),
+    byRole = (role: string) => value.services.filter((item) => item.role === role);
+  if (byRole("api-active").length !== 1 || byRole("api-standby").length < 1)
+    throw new Error("Exactly one active API and at least one standby are required");
+  const approvers = byRole("approver");
+  if (
+    approvers.length !== 3 ||
+    new Set(approvers.map((item) => item.hostId)).size !== 3 ||
+    new Set(approvers.map((item) => item.failureDomain)).size !== 3 ||
+    new Set(approvers.map((item) => item.provider)).size !== 3
+  )
+    throw new Error("Approvers require three independent hosts, providers and failure domains");
+  const writers = value.services.filter((item) =>
+    ["api-active", "api-standby", "approver", "keeper", "indexer", "hedger"].includes(item.role),
+  );
+  if (writers.some((item) => !item.privateIngress || !item.persistentVolume))
+    throw new Error("Financial services require private ingress and persistent volumes");
+  const api = byRole("api-active")[0],
+    keeper = byRole("keeper")[0];
+  if (!keeper || api.hostId === keeper.hostId || api.failureDomain === keeper.failureDomain)
+    throw new Error("Keeper must be independent from the API writer");
+  if (
+    value.rpcProviders[0].name === value.rpcProviders[1].name ||
+    new URL(value.rpcProviders[0].url).hostname === new URL(value.rpcProviders[1].url).hostname
+  )
+    throw new Error("RPC providers must be independent");
+  if (!value.edge.authenticatedOrigins || !value.edge.directExitSeparateOrigin)
+    throw new Error("Edge origins and direct exit must be isolated");
+  if (
+    !value.backup.encrypted ||
+    !value.monitoring.independentFromRuntime ||
+    !value.monitoring.pagerConfigured
+  )
+    throw new Error("Encrypted backup and independent paging are required");
+  if (value.services.some((item) => item.hostId === value.backup.restoreHostId))
+    throw new Error("Restore rehearsal host must be clean and separate");
+  return value;
+}
+if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+  if (!process.argv[2]) throw new Error("Usage: production-topology TOPOLOGY_JSON");
+  const value = validateProductionTopology(JSON.parse(readFileSync(process.argv[2], "utf8")));
+  console.log(
+    JSON.stringify(
+      { valid: true, services: value.services.length, approverFailureDomains: 3, rpcProviders: 2 },
+      null,
+      2,
+    ),
+  );
+}

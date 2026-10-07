@@ -31,7 +31,7 @@ The public surface is deliberately narrow:
 
 - `GET /health` returns indexed, finalized and head blocks plus lag.
 - `GET /v1/account/:address` returns collateral, margins and both positions with the indexed block.
-- `GET /v1/account/:address/activity?cursor=&limit=` returns a bounded, cursor-paginated union of trades, collateral actions and liquidations.
+- `GET /v1/account/:address/activity?cursor=&limit=&exclude=` returns a bounded, cursor-paginated union of trades, collateral actions and liquidations. `exclude` is a comma-separated list of event kinds to leave out.
 - `GET /v1/risk?finalized=true` returns precomputed aggregate collateral and long/short exposure.
 - `GET /v1/positions?finalized=true&cursor=&limit=` returns an indexed page of pseudonymous open positions.
 - `GET /v1/protocol` returns pause/resolution state and the current epoch/version metadata needed for display.

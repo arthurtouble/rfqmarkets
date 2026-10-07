@@ -58,10 +58,14 @@ deploy_private deploy/cloudflare/static/wrangler.admin.dev.jsonc admin "RFQ Mark
 deploy_private deploy/cloudflare/static/wrangler.internal-docs.jsonc internal-docs "RFQ Markets internal docs"
 
 # Direct exit page, built against the dev clearing contract once it exists.
-clearing=$(wrangler kv key get deployment.json --namespace-id "$kv" --remote 2>/dev/null \
-  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).contracts.clearingProxy)}catch{}})')
+deployment=$(wrangler kv key get deployment.json --namespace-id "$kv" --remote 2>/dev/null || true)
+read_deployment() { printf '%s' "$deployment" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const v=JSON.parse(s).$1;if(v!==undefined)process.stdout.write(String(v))}catch{}})"; }
+clearing=$(read_deployment contracts.clearingProxy)
 if [ -n "$clearing" ]; then
-  VITE_EXIT_CHAIN_ID=8453 VITE_EXIT_CLEARING_ADDRESS="$clearing" npm run build:exit
+  # The oracle nodes default to the dev ones; the deployment block bounds the one-click key search.
+  VITE_EXIT_CHAIN_ID=8453 VITE_EXIT_CLEARING_ADDRESS="$clearing" VITE_EXIT_DEPLOYMENT_BLOCK="$(read_deployment deploymentBlock)" \
+    VITE_EXIT_APP_URL="https://dev.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev" \
+    VITE_EXIT_DOCS_URL="https://docs.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev/protocol/safety-and-exits" npm run build:exit
   wrangler deploy --config deploy/cloudflare/static/wrangler.exit.dev.jsonc
 fi
 wrangler kv key put deployed-commit "$(git rev-parse HEAD)" --namespace-id "$kv" --remote

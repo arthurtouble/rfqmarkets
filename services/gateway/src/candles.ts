@@ -97,6 +97,13 @@ export class CandleBook {
   has(market: HistoryMarket) {
     return this.ids.has(market) || this.minutes.has(market);
   }
+  /** Launch markets and every market the stream has carried, in contract index order when known. */
+  markets(): HistoryMarket[] {
+    const order = (market: HistoryMarket) => this.ids.get(market) ?? MAX_MARKETS;
+    return [...new Set([...this.ids.keys(), ...this.minutes.keys()])].sort(
+      (a, b) => order(a) - order(b) || a.localeCompare(b),
+    );
+  }
   /** The contract market index the oracle nodes key candles by, when known. */
   marketId(market: HistoryMarket) {
     return this.ids.get(market);
@@ -123,6 +130,33 @@ export function resampleCandles(candles: readonly Candle[], intervalMs: number) 
     } else merged.push({ ...candle, start });
   }
   return merged;
+}
+
+export const DAY_MS = 86_400_000;
+
+/**
+ * Rolling 24-hour summary of the mid from ascending candles covering the day: the first candle's open is the
+ * reference, `spark` holds hourly closes for a sparkline. Null when there are no candles.
+ */
+export function dayStats(candles: readonly Candle[]) {
+  if (!candles.length) return null;
+  const first = candles[0],
+    last = candles.at(-1)!;
+  let high = first.high,
+    low = first.low;
+  for (const candle of candles) {
+    if (candle.high > high) high = candle.high;
+    if (candle.low < low) low = candle.low;
+  }
+  return {
+    since: first.start,
+    open: first.open.toString(),
+    high: high.toString(),
+    low: low.toString(),
+    last: last.close.toString(),
+    change: (last.close - first.open).toString(),
+    spark: resampleCandles(candles, CANDLE_INTERVALS["1h"]).map((candle) => candle.close.toString()),
+  };
 }
 
 export const candleToWire = (candle: Candle) => ({

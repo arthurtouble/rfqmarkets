@@ -1,4 +1,48 @@
-import assert from 'node:assert/strict';import test from 'node:test';import {validateProductionTopology} from './production-topology.js';
-const svc=(role:string,n:number,provider=`p${n}`)=>({role,hostId:`h${n}`,provider,region:`r${n}`,privateIngress:role!=='gateway',persistentVolume:role!=='gateway',failureDomain:`f${n}`}),valid=()=>({version:1,services:[svc('api-active',1),svc('api-standby',2),svc('approver',3),svc('approver',4),svc('approver',5),svc('keeper',6),svc('indexer',7),svc('hedger',8),svc('gateway',9)],rpcProviders:[{name:'rpc-a',url:'https://rpc-a.example'},{name:'rpc-b',url:'https://rpc-b.example'}],edge:{provider:'edge',authenticatedOrigins:true,directExitSeparateOrigin:true},backup:{provider:'archive',encrypted:true,immutableRetentionDays:90,restoreHostId:'clean-restore'},monitoring:{provider:'monitor',independentFromRuntime:true,pagerConfigured:true}});
-test('production topology requires independent writers, quorum and recovery',()=>assert.equal(validateProductionTopology(valid()).services.length,9));
-test('production topology rejects shared approver failure domains and RPCs',()=>{const shared=valid();shared.services[4].failureDomain=shared.services[3].failureDomain;assert.throws(()=>validateProductionTopology(shared),/Approvers/);const rpc=valid();rpc.rpcProviders[1]={name:'rpc-a',url:'https://rpc-a.example/other'};assert.throws(()=>validateProductionTopology(rpc),/RPC/);});
+import assert from "node:assert/strict";
+import test from "node:test";
+import { validateProductionTopology } from "./production-topology.js";
+const svc = (role: string, n: number, provider = `p${n}`) => ({
+    role,
+    hostId: `h${n}`,
+    provider,
+    region: `r${n}`,
+    privateIngress: role !== "gateway",
+    persistentVolume: role !== "gateway",
+    failureDomain: `f${n}`,
+  }),
+  valid = () => ({
+    version: 1,
+    services: [
+      svc("api-active", 1),
+      svc("api-standby", 2),
+      svc("approver", 3),
+      svc("approver", 4),
+      svc("approver", 5),
+      svc("keeper", 6),
+      svc("indexer", 7),
+      svc("hedger", 8),
+      svc("gateway", 9),
+    ],
+    rpcProviders: [
+      { name: "rpc-a", url: "https://rpc-a.example" },
+      { name: "rpc-b", url: "https://rpc-b.example" },
+    ],
+    edge: { provider: "edge", authenticatedOrigins: true, directExitSeparateOrigin: true },
+    backup: {
+      provider: "archive",
+      encrypted: true,
+      immutableRetentionDays: 90,
+      restoreHostId: "clean-restore",
+    },
+    monitoring: { provider: "monitor", independentFromRuntime: true, pagerConfigured: true },
+  });
+test("production topology requires independent writers, quorum and recovery", () =>
+  assert.equal(validateProductionTopology(valid()).services.length, 9));
+test("production topology rejects shared approver failure domains and RPCs", () => {
+  const shared = valid();
+  shared.services[4].failureDomain = shared.services[3].failureDomain;
+  assert.throws(() => validateProductionTopology(shared), /Approvers/);
+  const rpc = valid();
+  rpc.rpcProviders[1] = { name: "rpc-a", url: "https://rpc-a.example/other" };
+  assert.throws(() => validateProductionTopology(rpc), /RPC/);
+});

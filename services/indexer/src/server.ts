@@ -97,7 +97,17 @@ const isTrue = z
   .optional()
   .transform((value) => value === "true");
 const accountParams = z.object({ address: address("invalid account") });
-const accountActivityQuery = z.object({ cursor: activityCursor, limit: pageLimit(25) });
+/** Comma-separated kinds to leave out, e.g. `TradeExecuted,FundingSettled` when those have their own views. */
+const excludedKinds = z
+  .string()
+  .optional()
+  .transform((value) => (value ? value.split(",") : []))
+  .pipe(z.array(z.enum(ACTIVITY_KINDS, { message: "invalid activity kind" })).max(ACTIVITY_KINDS.length));
+const accountActivityQuery = z.object({
+  cursor: activityCursor,
+  limit: pageLimit(25),
+  exclude: excludedKinds,
+});
 const activityQuery = z.object({
   cursor: activityCursor,
   limit: pageLimit(25),
@@ -599,11 +609,14 @@ export function buildIndexer(options: IndexerOptions) {
       query = params && parse(accountActivityQuery, request.query, reply);
     if (!params || !query) return;
     const [cursorBlock, cursorLog] = query.cursor;
+    const excluded = query.exclude.length
+      ? ` AND kind NOT IN (${query.exclude.map(() => "?").join(",")})`
+      : "";
     const rows = db
       .prepare(
-        "SELECT * FROM activity WHERE account=? AND (block_number<? OR (block_number=? AND log_index<?)) ORDER BY block_number DESC,log_index DESC LIMIT ?",
+        `SELECT * FROM activity WHERE account=? AND (block_number<? OR (block_number=? AND log_index<?))${excluded} ORDER BY block_number DESC,log_index DESC LIMIT ?`,
       )
-      .all(params.address, cursorBlock, cursorBlock, cursorLog, query.limit) as Array<
+      .all(params.address, cursorBlock, cursorBlock, cursorLog, ...query.exclude, query.limit) as Array<
       Record<string, string | number>
     >;
     return activityPage(rows, query.limit, await finalityBlock());

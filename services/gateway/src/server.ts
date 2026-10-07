@@ -4,8 +4,10 @@ import { MarketHistory, type HistoryMarket } from "./history.js";
 import {
   CANDLE_INTERVALS,
   CandleBackfill,
+  DAY_MS,
   CandleBook,
   candleToWire,
+  dayStats,
   resampleCandles,
   type Candle,
   type CandleBackfillOptions,
@@ -36,6 +38,9 @@ export interface GatewayOptions {
 
 const MAX_CANDLES = 1_000;
 const DEFAULT_CANDLES = 300;
+/** Five-minute buckets covering the last 24 hours, current bucket included. */
+const DAY_BUCKETS = 289;
+const STATS_CACHE_MS = 5_000;
 
 export function buildGateway(options: GatewayOptions) {
   const connections = new ConnectionBudget(options.maxConnections, options.maxConnectionsPerClient);
@@ -164,6 +169,35 @@ export function buildGateway(options: GatewayOptions) {
       return body;
     },
   );
+  let statsCache: { atMs: number; body?: Promise<unknown> } = { atMs: 0 };
+  /** Rolling 24h open, high, low, change and hourly sparkline for every market with candles. */
+  async function marketStats() {
+    const serverTimeMs = now(),
+      entries = await Promise.all(
+        candles.markets().map(async (market) => {
+          const window = await candleWindow(market, "5m", DAY_BUCKETS);
+          return [market, dayStats(window.candles)] as const;
+        }),
+      );
+    return {
+      serverTimeMs,
+      windowMs: DAY_MS,
+      unit: "usdc-micro",
+      markets: Object.fromEntries(entries.filter(([, stats]) => stats)),
+    };
+  }
+  app.get("/v1/markets/stats", async (_request, reply) => {
+    reply.header("access-control-allow-origin", corsOrigin).header("cache-control", "public, max-age=5");
+    // Every client asks for the same summary, so it is computed at most once per STATS_CACHE_MS.
+    if (!statsCache.body || now() - statsCache.atMs >= STATS_CACHE_MS) {
+      const body = marketStats();
+      statsCache = { atMs: now(), body };
+      body.catch(() => {
+        statsCache = { atMs: 0 };
+      });
+    }
+    return statsCache.body;
+  });
   app.get<{ Querystring: { market?: string; limit?: string } }>(
     "/v1/markets/history",
     async (request, reply) => {

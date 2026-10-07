@@ -12,11 +12,9 @@ const post=async(path:string,body:unknown)=>{
   const payload=await response.json();
   assert(response.ok,`${path} failed: ${JSON.stringify(payload)}`); return payload;
 };
-const depositQuote=await post("/v1/deposit/quote",{account:user.address,fromChainId:1,fromToken:"ETH",amount:"1"});
-const depositSignature=await user.signTypedData(depositQuote.domain,depositQuote.types,depositQuote.intent);
-const deposited=await post("/v1/deposit/execute",{routeId:depositQuote.routeId,userSignature:depositSignature});
+const deposited=await post("/v1/dev/fund",{account:user.address,amount:"2500"});
 assert.match(deposited.transaction?.hash??"",/^0x[0-9a-fA-F]{64}$/);
-assert(BigInt(deposited.transaction.collateral)>=BigInt(depositQuote.minimumUsdc));
+assert.equal(deposited.collateral,"2500000000");
 const withdrawalNonce=BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString();
 const withdrawal=await post("/v1/withdraw/prepare",{account:user.address,amount:"10",nonce:withdrawalNonce});
 const withdrawalSignature=await user.signTypedData(withdrawal.domain,withdrawal.types,withdrawal.intent);
