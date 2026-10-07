@@ -3,12 +3,12 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { WagmiProvider } from "wagmi";
-import "@fontsource-variable/ibm-plex-sans/wght.css";
-import "@fontsource/ibm-plex-mono/500.css";
-import "@fontsource/ibm-plex-mono/600.css";
+import "@fontsource-variable/geist/wght.css";
+import "@fontsource/geist-mono/500.css";
 import { MarketFeedProvider } from "./data/market-feed.js";
 import { TradingProvider } from "./data/actions.js";
 import { router } from "./router.js";
+import { PrefsProvider } from "./ui/prefs.js";
 import { ToastProvider } from "./ui/toasts.js";
 import { createWagmiConfig, loadSettlement } from "./wallet/chain.js";
 import { TraderProvider } from "./wallet/trader.js";
@@ -28,7 +28,9 @@ createRoot(document.getElementById("root")!).render(<StrictMode>
         <ToastProvider>
           <TradingProvider>
             <MarketFeedProvider>
-              <RouterProvider router={router} />
+              <PrefsProvider>
+                <RouterProvider router={router} />
+              </PrefsProvider>
             </MarketFeedProvider>
           </TradingProvider>
         </ToastProvider>

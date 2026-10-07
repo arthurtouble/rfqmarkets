@@ -1,7 +1,7 @@
 import React,{useMemo,useState}from"react";
 import{createRoot}from"react-dom/client";
-import"@fontsource-variable/ibm-plex-sans/wght.css";
-import"@fontsource/ibm-plex-mono/500.css";
+import "@fontsource-variable/geist/wght.css";
+import "@fontsource/geist-mono/500.css";
 import{documents,resolveDocument}from"./documents.js";
 import{Markdown}from"./Markdown.js";
 import"./styles.css";

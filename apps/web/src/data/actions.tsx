@@ -52,7 +52,7 @@ type Trading = {
 };
 
 const TradingContext = createContext<Trading | null>(null);
-const sideLabel = (side: Side) => (side === "buy" ? "Buy" : "Sell");
+const sideLabel = (side: Side) => (side === "buy" ? "Long" : "Short");
 const blockLine = (tx?: Transaction) => (tx ? `Block ${tx.blockNumber} · ${shortHash(tx.hash)}` : undefined);
 const TRIGGER_LABELS = { "stop-loss": "Stop-loss", "take-profit": "Take-profit", "stop-entry": "Stop entry" } as const;
 const triggerLabel = (kind: keyof typeof TRIGGER_LABELS) => TRIGGER_LABELS[kind];
@@ -100,7 +100,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     const nonce = randomNonce();
     const prepared = await api<Prepared>("/v1/prepare", { quoteId: quote.quoteId, account: account(), nonce, reduceOnly });
     const session = sessionAllowed && quick.session?.privateKey ? quick.session as QuickSession & { privateKey: Hex } : null;
-    progress(session ? "Signing with quick trading" : "Confirm in your wallet");
+    progress(session ? "Signing with one-click trading" : "Confirm in your wallet");
     const userSignature: Hex = session
       ? await privateKeyToAccount(session.privateKey).signTypedData(typedData(prepared, "TradeIntent") as never)
       : await trader.signIntent(prepared, "TradeIntent");
@@ -112,7 +112,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     busy,
     quickSession: quick.session,
 
-    marketOrder: order => run("Trade", `${sideLabel(order.side)} ${order.market}`, async progress => {
+    marketOrder: order => run("Trade", order.reduceOnly ? `Reduce ${order.market}` : `${sideLabel(order.side)} ${order.market}`, async progress => {
       progress("Getting a firm quote");
       const quote = await api<Quote>("/v1/quote", {
         market: order.market, side: order.side, amount: microToInput(order.amountMicro),
@@ -120,7 +120,9 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       });
       const result = await settleTrade(quote, order.reduceOnly, progress, quickCovers(order.market, order.amountMicro));
       return {
-        title: `${sideLabel(order.side)} ${usdc(order.amountMicro)} ${order.market} ${result.transaction ? "filled" : "approved"}`,
+        title: order.reduceOnly
+          ? `Reduced ${order.market} by ${usdc(order.amountMicro)}`
+          : `${sideLabel(order.side)} ${order.market} ${usdc(order.amountMicro)} ${result.transaction ? "filled" : "approved"}`,
         detail: [`at ${usdc(quote.expectedPrice)}`, blockLine(result.transaction)].filter(Boolean).join(" · "),
         txHash: result.transaction?.hash, value: undefined,
       };
@@ -237,7 +239,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       return { title: `Withdrew ${usdc(amount)}`, detail: blockLine(result.transaction), txHash: result.transaction?.hash, value: true };
     })) ?? false,
 
-    enableQuickTrading: () => run("Quick trading", "Enable quick trading", async progress => {
+    enableQuickTrading: () => run("One-click trading", "Turn on one-click trading", async progress => {
       const privateKey = generatePrivateKey(), sessionAddress = privateKeyToAccount(privateKey).address;
       // Covers every registered market; one added later needs a new session (sessionCovers checks the mask).
       const request = quickSessionRequest(Math.max(1, marketList.markets.length));
@@ -249,16 +251,16 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       progress("Activating sponsored session");
       const result = await api<{ validUntil: string; transaction?: Transaction }>("/v1/session/execute", { grant: prepared.grant, userSignature });
       quick.save({ account: account(), sessionAddress, privateKey, validUntil: Number(result.validUntil) * 1_000, marketMask: String(request.marketMask) });
-      return { title: "Quick trading on", detail: `Trades up to ${QUICK_LIMITS.maxTradeAmount} USDC sign instantly in this tab for 8 hours`, txHash: result.transaction?.hash, value: undefined };
+      return { title: "One-click trading on", detail: `Trades up to ${QUICK_LIMITS.maxTradeAmount} USDC sign instantly in this tab for 8 hours`, txHash: result.transaction?.hash, value: undefined };
     }),
 
-    revokeQuickTrading: () => run("Revoke", "Revoke quick trading", async progress => {
+    revokeQuickTrading: () => run("Revoke", "Turn off one-click trading", async progress => {
       const session = quick.session, clearing = trader.settlement?.clearingAddress;
       if (!session || !clearing) throw new Error("No active session");
       progress("Confirm the revocation in your wallet");
       const receipt = await trader.send({ to: clearing, data: encodeFunctionData({ abi: clearingAbi, functionName: "revokeSession", args: [session.sessionAddress as Address] }) });
       quick.clear();
-      return { title: "Quick trading revoked", detail: `Block ${receipt.blockNumber}`, txHash: receipt.hash, value: undefined };
+      return { title: "One-click trading off", detail: `Block ${receipt.blockNumber}`, txHash: receipt.hash, value: undefined };
     }),
   };
 

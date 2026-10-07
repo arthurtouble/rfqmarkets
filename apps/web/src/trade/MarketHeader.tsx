@@ -1,32 +1,68 @@
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMarketFeed } from "../data/market-feed.js";
-import { fundingApr, usdc } from "../lib/format.js";
+import { usdc } from "../lib/format.js";
+import { useMarketList } from "../data/markets.js";
 import { MARKETS, type Market } from "../lib/types.js";
-import { AssetIcon, LiveBadge } from "../ui/primitives.js";
-import { PriceChart } from "./PriceChart.js";
+import { AssetIcon, Banner, Change, Chevron, Sheet, StreamBadge, marketName } from "../ui/primitives.js";
 
-export function MarketHeader({ market }: { market: Market }) {
+const pct = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: "exceptZero" });
+const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const dollars = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: "exceptZero" });
+
+/** Price change across the chart's window, for the line under the price. */
+export function recentChange(values: number[]) {
+  if (values.length < 2 || !values[0]) return null;
+  const delta = values.at(-1)! - values[0];
+  return { delta, ratio: delta / values[0] };
+}
+
+/** Registered markets, or the launch list until the config loads. */
+export function useSymbols(): readonly Market[] {
+  const { symbols } = useMarketList();
+  return symbols.length ? symbols : MARKETS;
+}
+
+export function MarketSwitcher({ market }: { market: Market }) {
+  const [open, setOpen] = useState(false);
+  const { snapshot, history } = useMarketFeed();
+  const symbols = useSymbols();
+  return <>
+    <button type="button" className="rfq-account-btn market-switcher" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+      <AssetIcon market={market} small />{marketName(market)}<Chevron />
+    </button>
+    <Sheet open={open} onClose={() => setOpen(false)} title="Markets" labelledBy="market-picker-title">
+      <div className="rfq-list">
+        {symbols.map(name => {
+          const change = recentChange(history[name] ?? []);
+          return <Link key={name} to="/trade/$market" params={{ market: name }} className="rfq-row" aria-current={name === market ? "true" : undefined} onClick={() => setOpen(false)}>
+            <AssetIcon market={name} />
+            <span><div className="rfq-row__title">{marketName(name)}</div><div className="rfq-row__sub">{name}</div></span>
+            <span className="rfq-row__end"><span className="rfq-row__price">{usdc(snapshot?.markets[name]?.mid)}</span>
+              {change && <Change value={change.ratio}>{pct.format(change.ratio)}</Change>}</span>
+          </Link>;
+        })}
+      </div>
+    </Sheet>
+  </>;
+}
+
+/** Live price, recent change and anything wrong with the market. */
+export function PriceHeader({ market }: { market: Market }) {
   const { snapshot, status, history } = useMarketFeed();
   const live = snapshot?.markets[market];
-  return <section className="panel market-stage">
-    <header>
-      <nav className="market-switch" aria-label="Markets">
-        {MARKETS.map(name => <Link key={name} to="/trade/$market" params={{ market: name }} className={name === market ? "active" : ""}>
-          <AssetIcon market={name} /><span><b>{name}-PERP</b><small>{usdc(snapshot?.markets[name].mid)}</small></span>
-        </Link>)}
-      </nav>
-      <div className="market-last"><strong className="mono">{usdc(live?.mid)}</strong><LiveBadge status={status} /></div>
-      <dl className="market-stats">
-        <div><dt>Bid</dt><dd className="mono">{usdc(live?.bid)}</dd></div>
-        <div><dt>Ask</dt><dd className="mono">{usdc(live?.ask)}</dd></div>
-        <div><dt>Funding APR</dt><dd className="mono">{fundingApr(live?.fundingApr)}</dd></div>
-        <div><dt>Quote spread</dt><dd className="mono">{live ? `${live.spread?.totalBps ?? live.baseSpreadBps} bps` : "—"}</dd></div>
-        <div><dt>Max trade</dt><dd className="mono">{usdc(live?.operatingMaxTradeNotional)}</dd></div>
-      </dl>
-    </header>
-    {live && live.riskMode !== "normal" && <p className="notice warn">{live.riskMode === "guarded"
-      ? "Hedging is catching up, so trade sizes are temporarily reduced."
-      : "Hedging is unavailable. Only trades that reduce market exposure can execute."}</p>}
-    <PriceChart values={history[market]} />
-  </section>;
+  const change = recentChange(history[market] ?? []);
+  // While the stream reconnects, show the last price we saw, dimmed.
+  const last = history[market]?.at(-1);
+  return <div className="price-header">
+    <div className={`price-hero tnum${live ? "" : " is-stale"}`} aria-live="off">{live ? usdc(live.mid) : last ? usd.format(last) : "—"}</div>
+    <div className="price-sub">
+      {status !== "live" ? <StreamBadge status={status} />
+        : change ? <><Change value={change.delta}>{dollars.format(change.delta)} ({pct.format(change.ratio)})</Change><span className="footnote rfq-faint">Recent</span></>
+        : <span className="footnote rfq-faint">Live</span>}
+    </div>
+    {live && !live.enabled && <Banner tone="warning"><b>{marketName(market)} is paused.</b> You can still close a position.</Banner>}
+    {live && live.enabled && live.riskMode === "guarded" && <Banner tone="warning">Trade sizes are smaller than usual while our hedge catches up.</Banner>}
+    {live && live.enabled && live.riskMode === "reduce_only" && <Banner tone="warning"><b>Only closing trades right now.</b> Opening new positions is paused while our hedge is unavailable.</Banner>}
+  </div>;
 }

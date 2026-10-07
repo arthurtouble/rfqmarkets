@@ -1,4 +1,5 @@
 @import "../../../packages/design-system/tokens.css";
+@import "../../../packages/design-system/legacy.css";
 
 :root { --ops: #00e6cf; --ops-surface: #063c38; }
 * { box-sizing: border-box; }
