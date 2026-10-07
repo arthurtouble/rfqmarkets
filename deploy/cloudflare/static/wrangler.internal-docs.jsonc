@@ -1,9 +1,14 @@
+// Internal docs (apps/internal-docs). Behind Cloudflare Access: private-edge.mjs refuses every request
+// without a valid Access token for ACCESS_AUD. ACCESS_TEAM_DOMAIN and ACCESS_AUD are passed at deploy time.
 {
   "$schema": "../../../node_modules/wrangler/config-schema.json",
   "name": "rfq-markets-internal-docs-testnet",
+  "main": "private-edge.mjs",
   "compatibility_date": "2026-09-11",
   "assets": {
     "directory": "../../../dist/internal-docs",
+    "binding": "ASSETS",
+    "run_worker_first": true,
     "not_found_handling": "single-page-application"
   },
   "observability": { "enabled": true, "head_sampling_rate": 1 }

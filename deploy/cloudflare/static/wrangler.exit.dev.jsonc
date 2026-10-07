@@ -1,0 +1,12 @@
+// Direct exit page (apps/exit) for the Base mainnet dev deployment. Public: it only reads the contract and
+// sends the connected wallet's own transactions. Built with the dev clearing address from KV deployment.json.
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "rfq-markets-exit-dev",
+  "compatibility_date": "2026-09-11",
+  "assets": {
+    "directory": "../../../dist/exit",
+    "not_found_handling": "single-page-application"
+  },
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}

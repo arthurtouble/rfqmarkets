@@ -8,7 +8,9 @@
 # CLOUDFLARE_WORKERS_SUBDOMAIN (default rfq-markets) are optional. Behind a TLS-intercepting proxy, set
 # RFQ_DOCKER_BUILD_CA to a CA bundle; it is mounted only while npm installs and stays out of the image.
 # RFQ_DOCKER_NODE_IMAGE swaps the Node base image for a mirror (for example
-# public.ecr.aws/docker/library/node:24-bookworm-slim) when Docker Hub rate-limits. Expects `npm ci` to have run.
+# public.ecr.aws/docker/library/node:24-bookworm-slim) when Docker Hub rate-limits. RFQ_ACCESS_EMAILS (default:
+# KV access-emails) lists who Cloudflare Access lets into the operations dashboard and internal docs when their
+# Access applications are first created. Expects `npm ci` to have run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${CLOUDFLARE_API_TOKEN:?}" "${CLOUDFLARE_ACCOUNT_ID:?}"
@@ -44,4 +46,25 @@ node -e 'const env=process.env,key=env.ALCHEMY_API_KEY,sub=env.CLOUDFLARE_WORKER
   | wrangler secret put RFQ_DEV_RUNTIME_SECRETS --name rfq-markets-runtime-dev
 wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
 wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
+
+# Private surfaces behind Cloudflare Access (private-edge.mjs locks them when Access is not set up).
+export RFQ_ACCESS_EMAILS="${RFQ_ACCESS_EMAILS:-$(wrangler kv key get access-emails --namespace-id "$kv" --remote 2>/dev/null || true)}"
+deploy_private() { # worker config hostname-prefix label
+  local flags
+  flags=$(node scripts/cloudflare-access.mjs "$2.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev" "$3")
+  # shellcheck disable=SC2086
+  wrangler deploy --config "$1" $flags
+}
+VITE_HEDGER_URL=/ops/hedger npm run build:admin
+npm run build:internal-docs
+deploy_private deploy/cloudflare/static/wrangler.admin.dev.jsonc rfq-markets-admin-dev "RFQ Markets hedge operations (dev)"
+deploy_private deploy/cloudflare/static/wrangler.internal-docs.jsonc rfq-markets-internal-docs-testnet "RFQ Markets internal docs"
+
+# Direct exit page, built against the dev clearing contract once it exists.
+clearing=$(wrangler kv key get deployment.json --namespace-id "$kv" --remote 2>/dev/null \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).contracts.clearingProxy)}catch{}})')
+if [ -n "$clearing" ]; then
+  VITE_EXIT_CHAIN_ID=8453 VITE_EXIT_CLEARING_ADDRESS="$clearing" npm run build:exit
+  wrangler deploy --config deploy/cloudflare/static/wrangler.exit.dev.jsonc
+fi
 wrangler kv key put deployed-commit "$(git rev-parse HEAD)" --namespace-id "$kv" --remote
