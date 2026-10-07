@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
 import { txUrl } from "../lib/explorer.js";
 import { useTrader } from "../wallet/trader.js";
+import { Check, Close } from "./primitives.js";
 
 export type ToastKind = "pending" | "success" | "error";
 export type Toast = { id: number; kind: ToastKind; title: string; detail?: string; txHash?: string };
@@ -40,14 +41,14 @@ function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number
   return <div className="toasts" role="status" aria-live="polite">
     {toasts.map(toast => {
       const link = toast.txHash ? txUrl(chain.id, toast.txHash) : undefined;
-      return <div key={toast.id} className={`toast ${toast.kind}`}>
-        <span className="toast-icon" aria-hidden="true" />
-        <div>
-          <strong>{toast.title}</strong>
-          {toast.detail && <p>{toast.detail}</p>}
-          {link && <a href={link} target="_blank" rel="noreferrer">View transaction</a>}
+      const kind = toast.kind === "pending" ? "pending" : toast.kind === "success" ? "success" : "error";
+      return <div key={toast.id} className={`rfq-toast rfq-toast--${kind}`}>
+        <span className="rfq-toast__icon" aria-hidden="true">{toast.kind === "pending" ? <span className="rfq-spinner" /> : toast.kind === "success" ? <Check /> : <Close />}</span>
+        <div className="toast-text">
+          <div className="rfq-toast__title">{toast.title}</div>
+          {(toast.detail || link) && <div className="rfq-toast__body">{toast.detail}{toast.detail && link && " · "}{link && <a href={link} target="_blank" rel="noreferrer">View</a>}</div>}
         </div>
-        {toast.kind !== "pending" && <button type="button" aria-label="Dismiss" onClick={() => dismiss(toast.id)}>×</button>}
+        {toast.kind !== "pending" && <button type="button" className="rfq-icon-btn toast-dismiss" aria-label="Dismiss" onClick={() => dismiss(toast.id)}><Close /></button>}
       </div>;
     })}
   </div>;

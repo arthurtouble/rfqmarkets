@@ -8,6 +8,7 @@ import "@fontsource/geist-mono/500.css";
 import { MarketFeedProvider } from "./data/market-feed.js";
 import { TradingProvider } from "./data/actions.js";
 import { router } from "./router.js";
+import { PrefsProvider } from "./ui/prefs.js";
 import { ToastProvider } from "./ui/toasts.js";
 import { createWagmiConfig, loadSettlement } from "./wallet/chain.js";
 import { TraderProvider } from "./wallet/trader.js";
@@ -27,7 +28,9 @@ createRoot(document.getElementById("root")!).render(<StrictMode>
         <ToastProvider>
           <TradingProvider>
             <MarketFeedProvider>
-              <RouterProvider router={router} />
+              <PrefsProvider>
+                <RouterProvider router={router} />
+              </PrefsProvider>
             </MarketFeedProvider>
           </TradingProvider>
         </ToastProvider>
