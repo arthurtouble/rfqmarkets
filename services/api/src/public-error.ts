@@ -19,6 +19,7 @@ export function publicError(error: unknown, fallback: string): string {
     Unauthorized: "Unauthorized action",
     Insolvent: "Settlement requires resolution",
     OracleInvalid: "Oracle proof rejected",
+    TriggerNotReached: "Trigger price not reached",
   };
   const value = error as { revert?: { name?: string }; data?: unknown } | null;
   if (value?.revert?.name && Object.hasOwn(names, value.revert.name)) return names[value.revert.name];
@@ -29,6 +30,7 @@ export function publicError(error: unknown, fallback: string): string {
     "0xd69b5379": "InvalidTrade",
     "0x8baa579f": "InvalidSignature",
     "0x82b42900": "Unauthorized",
+    "0xdccfcae2": "TriggerNotReached",
   };
   if (typeof value?.data === "string") {
     const name = selectors[value.data.slice(0, 10).toLowerCase()];

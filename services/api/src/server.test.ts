@@ -1560,6 +1560,57 @@ test("an armed stop-loss fires through the approvers once the oracle mid crosses
   }
 });
 
+test("a stop that gaps past its slippage limit waits, says why, and fires once the price is back in its band", async () => {
+  let approverCalls = 0;
+  const approverFetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    approverCalls++;
+    return routedFetch(input, init);
+  }) as typeof fetch;
+  const { app: target, prices, tick } = triggerApi({ approverFetch });
+  await target.ready();
+  try {
+    const signer = Wallet.createRandom();
+    const base = {
+      account: signer.address,
+      market: "BTC",
+      kind: "stop-loss",
+      side: "sell",
+      amount: "950",
+      slippageBps: 100,
+      durationSeconds: 3600,
+    };
+    const reached = await target.inject({
+      method: "POST",
+      url: "/v1/orders/trigger/prepare",
+      payload: { ...base, triggerPrice: "100500", nonce: "777100" },
+    });
+    assert.equal(reached.statusCode, 409);
+    assert.equal(reached.json().error, "stop-loss price must be below the current price");
+
+    await placeTrigger(target, { ...base, triggerPrice: "95000", nonce: "777101" }, signer);
+    const list = async () => (await target.inject(`/v1/orders/${signer.address}`)).json().items;
+    // 90,000 is through the 95,000 trigger but below the 94,050 limit (1% slippage): no fill, a reason.
+    prices.BTC = 90_000n * 1_000_000n;
+    tick();
+    let [current] = await list();
+    for (let poll = 0; poll < 300 && !current.lastError; poll++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      [current] = await list();
+    }
+    assert.equal(current.status, "open");
+    assert.match(current.lastError, /within the slippage limit/);
+    assert.equal(approverCalls, 0, "a fill worse than the signed limit must not reach the approvers");
+
+    prices.BTC = 94_500n * 1_000_000n;
+    tick();
+    for (let poll = 0; poll < 300 && approverCalls === 0; poll++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert(approverCalls > 0, "back inside the band, the stop fires");
+  } finally {
+    await target.close();
+  }
+});
+
 test("an armed trigger order survives API restart with its type and trigger", async () => {
   const journalPath = join(directory, "trigger-restart.sqlite"),
     first = triggerApi({ journalPath });

@@ -4,6 +4,7 @@ import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { useMarketList } from "../data/markets.js";
 import { initialMarginAfter } from "../lib/account.js";
 import { abs, baseAmount, microToInput, parseUsdcInput, usdc } from "../lib/format.js";
+import { triggerProblem } from "../lib/orders.js";
 import { indicativeQuote } from "../lib/quote.js";
 import type { AccountState, Market, Quote, Side } from "../lib/types.js";
 import { Banner, Down, Rows, Segmented, Up } from "../ui/primitives.js";
@@ -13,8 +14,9 @@ import { useTrader } from "../wallet/trader.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
 import { useFunds } from "./FundsDialog.js";
 import { ReviewSheet } from "./ReviewSheet.js";
+import { StopTriggerField } from "./TriggerOrders.js";
 
-type OrderType = "market" | "limit";
+type OrderType = "market" | "limit" | "stop";
 const PRESETS = [25, 50, 75, 100] as const;
 /** Initial margin for the smallest tier; sizing presets assume it. */
 const INITIAL_RATE_BPS = 2_000n;
@@ -30,14 +32,16 @@ export function OrderTicket({ market, account, side, onSide }: { market: Market;
   const [orderType, setOrderType] = useState<OrderType>("market");
   const [amount, setAmount] = useState("");
   const [limitPrice, setLimitPrice] = useState("");
+  const [stopPrice, setStopPrice] = useState("");
   const [reduceOnly, setReduceOnly] = useState(false);
   const [review, setReview] = useState<Quote | null>(null);
-  useEffect(() => setLimitPrice(""), [market]);
+  useEffect(() => { setLimitPrice(""); setStopPrice(""); }, [market]);
   useEffect(() => { if (!advanced) { setOrderType("market"); setReduceOnly(false); } }, [advanced]);
 
   const live = snapshot?.markets[market];
   const amountMicro = parseUsdcInput(amount);
   const limitMicro = parseUsdcInput(limitPrice);
+  const stopMicro = parseUsdcInput(stopPrice);
   const result = useMemo(() => snapshot && amountMicro ? indicativeQuote(snapshot, market, side, amountMicro, now) : null, [snapshot, market, side, amountMicro, now]);
   const quote = result && "quote" in result ? result.quote : null;
 
@@ -57,6 +61,7 @@ export function OrderTicket({ market, account, side, onSide }: { market: Market;
   const oneClick = orderType === "market" && amountMicro !== null && sessionCovers(trading.quickSession, amountMicro, marketIndex);
   const busy = trading.busy !== null;
 
+  const stopProblem = orderType === "stop" && stopMicro !== null && live ? triggerProblem("stop-entry", side, stopMicro, BigInt(live.mid)) : null;
   const problem = status !== "live" ? "Waiting for a fresh price"
     : live && !live.enabled ? "Trading paused"
     : live && !reduceOnly && (side === "buy" ? !live.canBuy : !live.canSell) ? `${SIDE_WORD[side]} is closed right now`
@@ -64,6 +69,8 @@ export function OrderTicket({ market, account, side, onSide }: { market: Market;
     : amountMicro === null ? "Enter a valid amount"
     : nearCap ? `Up to ${usdc(tradeCap)} per trade`
     : orderType === "limit" && limitMicro === null ? "Enter a limit price"
+    : orderType === "stop" && stopMicro === null ? "Enter a trigger price"
+    : stopProblem ? stopProblem
     : result && "error" in result ? result.error
     : !quote ? "Waiting for a fresh price"
     : marginShort ? "Add funds for this size"
@@ -72,12 +79,17 @@ export function OrderTicket({ market, account, side, onSide }: { market: Market;
   const submit = () => {
     if (!amountMicro || !quote) return;
     if (orderType === "limit") { void trading.limitOrder({ market, side, amountMicro, reduceOnly, limitPrice: microToInput(limitMicro!) }); return; }
+    if (orderType === "stop") {
+      void trading.triggerOrder({ market, kind: "stop-entry", side, amountMicro, triggerPriceMicro: stopMicro!, reduceOnly })
+        .then(orderId => { if (orderId) { setAmount(""); setStopPrice(""); } });
+      return;
+    }
     if (oneClick) { void trading.marketOrder({ market, side, amountMicro, reduceOnly }).then(() => setAmount("")); return; }
     setReview(quote);
   };
 
   const sideClass = side === "buy" ? "long" : "short";
-  const label = `${orderType === "limit" ? "Place limit · " : ""}${SIDE_WORD[side]} ${market} · ${usdc(amountMicro)}`;
+  const label = `${orderType === "limit" ? "Place limit · " : orderType === "stop" ? "Place stop · " : ""}${SIDE_WORD[side]} ${market} · ${usdc(amountMicro)}`;
 
   return <div className="ticket">
     <div className="rfq-side" role="group" aria-label="Direction">
@@ -86,7 +98,7 @@ export function OrderTicket({ market, account, side, onSide }: { market: Market;
     </div>
 
     {advanced && <Segmented label="Order type" value={orderType} onChange={next => { setOrderType(next); if (next === "limit" && !limitPrice && live) setLimitPrice(midDollars(live.mid)); }}
-      options={[{ id: "market", label: "Market" }, { id: "limit", label: "Limit" }]} />}
+      options={[{ id: "market", label: "Market" }, { id: "limit", label: "Limit" }, { id: "stop", label: "Stop" }]} />}
 
     <div className="rfq-amount">
       <label className={`rfq-amount__field${nearCap ? " is-error" : ""}`}>
@@ -111,10 +123,12 @@ export function OrderTicket({ market, account, side, onSide }: { market: Market;
       <span className="rfq-field__hint">{limitMarketable ? "Fills now at the current price" : "Fills when the price reaches your limit"}</span>
     </div>}
 
+    {orderType === "stop" && <StopTriggerField market={market} side={side} value={stopPrice} onChange={setStopPrice} reduceOnly={reduceOnly} />}
+
     {advanced && <label className="check-row"><input type="checkbox" checked={reduceOnly} onChange={event => setReduceOnly(event.target.checked)} /><span>Reduce only<span className="footnote rfq-faint"> · never open or grow a position</span></span></label>}
 
     <Rows rows={[
-      [orderType === "limit" ? "Current price" : "Entry price", usdc(quote?.expectedPrice)],
+      [orderType === "market" ? "Entry price" : "Current price", usdc(quote?.expectedPrice)],
       ["Fee", usdc(quote?.fee)],
       ["Leverage after", leverageAfter === null ? "—" : `${leverageAfter.toFixed(2)}×`],
       ...(advanced ? [

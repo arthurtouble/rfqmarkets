@@ -2,7 +2,7 @@
 // entry), TP/SL pairs and closes. Pure, so the ticket can validate as the user
 // types; the actions in data/actions.tsx send these bodies.
 import { triggerAboveFor, triggerLimitPrice, triggerReached } from "../../../../packages/shared/src/trigger.js";
-import { microToInput } from "./format.js";
+import { abs, microToInput } from "./format.js";
 import { DEFAULT_TRIGGER_SLIPPAGE_BPS, clampSlippageBps } from "./slippage.js";
 import type { Market, RestingOrder, Side, TriggerKind } from "./types.js";
 
@@ -127,3 +127,40 @@ export const pairedOrder = (order: RestingOrder, orders: readonly RestingOrder[]
 /** Open TP/SL orders protecting `market`. */
 export const protectiveOrders = (orders: readonly RestingOrder[], market: Market) =>
   orders.filter(order => order.market === market && order.status === "open" && (order.type === "stop-loss" || order.type === "take-profit"));
+
+/** The open take-profit and stop-loss on `market`, newest first when more than one of a kind is open. */
+export function positionProtection(orders: readonly RestingOrder[], market: Market) {
+  const open = protectiveOrders(orders, market).sort((a, b) => b.expiresAtMs - a.expiresAtMs);
+  return {
+    takeProfit: open.find(order => order.type === "take-profit") ?? null,
+    stopLoss: open.find(order => order.type === "stop-loss") ?? null,
+  };
+}
+
+/**
+ * Whether a reduce-only order covers less than the position: it was signed for a smaller size and
+ * the position has grown since. The contract only ever clamps a trigger down to the position.
+ */
+export const coversLessThan = (order: RestingOrder, positionSize: bigint) =>
+  abs(BigInt(order.baseDelta)) < abs(positionSize);
+
+/** PnL (USDC 1e6) a position of `size` (1e18, signed) entered at `entryMicro` has at `priceMicro`, before fees. */
+export const pnlAtPrice = (size: bigint, entryMicro: bigint, priceMicro: bigint) => (size * (priceMicro - entryMicro)) / 10n ** 18n;
+
+/**
+ * `midMicro` moved `percent` up or down, rounded to five significant digits so presets read as
+ * clean prices (BTC to $10, ETH to $0.10).
+ */
+export function offsetPrice(midMicro: bigint, percent: number, up: boolean): bigint {
+  const bps = BigInt(Math.round(percent * 100));
+  const raw = (midMicro * (up ? 10_000n + bps : 10_000n - bps)) / 10_000n;
+  const digits = raw.toString().length;
+  const step = digits > 5 ? 10n ** BigInt(digits - 5) : 1n;
+  return ((raw + step / 2n) / step) * step;
+}
+
+/** Whether a stop-loss sits past the estimated liquidation price, so liquidation would come first. */
+export function stopPastLiquidation(size: bigint, stopLossMicro: bigint, liquidationMicro: bigint | null) {
+  if (liquidationMicro === null || liquidationMicro <= 0n || size === 0n) return false;
+  return size > 0n ? stopLossMicro <= liquidationMicro : stopLossMicro >= liquidationMicro;
+}

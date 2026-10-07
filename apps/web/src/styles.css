@@ -101,7 +101,14 @@ dialog.sheet > .rfq-sheet { width: 100%; max-height: 92dvh; overflow-y: auto; ov
 .activity-tabs { padding: var(--space-2) var(--space-4) 0; border-bottom: 1px solid var(--line); }
 .activity-body { min-height: 160px; }
 .activity-body > .stack { padding: var(--space-4); }
-.rfq-pos__actions.single { grid-template-columns: 1fr; }
+.rfq-pos__tpsl { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); color: var(--text-tertiary); font: 400 12px/16px var(--font-sans); }
+.tpsl-summary { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-1) var(--space-3); color: var(--text); font: 500 14px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+.rfq-table .tpsl-summary { justify-content: flex-start; font-size: inherit; }
+.tpsl-cell { display: inline-flex; align-items: center; min-height: var(--size-control-sm); margin: 0 calc(-1 * var(--space-2)); padding: 0 var(--space-2); border: 0; border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.tpsl-cell:hover { background: var(--surface-raised); }
+.tpsl-cell .rfq-faint:only-child { color: var(--brand-text); font-weight: 500; }
+.order-note { max-width: 220px; white-space: normal; }
+.rfq-field__label { font: 500 13px/18px var(--font-sans); color: var(--text-secondary); }
 .rfq-table td .caption { margin-top: 2px; }
 .portfolio-summary { display: grid; gap: var(--space-4); }
 @media (min-width: 900px) {

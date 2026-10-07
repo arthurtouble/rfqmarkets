@@ -9,7 +9,7 @@ import { encodeFunctionData, erc20Abi, parseAbi, type Address, type Hex } from "
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
 import { errorMessage, postJson, randomNonce } from "../lib/http.js";
-import { microToInput, shortHash, usdc } from "../lib/format.js";
+import { abs, baseAmount, microToInput, parseUsdcInput, shortHash, usdc } from "../lib/format.js";
 import { LIMIT_ORDER_DURATION_SECONDS, tpslPrepareBody, triggerPrepareBody, type TpslInput, type TriggerOrderInput } from "../lib/orders.js";
 import { clampSlippageBps } from "../lib/slippage.js";
 import type { CancelResult, Market, Prepared, PreparedTpsl, PreparedTrigger, Quote, RestingOrder, Side, Transaction } from "../lib/types.js";
@@ -54,10 +54,11 @@ type Trading = {
 const TradingContext = createContext<Trading | null>(null);
 const sideLabel = (side: Side) => (side === "buy" ? "Long" : "Short");
 const blockLine = (tx?: Transaction) => (tx ? `Block ${tx.blockNumber} · ${shortHash(tx.hash)}` : undefined);
-const TRIGGER_LABELS = { "stop-loss": "Stop-loss", "take-profit": "Take-profit", "stop-entry": "Stop entry" } as const;
+const TRIGGER_LABELS = { "stop-loss": "Stop-loss", "take-profit": "Take-profit", "stop-entry": "Stop" } as const;
 const triggerLabel = (kind: keyof typeof TRIGGER_LABELS) => TRIGGER_LABELS[kind];
+/** "Closes 0.01 BTC when price ≤ $95,000.00" for TP/SL, "Long $500.00 BTC when price ≥ …" for a stop entry. */
 const triggerLine = ({ summary }: PreparedTrigger) =>
-  `${sideLabel(summary.side)} ${summary.amount} USDC ${summary.market} when price ${summary.triggerAbove ? "≥" : "≤"} ${usdc(summary.triggerPrice)}`;
+  `${summary.reduceOnly ? `Closes ${baseAmount(abs(BigInt(summary.baseDelta)))} ${summary.market}` : `${sideLabel(summary.side)} ${usdc(parseUsdcInput(summary.amount))} ${summary.market}`} when price ${summary.triggerAbove ? "≥" : "≤"} ${usdc(summary.triggerPrice)}`;
 const fractionLabel = (fractionBps: number, market: Market) => (fractionBps < 10_000 ? `${fractionBps / 100}% of ${market} position` : `${market} position`);
 /** Re-quote a close-all leg when less than this remains on its quote. */
 const QUOTE_EXPIRY_MARGIN_MS = 1_500;

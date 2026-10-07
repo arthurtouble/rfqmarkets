@@ -7,4 +7,5 @@ test("public action errors cannot expose transport credentials or provider reque
   assert.equal(publicError({ message, data: "0x50cb02e4" }, "action failed"), "Insufficient margin");
   assert.equal(publicError({ message, revert: { name: "Replay" } }, "action failed"), "Nonce already used");
   assert.equal(publicError({ revert: { name: message } }, "action failed"), "action failed");
+  assert.equal(publicError({ message, data: "0xdccfcae2" }, "action failed"), "Trigger price not reached");
 });

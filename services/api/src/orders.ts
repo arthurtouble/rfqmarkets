@@ -1,5 +1,5 @@
 import { getAddress, parseUnits } from "ethers";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   cancelToWire,
   cancelTypes,
@@ -76,8 +76,18 @@ const ORDER_RECONCILE_MS = 30_000;
 const CANCEL_TTL_SECONDS = 120;
 /** Position reads per reduce-only sweep; the rest wait for the next sweep. */
 const MAX_POSITION_SWEEP = 256;
-const POSITION_CLOSED_NOTE =
-  "position closed; the signed order stays valid on chain until its deadline or a nonce cancel";
+/**
+ * The leader stops acting on a reduce-only trigger once its position closes. The signed intent stays
+ * executable on chain until its deadline or a nonce cancel, so only this leader's choice retires it.
+ */
+const POSITION_CLOSED_NOTE = "position closed";
+/** Shown on a crossed trigger whose fill would break its signed limit, e.g. after a price gap. */
+const PAST_LIMIT_NOTE = "triggered; waiting for the price to come back within the slippage limit";
+const TRIGGER_WORDS: Record<TriggerKind, string> = {
+  "stop-loss": "stop-loss",
+  "take-profit": "take-profit",
+  "stop-entry": "stop entry",
+};
 
 const isLive = (order: RestingOrder) =>
   order.status === "prepared" || order.status === "open" || order.status === "executing";
@@ -124,6 +134,12 @@ class OrderRejection extends Error {
   ) {
     super(message);
   }
+}
+
+/** Answer a prepare route: our own rejections keep their status and message, anything else is screened. */
+function rejectOrder(reply: FastifyReply, error: unknown, fallback: string) {
+  if (error instanceof OrderRejection) return reply.code(error.status).send({ error: error.message });
+  return reply.code(409).send({ error: publicError(error, fallback) });
 }
 
 /**
@@ -375,7 +391,7 @@ export class LimitOrders {
       return false;
     order.status = order.transactionHash ? "filled" : "cancelled";
     this.persistStatus(order);
-    this.closeSiblings(order, "nonce used by another order");
+    this.closeSiblings(order, "cancelled by another order with the same nonce");
     return true;
   }
 
@@ -432,9 +448,10 @@ export class LimitOrders {
       if (
         !crossed(indicative.quote.snapshot.bid, indicative.quote.snapshot.ask, indicative.quote.expectedPrice)
       )
-        return this.arm(order);
+        return this.waitForPrice(order, indicative.quote.snapshot, indicative.quote.expectedPrice, trigger);
       const { quote } = await this.quoting.createQuote(request, options);
-      if (!crossed(quote.snapshot.bid, quote.snapshot.ask, quote.expectedPrice)) return this.arm(order);
+      if (!crossed(quote.snapshot.bid, quote.snapshot.ask, quote.expectedPrice))
+        return this.waitForPrice(order, quote.snapshot, quote.expectedPrice, trigger);
       ctx.quotes.bind(quote.quoteId, order.intent);
       ctx.quotes.triggers.set(quote.quoteId, trigger);
       await this.submit(order, quote.quoteId, order.userSignature!);
@@ -444,6 +461,26 @@ export class LimitOrders {
       order.lastError = publicError(error, "execution unavailable");
       this.persistStatus(order);
     }
+  }
+
+  /**
+   * Re-arm a trigger that did not fire. When the trigger is met but the fill would break the signed
+   * limit (the price gapped through the slippage band), say so on the order once.
+   */
+  private waitForPrice(
+    order: RestingOrder,
+    snapshot: { bid: bigint; ask: bigint },
+    price: bigint,
+    trigger: Trigger,
+  ) {
+    this.arm(order);
+    const note =
+      triggerReached(snapshot.bid, snapshot.ask, trigger) && !marketable(order, price)
+        ? PAST_LIMIT_NOTE
+        : undefined;
+    if (note === order.lastError || (note === undefined && order.lastError !== PAST_LIMIT_NOTE)) return;
+    order.lastError = note;
+    this.persistStatus(order);
   }
 
   /** Execute a bound quote for an order; re-arms it with the reason when execution fails. */
@@ -465,7 +502,7 @@ export class LimitOrders {
       order.transactionHash = body.transaction.hash;
       order.lastError = undefined;
       this.checkQueued = true;
-      this.closeSiblings(order, "the other leg of this nonce filled");
+      this.closeSiblings(order, "the other TP/SL leg filled");
     } else {
       order.status = "open";
       this.arm(order);
@@ -506,7 +543,10 @@ export class LimitOrders {
       throw new OrderRejection(409, "order size rounds to zero");
     // An order whose trigger is already met would fire at once; that is a market or limit order.
     if (trigger.triggerAbove ? input.mid >= triggerPrice : input.mid <= triggerPrice)
-      throw new OrderRejection(409, "trigger price already reached");
+      throw new OrderRejection(
+        409,
+        `${TRIGGER_WORDS[kind]} price must be ${trigger.triggerAbove ? "above" : "below"} the current price`,
+      );
     const limitPrice = triggerLimitPrice(triggerPrice, side, slippage),
       // The fee cap covers the best fill price the order can get: a buy is capped at its limit, but a sell
       // has no upper bound, so a take-profit that gaps through its trigger allows up to twice the trigger.
@@ -726,8 +766,7 @@ export class LimitOrders {
         this.stagePrepared(order);
         return this.preparedTrigger(order);
       } catch (error) {
-        const status = error instanceof OrderRejection ? error.status : 409;
-        return reply.code(status).send({ error: publicError(error, "trigger order rejected") });
+        return rejectOrder(reply, error, "trigger order rejected");
       }
     });
 
@@ -787,8 +826,7 @@ export class LimitOrders {
           orders: orders.map((order) => this.preparedTrigger(order)),
         };
       } catch (error) {
-        const status = error instanceof OrderRejection ? error.status : 409;
-        return reply.code(status).send({ error: publicError(error, "take-profit/stop-loss rejected") });
+        return rejectOrder(reply, error, "take-profit/stop-loss rejected");
       }
     });
 
@@ -865,6 +903,7 @@ export class LimitOrders {
     app.post("/v1/orders/:orderId/cancel/prepare", async (request, reply) => {
       const order = this.orders.get((request.params as { orderId: string }).orderId);
       if (!order || !order.userSignature) return reply.code(404).send({ error: "order not found" });
+      if (!isLive(order)) return reply.code(409).send({ error: `order is already ${order.status}` });
       const intent: CancelIntent = {
         account: order.intent.account,
         nonce: order.intent.nonce,
@@ -883,6 +922,7 @@ export class LimitOrders {
       const order = this.orders.get((request.params as { orderId: string }).orderId),
         parsed = cancelExecuteSchema.safeParse(request.body);
       if (!order || !parsed.success) return reply.code(400).send({ error: "invalid order cancellation" });
+      if (!isLive(order)) return reply.code(409).send({ error: `order is already ${order.status}` });
       const { userSignature } = parsed.data;
       try {
         const intent: CancelIntent = {

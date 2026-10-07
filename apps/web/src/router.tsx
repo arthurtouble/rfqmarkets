@@ -1,5 +1,6 @@
 import { Link, Outlet, createRootRoute, createRoute, createRouter, redirect, useRouterState } from "@tanstack/react-router";
 import { useIndexerSync } from "./data/queries.js";
+import { useOrderFillAlerts } from "./trade/TriggerOrders.js";
 import type { Market } from "./lib/types.js";
 import { AccountPage } from "./account/AccountPage.js";
 import { MarketsPage } from "./markets/MarketsPage.js";
@@ -22,6 +23,7 @@ function Shell() {
 
 function ShellLayout() {
   useIndexerSync();
+  useOrderFillAlerts();
   const funds = useFunds();
   const { mode, setMode } = usePrefs();
   const trader = useTrader();

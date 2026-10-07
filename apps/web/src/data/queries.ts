@@ -26,11 +26,20 @@ export function useAccountState(address: string | null) {
   });
 }
 
+/**
+ * Open orders also change off chain (a TP/SL cancelled because its position closed, a stop waiting
+ * out a price gap), which the indexer stream does not announce, so they refresh while any is open.
+ */
+const ORDERS_REFRESH_MS = 5_000;
+const ordersRefetch = (query: { state: { data?: RestingOrder[] } }) =>
+  query.state.data?.some(order => order.status === "open" || order.status === "executing") ? ORDERS_REFRESH_MS : false;
+
 export function useOrders(address: string | null) {
   return useQuery({
     queryKey: keys.orders(address ?? ""),
     queryFn: ({ signal }) => getJson<{ items: RestingOrder[] }>(`${API}/v1/orders/${address}`, signal).then(value => value.items),
     enabled: !!address,
+    refetchInterval: ordersRefetch,
   });
 }
 
@@ -94,6 +103,7 @@ export function useOpenOrders(address: string | null, market?: Market) {
     queryKey: keys.orders(address ?? ""),
     queryFn: ({ signal }) => getJson<{ items: RestingOrder[] }>(`${API}/v1/orders/${address}`, signal).then(value => value.items),
     enabled: !!address,
+    refetchInterval: ordersRefetch,
     select: items => items.filter(order => (order.status === "open" || order.status === "executing") && (!market || order.market === market)),
   });
 }

@@ -68,6 +68,8 @@ string and `MARKETS` is only the launch fallback.
 - `tpslProblem(size, mid, tp?, sl?)` and `triggerProblem(kind, side, trigger, mid)` give the reason a price would be rejected, for inline validation.
 - Orders are always signed with the wallet: `POST /v1/orders` accepts only the owner's signature, so the quick-trading key cannot place resting orders. (`sessionCoversDeadline` exists for when it can.)
 
+**Screens** (`trade/TriggerOrders.tsx`). `TpslSheet` sets, replaces (new pair first, then the old one is cancelled) or removes a position's TP/SL, with ±% presets from the current price, estimated PnL at each trigger, a slippage band in Advanced, and warnings for a stop past the liquidation price or a TP/SL that covers only part of a grown position. Positions show the TP/SL (table column on desktop, card row and button on phones). The ticket's **Stop** type (Advanced) places a stop entry, or a reduce-only stop with Reduce only. The Orders tab lists limit, stop and TP/SL orders (cards on phones) with the trigger, the fill bound, the estimated PnL at the trigger and why an open order is waiting. `useOrderFillAlerts()` toasts when a resting order fills in the background, and open orders refresh every 5 s because off-chain changes (a TP/SL retired when its position closes) are not on the indexer stream.
+
 **Closing.** `closePosition(market, fractionBps?)` closes a share (1..10,000 bps;
 `closeFractionBps(percent)` converts) and `closeAll(fractionBps?)` closes every
 position, one quote each, returning `{ closed, failed }`. Both sign with the
