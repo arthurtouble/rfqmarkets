@@ -1,7 +1,7 @@
 import React,{useEffect,useState}from"react";
 import{createRoot}from"react-dom/client";
-import"@fontsource-variable/ibm-plex-sans/wght.css";
-import"@fontsource/ibm-plex-mono/500.css";
+import "@fontsource-variable/geist/wght.css";
+import "@fontsource/geist-mono/500.css";
 import"./styles.css";
 type Market="BTC"|"ETH";
 type Risk={indexedBlock:number;accountCount:number;totalCollateral:string;markets:Record<Market,{longBase:string;shortBase:string;netBase:string;longAccounts:number;shortAccounts:number}>};

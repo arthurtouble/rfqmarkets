@@ -1,18 +1,137 @@
-:root {
-  --font-ui: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-  --ink-0: #05070d; --ink-1: #090d16; --ink-2: #0e1421; --ink-3: #172033;
-  --line: #26324a; --line-strong: #405174;
-  --text: #f7f9ff; --text-soft: #aeb9ce; --text-dim: #748099;
-  --brand: #7185ff; --brand-strong: #9ba8ff;
-  --buy: #00e6b8; --buy-surface: #073b34;
-  --sell: #ff3f69; --sell-surface: #470f22;
-  --warn: #ffc34d; --danger: #ff355f;
-  --radius-sm: 0; --radius-md: 0; --radius-lg: 0;
-  --shadow: 0 18px 48px rgba(0, 0, 0, .32);
-  color-scheme: dark; font-family: var(--font-ui); font-synthesis: none;
+/* RFQ Markets — generated from tokens.json by scripts/build-design-tokens.mjs. Do not edit. */
+:root, [data-theme="dark"] {
+  --bg: #0B0D12;
+  --surface: #12151C;
+  --surface-raised: #1A1E27;
+  --surface-sunken: #07090C;
+  --line: #232834;
+  --line-strong: #626A7D;
+  --text: #F4F6FA;
+  --text-secondary: #A3ABBA;
+  --text-tertiary: #7D8596;
+  --brand: #3D6BF5;
+  --brand-text: #5B8CFF;
+  --on-brand: #FFFFFF;
+  --brand-soft: #16213D;
+  --long: #2EBD85;
+  --long-text: #2EBD85;
+  --on-long: #04140D;
+  --long-soft: #10261D;
+  --short: #F6465D;
+  --short-text: #FF5C70;
+  --on-short: #1A0408;
+  --short-soft: #2B1418;
+  --danger: var(--short-text);
+  --warning: #F0B90B;
+  --warning-soft: #2A2410;
+  --focus-ring: #7FA2FF;
+  --scrim: rgba(3, 4, 7, 0.72);
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-sheet: 0 -12px 40px rgba(0, 0, 0, 0.55);
+  --shadow-card: none;
+  color-scheme: dark;
 }
-::selection { color: var(--ink-0); background: var(--brand); }
-:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-button { transition: border-color .12s ease, background .12s ease, color .12s ease, transform .12s ease; }
-button:active { transform: translateY(1px); }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #FFFFFF;
+    --surface: #F5F6F8;
+    --surface-raised: #FFFFFF;
+    --surface-sunken: #EDEFF3;
+    --line: #E3E6EB;
+    --line-strong: #7E8594;
+    --text: #0B0D12;
+    --text-secondary: #4A5262;
+    --text-tertiary: #646C7C;
+    --brand: #2F5BEA;
+    --brand-text: #2F5BEA;
+    --on-brand: #FFFFFF;
+    --brand-soft: #EAF0FE;
+    --long: #0B8457;
+    --long-text: #067A55;
+    --on-long: #FFFFFF;
+    --long-soft: #E7F5EE;
+    --short: #D12F46;
+    --short-text: #C42840;
+    --on-short: #FFFFFF;
+    --short-soft: #FCEBED;
+    --danger: var(--short-text);
+    --warning: #8A5A00;
+    --warning-soft: #FFF5DB;
+    --focus-ring: #2F5BEA;
+    --scrim: rgba(11, 13, 18, 0.40);
+    --shadow-popover: 0 8px 24px rgba(11, 13, 18, 0.12);
+    --shadow-sheet: 0 -12px 40px rgba(11, 13, 18, 0.14);
+    --shadow-card: 0 1px 2px rgba(11, 13, 18, 0.06);
+    color-scheme: light;
+  }
+}
+[data-theme="light"] {
+  --bg: #FFFFFF;
+  --surface: #F5F6F8;
+  --surface-raised: #FFFFFF;
+  --surface-sunken: #EDEFF3;
+  --line: #E3E6EB;
+  --line-strong: #7E8594;
+  --text: #0B0D12;
+  --text-secondary: #4A5262;
+  --text-tertiary: #646C7C;
+  --brand: #2F5BEA;
+  --brand-text: #2F5BEA;
+  --on-brand: #FFFFFF;
+  --brand-soft: #EAF0FE;
+  --long: #0B8457;
+  --long-text: #067A55;
+  --on-long: #FFFFFF;
+  --long-soft: #E7F5EE;
+  --short: #D12F46;
+  --short-text: #C42840;
+  --on-short: #FFFFFF;
+  --short-soft: #FCEBED;
+  --danger: var(--short-text);
+  --warning: #8A5A00;
+  --warning-soft: #FFF5DB;
+  --focus-ring: #2F5BEA;
+  --scrim: rgba(11, 13, 18, 0.40);
+  --shadow-popover: 0 8px 24px rgba(11, 13, 18, 0.12);
+  --shadow-sheet: 0 -12px 40px rgba(11, 13, 18, 0.14);
+  --shadow-card: 0 1px 2px rgba(11, 13, 18, 0.06);
+  color-scheme: light;
+}
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 999px;
+  --size-control-lg: 52px;
+  --size-control-md: 44px;
+  --size-control-sm: 32px;
+  --size-topbar: 64px;
+  --size-tabbar: 56px;
+  --size-ticket: 360px;
+  --size-content: 1280px;
+  --font-sans: "Geist Variable", Geist, "SF Pro Text", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, monospace;
+}
+.price-hero { font-family: var(--font-sans); font-size: 44px; line-height: 48px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.amount-input { font-family: var(--font-sans); font-size: 40px; line-height: 44px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.balance { font-family: var(--font-sans); font-size: 32px; line-height: 38px; font-weight: 600; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
+.num { font-family: var(--font-sans); font-size: 15px; line-height: 20px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.num-sm { font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.title-1 { font-family: var(--font-sans); font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: -0.01em; }
+.title-2 { font-family: var(--font-sans); font-size: 22px; line-height: 28px; font-weight: 650; letter-spacing: -0.005em; }
+.headline { font-family: var(--font-sans); font-size: 17px; line-height: 22px; font-weight: 600; }
+.body { font-family: var(--font-sans); font-size: 15px; line-height: 22px; font-weight: 400; }
+.callout { font-family: var(--font-sans); font-size: 14px; line-height: 20px; font-weight: 500; }
+.footnote { font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 400; }
+.caption { font-family: var(--font-sans); font-size: 12px; line-height: 16px; font-weight: 500; }
+.mono { font-family: var(--font-mono); font-size: 13px; line-height: 18px; font-weight: 500; }

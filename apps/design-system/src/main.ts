@@ -1,3 +1,2 @@
-import "@fontsource-variable/ibm-plex-sans/wght.css";
-import "@fontsource/ibm-plex-mono/500.css";
-import "@fontsource/ibm-plex-mono/600.css";
+import "@fontsource-variable/geist/wght.css";
+import "@fontsource/geist-mono/500.css";
