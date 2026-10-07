@@ -14,6 +14,7 @@ import { registerHttpGuards } from "./http.js";
 import { MarketStream } from "./market-stream.js";
 import { RuntimeMetrics } from "./metrics.js";
 import { registerOperationsRoutes } from "./operations.js";
+import { registerLadderRoutes } from "./ladder.js";
 import { LimitOrders } from "./orders.js";
 import { QuoteEngine } from "./quoting.js";
 import { registerSignedActions } from "./signed-actions.js";
@@ -40,6 +41,7 @@ export function buildApi(options: ApiOptions = {}) {
   registerOperationsRoutes(app, ctx, { chain, quoting, stream, orders, metrics });
   registerDevRoutes(app, ctx, dev);
   quoting.register(app, guards);
+  registerLadderRoutes(app, guards, quoting);
   stream.register(app);
   registerAccountRoutes(app, ctx, quoting);
   registerSignedActions(app, ctx, chain, dev, quoting);

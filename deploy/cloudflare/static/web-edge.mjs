@@ -8,6 +8,7 @@ const READS = [
   [/^\/v1\/markets\/(stream|history|stats)$/, "MARKET_GATEWAY"],
   [/^\/v1\/candles$/, "MARKET_GATEWAY"],
   [/^\/v1\/(config|markets)$/, "API"],
+  [/^\/v1\/quote\/ladder$/, "API"],
   [new RegExp(`^/v1/(account|orders)/${ADDRESS}$`), "API"],
 ];
 const WRITES = [

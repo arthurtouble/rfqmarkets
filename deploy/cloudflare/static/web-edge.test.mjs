@@ -22,6 +22,8 @@ test("routes public reads to the indexer and market streams to the gateway", () 
   assert.equal(serviceForPath("/v1/portfolio/0x12"), null);
   assert.equal(serviceForPath(`/v1/funding/${account}`, "POST"), null);
   assert.equal(serviceForPath("/v1/quote"), "API");
+  assert.equal(serviceForPath("/v1/quote/ladder", "GET"), "API");
+  assert.equal(serviceForPath("/v1/quote/ladder", "POST"), null);
   for (const path of [
     "/v1/orders/prepare",
     "/v1/orders/trigger/prepare",
