@@ -14,7 +14,7 @@ export type DevManifest=ReturnType<typeof validateDevManifest>;
 export function generateDevIdentities(oracleSigners:string[]=["REPLACE_WITH_ORACLE_SIGNER_1","REPLACE_WITH_ORACLE_SIGNER_2","REPLACE_WITH_ORACLE_SIGNER_3"]){
   const make=()=>{const wallet=Wallet.createRandom();return {address:wallet.address,privateKey:wallet.privateKey};};
   const identities={owner:make(),emergency:make(),approvers:[make(),make(),make()] as const,createdAt:new Date().toISOString()};
-  const market={maxTradeUsdc:"25000000",netUsdc:"100000000",grossUsdc:"200000000",sideUsdc:"150000000"};
+  const market={maxTradeUsdc:"25000000",netUsdc:"100000000",grossUsdc:"200000000",sideUsdc:"150000000",marginScaleBps:2_500};
   const manifest={version:1,mode:"dev",chainId:"8453",usdc:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",oracleSigners:[...oracleSigners],oracleThreshold:Math.floor(oracleSigners.length/2)+1,
     owner:identities.owner.address,emergencyCouncil:identities.emergency.address,approvers:identities.approvers.map(item=>item.address),
     policy:{makerCapitalUsdc:"100000000",markets:{BTC:market,ETH:market}}};
