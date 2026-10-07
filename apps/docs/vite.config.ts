@@ -19,6 +19,11 @@ function prerender(): Plugin {
       const server = await createServer({
         root, configFile: false, logLevel: "error", appType: "custom", plugins: [react()],
         server: { middlewareMode: true, hmr: false, ws: false },
+        // Its own cache and no dependency pre-bundling: the shared node_modules/.vite belongs to any
+        // dev server running alongside (the e2e suite builds the docs while the web app is served),
+        // and rewriting it makes that server answer "504 Outdated Optimize Dep".
+        cacheDir: resolve(root, "../../node_modules/.vite-docs-prerender"),
+        optimizeDeps: { noDiscovery: true, include: [] },
       });
       try {
         const site = await server.ssrLoadModule("/src/prerender.tsx");
