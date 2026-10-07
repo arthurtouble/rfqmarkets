@@ -8,7 +8,7 @@ import { getPublicClient } from "wagmi/actions";
 import { encodeFunctionData, erc20Abi, parseAbi, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
-import { errorMessage, postJson, randomNonce } from "../lib/http.js";
+import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
 import { microToInput, shortHash, usdc } from "../lib/format.js";
 import { LIMIT_ORDER_DURATION_SECONDS, tpslPrepareBody, triggerPrepareBody, type TpslInput, type TriggerOrderInput } from "../lib/orders.js";
 import { clampSlippageBps } from "../lib/slippage.js";
@@ -61,6 +61,8 @@ const triggerLine = ({ summary }: PreparedTrigger) =>
 const fractionLabel = (fractionBps: number, market: Market) => (fractionBps < 10_000 ? `${fractionBps / 100}% of ${market} position` : `${market} position`);
 /** Re-quote a close-all leg when less than this remains on its quote. */
 const QUOTE_EXPIRY_MARGIN_MS = 1_500;
+/** The API refused the signed price because the market moved past it before settlement. */
+const priceMoved = (error: unknown) => error instanceof ApiError && error.status === 409 && error.message.startsWith("price moved");
 
 export function TradingProvider({ children }: { children: ReactNode }) {
   const trader = useTrader(), config = useConfig(), client = useQueryClient(), { notify } = useToasts();
@@ -106,6 +108,18 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       : await trader.signIntent(prepared, "TradeIntent");
     progress("Collecting approver signatures");
     return api<Settled>("/v1/approve", { quoteId: quote.quoteId, account: account(), nonce, userSignature });
+  }
+
+  /** Settles a reduce-only close. If the price moves past the signed limit first, re-quotes and signs once more: getting out should not fail on a tick. */
+  async function settleClose(market: Market, fractionBps: number, quote: Quote, progress: (detail: string) => void) {
+    try {
+      return { quote, result: await settleTrade(quote, true, progress, quickCovers(market, quoteAmount(quote))) };
+    } catch (error) {
+      if (!priceMoved(error)) throw error;
+      progress("Price moved, getting a new quote");
+      const fresh = await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps });
+      return { quote: fresh, result: await settleTrade(fresh, true, progress, quickCovers(market, quoteAmount(fresh))) };
+    }
   }
 
   const value: Trading = {
@@ -174,8 +188,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     closePosition: (market, fractionBps = 10_000) => run("Close", `Close ${fractionLabel(fractionBps, market)}`, async progress => {
       progress("Getting an exact close quote");
-      const quote = await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps });
-      const result = await settleTrade(quote, true, progress, quickCovers(market, quoteAmount(quote)));
+      const { quote, result } = await settleClose(market, fractionBps, await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps }), progress);
       return { title: `${fractionLabel(fractionBps, market)} closed`, detail: [`at ${usdc(quote.expectedPrice)}`, blockLine(result.transaction)].filter(Boolean).join(" · "), txHash: result.transaction?.hash, value: undefined };
     }),
 
@@ -192,7 +205,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           const quote = Date.now() < first.expiresAtMs - QUOTE_EXPIRY_MARGIN_MS ? first
             : await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps });
           const step = (detail: string) => progress(`${market} (${index + 1} of ${quotes.length}): ${detail}`);
-          const result = await settleTrade(quote, true, step, quickCovers(market, quoteAmount(quote)));
+          const { result } = await settleClose(market, fractionBps, quote, step);
           lastTx = result.transaction ?? lastTx;
           outcome.closed.push(market);
         } catch (error) {
