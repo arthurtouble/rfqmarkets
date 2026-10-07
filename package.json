@@ -97,6 +97,7 @@
     "format:check": "prettier --check \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/{local-stack,base-sepolia-stack,base-mainnet-dev-stack,approver-process,persistent-service,persistent-config,cloudflare-dev-container,dev-stack,dev-scenario}.ts\" \"scripts/lib/service-stack.ts\""
   },
   "devDependencies": {
+    "@base-org/account": "2.5.13",
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@nomicfoundation/hardhat-ethers": "4.0.15",
@@ -110,6 +111,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.1.1",
+    "@walletconnect/ethereum-provider": "2.25.0",
     "chai": "6.2.2",
     "hardhat": "3.16.0",
     "mocha": "12.0.0",
