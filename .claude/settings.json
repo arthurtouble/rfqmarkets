@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash scripts/dev-contracts.sh:*)",
+      "Bash(node .local-state/ops/:*)",
+      "Bash(~/.local/bin/forge build:*)",
+      "Bash(npx wrangler kv key:*)"
+    ]
+  }
+}
