@@ -112,12 +112,12 @@ contract ClearingHandler is ClearingFixture {
 
 interface IClearingView {
     function positionOf(address account, uint8 market) external view returns (Position memory);
-    function markets(uint256 market)
-        external
-        view
-        returns (int256, int256, uint64, uint64, uint256, uint256, bool);
+    function markets(uint256 market) external view returns (int256, int256, uint64, uint64, uint256, uint256, bool);
     function exposureState(uint8 market) external view returns (uint256, uint256, uint256, uint256, bool);
     function accountCount() external view returns (uint256);
+    function collateralOf(address account) external view returns (int256);
+    function maintenanceEquity(address account) external view returns (int256);
+    function customerUnrealizedGain() external view returns (uint256);
 }
 
 contract ClearingInvariantsTest is Test {
@@ -164,6 +164,19 @@ contract ClearingInvariantsTest is Test {
             assertEq(longBase, longs, "long book");
             assertEq(shortBase, shorts, "short book");
         }
+    }
+
+    /// @notice The aggregate cost basis values the book the same as summing every position's PnL at mid
+    /// (the fixture quotes bid == ask), up to a micro-unit of truncation per leg.
+    function invariant_unrealizedGainMatchesPositions() public view {
+        uint256 count = handler.traderCount();
+        int256 pnl;
+        for (uint256 i; i < count; ++i) {
+            address account = handler.traderAt(i);
+            pnl += clearing.maintenanceEquity(account) - clearing.collateralOf(account);
+        }
+        int256 expected = pnl > 0 ? pnl : int256(0);
+        assertApproxEqAbs(int256(clearing.customerUnrealizedGain()), expected, 2 * count, "unrealized gain");
     }
 
     function afterInvariant() external view {

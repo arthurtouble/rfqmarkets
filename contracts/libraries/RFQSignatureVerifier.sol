@@ -69,7 +69,9 @@ library RFQSignatureVerifier {
             )
         );
         if (approval.intentHash != digest) revert InvalidSignature();
-        if (SignatureChecker.isValidSignatureNowCalldata(intent.account, digest, signature)) return (digest, address(0));
+        if (SignatureChecker.isValidSignatureNowCalldata(intent.account, digest, signature)) {
+            return (digest, address(0));
+        }
 
         // Otherwise the signer must be a live session key of this account, scoped to this market and fee.
         sessionSigner = ECDSA.recoverCalldata(digest, signature);
