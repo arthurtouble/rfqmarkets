@@ -28,7 +28,8 @@ abstract contract ClearingFixture is Test {
     uint256[3] internal approverKeys = [uint256(0xA11CE), 0xB0B, 0xC0FFEE];
     address[3] internal approvers;
 
-    uint256[2] internal prices = [uint256(100_000e6), 4_000e6];
+    /// @notice Fixture price per market id; `listMarket` appends one.
+    uint256[] internal prices;
     uint256 internal nextNonce = 1;
 
     struct Trader {
@@ -38,6 +39,9 @@ abstract contract ClearingFixture is Test {
 
     function setUp() public virtual {
         vm.warp(1_800_000_000);
+        delete prices;
+        prices.push(100_000e6);
+        prices.push(4_000e6);
         usdc = new MockUSDC();
         oracle = new MockPriceOracle();
         for (uint256 i; i < 3; ++i) {
@@ -122,6 +126,14 @@ abstract contract ClearingFixture is Test {
         usdc.approve(address(clearing), type(uint256).max);
         clearing.deposit(amount);
         vm.stopPrank();
+    }
+
+    /// @notice Governance registers `config` as the next market, priced at `price`.
+    function listMarket(MarketConfig memory config, uint256 price) internal returns (uint8 market) {
+        vm.prank(governance);
+        market = clearing.addMarket(config);
+        assertEq(market, prices.length);
+        prices.push(price);
     }
 
     // ---- Oracle helpers ----
