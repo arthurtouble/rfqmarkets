@@ -41,6 +41,25 @@ Production builds call services on the same origin through the Cloudflare edge
 (`deploy/cloudflare/static/web-edge.mjs`). Dev builds use the local ports, or
 `VITE_API_URL`, `VITE_INDEXER_URL` and `VITE_MARKET_STREAM_URL` when set.
 
+## What the app does not take from the API
+
+The API and the edge are not trusted to decide what a user signs or sends:
+
+- **Build-time pins** (`wallet/settlement.ts`). A deployed build sets
+  `VITE_CHAIN_ID`, `VITE_CLEARING_ADDRESS` and `VITE_TOKEN_ADDRESS`
+  (`scripts/cloudflare-dev-deploy.sh` reads the last two from the deployment
+  record). When `GET /v1/config` disagrees, the app shows an error and stays
+  read-only. Base and Base Sepolia always use their public RPC, never the
+  API's `rpcUrl`. Local builds set no pins and take the API's config.
+- **Intent checks** (`wallet/verify-intent.ts`). Before every signature,
+  with the wallet or the one-click key, the payload must use the
+  `RFQ Markets`/`1` domain on the settlement chain and clearing contract, the
+  protocol's own type definitions and the connected account, and its fields
+  must match the request: withdrawal recipient and amount, trade market, side,
+  size, limit price and fee cap against the quote, trigger and slippage, and
+  the session key and limits of a one-click grant. On a mismatch nothing is
+  signed and the error says so.
+
 ## Data layer for the UI
 
 Hooks and helpers the screens wire to. Amounts are bigint or decimal strings in

@@ -278,6 +278,7 @@ dialog.sheet > .rfq-sheet { width: 100%; max-height: 92dvh; overflow-y: auto; ov
 /* Connect sheet (wallet/ConnectDialog.tsx) ------------------------------ */
 dialog.sheet { text-align: start; }
 .connect-sheet { gap: var(--space-5); }
+.settlement-error { margin: var(--space-3) var(--space-4) 0; }
 .wallet-group { display: grid; gap: var(--space-2); }
 .wallet-group h3 { color: var(--text-tertiary); font: 500 12px/16px var(--font-sans); }
 .wallet-option { display: flex; align-items: center; gap: var(--space-3); min-height: 60px; padding: var(--space-3); border: 0; border-radius: var(--radius-md); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }

@@ -52,7 +52,7 @@ The hedge operations dashboard and the internal docs sit behind a Cloudflare Acc
 
 Both workflows run shell scripts that work from any machine with Docker, Node and a Cloudflare token (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`):
 
-- `scripts/cloudflare-dev-deploy.sh` builds and publishes the oracle nodes (`scripts/cloudflare-oracle-deploy.sh`, which waits for each node before deploying the next), the runtime, UI, docs, the private pages and the exit page, and records the commit in KV `deployed-commit`. Set `CLOUDFLARE_WORKERS_SUBDOMAIN` if the account's `workers.dev` subdomain is not `rfq-markets`. Behind a TLS-intercepting proxy, set `RFQ_DOCKER_BUILD_CA` to the proxy's CA bundle.
+- `scripts/cloudflare-dev-deploy.sh` builds and publishes the oracle nodes (`scripts/cloudflare-oracle-deploy.sh`, which waits for each node before deploying the next), the runtime, UI, docs, the private pages and the exit page, and records the commit in KV `deployed-commit`. The trading UI is built with `VITE_CHAIN_ID=8453` and, once KV `deployment.json` exists, `VITE_CLEARING_ADDRESS` and `VITE_TOKEN_ADDRESS` from it, so it refuses a `/v1/config` naming other contracts (`apps/web/src/wallet/settlement.ts`); after a contract redeployment, redeploy the UI. Set `CLOUDFLARE_WORKERS_SUBDOMAIN` if the account's `workers.dev` subdomain is not `rfq-markets`. Behind a TLS-intercepting proxy, set `RFQ_DOCKER_BUILD_CA` to the proxy's CA bundle.
 - `scripts/dev-contracts.sh ACTION [AMOUNT]` runs a dev-contracts action with the state from KV. Everything except `identities` and `preflight` sends Base mainnet transactions.
 
 The live environment is on the RFQ Markets account: UI `https://dev.rfq-markets.workers.dev`, docs `https://docs.rfq-markets.workers.dev`.

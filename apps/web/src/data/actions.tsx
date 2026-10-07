@@ -5,7 +5,7 @@ import { createContext, useContext, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfig } from "wagmi";
 import { getPublicClient } from "wagmi/actions";
-import { encodeFunctionData, erc20Abi, parseAbi, type Address, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, parseAbi, parseUnits, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
 import { friendlyError } from "../lib/errors.js";
@@ -38,7 +38,8 @@ import {
   useQuickSession,
   type QuickSession,
 } from "../wallet/quick-session.js";
-import { typedData, useTrader } from "../wallet/trader.js";
+import { useTrader } from "../wallet/trader.js";
+import { IntentMismatchError, quoteTerms, verifyTpslPair } from "../wallet/verify-intent.js";
 import { useToasts } from "../ui/toasts.js";
 import { useMarketList } from "./markets.js";
 import { keys } from "./queries.js";
@@ -165,14 +166,37 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       ...(order.slippageBps === undefined ? {} : { slippageBps: clampSlippageBps(order.slippageBps) }),
     });
   const quoteAmount = (quote: Quote) => (quote.amount === undefined ? null : BigInt(quote.amount));
+  /** The contract index of `market`, which every signed trade names. */
+  const marketIndex = (market: Market) => {
+    const index = marketList.get(market)?.index;
+    if (index === undefined || index >= Number.MAX_SAFE_INTEGER)
+      throw new Error(`${market} is not in the market list yet; try again`);
+    return index;
+  };
+
+  /** What the user asked for in a trade at a firm quote; checked against the quote and the prepared intent before signing. */
+  type TradeRequest = { market: Market; side?: Side; amountMicro?: bigint; slippageBps?: number };
 
   async function settleTrade(
     quote: Quote,
     reduceOnly: boolean,
     progress: (detail: string) => void,
     sessionAllowed: boolean,
+    request: TradeRequest,
   ) {
+    if (quote.market !== request.market || (request.side && quote.side !== request.side))
+      throw new IntentMismatchError("the quote is for another market or side");
     const nonce = randomNonce();
+    const expected = {
+      kind: "trade" as const,
+      market: marketIndex(request.market),
+      side: request.side,
+      reduceOnly,
+      nonce,
+      quote: quoteTerms(quote),
+      amountMicro: request.amountMicro,
+      slippageBps: request.slippageBps,
+    };
     const prepared = await api<Prepared>("/v1/prepare", {
       quoteId: quote.quoteId,
       account: account(),
@@ -186,9 +210,9 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     progress(session ? "Signing with one-click trading" : "Confirm in your wallet");
     const userSignature: Hex = session
       ? await privateKeyToAccount(session.privateKey).signTypedData(
-          typedData(prepared, "TradeIntent") as never,
+          trader.verified(prepared, "TradeIntent", expected) as never,
         )
-      : await trader.signIntent(prepared, "TradeIntent");
+      : await trader.signIntent(prepared, "TradeIntent", expected);
     progress("Collecting approver signatures");
     return api<Settled>("/v1/approve", { quoteId: quote.quoteId, account: account(), nonce, userSignature });
   }
@@ -203,7 +227,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     try {
       return {
         quote,
-        result: await settleTrade(quote, true, progress, quickCovers(market, quoteAmount(quote))),
+        result: await settleTrade(quote, true, progress, quickCovers(market, quoteAmount(quote)), { market }),
       };
     } catch (error) {
       if (!priceMoved(error)) throw error;
@@ -215,7 +239,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       });
       return {
         quote: fresh,
-        result: await settleTrade(fresh, true, progress, quickCovers(market, quoteAmount(fresh))),
+        result: await settleTrade(fresh, true, progress, quickCovers(market, quoteAmount(fresh)), { market }),
       };
     }
   }
@@ -234,12 +258,15 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           if (reviewed && !quoteUsable(reviewed.expiresAtMs, Date.now()))
             throw new Error("The quote expired. Review the new price");
           if (!reviewed) progress("Getting a firm quote");
+          const slippageBps =
+            order.slippageBps === undefined ? undefined : clampSlippageBps(order.slippageBps);
           const quote = reviewed ?? (await requestQuote(order));
           const result = await settleTrade(
             quote,
             order.reduceOnly,
             progress,
             quickCovers(order.market, order.amountMicro),
+            { market: order.market, side: order.side, amountMicro: order.amountMicro, slippageBps },
           );
           return {
             title: order.reduceOnly
@@ -256,6 +283,16 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     limitOrder: async (order) =>
       (await run("Limit order", `Place ${sideLabel(order.side).toLowerCase()} limit`, async (progress) => {
+        const nonce = randomNonce();
+        const expected = {
+          kind: "limit" as const,
+          market: marketIndex(order.market),
+          side: order.side,
+          reduceOnly: order.reduceOnly,
+          nonce,
+          amountMicro: order.amountMicro,
+          limitPrice: parseUnits(order.limitPrice, 6),
+        };
         const prepared = await api<Prepared & { orderId: string }>("/v1/orders/prepare", {
           account: account(),
           market: order.market,
@@ -263,11 +300,11 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           amount: microToInput(order.amountMicro),
           limitPrice: order.limitPrice,
           durationSeconds: LIMIT_ORDER_DURATION_SECONDS,
-          nonce: randomNonce(),
+          nonce,
           reduceOnly: order.reduceOnly,
         });
         progress("Confirm in your wallet");
-        const userSignature = await trader.signIntent(prepared, "TradeIntent");
+        const userSignature = await trader.signIntent(prepared, "TradeIntent", expected);
         await api("/v1/orders", { orderId: prepared.orderId, userSignature });
         return {
           title: `${sideLabel(order.side)} limit open`,
@@ -280,12 +317,20 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     // orders are always signed with the wallet, never the quick-trading key.
     triggerOrder: (order) =>
       run("Trigger order", `Place ${triggerLabel(order.kind).toLowerCase()}`, async (progress) => {
-        const prepared = await api<PreparedTrigger>(
-          "/v1/orders/trigger/prepare",
-          triggerPrepareBody(order, account(), randomNonce()),
-        );
+        const body = triggerPrepareBody(order, account(), randomNonce());
+        const prepared = await api<PreparedTrigger>("/v1/orders/trigger/prepare", body);
         progress("Confirm in your wallet");
-        const userSignature = await trader.signIntent(prepared, "TriggeredTradeIntent");
+        const userSignature = await trader.signIntent(prepared, "TriggeredTradeIntent", {
+          kind: "trigger",
+          market: marketIndex(order.market),
+          triggerKind: order.kind,
+          triggerPrice: order.triggerPriceMicro,
+          slippageBps: body.slippageBps,
+          nonce: body.nonce,
+          reduceOnly: body.reduceOnly,
+          side: body.side,
+          amountMicro: order.sizing === "position" ? undefined : order.amountMicro,
+        });
         await api("/v1/orders", { orderId: prepared.orderId, userSignature });
         return {
           title: `${triggerLabel(prepared.type)} set`,
@@ -296,10 +341,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     placeTpsl: (input) =>
       run("TP/SL", `Protect ${input.market}`, async (progress) => {
-        const pair = await api<PreparedTpsl>(
-          "/v1/orders/tpsl/prepare",
-          tpslPrepareBody(input, account(), randomNonce()),
-        );
+        const body = tpslPrepareBody(input, account(), randomNonce()),
+          market = marketIndex(input.market);
+        const pair = await api<PreparedTpsl>("/v1/orders/tpsl/prepare", body);
+        verifyTpslPair(pair.orders, { takeProfit: input.takeProfitMicro, stopLoss: input.stopLossMicro });
         // Sign every leg before placing any, so a rejected prompt leaves nothing half-placed.
         const signatures: Hex[] = [];
         for (const [index, leg] of pair.orders.entries()) {
@@ -308,7 +353,17 @@ export function TradingProvider({ children }: { children: ReactNode }) {
               ? `Confirm the ${triggerLabel(leg.type).toLowerCase()} in your wallet (${index + 1} of ${pair.orders.length})`
               : "Confirm in your wallet",
           );
-          signatures.push(await trader.signIntent(leg, "TriggeredTradeIntent"));
+          signatures.push(
+            await trader.signIntent(leg, "TriggeredTradeIntent", {
+              kind: "trigger",
+              market,
+              triggerKind: leg.type,
+              triggerPrice: (leg.type === "take-profit" ? input.takeProfitMicro : input.stopLossMicro)!,
+              slippageBps: body.slippageBps,
+              nonce: body.nonce,
+              reduceOnly: true,
+            }),
+          );
         }
         progress("Placing orders");
         for (const [index, leg] of pair.orders.entries())
@@ -330,7 +385,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         progress(
           affected > 1 ? `Confirm in your wallet (cancels ${affected} orders)` : "Confirm in your wallet",
         );
-        const userSignature = await trader.signIntent(prepared, "CancelIntent");
+        const userSignature = await trader.signIntent(prepared, "CancelIntent", {
+          kind: "cancel",
+          nonce: order.nonce,
+        });
         const result = await api<CancelResult>(`/v1/orders/${order.orderId}/cancel`, {
           intent: prepared.intent,
           userSignature,
@@ -408,13 +466,15 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     emergencyClose: (market) =>
       run("Emergency close", `Close ${market} at oracle`, async (progress) => {
-        const prepared = await api<Prepared>("/v1/close/prepare", {
-          account: account(),
-          market,
-          nonce: randomNonce(),
-        });
+        const nonce = randomNonce(),
+          index = marketIndex(market);
+        const prepared = await api<Prepared>("/v1/close/prepare", { account: account(), market, nonce });
         progress("Confirm in your wallet");
-        const userSignature = await trader.signIntent(prepared, "CloseIntent");
+        const userSignature = await trader.signIntent(prepared, "CloseIntent", {
+          kind: "close",
+          market: index,
+          nonce,
+        });
         progress("Submitting conservative close");
         const result = await api<Settled>("/v1/close/execute", { intent: prepared.intent, userSignature });
         return {
@@ -460,13 +520,19 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     withdraw: async (amount) =>
       (await run("Withdrawal", `Withdraw ${usdc(amount)}`, async (progress) => {
+        const nonce = randomNonce();
         const prepared = await api<Prepared>("/v1/withdraw/prepare", {
           account: account(),
           amount: microToInput(amount),
-          nonce: randomNonce(),
+          nonce,
         });
         progress("Confirm in your wallet");
-        const userSignature = await trader.signIntent(prepared, "WithdrawalIntent");
+        // The recipient must be the signing wallet and the amount the one requested.
+        const userSignature = await trader.signIntent(prepared, "WithdrawalIntent", {
+          kind: "withdraw",
+          amountMicro: amount,
+          nonce,
+        });
         progress("Submitting sponsored withdrawal");
         const result = await api<Settled>("/v1/withdraw/execute", { intent: prepared.intent, userSignature });
         return {
@@ -482,20 +548,32 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         const privateKey = generatePrivateKey(),
           sessionAddress = privateKeyToAccount(privateKey).address;
         // Covers every registered market; one added later needs a new session (sessionCovers checks the mask).
-        const request = quickSessionRequest(Math.max(1, marketList.markets.length));
+        const request = quickSessionRequest(Math.max(1, marketList.markets.length)),
+          nonce = randomNonce();
         const prepared = await api<Omit<Prepared, "intent"> & { grant: Record<string, unknown> }>(
           "/v1/session/prepare",
           {
             account: account(),
             session: sessionAddress,
             ...request,
-            nonce: randomNonce(),
+            nonce,
           },
         );
         progress("Confirm the session in your wallet");
+        // Only the key generated above, with exactly the quick-trading limits, may be authorized.
         const userSignature = await trader.signIntent(
           { ...prepared, intent: prepared.grant },
           "SessionGrant",
+          {
+            kind: "session",
+            session: sessionAddress,
+            marketMask: BigInt(request.marketMask),
+            nonce,
+            maxTradeNotional: parseUnits(QUICK_LIMITS.maxTradeAmount, 6),
+            maxCumulativeNotional: parseUnits(QUICK_LIMITS.maxCumulativeAmount, 6),
+            maxFee: parseUnits(QUICK_LIMITS.maxFee, 6),
+            durationSeconds: QUICK_LIMITS.durationSeconds,
+          },
         );
         progress("Activating sponsored session");
         const result = await api<{ validUntil: string; transaction?: Transaction }>("/v1/session/execute", {

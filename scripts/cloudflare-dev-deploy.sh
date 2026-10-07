@@ -15,10 +15,18 @@ cd "$(dirname "$0")/.."
 export CLOUDFLARE_WORKERS_SUBDOMAIN="${CLOUDFLARE_WORKERS_SUBDOMAIN:-rfq-markets}"
 wrangler() { npx wrangler "$@"; }
 
-npm run build:web
+kv=$(node scripts/cloudflare-kv-namespace.mjs rfq-markets-dev-state)
+# The dev contracts, once deployed: pinned into the trading UI and the exit page so neither trusts the API for them.
+deployment=$(wrangler kv key get deployment.json --namespace-id "$kv" --remote 2>/dev/null || true)
+read_deployment() { printf '%s' "$deployment" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const v=JSON.parse(s).$1;if(v!==undefined)process.stdout.write(String(v))}catch{}})"; }
+clearing=$(read_deployment contracts.clearingProxy)
+usdc=$(read_deployment contracts.usdc)
+
+# The trading UI refuses a /v1/config that names another chain, clearing contract or USDC token, and signs
+# only for the pinned contract. Before the first contract deployment only the chain is pinned.
+VITE_CHAIN_ID=8453 VITE_CLEARING_ADDRESS="$clearing" VITE_TOKEN_ADDRESS="$usdc" npm run build:web
 DOCS_SITE_URL="https://docs.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev" npm run build:docs
 npm run validate:cloudflare-static
-kv=$(node scripts/cloudflare-kv-namespace.mjs rfq-markets-dev-state)
 sha=$(git rev-parse --short=12 HEAD)
 generated=deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
 
@@ -57,10 +65,12 @@ npm run build:internal-docs
 deploy_private deploy/cloudflare/static/wrangler.admin.dev.jsonc admin "RFQ Markets hedge operations (dev)"
 deploy_private deploy/cloudflare/static/wrangler.internal-docs.jsonc internal-docs "RFQ Markets internal docs"
 
-# Direct exit page, built against the dev clearing contract once it exists.
-deployment=$(wrangler kv key get deployment.json --namespace-id "$kv" --remote 2>/dev/null || true)
-read_deployment() { printf '%s' "$deployment" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const v=JSON.parse(s).$1;if(v!==undefined)process.stdout.write(String(v))}catch{}})"; }
-clearing=$(read_deployment contracts.clearingProxy)
+# Direct exit page, built against the dev clearing contract once it exists (the runtime may have just
+# deployed it on a first run).
+if [ -z "$clearing" ]; then
+  deployment=$(wrangler kv key get deployment.json --namespace-id "$kv" --remote 2>/dev/null || true)
+  clearing=$(read_deployment contracts.clearingProxy)
+fi
 if [ -n "$clearing" ]; then
   # The oracle nodes default to the dev ones; the deployment block bounds the one-click key search.
   VITE_EXIT_CHAIN_ID=8453 VITE_EXIT_CLEARING_ADDRESS="$clearing" VITE_EXIT_DEPLOYMENT_BLOCK="$(read_deployment deploymentBlock)" \

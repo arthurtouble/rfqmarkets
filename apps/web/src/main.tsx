@@ -24,7 +24,7 @@ const wagmiConfig = createWagmiConfig(settlement.chain);
 createRoot(document.getElementById("root")!).render(<StrictMode>
   <WagmiProvider config={wagmiConfig}>
     <QueryClientProvider client={queryClient}>
-      <TraderProvider chain={settlement.chain} settlement={settlement.config}>
+      <TraderProvider chain={settlement.chain} settlement={settlement.config} settlementError={settlement.error ?? null}>
         <ToastProvider>
           <TradingProvider>
             <MarketFeedProvider>
