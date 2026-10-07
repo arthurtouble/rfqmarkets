@@ -17,7 +17,7 @@ Open positions appear in the **Positions** tab under the chart on the trade page
 | **Funding** | Advanced view only. Funding accrued since the position was last settled. Negative means you owe it. See [Funding](../risk/funding.md). |
 | **PnL** | Unrealized profit or loss: size times the difference between mark and entry. The percentage underneath is the return on the position's margin. |
 
-On a phone, each position is a card showing the side, the profit or loss with its return on margin, and the size, entry, mark, margin, liquidation price and funding. The phone's trade page shows only the position in the market you are looking at; the Portfolio tab shows all of them. When the price gets within 10% of a position's liquidation price, its card says so.
+On a phone, each position is a card showing the side, the profit or loss with its return on margin, and the size, entry, mark, margin, liquidation price and funding. The phone's trade page shows only the position in the market you are looking at; the Portfolio tab shows all of them. When the price gets within 10% of a position's liquidation price, a warning appears above the positions on desktop and on the position's card on a phone.
 
 The figures update with every price tick, except the liquidation price, which updates when your account data refreshes.
 

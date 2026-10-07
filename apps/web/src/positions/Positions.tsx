@@ -81,7 +81,10 @@ export function Positions({ account, only }: { account: AccountState | null; onl
   if (!account || !positions.length) return null;
   const closingView = closing ? positionView(account, closing) : null;
   return <div className="positions">
-    {desktop && !only ? <PositionsTable positions={positions} onClose={setClosing} onCloseAll={positions.length > 1 ? () => setClosingAll(true) : undefined} />
+    {desktop && !only ? <>
+        {positions.map(view => <NearLiquidation key={view.market} view={view} />)}
+        <PositionsTable positions={positions} onClose={setClosing} onCloseAll={positions.length > 1 ? () => setClosingAll(true) : undefined} />
+      </>
       : <>{!only && positions.length > 1 && <div className="positions__bar">
           <button type="button" className="rfq-btn rfq-btn--sm rfq-btn--secondary" onClick={() => setClosingAll(true)}>Close all</button>
         </div>}
