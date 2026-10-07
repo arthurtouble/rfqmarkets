@@ -78,7 +78,7 @@ Variational demonstrates the approachable amount-first RFQ flow and portfolio-ma
 7. Run `npm run smoke:base-sepolia-iteration-pyth`, `npm run smoke:base-sepolia-iteration-e2e`, `npm run smoke:hyperliquid-testnet` and, when the venue account is funded, `npm run smoke:base-sepolia-iteration-hedge-e2e`.
 8. Run the checkpointed soak with `RFQ_TESTNET_SOAK_HOURS=72 npm run soak:base-sepolia-iteration`. A short smoke is evidence of wiring; it is not soak evidence.
 
-The public docs run on port 4175 with `npm run dev:docs`; internal operations docs run on port 4176 with `npm run dev:internal-docs`; the executable design-system specimen runs on port 4177 with `npm run dev:design-system`. The canonical operational references are [Base Sepolia deployment](BASE-SEPOLIA-DEPLOYMENT.md), [local development](LOCAL-DEVELOPMENT.md), [hedging operations](HEDGING-OPERATIONS.md), [market lifecycle](MARKET-LIFECYCLE-PLAYBOOK.md), [authorization and upgrades](AUTHORIZATION-AND-UPGRADES.md), and [production release checklist](PRODUCTION-RELEASE-CHECKLIST.md).
+The public docs run on port 4175 with `npm run dev:docs`; internal operations docs run on port 4176 with `npm run dev:internal-docs`; the executable design-system specimen runs on port 4177 with `npm run dev:design-system`. The canonical operational references are [Base Sepolia deployment](base-sepolia-deployment.md), [local development](../operations/local-development.md), [hedging operations](../architecture/hedging.md), [market lifecycle](../operations/market-lifecycle.md), [authorization and upgrades](2026-09-08-authorization-and-upgrades.md), and [production release checklist](../release/release-checklist.md).
 
 ## Production sequence
 

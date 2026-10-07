@@ -70,7 +70,7 @@ For a primary outage, a reduce-only exit request records its account, position b
 
 ## Quote construction
 
-The UI flow is defined in UX-AND-INTENT.md. The quoter computes an exact proposed fill inside the user's automatically generated bound.
+The UI flow is defined in [trading UX and intents](../product/trading-ux-and-intents.md). The quoter computes an exact proposed fill inside the user's automatically generated bound.
 
 For signed customer-notional change `d`, reference cash is based on the fresh report converted to USDC. Directional liquidity anchor uses ask for a customer buy and bid for a customer sell. The off-chain required customer charge is:
 
