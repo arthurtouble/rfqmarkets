@@ -20,7 +20,6 @@ library RFQLiquidation {
         if ($.resolutionRequired || market >= MARKET_COUNT) revert InvalidTrade();
         RFQLedger.touchOracle(report, market);
         RFQLedger.requireFreshPositions(account);
-        RFQLedger.updateAllFunding();
         RFQLedger.settleAllFunding(account);
         if ($.resolutionRequired) return;
 
@@ -47,7 +46,7 @@ library RFQLiquidation {
 
         int256 collateral = $.accounts[account].collateral;
         uint256 available = collateral > 0 ? uint256(collateral) : 0;
-        (uint256 penalty, uint256 reward) = RFQRiskMath.liquidationCharge(closedNotional, BASE_UNIT, available);
+        (uint256 penalty, uint256 reward) = RFQRiskMath.liquidationCharge(closedNotional, available);
         RFQLedger.changeCollateral(account, -int256(penalty));
         $.insuranceBalance += penalty - reward;
         RFQLedger.absorbDeficit(account);
@@ -60,7 +59,7 @@ library RFQLiquidation {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if (!$.paused || $.resolutionRequired || market >= MARKET_COUNT) revert InvalidTrade();
         RFQLedger.touchOracle(report, market);
-        RFQLedger.settleFunding(account, market);
+        RFQLedger.settleAllFunding(account);
         if ($.resolutionRequired) return;
 
         Account storage owner = $.accounts[account];
@@ -70,7 +69,9 @@ library RFQLiquidation {
         RFQLedger.applyPosition(account, market, -size, price);
         if ($.resolutionRequired) return;
         bool flat = true;
-        for (uint8 i; i < MARKET_COUNT; ++i) if (owner.positions[i].size != 0) flat = false;
+        for (uint8 i; i < MARKET_COUNT; ++i) {
+            if (owner.positions[i].size != 0) flat = false;
+        }
         if (flat) RFQLedger.absorbDeficit(account);
         emit IRFQClearingEvents.PositionClosed(account, market, -size, price);
     }
