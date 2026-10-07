@@ -2,7 +2,7 @@
 // without a valid Access token for ACCESS_AUD. ACCESS_TEAM_DOMAIN and ACCESS_AUD are passed at deploy time.
 {
   "$schema": "../../../node_modules/wrangler/config-schema.json",
-  "name": "rfq-markets-internal-docs-testnet",
+  "name": "internal-docs",
   "main": "private-edge.mjs",
   "compatibility_date": "2026-09-11",
   "assets": {

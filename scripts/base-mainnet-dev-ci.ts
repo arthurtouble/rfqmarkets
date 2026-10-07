@@ -19,6 +19,7 @@ import { validateDevManifest } from "./mainnet-manifest.js";
 //   fund-maker USDC                owner approves and deposits maker capital
 //   fund-sponsor ETH               owner tops the gas sponsor up to ETH
 //   unpause                        owner unpauses the clearing
+//   oracle-signers                 owner points the SignedPriceOracle at the oracle nodes' published keys
 const BASE_USDC="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 /** `oracleSigners`, when the runtime publishes its oracle nodes' addresses, names the SignedPriceOracle signer set. */
 export type RuntimeIdentities={emergency:string;approvers:[string,string,string];sponsor:string;oracleSigners?:string[]};
@@ -90,6 +91,16 @@ if(import.meta.url===`file://${process.argv[1]}`){
       const owner=await ownerWallet(),clearing=new Contract(loadRecord().contracts.clearingProxy,artifact("RFQClearing").abi,owner);
       if(await clearing.paused())await (await clearing.unpause()).wait(2);console.log("clearing unpaused");break;
     }
-    default:throw new Error("usage: base-mainnet-dev-ci identities|prepare|cli ACTION|fund-maker USDC|fund-sponsor ETH|unpause");
+    case "oracle-signers":{
+      // After the oracle node workers are replaced (new Durable Objects, new keys), move the adapter to
+      // the keys they now publish, keeping its threshold, and record the new set for the nodes to read.
+      const owner=await ownerWallet(),record=loadRecord(),signers=oracleSignersFor(runtimeIdentities());
+      const oracle=new Contract(record.contracts.oracleAdapter,artifact("SignedPriceOracle").abi,owner),threshold=Number(await oracle.threshold());
+      const current=(await oracle.signers() as string[]).map(item=>getAddress(item));
+      if(current.length!==signers.length||current.some((item,index)=>item!==signers[index]))await (await oracle.setSigners(signers,threshold)).wait(2);
+      record.oracle={...record.oracle,signers,threshold};writePrivate(RECORD,record);
+      console.log(JSON.stringify({oracle:record.contracts.oracleAdapter,signers,threshold}));break;
+    }
+    default:throw new Error("usage: base-mainnet-dev-ci identities|prepare|cli ACTION|fund-maker USDC|fund-sponsor ETH|unpause|oracle-signers");
   }
 }

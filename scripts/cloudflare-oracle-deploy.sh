@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the oracle node image once and deploys the three oracle node workers one at a time
-# (rfq-markets-oracle-1 wnam, -2 weur, -3 apac; deploy/cloudflare/DEV-ENVIRONMENT.md). After each
+# (oracle-1 wnam, -2 weur, -3 apac; deploy/cloudflare/DEV-ENVIRONMENT.md). After each
 # deploy it waits for that node to answer before touching the next, so a bad build stops after one node.
 # Usage: scripts/cloudflare-oracle-deploy.sh KV_NAMESPACE_ID. Called by scripts/cloudflare-dev-deploy.sh.
 # Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. Optional: CLOUDFLARE_WORKERS_SUBDOMAIN
@@ -39,7 +39,7 @@ wrangler containers push "$image"
 # A node is up when /health is 200, or when it is serving but waiting for a deployment that names it;
 # anything else (including node_start_failed) holds the rollout.
 wait_for() {
-  local url="https://rfq-markets-oracle-$1.$subdomain.workers.dev/health" deadline=$((SECONDS + timeout)) body
+  local url="https://oracle-$1.$subdomain.workers.dev/health" deadline=$((SECONDS + timeout)) body
   while [ "$SECONDS" -lt "$deadline" ]; do
     body=$(curl -sS --max-time 10 -w '\n%{http_code}' "$url" 2>/dev/null || true)
     case "${body##*$'\n'}" in

@@ -3,7 +3,7 @@
 // the DEV_STATE id and the image. Public on workers.dev, GET only.
 {
   "$schema": "../../../node_modules/wrangler/config-schema.json",
-  "name": "rfq-markets-oracle-ORACLE_NODE_INDEX_VALUE",
+  "name": "oracle-ORACLE_NODE_INDEX_VALUE",
   "main": "oracle-worker.mjs",
   "compatibility_date": "2026-09-11",
   "compatibility_flags": ["nodejs_compat"],

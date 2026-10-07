@@ -2,7 +2,7 @@
 // sends the connected wallet's own transactions. Built with the dev clearing address from KV deployment.json.
 {
   "$schema": "../../../node_modules/wrangler/config-schema.json",
-  "name": "rfq-markets-exit-dev",
+  "name": "exit",
   "compatibility_date": "2026-09-11",
   "assets": {
     "directory": "../../../dist/exit",

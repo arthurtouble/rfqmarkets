@@ -21,7 +21,7 @@ Prices are in USDC micro-units per market unit. A node serves:
 - `/v1/batch/stream` (SSE)
 - `/v1/candles`
 
-On Cloudflare, each node is its own worker, `rfq-markets-oracle-<n>` (`deploy/cloudflare/runtime/oracle-worker.mjs`). Its Durable Object:
+On Cloudflare, each node is its own worker, `oracle-<n>` (`deploy/cloudflare/runtime/oracle-worker.mjs`). Its Durable Object:
 
 - generates the signing key on first start and keeps it only in Durable Object storage;
 - publishes the address to KV `oracle-node-<n>.json`;

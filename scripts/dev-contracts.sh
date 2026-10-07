@@ -3,7 +3,8 @@
 # rfq-markets-dev-state KV namespace: loads the deployment record and the runtime's public keys,
 # runs the action, and saves the record back.
 #   scripts/dev-contracts.sh ACTION [AMOUNT]
-# ACTION: identities, preflight, deploy, upgrade, unpause, fund-maker, fund-sponsor, configure, verify, basescan.
+# ACTION: identities, preflight, deploy, upgrade, unpause, fund-maker, fund-sponsor, configure, oracle-signers,
+# verify, basescan.
 # Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. The owner key is RFQ_DEV_OWNER_KEY when set,
 # otherwise the dev environment's `owner-key` KV entry. RPC: RFQ_BASE_MAINNET_RPC_URL, else Alchemy when
 # ALCHEMY_API_KEY is set, else mainnet.base.org. Expects `npm ci` and `npm run compile:contracts`.
@@ -49,6 +50,7 @@ case "$action" in
   verify) ci cli dev-verify ;;
   basescan) ci cli dev-basescan ;;
   unpause) ci unpause ;;
+  oracle-signers) ci oracle-signers ;;
   fund-maker) ci fund-maker "${amount:-100}" ;;
   fund-sponsor) ci fund-sponsor "${amount:-0.003}" ;;
   *) echo "unknown action $action" >&2; exit 2 ;;
