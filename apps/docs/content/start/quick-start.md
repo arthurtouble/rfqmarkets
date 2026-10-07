@@ -43,11 +43,11 @@ Your wallet shows a typed-data signature request titled *TradeIntent*. It lists 
 
 ## 4. Watch the position
 
-The **Positions** tab under the chart shows your open position: its value, entry price, the current mark, the estimated liquidation price and the profit or loss. The **Portfolio** page shows your whole account: account value, margin in use, leverage and every position. [Positions and your account](../trading/positions.md) explains each figure.
+The **Positions** tab under the chart shows your open position: its value, entry price, the current mark, the estimated liquidation price, the margin it uses and the profit or loss. The **Portfolio** page shows your whole account: account value, margin in use, leverage, a chart of your profit or loss, and every position and trade. [Positions and your account](../trading/positions.md) explains each figure.
 
 ## 5. Close
 
-Click **Close** on the position. Pick how much to close, from 25% to 100%, check the estimated price and profit, and confirm. The close is a reduce-only trade, so it can never accidentally open a position the other way.
+Click **Close** on the position. Pick how much to close, from 25% to 100%, check the estimated price and profit, and confirm. The close is a reduce-only trade, so it can never accidentally open a position the other way. With more than one position open, **Close all** closes them all in one go.
 
 ## 6. Withdraw
 
