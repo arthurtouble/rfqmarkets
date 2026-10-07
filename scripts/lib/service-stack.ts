@@ -10,6 +10,7 @@ import { clearingStateAbi } from "../../packages/shared/src/abi.js";
 import { syncMarketRegistry } from "../../packages/shared/src/markets.js";
 import { childEnvironment } from "../../packages/shared/src/process-environment.js";
 import { buildApi, type ApiOptions } from "../../services/api/src/server.js";
+import { HttpFeeTierSource } from "../../services/api/src/fee-tiers.js";
 import { HttpHedgeRiskSource } from "../../services/api/src/hedge-risk.js";
 import type { OracleSource } from "../../services/api/src/oracle.js";
 import type { SenderOptions } from "../../services/api/src/sender.js";
@@ -230,6 +231,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
       journalPath: state("api.sqlite"),
       oracleSource: config.oracleSource,
       hedgeRiskSource: new HttpHedgeRiskSource(hedgeRiskUrl, config.hedge.token),
+      feeTierSource: new HttpFeeTierSource(`http://127.0.0.1:${ports.indexer}`),
       hedgeRiskMaxAgeMs: config.hedge.riskMaxAgeMs,
       operationsToken: config.hedge.token,
       chain: {

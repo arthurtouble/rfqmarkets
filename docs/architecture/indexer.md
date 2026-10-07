@@ -37,6 +37,7 @@ The public surface is deliberately narrow:
 - `GET /v1/protocol` returns pause/resolution state and the current epoch/version metadata needed for display.
 - `GET /v1/portfolio/:address`, `/v1/portfolio/:address/history`, `/v1/portfolio/:address/trades` and `GET /v1/funding/:address` return the portfolio history described below.
 - `GET /v1/leaderboard` and `GET /v1/points/:address` return the leaderboard and trading points described below.
+- `GET /v1/fees/:address` returns the account's volume fee tier, described below.
 - `POST /v1/referrals` and `GET /v1/referrals/:address` record and read referrals, described below. It is the indexer's only write.
 
 ## Portfolio history
@@ -145,3 +146,19 @@ Both are derived from the same portfolio replays, so anyone can recompute them f
 An account names its referrer by signing `Referral(address account,address referrer,uint64 issuedAt)` under the venue's EIP-712 domain (`RFQ Markets`, version `1`, the chain id and the clearing contract) and posting `{ account, referrer, issuedAt, signature }` to `POST /v1/referrals`. The signature must come from the account (an EOA, or an ERC-1271 wallet at that address), within 10 minutes of `issuedAt`, and an account cannot refer itself. The first referral is permanent: posting the same one again is a no-op and a different referrer gets 409. Isolated accounts have no key, so their owner's referral covers them.
 
 A referrer earns 10% of its referees' points (rounded down, one level only), reported by `GET /v1/points/:address` as `referralPoints` and `totalWithReferrals`. `GET /v1/referrals/:address` returns `{ account, referrer, referees }`. Referrals are stored beside the index but are not chain data, so a reindex or schema change keeps them.
+
+## Volume fee tiers
+
+Fees follow Hyperliquid's model: the tier comes from rolling 14-day trade volume, assessed once a day for the 14 full UTC days before today, and isolated accounts count towards their owner. Each tier waives a share of the base fee (2 bps), in the same proportions as Hyperliquid's taker schedule. The schedule lives in `packages/shared/src/fee-tiers.ts`.
+
+| Tier | 14-day volume | Discount | Fee |
+| --- | --- | --- | --- |
+| 0 | under $5M | 0% | 2.00 bps |
+| 1 | $5M | 11% | 1.78 bps |
+| 2 | $25M | 22% | 1.56 bps |
+| 3 | $100M | 33% | 1.34 bps |
+| 4 | $500M | 38% | 1.24 bps |
+
+`GET /v1/fees/:address` returns `{ account, owner, accounts, windowStartMs, windowEndMs, volume, tier, discountBps, nextTier, indexedBlock }`. `nextTier` is `null` at the top tier.
+
+The API reads this endpoint (`HttpFeeTierSource`, one read per account per UTC day) when `feeTiers` is set in its persistent config, or always in the all-in-one service stack. Only the tier number is trusted, and the discount comes from the API's own copy of the schedule. A failed or stale read means the full fee. A `/v1/quote` request may include `account` to see its discounted `fee` and `feeDiscountBps`. Settlement re-quotes for the signing account, so the tier also applies to quotes taken without `account`, under the fee cap the intent signed. Approvers cannot see volume, so their fee floor is the base fee at the deepest tier's discount. Upgrade every approver before enabling `feeTiers` on the API, or discounted trades fail approval.

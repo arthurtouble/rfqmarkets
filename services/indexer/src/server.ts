@@ -35,6 +35,7 @@ import {
 } from "./leaderboard.js";
 import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import { validOwnerSignature } from "../../api/src/owner-signature.js";
+import { feeTierFor, feeTierWindow, nextFeeTier } from "../../../packages/shared/src/fee-tiers.js";
 import { referralBonus, referralDigest, referralTermsError } from "./referrals.js";
 
 export interface IndexerOptions {
@@ -932,6 +933,38 @@ export function buildIndexer(options: IndexerOptions) {
       referees: referees.length,
       referralPoints: bonus.toString(),
       totalWithReferrals: (BigInt(own.total) + bonus).toString(),
+    };
+  });
+  app.get("/v1/fees/:address", async (request, reply) => {
+    await sync();
+    const params = parse(accountParams, request.params, reply);
+    if (!params) return;
+    const scope = await portfolioScope(false),
+      owners = isolatedOwners(scope.through),
+      // An isolated account trades on its owner's tier.
+      owner = owners.get(params.address) ?? params.address,
+      { accounts } = pointsOf(owner, scope.through, false, owners),
+      window = feeTierWindow(Date.now());
+    let volume = 0n;
+    for (const account of accounts)
+      for (const fill of portfolio(account, scope.through, false).fills)
+        if (fill.kind === "trade" && fill.timeMs >= window.startMs && fill.timeMs < window.endMs)
+          volume += BigInt(fill.notional);
+    const tier = feeTierFor(volume),
+      next = nextFeeTier(tier);
+    return {
+      account: params.address,
+      owner,
+      accounts,
+      windowStartMs: window.startMs,
+      windowEndMs: window.endMs,
+      volume: volume.toString(),
+      tier: tier.tier,
+      discountBps: tier.discountBps,
+      nextTier: next
+        ? { tier: next.tier, minVolume: next.minVolume.toString(), discountBps: next.discountBps }
+        : null,
+      indexedBlock: scope.through,
     };
   });
   let chainId: Promise<bigint> | undefined;

@@ -72,6 +72,8 @@ export const persistentConfigSchema = z
       .string()
       .url()
       .refine(isSecureOrLoopbackUrl, "indexer URL must use HTTPS unless it is loopback"),
+    /** API: price fees at volume tiers read from indexerUrl. Enable only once every approver accepts tiers. */
+    feeTiers: z.boolean().optional(),
     apiUrl: z.string().url(),
     /** Pyth feed ids: `[BTC, ETH]`, or a map from market symbol to feed id for any registered market. */
     feedIds: z.union([

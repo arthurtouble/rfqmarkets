@@ -567,6 +567,15 @@ test("leaderboard ranks owners with their isolated accounts, and points sum trad
     assert.equal(referred.referees, 1);
     assert.equal(referred.referralPoints, "3");
     assert.equal(referred.totalWithReferrals, "7");
+
+    // An isolated account trades on its owner's tier; these 1970 fills are outside today's 14-day window.
+    const fees = await get(`/v1/fees/${isolated}`);
+    assert.equal(fees.owner, account);
+    assert.deepEqual(fees.accounts, [account, isolated]);
+    assert.equal(fees.volume, "0");
+    assert.equal(fees.tier, 0);
+    assert.equal(fees.nextTier.tier, 1);
+    assert.equal(fees.windowEndMs - fees.windowStartMs, 14 * 86_400_000);
     for (const url of ["/v1/leaderboard?window=2d", "/v1/leaderboard?sort=fees", "/v1/points/0x12"])
       assert.equal((await app.inject({ method: "GET", url })).statusCode, 400, url);
   } finally {

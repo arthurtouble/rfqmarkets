@@ -96,7 +96,8 @@ export class RfqClient {
     return this.request("/v1/markets");
   }
   /** An indicative quote (not stored); prepare a trade with `trade`. */
-  quote(input: { market: string; side: Side; amount: string; slippageBps?: number }) {
+  /** Pass `account` to price the fee at that account's volume tier. */
+  quote(input: { market: string; side: Side; amount: string; slippageBps?: number; account?: string }) {
     return this.request<Wire & { quoteId: string }>("/v1/quote", input);
   }
   /** Buy and sell prices at several USDC sizes. */
@@ -120,6 +121,10 @@ export class RfqClient {
       limit: String(input.limit ?? 50),
     });
     return this.request(`/v1/leaderboard?${query}`);
+  }
+  /** The account's volume fee tier, its 14-day volume and the next tier. */
+  async feeTier(address?: string) {
+    return this.request(`/v1/fees/${await this.accountOf(address)}`);
   }
   async points(address?: string) {
     return this.request(`/v1/points/${await this.accountOf(address)}`);
@@ -168,6 +173,7 @@ export class RfqClient {
         market: input.market,
         side: input.side,
         amount: input.amount,
+        account,
         ...(input.slippageBps === undefined ? {} : { slippageBps: input.slippageBps }),
       });
     return this.fill(quote, account, input.reduceOnly ?? false, input.nonce);
