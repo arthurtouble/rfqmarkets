@@ -51,7 +51,8 @@ export default defineConfig({
       stderr: "pipe",
     },
     {
-      command: "npm run dev:docs",
+      // Bound to IPv4 explicitly: Vite's default "localhost" can resolve to ::1 only on CI runners.
+      command: "npm run dev:docs -- --host 127.0.0.1 --strictPort",
       url: urls.docs,
       reuseExistingServer: !ci,
       timeout: 60_000,
