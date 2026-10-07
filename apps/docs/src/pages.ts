@@ -50,7 +50,7 @@ export const pages: Page[] = sections.flatMap((section) =>
     const body = sources[`../content/${path}.md`];
     if (body === undefined) throw new Error(`Missing docs page ${path}.md`);
     const title = body.match(/^#\s+(.+)$/m)?.[1].trim() ?? name;
-    const lead = body.split(/\n\s*\n/).map((block) => block.trim()).find((block) => block && !/^[#|`>-]|^\d+\./.test(block)) ?? "";
+    const lead = body.split(/\n\s*\n/).map((block) => block.trim()).find((block) => block && !/^[#|`>-]|^\d+\.|^Last updated:/.test(block)) ?? "";
     const summary = plain(lead).split(/(?<=\.)\s+/)[0] ?? "";
     const headings = [...body.replace(/```[\s\S]*?```/g, "").matchAll(/^##\s+(.+)$/gm)].map((match) => ({ id: slug(match[1]), title: match[1].replace(/`/g, "") }));
     const route = path === "start/introduction" ? "/" : `/${path}`;
