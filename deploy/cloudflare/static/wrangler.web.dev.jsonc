@@ -1,0 +1,24 @@
+// Trading UI for the Base mainnet dev deployment. Service routes go to the dev runtime worker.
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "rfq-markets-dev",
+  "main": "web-edge.mjs",
+  "compatibility_date": "2026-09-11",
+  "assets": {
+    "directory": "../../../dist/web",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "services": [
+    {"binding": "API", "service": "rfq-markets-runtime-dev"},
+    {"binding": "INDEXER", "service": "rfq-markets-runtime-dev"},
+    {"binding": "MARKET_GATEWAY", "service": "rfq-markets-runtime-dev"}
+  ],
+  "ratelimits": [
+    {"name":"PUBLIC_READ_LIMIT","namespace_id":"8453011","simple":{"limit":600,"period":60}},
+    {"name":"PUBLIC_WRITE_LIMIT","namespace_id":"8453012","simple":{"limit":120,"period":60}},
+    {"name":"GLOBAL_READ_LIMIT","namespace_id":"8453013","simple":{"limit":12000,"period":60}},
+    {"name":"GLOBAL_WRITE_LIMIT","namespace_id":"8453014","simple":{"limit":2400,"period":60}}
+  ],
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}
