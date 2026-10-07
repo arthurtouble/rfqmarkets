@@ -18,6 +18,9 @@ type Record = {
 type Secrets = {
   rpcUrl: string;
   secondaryRpcUrl: string;
+  /** Indexer RPC and its eth_getLogs block cap; mainnet.base.org allows 500 blocks per call. */
+  indexerRpcUrl?: string;
+  maxLogRange?: number;
   /** Oracle node base URLs, one per region. */
   oracleNodes: string[];
   sponsorKey: string;
@@ -33,7 +36,11 @@ const record = json<Record>("RFQ_DEV_DEPLOYMENT_JSON"),
 if (record.chainId !== "8453" || record.launchProfile !== "dev")
   throw new Error("dev runtime only serves the Base mainnet dev profile");
 if (typeof record.deploymentBlock !== "number") throw new Error("deployment record has no deploymentBlock");
-for (const url of [secrets.rpcUrl, secrets.secondaryRpcUrl])
+for (const url of [
+  secrets.rpcUrl,
+  secrets.secondaryRpcUrl,
+  ...(secrets.indexerRpcUrl ? [secrets.indexerRpcUrl] : []),
+])
   if (!url.startsWith("https://")) throw new Error("RPC URLs must use HTTPS");
 
 const clearing = getAddress(record.contracts.clearingProxy);
@@ -45,6 +52,8 @@ const stack = await startServiceStack({
   tokenAddress: record.contracts.usdc,
   startBlock: record.deploymentBlock,
   rpcUrl: secrets.rpcUrl,
+  indexerRpcUrl: secrets.indexerRpcUrl,
+  maxLogRange: secrets.maxLogRange,
   sponsorKey: secrets.sponsorKey,
   oracleSource: new SignedOracleSource({
     nodes: secrets.oracleNodes,

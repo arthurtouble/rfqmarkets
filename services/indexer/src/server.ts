@@ -14,6 +14,8 @@ export interface IndexerOptions {
   databasePath: string;
   startBlock?: number;
   confirmations?: number;
+  /** Most blocks one eth_getLogs call may span; public Base RPCs cap this well below the default 10,000. */
+  maxLogRange?: number;
   pollMs?: number;
   corsOrigin?: string | string[];
   provider?: JsonRpcProvider;
@@ -252,7 +254,7 @@ export function buildIndexer(options: IndexerOptions) {
     }
     // Stage every network read before opening a synchronous transaction. A failed
     // read or crash cannot advance the checkpoint past incomplete projections.
-    const to = Math.min(head, from + 9_999),
+    const to = Math.min(head, from + (options.maxLogRange ?? 10_000) - 1),
       logs = await provider.getLogs({ address: options.clearingAddress, fromBlock: from, toBlock: to }),
       affected = new Map<string, { tx: string; block: number }>(),
       numbers = [...new Set([...logs.map((log) => log.blockNumber), to])],
