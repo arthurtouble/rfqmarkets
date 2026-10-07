@@ -109,3 +109,4 @@ h1, h2, p { margin: 0; }
   .ops-dialog-layer { place-items: end stretch; padding: 0; }
   .ops-dialog { width: 100%; max-width: none; border-radius: var(--radius-xl) var(--radius-xl) 0 0; max-height: 92dvh; }
 }
+.ops-form__grid .rfq-field { align-content: start; }

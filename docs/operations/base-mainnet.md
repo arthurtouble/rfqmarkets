@@ -114,7 +114,7 @@ Every broadcasting command refuses to run until `RFQ_MAINNET_DEPLOY_CONFIRM` equ
 ## Upgradeability and admin review
 
 - **Initial state is closed.** v1 `initialize` takes the per-market caps and starts paused, so there is no window where the proxy is open at contract maxima. The manifest validator also refuses caps above the contract bounds (1M per trade, 5M gross).
-- **Cap changes take 72 hours in production.** `setExposurePolicy` is governance-only and requires the clearing to be paused. The emergency council can only lower market caps.
+- **Cap changes.** Governance changes take 72 hours in production. From v1.2 the [risk operator](risk-operator.md) changes caps, risk parameters and spreads at once within governance's envelope, and `setExposurePolicy` no longer requires a paused clearing. The emergency council can only lower caps.
 - **Governance can move.** `transferGovernance` then `acceptGovernance` lets the dev owner (or a timelock) hand over without redeploying; the emergency council can never become governance.
 - **Upgrades go through the timelock only.** The `ProxyAdmin` is owned by the timelock and there is no emergency upgrade bypass, by design. During an incident the emergency Safe can pause, lower caps and rotate the leader epoch; a code fix takes 72 hours. Users can always withdraw free collateral and close through the paused-close path.
 - **Linked libraries are implementation authority.** The five libraries run in the proxy's context through delegatecall. Storage validation runs with `--unsafeAllowLinkedLibraries`, so library changes need the same review as implementation changes.

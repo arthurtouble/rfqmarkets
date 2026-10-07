@@ -197,7 +197,8 @@ export function parseDraft(
 
 // ---- Change plans ----
 
-export type Direction = "tightens" | "loosens";
+/** How a change moves risk; `sets` is a new market's initial value. */
+export type Direction = "tightens" | "loosens" | "sets";
 export type Change = { label: string; from: string; to: string; direction: Direction };
 
 /** One contract call: what it changes, and why the connected role may not send it (if it may not). */
@@ -398,25 +399,25 @@ export function planListing(
       args: [config],
       title: `List ${symbol}`,
       changes: [
-        { label: "Trading", from: "—", to: settings.enabled ? "Open" : "Reduce-only", direction: "loosens" },
+        { label: "Trading", from: "—", to: settings.enabled ? "Open" : "Reduce-only", direction: "sets" },
         {
           label: "Max trade / net cap",
           from: "—",
           to: `${dollars(settings.maxTradeNotional)} / ${dollars(settings.maxMarketNotional)}`,
-          direction: "loosens",
+          direction: "sets",
         },
         {
           label: "Gross / per-side cap",
           from: "—",
           to: `${dollars(settings.grossLimit)} / ${dollars(settings.sideLimit)}`,
-          direction: "loosens",
+          direction: "sets",
         },
-        { label: "Max leverage", from: "—", to: leverageText(settings.marginScaleBps), direction: "loosens" },
+        { label: "Max leverage", from: "—", to: leverageText(settings.marginScaleBps), direction: "sets" },
         {
           label: "Stress shock / impact K",
           from: "—",
           to: `${shockText(settings.shockBps)} / ${settings.impactK}`,
-          direction: "loosens",
+          direction: "sets",
         },
       ],
       blocked,

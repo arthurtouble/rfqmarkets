@@ -778,8 +778,13 @@ export function Runner({
           </li>
         ))}
       </ol>
+      {calls.some((call) => call.changes.some((change) => change.direction === "loosens")) && (
+        <p className="footnote rfq-faint">
+          <span className="ops-loosens">Highlighted</span> values add risk.
+        </p>
+      )}
       <div className="ops-actions ops-actions--end">
-        {onBack && !running && !finished && (
+        {onBack && !running && !steps.some((step) => step.status === "done") && (
           <button className="rfq-btn rfq-btn--secondary" type="button" onClick={onBack}>
             Back
           </button>

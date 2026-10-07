@@ -5,6 +5,7 @@ import {
   BrowserProvider,
   Contract,
   JsonRpcProvider,
+  NonceManager,
   Wallet,
   encodeBytes32String,
   decodeBytes32String,
@@ -15,7 +16,8 @@ import {
 import type { Call, ChainMarket, ConsoleState } from "./controls-model.js";
 
 const env: Partial<ImportMetaEnv> = import.meta.env ?? {};
-const API = env.VITE_API_URL ?? (env.DEV ? "http://127.0.0.1:4100" : "");
+// Same-origin: the private edge (deployed) or the Vite dev server (locally) forwards these paths to the API.
+const API = env.VITE_API_URL ?? "";
 
 export const CLEARING_ABI = [
   "function marketCount() view returns(uint8)",
@@ -173,8 +175,15 @@ export async function connectLocalOperator(config: VenueConfig): Promise<Operato
     throw new Error("The local stack has no risk operator. Redeploy with `npm run dev:stack`.");
   const { privateKey } = (await response.json()) as { privateKey: string };
   const provider = new JsonRpcProvider(config.rpcUrl, undefined, { staticNetwork: true });
-  const signer = new Wallet(privateKey, provider);
-  return { kind: "local", account: signer.address, signer, provider, chainId: BigInt(config.chainId) };
+  const wallet = new Wallet(privateKey, provider);
+  // Back-to-back calls (a listing and its spread) must not reuse a nonce the RPC still reports as pending.
+  return {
+    kind: "local",
+    account: wallet.address,
+    signer: new NonceManager(wallet),
+    provider,
+    chainId: BigInt(config.chainId),
+  };
 }
 
 /**

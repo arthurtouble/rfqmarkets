@@ -76,3 +76,69 @@ test.describe("hedge operations dashboard", () => {
     expect(background).toBe("rgb(255, 255, 255)");
   });
 });
+
+// Markets and risk (apps/admin/src/MarketControls.tsx): the local stack appoints a risk operator whose key the
+// API serves in development, so the console can sign real transactions against the local chain. Role and bound
+// refusals are covered by apps/admin/src/controls-model.test.ts and test/contracts/RiskOperator.t.sol.
+test.describe("markets and risk", () => {
+  test("the risk operator makes a market reduce-only, reopens it and changes its spread", async ({
+    page,
+    stack,
+  }) => {
+    await page.goto(`${stack.urls.admin}/#markets`);
+    await expect(page.getByRole("heading", { level: 1, name: "Markets and risk" })).toBeVisible();
+    const eth = page.getByRole("article", { name: "ETH controls" });
+    await expect(eth.getByText(/^Max trade/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Use local operator" }).click();
+    await expect(page.getByLabel("Role Risk operator")).toBeVisible();
+
+    // Reduce-only and back, one signed transaction each.
+    await expect(eth.getByText("Open", { exact: true })).toBeVisible();
+    await eth.getByRole("button", { name: "Make reduce-only" }).click();
+    const dialog = page.getByRole("dialog", { name: "Make ETH reduce-only" });
+    await expect(dialog.getByText("Open → Reduce-only")).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await dialog.getByRole("button", { name: "Sign and send" }).click();
+    await dialog.getByRole("button", { name: "Done" }).click();
+    await expect(eth.getByText("Reduce-only", { exact: true })).toBeVisible();
+    await expect(page.getByText("ETH is reduce-only.")).toBeVisible();
+
+    await eth.getByRole("button", { name: "Reopen" }).click();
+    const reopen = page.getByRole("dialog", { name: "Reopen ETH" });
+    await reopen.getByRole("button", { name: "Sign and send" }).click();
+    await reopen.getByRole("button", { name: "Done" }).click();
+    await expect(eth.getByText("Open", { exact: true })).toBeVisible();
+
+    // A market's own spread, then back to the default.
+    const btc = page.getByRole("article", { name: "BTC controls" });
+    await btc.getByRole("button", { name: "Edit" }).click();
+    const edit = page.getByRole("dialog", { name: "Edit BTC" });
+    await edit.getByLabel("Base spread").fill("6");
+    await edit.getByLabel("Max leverage").fill("25");
+    await expect(edit.getByText("Between 1x and 20x")).toBeVisible();
+    await expect(edit.getByRole("button", { name: "Fix the highlighted fields" })).toBeDisabled();
+    await edit.getByLabel("Max leverage").fill("20");
+    await expectNoHorizontalOverflow(page);
+    await edit.getByRole("button", { name: "Review changes" }).click();
+    await expect(edit.getByText("6 bps", { exact: true })).toBeVisible();
+    await edit.getByRole("button", { name: "Sign and send" }).click();
+    await edit.getByRole("button", { name: "Done" }).click();
+    await expect(btc.getByText("6 bps", { exact: true })).toBeVisible();
+
+    await btc.getByRole("button", { name: "Edit" }).click();
+    await page.getByRole("dialog", { name: "Edit BTC" }).getByLabel("Base spread").fill("");
+    await page
+      .getByRole("dialog", { name: "Edit BTC" })
+      .getByRole("button", { name: "Review changes" })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Edit BTC" })
+      .getByRole("button", { name: "Sign and send" })
+      .click();
+    await page.getByRole("dialog", { name: "Edit BTC" }).getByRole("button", { name: "Done" }).click();
+    await expect(btc.getByText("default", { exact: true })).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+  });
+});
