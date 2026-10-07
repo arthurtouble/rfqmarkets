@@ -28,7 +28,8 @@ import type { ExecutionService } from "./execution.js";
 import type { HttpGuards } from "./http.js";
 import { LimitTriggerBook, StopTriggerBook } from "./limit-book.js";
 import { abs, marketIndex, marketSymbols, type Market, type Side } from "./markets.js";
-import { validOwnerSignature } from "./owner-signature.js";
+import type { IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
+import { signingAccount, validOwnerSignature } from "./owner-signature.js";
 import { publicError } from "./public-error.js";
 import type { QuoteEngine } from "./quoting.js";
 import {
@@ -805,7 +806,8 @@ export class LimitOrders {
         };
       if (
         !(await validOwnerSignature(
-          order.intent.account,
+          // An isolated account's orders are signed by its owner.
+          await signingAccount(ctx.clearing as IsolatedOwnerReader | undefined, order.intent.account),
           intentDigest(ctx.domain, order.intent, trigger),
           userSignature,
           ctx.provider,

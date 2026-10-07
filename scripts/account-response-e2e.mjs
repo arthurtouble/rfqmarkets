@@ -281,6 +281,21 @@ try {
   assert.equal(isolatedView.marginMode, "isolated");
   assert.equal(isolatedView.isolatedOwner, user.address);
   assert.equal(isolatedView.initialMargin, isolatedView.onchain.initialMargin);
+  // A resting order for the isolated account is placed with the owner's signature.
+  const limit = await post("/v1/orders/prepare", {
+    account: isolated,
+    market: "BTC",
+    side: "buy",
+    amount: "100",
+    limitPrice: "1000",
+    durationSeconds: 3600,
+    nonce: "903",
+  });
+  const placed = await post("/v1/orders", {
+    orderId: limit.orderId,
+    userSignature: await user.signTypedData(limit.domain, limit.types, limit.intent),
+  });
+  assert.equal(placed.orderId, limit.orderId);
   // Another wallet cannot sign for the isolated account.
   const forged = await isolatedOrder("902", maker);
   assert.notEqual(forged.statusCode, 200, forged.body);
