@@ -82,7 +82,7 @@ No production deployment, authority rotation, live venue order or sustained test
 
 ### Continued execution: account-wide default and upgrade compatibility
 
-- Added the candidate accounting specification in `contracts/ACCOUNTING-AND-RESOLUTION.md`.
+- Added the candidate accounting specification in `contracts/ACCOUNTING-AND-RESOLUTION.md` (since folded into [contracts](../architecture/contracts.md)).
 - Liquidation now nets both markets' accrued funding at one block timestamp, closes the complete bankrupt portfolio before absorbing its deficit, and realizes surviving offsets when a partial close creates negative cash collateral. Default absorption is guarded against open positions.
 - Unfunded maker PnL/funding credits commit resolution while preserving unpaid positions/index liabilities. Trade fees/nonces and successful fill events are not produced for an unpaid trade. API owner/trade responses require matching settlement events; an included resolution trigger is not reported as a fill/payment.
 - Both funding indices freeze at the exact incident block timestamp. Funding catch-up uses the full elapsed interval and full-precision signed multiplication/division; the cached-mark historical approximation is explicitly documented for economic review. Oracle replacement is rejected during resolution.
@@ -115,7 +115,7 @@ Validation for this pass: current compile passes at 20,865 bytes; all six local 
 - Added one-block independent approver reads and an integer model for the controls. API quote refresh now considers gross exposure, and exact owner close quotes can bypass opening size limits. Local API settlement uses three real approver services and exercises a full RFQ exit after net/trade limits tighten and the market is disabled.
 - Updated rapid-iteration testnet upgrade tooling to require a reviewed BTC/ETH exposure policy file, pause before upgrading, persist the active implementation before multi-transaction migration, scan at most 200 accounts per call and leave the candidate paused.
 - To retain the bytecode gate, RFQRiskMath now performs explicitly scoped bookkeeping writes through typed storage references as well as valuation: exposure tracking, signer rotation, exact token pulls, portfolio clearing, funding index recording and bounded resolution crystallization. Core authorization/reentrancy/PnL affordability and scalar ledgers remain in clearing. This replaces the prior read-only risk-library boundary and requires independent module review.
-- Added [exposure/migration specification](../../contracts/EXPOSURE-CONTROLS-AND-MIGRATION.md). Existing slot ordering and owner typed-data formats are retained; migration pause/policy changes fence old maker approvals, while still-valid old owner intents can receive new approval signatures.
+- Added exposure/migration specification (pre-v1; v1 has no migration, see [contracts](../architecture/contracts.md)). Existing slot ordering and owner typed-data formats are retained; migration pause/policy changes fence old maker approvals, while still-valid old owner intents can receive new approval signatures.
 
 R6 remains implementing: commitment-aware gross reservation, complete independent differential/venue parity, cap calibration and operator migration rehearsal are unfinished. R5 maker-incident entry, keeper, production provisioning and audits/soak remain unfinished. No deployment or live venue order was performed.
 

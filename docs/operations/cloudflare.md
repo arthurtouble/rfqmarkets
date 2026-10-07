@@ -2,6 +2,8 @@
 
 Status: the deployment design and CI are source controlled. The public testnet terminal and public documentation are deployed to the RFQ Markets Cloudflare account. The terminal now runs behind a fail-closed edge Worker: static and SPA routes are served normally, reserved service routes return structured `503` responses until private bindings exist, and `/edge/health` reports binding readiness without claiming the trading runtime is healthy. This is a testnet hosting profile, not the final production trust layout.
 
+The Base mainnet **dev** environment (UI, docs and all services on Cloudflare, auto-deployed from `main`) is described separately in [deploy/cloudflare/DEV-ENVIRONMENT.md](../../deploy/cloudflare/DEV-ENVIRONMENT.md).
+
 ## Current testnet surfaces
 
 | Surface | URL | Status |

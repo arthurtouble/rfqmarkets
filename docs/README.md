@@ -5,7 +5,7 @@ Every file under `docs/` is published to the private internal manual (`npm run d
 ## Architecture: how the system works
 
 - [Overview](architecture/overview.md): components, trust boundaries, request paths and launch gates. Read this first.
-- [Contracts](architecture/contracts.md): clearing state, settlement order, oracle adapter, liquidation and authority. Contract-level specifications also live beside the code in [contracts/ACCOUNTING-AND-RESOLUTION.md](../contracts/ACCOUNTING-AND-RESOLUTION.md) and [contracts/EXPOSURE-CONTROLS-AND-MIGRATION.md](../contracts/EXPOSURE-CONTROLS-AND-MIGRATION.md).
+- [Contracts](architecture/contracts.md): clearing state, settlement order, oracle adapter, liquidation and authority.
 - [Economic specification](architecture/economic-specification.md): margin, funding, impact, loss waterfall and invariants.
 - [Gross approval reservations](architecture/gross-approval-reservations.md): how the API and approvers reserve gross exposure before signing.
 - [Hedging](architecture/hedging.md): venue capital, reconciliation and the hedge worker.
@@ -21,7 +21,9 @@ Every file under `docs/` is published to the private internal manual (`npm run d
 ## Operations
 
 - [Local development](operations/local-development.md): run the full stack on a local chain.
+- [Base mainnet deployment](operations/base-mainnet.md): dev and production profiles, deploy, upgrade and handover commands.
 - [Cloudflare](operations/cloudflare.md): Workers, the runtime container and CI delivery.
+- [Cloudflare dev environment](../deploy/cloudflare/DEV-ENVIRONMENT.md): the hosted dev stack wired to the mainnet dev contracts.
 - [Market lifecycle](operations/market-lifecycle.md): enabling, tightening, pausing and retiring markets.
 - [Market making](operations/market-making.md) and [market-flow calibration](operations/market-flow-calibration.md): quote policy and the research pipeline behind it.
 - The incident runbook and alert rules live in [deploy/operations](../deploy/operations/INCIDENT-RUNBOOK.md).
