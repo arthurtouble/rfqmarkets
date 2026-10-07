@@ -1,66 +1,45 @@
 // The live market stream, shared by every page through context so the app
-// holds one connection. History is seeded from the gateway, then extended.
-// Markets are whatever the stream carries (governance can add one at any time);
-// a market seen for the first time gets its history seeded then.
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+// holds one connection. Markets are whatever the stream carries (governance can
+// add one at any time). Charts read candles (data/candles.ts), not this feed.
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { MARKET_STREAM } from "../lib/env.js";
 import { useEventStream, type StreamStatus } from "../lib/event-stream.js";
-import { getJson } from "../lib/http.js";
-import { MARKETS, type Market, type MarketSnapshot } from "../lib/types.js";
+import { priceStatus, type PriceStatus } from "../lib/market-stats.js";
+import type { Market, MarketSnapshot } from "../lib/types.js";
 
-const HISTORY_POINTS = 240;
-/** Mid prices (USDC) per market, oldest first. A market not yet seen has no entry. */
-type History = Record<Market, number[]>;
-type MarketFeed = { snapshot: MarketSnapshot | null; status: StreamStatus; history: History };
+/** The last mid each market had, kept when a market drops out of the stream. */
+type LastPrice = { mid: string; observedAtMs: number };
+type MarketFeed = {
+  snapshot: MarketSnapshot | null;
+  status: StreamStatus;
+  /** When this client received the current snapshot (its own clock). */
+  receivedAtMs: number | null;
+  lastPrices: Record<Market, LastPrice>;
+};
 
-const launchHistory = (): History => Object.fromEntries(MARKETS.map(market => [market, []]));
-const MarketFeedContext = createContext<MarketFeed>({ snapshot: null, status: "connecting", history: launchHistory() });
-
-const midOf = (snapshot: MarketSnapshot, market: Market) => Number(BigInt(snapshot.markets[market].mid)) / 1e6;
+const MarketFeedContext = createContext<MarketFeed>({ snapshot: null, status: "connecting", receivedAtMs: null, lastPrices: {} });
 
 export function MarketFeedProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<MarketSnapshot | null>(null);
-  const [history, setHistory] = useState<History>(launchHistory);
+  const [receivedAtMs, setReceivedAtMs] = useState<number | null>(null);
+  const [lastPrices, setLastPrices] = useState<Record<Market, LastPrice>>({});
   const [streamError, setStreamError] = useState(false);
-  const [seen, setSeen] = useState<readonly Market[]>(MARKETS);
-  const seeded = useRef(new Set<Market>());
 
   const status = useEventStream(`${MARKET_STREAM}/v1/markets/stream`, {
     markets: data => {
       const next = data as MarketSnapshot;
       if (!next?.markets || typeof next.markets !== "object" || !Object.keys(next.markets).length) return;
-      setSnapshot(next); setStreamError(false);
-      setHistory(current => {
-        const updated: History = { ...current };
-        for (const market of Object.keys(next.markets))
-          updated[market] = [...(current[market] ?? []), midOf(next, market)].slice(-HISTORY_POINTS);
+      setSnapshot(next); setReceivedAtMs(Date.now()); setStreamError(false);
+      setLastPrices(current => {
+        const updated = { ...current };
+        for (const [market, state] of Object.entries(next.markets)) updated[market] = { mid: state.mid, observedAtMs: state.observedAtMs };
         return updated;
       });
-      setSeen(current => (Object.keys(next.markets).every(market => current.includes(market)) ? current : [...new Set([...current, ...Object.keys(next.markets)])]));
     },
     "stream-error": () => setStreamError(true),
   });
 
-  // One controller for the provider's lifetime: a newly seen market must not cancel another's seed.
-  const controller = useRef<AbortController | null>(null);
-  useEffect(() => () => { controller.current?.abort(); controller.current = null; seeded.current.clear(); }, []);
-
-  useEffect(() => {
-    controller.current ??= new AbortController();
-    const { signal } = controller.current;
-    for (const market of seen) {
-      if (seeded.current.has(market)) continue;
-      seeded.current.add(market);
-      getJson<{ points?: Array<{ mid: string }> }>(`${MARKET_STREAM}/v1/markets/history?market=${encodeURIComponent(market)}&limit=${HISTORY_POINTS}`, signal)
-        .then(value => {
-          const prior = (value.points ?? []).map(point => Number(BigInt(point.mid)) / 1e6);
-          setHistory(current => ({ ...current, [market]: [...prior, ...(current[market] ?? [])].slice(-HISTORY_POINTS) }));
-        })
-        .catch(() => { /* chart starts from the live stream instead */ });
-    }
-  }, [seen]);
-
-  return <MarketFeedContext.Provider value={{ snapshot, status: streamError ? "reconnecting" : status, history }}>{children}</MarketFeedContext.Provider>;
+  return <MarketFeedContext.Provider value={{ snapshot, status: streamError ? "reconnecting" : status, receivedAtMs, lastPrices }}>{children}</MarketFeedContext.Provider>;
 }
 
 export const useMarketFeed = () => useContext(MarketFeedContext);
@@ -70,4 +49,16 @@ export function useNow(intervalMs = 500) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), intervalMs); return () => clearInterval(timer); }, [intervalMs]);
   return now;
+}
+
+/** One market's live state and whether its price is live, delayed, paused or unavailable. */
+export function useMarketPrice(market: Market): { live: MarketSnapshot["markets"][Market] | undefined; status: PriceStatus; last: LastPrice | undefined } {
+  const { snapshot, status, receivedAtMs, lastPrices } = useMarketFeed();
+  const now = useNow(2_000);
+  const live = snapshot?.markets[market];
+  return {
+    live,
+    last: lastPrices[market],
+    status: priceStatus(live, { streamLive: status === "live", nowMs: now, receivedAtMs, serverTimeMs: snapshot?.serverTimeMs }),
+  };
 }

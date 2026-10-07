@@ -19,14 +19,15 @@ npm run build:web            # production bundle in dist/web
 | `src/lib/` | Pure code: wire types, formatting, account marking, indicative quotes, SSE hook. |
 | `src/wallet/` | wagmi config, the trader interface (browser wallet or local dev key), connect dialog, wallet menu, quick-trading key. |
 | `src/data/` | The shared market stream, TanStack Query hooks and every user action. |
-| `src/trade/`, `src/markets/`, `src/portfolio/`, `src/account/` | Pages and their components. |
+| `src/trade/`, `src/markets/`, `src/portfolio/`, `src/account/` | Pages and their components. `trade/MarketChart.tsx` is the price header and chart: a line with ranges in Simple, candlesticks in Advanced (`trade/CandleChart.tsx`, TradingView Lightweight Charts, loaded on first use). |
 | `src/positions/` | Open positions (table on desktop, cards on phones), the close sheet and close all. |
 | `src/ui/` | Small shared primitives and toasts. |
 
 ## How data flows
 
 - **Prices** come from one `EventSource` on the market gateway, shared through
-  `MarketFeedProvider`. The ticket rebuilds an indicative quote locally on each
+  `MarketFeedProvider`. Charts read candles and the Markets page reads 24h
+  stats from the same gateway. The ticket rebuilds an indicative quote locally on each
   tick with `packages/shared` pricing; the firm quote comes from `POST /v1/quote`.
 - **Account, orders and indexer data** are TanStack queries. The indexer's
   update stream invalidates them, so nothing polls.
@@ -90,7 +91,15 @@ so the indexer stream refreshes them when the account has activity.
 **Candles** (`data/candles.ts`). `useLiveCandles(market, "1m" | "5m" | "15m" | "1h" | "4h" | "1d", limit?)`
 → `{ candles, … }` with the last bucket following the live stream (needs
 `MarketFeedProvider`); `useCandles` is the plain query; `candleToNumbers` maps
-to chart-library numbers.
+to chart-library numbers and `linePoints` to the Simple chart's line.
+
+**Market discovery** (`data/market-stats.ts`, `lib/market-stats.ts`, `data/market-feed.tsx`).
+
+- `useMarketStats()` → `GET /v1/markets/stats`: each market's 24h `open`, `high`, `low`, `last`, `change` and hourly `spark`, refreshed every 30s.
+- `dayChange(stats, liveMid)` and `dayRange(stats, liveMid)` measure the 24h change and range to the live mid.
+- `searchMarkets(markets, query, marketName)` filters by symbol or name, best match first.
+- `useMarketPrice(market)` → `{ live, last, status }`, where `status` is `live`, `delayed` (stream down, or no fresh price for 15s), `paused` or `unavailable` (registered but not priced). `PriceStatusBadge` in `trade/MarketHeader.tsx` renders it.
+- `CHART_RANGES` maps the Simple chart's 1H/1D/1W/1M to candle intervals; `CANDLE_PICKER` lists the Advanced intervals.
 
 **Quick trading** (`wallet/quick-session.ts`). The session grant covers every
 registered market (`allMarketsMask(count)`); `sessionCovers(session, amount, marketIndex)`
