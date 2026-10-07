@@ -111,6 +111,7 @@ dialog.sheet > .rfq-sheet { width: 100%; max-height: 92dvh; overflow-y: auto; ov
 .positions { display: grid; }
 .positions__bar { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4) 0; }
 .positions__cards { display: grid; gap: var(--space-3); }
+.positions > .rfq-banner { margin: var(--space-3) var(--space-4) 0; }
 /* Inside the activity card the positions are rows, not cards within a card. */
 .activity .positions__cards { gap: 0; }
 .activity .rfq-pos { border-radius: 0; background: none; }
