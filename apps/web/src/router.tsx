@@ -67,8 +67,10 @@ const indexRoute = createRoute({
 const tradeRoute = createRoute({
   getParentRoute: () => rootRoute, path: "/trade/$market",
   params: { parse: ({ market }) => ({ market: market.toUpperCase() }), stringify: ({ market }) => ({ market }) },
-  beforeLoad: ({ params }) => {
+  beforeLoad: ({ params, location }) => {
     if (!isMarket(params.market)) throw redirect({ to: "/trade/$market", params: { market: "BTC" } });
+    // One address per market: /trade/eth becomes /trade/ETH.
+    if (location.pathname !== `/trade/${params.market}`) throw redirect({ to: "/trade/$market", params: { market: params.market }, replace: true });
     try { localStorage.setItem(LAST_MARKET, params.market); } catch { /* private mode */ }
   },
   component: function Trade() { const { market } = tradeRoute.useParams(); return <TradePage market={market as Market} />; },

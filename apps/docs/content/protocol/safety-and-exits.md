@@ -8,23 +8,21 @@ Your collateral and positions are in the clearing contract, not on the venue's s
 
 ### The exit page
 
-The exit page at [exit.rfq-markets.workers.dev](https://exit.rfq-markets.workers.dev) is a deliberately minimal page that talks only to your wallet and the contract. It does not use the venue's API, and it reads the chain through your wallet's own network connection.
+The exit page at [exit.rfq-markets.workers.dev](https://exit.rfq-markets.workers.dev) talks only to your wallet, the contract and the three public [oracle nodes](../integrate/oracle-feeds.md). It does not use the venue's API, and it reads the chain through your wallet's own network connection, so it keeps working when the app and its servers are down.
 
-To use it, open it with a browser extension wallet on Base and click **Connect and read account**. It shows your raw account state: collateral (in millionths of a USDC), each position's size, entry price and funding index, and whether the venue is paused or in resolution. From there you can:
+Open it in a browser with a wallet extension, or inside your wallet app's browser on a phone (the page offers links that open it in Coinbase Wallet or MetaMask). Connect, and if your wallet is on another network, tap **Switch to Base**. The page then shows your balance in the contract, how much you can withdraw, your open positions and whether trading is open, paused or in resolution. From there:
 
 | Action | What it does | When it works |
 | --- | --- | --- |
-| **Withdraw** | Withdraws USDC to your wallet. | Any time outside resolution, if your account still meets initial margin afterwards. With open positions it needs a fresh oracle price on chain. |
-| **Cancel nonce** | Burns a nonce, so a signed trade, limit order or stop order using it can never execute. | Any time. |
-| **Revoke session** | Revokes a one-click trading session key. | Any time. |
-| **Close paused position** | Closes a whole position at the oracle price. | Only while trading is paused. You must paste a fresh signed oracle report. |
-| **Claim resolution payment** | Pays out your share after a resolution. | Only after resolution is finalized. |
+| **Withdraw** | Sends USDC from the contract to your wallet. | Any time outside resolution, if your account still meets initial margin afterwards. With positions open, the contract needs a price from the last 15 seconds; if the one on chain is older, the page first sends a price update, so your wallet asks twice. |
+| **Close at oracle price** | Closes a whole position at the oracle bid (long) or ask (short), with no fee. | Only while trading is paused. The page fetches a signed price from the oracle nodes; confirm within 15 seconds, while it is valid. |
+| **Turn off one-click trading** | Revokes the one-click trading key, so it can no longer trade for you. | Any time. The page finds your active keys; you can also paste a key's address. |
+| **Cancel a signed order** (under Advanced) | Burns an order's nonce, so a signed trade, limit order or stop order using it can never execute. | Any time. |
+| **Resolution steps and claim** | Records the resolution price samples, processes accounts and pays out your share. | Only during resolution. Anyone can run the steps, so you do not have to wait for the operator. |
 
-The exit page only knows the BTC and ETH markets today. It works with browser extensions only, not WalletConnect or Base Account; with those, use the contract functions in [On-chain data](../integrate/onchain-data.md) from any tool that can send a transaction.
+Every market the contract lists appears, including ones governance adds later. Everything on the page is an ordinary transaction from your wallet, so you need a little ETH on Base for fees. WalletConnect and Base Account are not offered on the exit page; with those wallets, call the contract functions in [On-chain data](../integrate/onchain-data.md) from any tool that can send a transaction.
 
-Everything on the exit page is an ordinary transaction from your wallet, so you need a little ETH on Base. If your wallet is on another network, switch it to Base first; the page does not switch for you.
-
-The oracle report for a paused close has to be assembled from the oracle nodes' published batches. [Oracle feeds](../integrate/oracle-feeds.md#building-a-report) explains how. If the venue's API is still running, the app's **Close at oracle price** button does this for you and pays the gas.
+If the oracle nodes cannot be reached, open **Advanced** and paste a report you assembled yourself; [Oracle feeds](../integrate/oracle-feeds.md#building-a-report) explains how. The page uses it instead of the nodes until you clear it. If the venue's API is still running, the app's **Close at oracle price** button does the same close for you and pays the gas.
 
 ## If trading is paused
 
@@ -59,7 +57,7 @@ Once resolution starts:
 2. **Prices are fixed.** Anyone can submit oracle reports. For each market with open positions, the contract takes the first three valid observations made after resolution started, spanning at least 30 seconds, and fixes the median as that market's resolution price.
 3. **Claims are computed.** Anyone can process the account registry in batches. Each account's claim is its collateral plus the profit or loss on its positions at the resolution price, less unpaid funding, and never below zero.
 4. **Payouts are pro rata.** Once every account is processed, the contract compares the USDC it holds with the total of all claims. If it can pay everything, everyone is paid in full. If it cannot, everyone receives the same fraction of their claim.
-5. **You claim your share** with **Claim resolution payment** on the exit page.
+5. **You claim your share** with **Claim** on the exit page.
 
 Later recoveries, for example the maker returning hedge profits, can be added to the pool and raise everyone's payout in the same proportion. Nobody is ever paid more than their claim, and any surplus beyond 100% of claims goes back to governance only after every claim is fully covered.
 

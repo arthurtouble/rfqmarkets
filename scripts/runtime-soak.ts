@@ -1,11 +1,95 @@
-import assert from"node:assert/strict";
+import assert from "node:assert/strict";
 
-const api=process.env.RFQ_API_URL??"http://127.0.0.1:4100",gateway=process.env.RFQ_GATEWAY_URL??"http://127.0.0.1:4500",requests=Number(process.env.RFQ_SOAK_REQUESTS??200),concurrency=Number(process.env.RFQ_SOAK_CONCURRENCY??10),reconnects=Number(process.env.RFQ_SOAK_RECONNECTS??25),maxP95=Number(process.env.RFQ_SOAK_MAX_P95_MS??1_500);
-assert(Number.isInteger(requests)&&requests>=10&&requests<=10_000);assert(Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=100);assert(Number.isInteger(reconnects)&&reconnects>=1&&reconnects<=500);
-const latencies:number[]=[],errors:string[]=[];let next=0;
-async function worker(){while(true){const index=next++;if(index>=requests)return;const started=performance.now(),market=index%2?"ETH":"BTC",side=index%4<2?"buy":"sell",amount=String(100+(index%20)*250);try{const response=await fetch(`${api}/v1/quote`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({market,side,amount}),signal:AbortSignal.timeout(8_000)}),payload=await response.json();if(!response.ok)throw new Error(`${response.status}:${payload.error??"unknown"}`);assert(BigInt(payload.expectedPrice)>0n);latencies.push(performance.now()-started);}catch(error){errors.push(String(error));}}}
-await Promise.all(Array.from({length:concurrency},()=>worker()));
-async function firstFrame(){const started=performance.now(),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8_000);try{const response=await fetch(`${gateway}/v1/markets/stream`,{headers:{accept:"text/event-stream"},signal:controller.signal});assert(response.ok&&response.body);const reader=response.body.getReader(),decoder=new TextDecoder();let buffer="";while(true){const{done,value}=await reader.read();if(done)throw new Error("stream ended before market frame");buffer+=decoder.decode(value,{stream:true});if(buffer.includes("event: markets")&&buffer.includes("\n\n"))return performance.now()-started;}}finally{clearTimeout(timer);controller.abort();}}
-const reconnectLatencies:number[]=[];for(let index=0;index<reconnects;index++)reconnectLatencies.push(await firstFrame());
-assert.equal(errors.length,0,`${errors.length} quote requests failed: ${errors.slice(0,3).join(", ")}`);latencies.sort((a,b)=>a-b);reconnectLatencies.sort((a,b)=>a-b);const percentile=(values:number[],p:number)=>Math.round(values[Math.min(values.length-1,Math.ceil(values.length*p)-1)]);const p95=percentile(latencies,.95);assert(p95<=maxP95,`quote p95 ${p95}ms exceeds ${maxP95}ms`);
-console.log(JSON.stringify({passed:true,requests,concurrency,quoteLatencyMs:{p50:percentile(latencies,.5),p95,p99:percentile(latencies,.99),max:Math.round(latencies.at(-1)??0)},streamReconnects:reconnects,streamFirstFrameMs:{p50:percentile(reconnectLatencies,.5),p95:percentile(reconnectLatencies,.95),max:Math.round(reconnectLatencies.at(-1)??0)}},null,2));
+const api = process.env.RFQ_API_URL ?? "http://127.0.0.1:4100",
+  gateway = process.env.RFQ_GATEWAY_URL ?? "http://127.0.0.1:4500",
+  requests = Number(process.env.RFQ_SOAK_REQUESTS ?? 200),
+  concurrency = Number(process.env.RFQ_SOAK_CONCURRENCY ?? 10),
+  reconnects = Number(process.env.RFQ_SOAK_RECONNECTS ?? 25),
+  maxP95 = Number(process.env.RFQ_SOAK_MAX_P95_MS ?? 1_500);
+assert(Number.isInteger(requests) && requests >= 10 && requests <= 10_000);
+assert(Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= 100);
+assert(Number.isInteger(reconnects) && reconnects >= 1 && reconnects <= 500);
+const latencies: number[] = [],
+  errors: string[] = [];
+let next = 0;
+async function worker() {
+  while (true) {
+    const index = next++;
+    if (index >= requests) return;
+    const started = performance.now(),
+      market = index % 2 ? "ETH" : "BTC",
+      side = index % 4 < 2 ? "buy" : "sell",
+      amount = String(100 + (index % 20) * 250);
+    try {
+      const response = await fetch(`${api}/v1/quote`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ market, side, amount }),
+          signal: AbortSignal.timeout(8_000),
+        }),
+        payload = await response.json();
+      if (!response.ok) throw new Error(`${response.status}:${payload.error ?? "unknown"}`);
+      assert(BigInt(payload.expectedPrice) > 0n);
+      latencies.push(performance.now() - started);
+    } catch (error) {
+      errors.push(String(error));
+    }
+  }
+}
+await Promise.all(Array.from({ length: concurrency }, () => worker()));
+async function firstFrame() {
+  const started = performance.now(),
+    controller = new AbortController(),
+    timer = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch(`${gateway}/v1/markets/stream`, {
+      headers: { accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+    assert(response.ok && response.body);
+    const reader = response.body.getReader(),
+      decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error("stream ended before market frame");
+      buffer += decoder.decode(value, { stream: true });
+      if (buffer.includes("event: markets") && buffer.includes("\n\n")) return performance.now() - started;
+    }
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+const reconnectLatencies: number[] = [];
+for (let index = 0; index < reconnects; index++) reconnectLatencies.push(await firstFrame());
+assert.equal(errors.length, 0, `${errors.length} quote requests failed: ${errors.slice(0, 3).join(", ")}`);
+latencies.sort((a, b) => a - b);
+reconnectLatencies.sort((a, b) => a - b);
+const percentile = (values: number[], p: number) =>
+  Math.round(values[Math.min(values.length - 1, Math.ceil(values.length * p) - 1)]);
+const p95 = percentile(latencies, 0.95);
+assert(p95 <= maxP95, `quote p95 ${p95}ms exceeds ${maxP95}ms`);
+console.log(
+  JSON.stringify(
+    {
+      passed: true,
+      requests,
+      concurrency,
+      quoteLatencyMs: {
+        p50: percentile(latencies, 0.5),
+        p95,
+        p99: percentile(latencies, 0.99),
+        max: Math.round(latencies.at(-1) ?? 0),
+      },
+      streamReconnects: reconnects,
+      streamFirstFrameMs: {
+        p50: percentile(reconnectLatencies, 0.5),
+        p95: percentile(reconnectLatencies, 0.95),
+        max: Math.round(reconnectLatencies.at(-1) ?? 0),
+      },
+    },
+    null,
+    2,
+  ),
+);
