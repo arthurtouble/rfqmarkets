@@ -5,7 +5,8 @@
 #   scripts/dev-contracts.sh ACTION [AMOUNT]
 # ACTION: identities, preflight, deploy, upgrade, unpause, fund-maker, fund-sponsor, configure, verify, basescan.
 # Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. The owner key is RFQ_DEV_OWNER_KEY when set,
-# otherwise the dev environment's `owner-key` KV entry. Expects `npm ci` and `npm run compile:contracts`.
+# otherwise the dev environment's `owner-key` KV entry. RPC: RFQ_BASE_MAINNET_RPC_URL, else Alchemy when
+# ALCHEMY_API_KEY is set, else mainnet.base.org. Expects `npm ci` and `npm run compile:contracts`.
 # Every action except identities and preflight sends Base mainnet transactions.
 set -euo pipefail
 cd "$(dirname "$0")/.."
