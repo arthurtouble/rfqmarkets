@@ -598,6 +598,9 @@ test("hedges through the venue coin map and keeps an unmapped market reduce-only
     const status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
     assert.equal(status.markets.SOL.state, "unhedged");
     assert.equal(status.markets.BTC.coin, "BTC-PERP");
+    // The dashboard shows the same trading mode the API enforces.
+    for (const market of ["BTC", "ETH", "SOL"])
+      assert.equal(status.markets[market].tradingMode, risk.markets[market].mode, market);
     assert.equal(logged.length, 1, "the missing mapping is logged once");
     assert.match(logged[0], /SOL has no hedge venue mapping/);
   } finally {

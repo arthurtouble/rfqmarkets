@@ -35,7 +35,11 @@ export async function handlePrivateRequest(request, env, options) {
   if (env.RUNTIME && runtimeRead(url.pathname)) {
     const headers = new Headers({ accept: request.headers.get("accept") ?? "*/*" });
     headers.set("x-request-id", request.headers.get("cf-ray") ?? crypto.randomUUID());
-    // The Access token and cookies stay at the edge; the runtime sees only the path and query.
+    // The runtime's edge admission rate-limits indexer reads per client IP and refuses requests without one
+    // (deploy/cloudflare/runtime/edge-admission.mjs), so the operator's IP goes along.
+    const client = request.headers.get("cf-connecting-ip");
+    if (client) headers.set("cf-connecting-ip", client);
+    // The Access token and cookies stay at the edge; the runtime sees only the path, query and client IP.
     try {
       return await env.RUNTIME.fetch(new Request(url, { method: "GET", headers, signal: request.signal }));
     } catch {
