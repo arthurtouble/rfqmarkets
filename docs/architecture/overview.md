@@ -1,6 +1,8 @@
 # RFQ Markets — consolidated architecture and status
 
-2026-09-09. Canonical overview. Supersedes conflicting topology/status statements in earlier documents. Detailed requirements remain in SIMPLIFIED-DESIGN.md, ADVERSARIAL-FLOW.md and ARCHITECTURE-REVIEW.md. The full local stack is implemented and tested; no public network deployment or independent audit has occurred. The latest unbiased assessment is [SYSTEM-AUDIT-2026-09-09.md](SYSTEM-AUDIT-2026-09-09.md).
+> **Current deployment (2026-10-06).** A development deployment runs on Base mainnet: an owner-controlled clearing proxy at `0x6e67c66f955D88EBD6D69eD3343359651C6f45a1`, no timelock, capped at 25 USDC per trade and 100 USDC per market. The UI and all services run on Cloudflare, with the hedger simulated. The production topology below (Safes, timelock, independent approver domains, live hedging) is still the target, not what is deployed.
+
+2026-09-09. Canonical overview. Supersedes conflicting topology/status statements in earlier documents. Detailed requirements remain in the [simplified design](../history/2026-09-08-simplified-design.md), [adversarial flow](../history/2026-09-08-adversarial-flow.md) and [architecture review](../history/2026-09-08-architecture-review.md). The full local stack is implemented and tested; no public network deployment or independent audit has occurred. The latest unbiased assessment is [2026-09-09-system-audit.md](../history/2026-09-09-system-audit.md).
 
 ## Readiness
 
@@ -98,7 +100,7 @@ Owner-authorized deposit, withdrawal, cancellation and session revocation bypass
 
 ## Normal execution and integrated economic defenses
 
-The normal user-facing and generated-intent behavior is specified in [UX-AND-INTENT.md](UX-AND-INTENT.md). Users enter an amount, view the live estimate and click Buy/Sell. Protective intent fields are populated automatically; advanced settings expose slippage and related preferences.
+The normal user-facing and generated-intent behavior is specified in [trading-ux-and-intents.md](../product/trading-ux-and-intents.md). Users enter an amount, view the live estimate and click Buy/Sell. Protective intent fields are populated automatically; advanced settings expose slippage and related preferences.
 
 1. Stream one shared market and portfolio-pricing frame. The browser computes the exact-size indication with shared fixed-point code; browsing and typing create no request or reservation. A firm quote is minted only after the click.
 2. User signs a bounded intent: account, market, direction, size, limit, fee ceiling, deadline, nonce and relevant reduce-only/session constraints. Domain binds chain and contract.
@@ -106,13 +108,13 @@ The normal user-facing and generated-intent behavior is specified in [UX-AND-INT
 4. Price from shared cumulative inventory cost; splitting wallets does not reset liquidity or size charges. Include fees, hedge cost and bounded inventory adjustments.
 5. Treat outstanding quotes as optional executable commitments. Never assume opposing pending orders both fill or grant a favorable offset discount based on an order that can disappear. Capacity remains reserved while an escaped quote could execute.
 6. Request all three approvers in parallel, collect two matching signatures, simulate and submit immediately. Each approver reads independent inputs and enforces the full policy.
-7. Contracts enforce the simple current-state impact acceptance boundary and market/side/portfolio constraints even if the API hid outstanding orders. Two-of-three approvals do not supply global off-chain ordering. ECONOMIC-SPECIFICATION.md defines the version 0.1 potential, risk-reduction credit caps and test parameters.
+7. Contracts enforce the simple current-state impact acceptance boundary and market/side/portfolio constraints even if the API hid outstanding orders. Two-of-three approvals do not supply global off-chain ordering. [economic specification](economic-specification.md) defines the version 0.1 potential, risk-reduction credit caps and test parameters.
 8. Display provisional execution promptly; reconcile inclusion and reorgs through the chain-derived indexer without double counting. Refresh approval internally only under unchanged user authority; an exact accepted fill is never silently worsened.
 9. Hedge reconciled exposure at the selected confirmation stage within explicit risk limits; record and reconcile external outcomes.
 
 Correlated markets share one admission budget and factor/stress accounting, with independent gross limits. Net delta alone does not cover basis jumps or separate-account defaults. Current contract caps cannot rely on unverified external hedge state. Conservative constraints may decline a valid user request when shared capacity or price limits are exhausted; no unconditional-fill promise.
 
-Other mandatory controls: quote-stuffing budgets; deterministic eligible oracle observations; fee/rounding resistance; bounded sponsorship; funding accrual before exposure changes; replay-safe cancellation/retry; wash-reward economics; reference-market manipulation checks; and hedge execution slippage limits. Full attack cases and simulation requirements are in [ADVERSARIAL-FLOW.md](ADVERSARIAL-FLOW.md).
+Other mandatory controls: quote-stuffing budgets; deterministic eligible oracle observations; fee/rounding resistance; bounded sponsorship; funding accrual before exposure changes; replay-safe cancellation/retry; wash-reward economics; reference-market manipulation checks; and hedge execution slippage limits. Full attack cases and simulation requirements are in [2026-09-08-adversarial-flow.md](../history/2026-09-08-adversarial-flow.md).
 
 ## Keys, privacy and recovery
 
@@ -128,9 +130,9 @@ Hedge failover separately requires venue credential revocation or otherwise veri
 
 ## Data, gas and availability
 
-Base is authoritative; one rebuildable event projection is the customer read model. The executable local indexer uses SQLite and canonical block-hash reconciliation. Production may use PostgreSQL or a maintained indexing framework after dependency and load review. API intent/sender and hedge journals record different operational facts, not duplicated authoritative balances. Lost chain-derived data is rebuildable; unknown external or signed commitments require reconciliation before resuming risk. See [INDEXER-DESIGN.md](INDEXER-DESIGN.md).
+Base is authoritative; one rebuildable event projection is the customer read model. The executable local indexer uses SQLite and canonical block-hash reconciliation. Production may use PostgreSQL or a maintained indexing framework after dependency and load review. API intent/sender and hedge journals record different operational facts, not duplicated authoritative balances. Lost chain-derived data is rebuildable; unknown external or signed commitments require reconciliation before resuming risk. See [indexer.md](indexer.md).
 
-Trading is sponsored by API gas wallets; ordinary automatic top-ups come from a separate allowlisted reserve under individual/global caps, maximum balances, refill rates and a finite allowance. API cannot raise those limits. Independent refill triggering has recovery gas. Treasury replenishment is periodic. UX-AND-INTENT.md specifies signed USDC deposit, lazy scoped-session certificates and relayed owner withdrawals, with direct calls as fallback; deployed-token and wallet compatibility must be tested.
+Trading is sponsored by API gas wallets; ordinary automatic top-ups come from a separate allowlisted reserve under individual/global caps, maximum balances, refill rates and a finite allowance. API cannot raise those limits. Independent refill triggering has recovery gas. Treasury replenishment is periodic. [trading UX](../product/trading-ux-and-intents.md) specifies signed USDC deposit, lazy scoped-session certificates and relayed owner withdrawals, with direct calls as fallback; deployed-token and wallet compatibility must be tested.
 
 Oracle observations carry identity, schema and validity metadata, but report expiry alone is not the safe trading freshness threshold. [Chainlink report schema](https://docs.chain.link/data-streams/reference/report-schema-v3). Specify maximum age, report selection, cross-market consistency and access for independent exit keepers. No arbitrary stale-price fallback or silent replacement oracle.
 
@@ -156,7 +158,7 @@ Origins are hidden from ordinary public ingress, not from providers or every net
 
 ## Open specifications and launch gates
 
-The first complete candidate choices for these items now live in [ECONOMIC-SPECIFICATION.md](ECONOMIC-SPECIFICATION.md). They include initial capital allocation, quote equations, margin tiers, funding, oracle modes, liquidation, insolvency resolution, hedge limits, governance and recovery. They are specifications to simulate and audit, not validated production parameters. The table below therefore tracks validation work rather than missing conceptual mechanisms.
+The first complete candidate choices for these items now live in [economic-specification.md](economic-specification.md). They include initial capital allocation, quote equations, margin tiers, funding, oracle modes, liquidation, insolvency resolution, hedge limits, governance and recovery. They are specifications to simulate and audit, not validated production parameters. The table below therefore tracks validation work rather than missing conceptual mechanisms.
 
 | Item | What remains |
 | --- | --- |
@@ -168,4 +170,4 @@ The first complete candidate choices for these items now live in [ECONOMIC-SPECI
 | Governance | Transparent-proxy administration and emergency restrictions exist and upgrade validation passes; deploy the timelock/multisigs and verify the ProxyAdmin owner, every selector and delay. |
 | UX and deployment | Local amount/Buy/Sell ticket, injected-wallet intent signing, exact API/approver quorum and sponsored local-chain settlement run; integrate production oracle/RPC inputs, then benchmark providers, cost, tail latency and recovery objectives. |
 
-Current executable evidence is catalogued in [VALIDATION-REPORT.md](VALIDATION-REPORT.md), and the concise local-versus-production assessment is in [LOCAL-READINESS-REVIEW.md](LOCAL-READINESS-REVIEW.md). The local API, contract-shaped approvals, scoped quick-trading sessions, restart-safe sender journal, chain-derived read model, owner-signed exit paths and hedge loop are connected. Portfolio risk math sits in a stateless linked library, and quotes pin live epoch/policy/signer-set versions. Base Sepolia now exercises native USDC custody, deployed Safe/timelock roles, authenticated Pyth updates and actual 2-of-3 sponsored fills. A repeatable lifecycle also drives finalized Base exposure into real Hyperliquid testnet fills and unwinds both sides through an exact reduce-only RFQ. The remaining external boundaries are independently provisioned RPCs, production credential custody and failover, long-running load/soak evidence, and independent economic/security audits before any bounded deployment.
+Current executable evidence is catalogued in [2026-09-11-validation-report.md](../history/2026-09-11-validation-report.md), and the concise local-versus-production assessment is in [2026-09-10-local-readiness-review.md](../history/2026-09-10-local-readiness-review.md). The local API, contract-shaped approvals, scoped quick-trading sessions, restart-safe sender journal, chain-derived read model, owner-signed exit paths and hedge loop are connected. Portfolio risk math sits in a stateless linked library, and quotes pin live epoch/policy/signer-set versions. Base Sepolia now exercises native USDC custody, deployed Safe/timelock roles, authenticated Pyth updates and actual 2-of-3 sponsored fills. A repeatable lifecycle also drives finalized Base exposure into real Hyperliquid testnet fills and unwinds both sides through an exact reduce-only RFQ. The remaining external boundaries are independently provisioned RPCs, production credential custody and failover, long-running load/soak evidence, and independent economic/security audits before any bounded deployment.

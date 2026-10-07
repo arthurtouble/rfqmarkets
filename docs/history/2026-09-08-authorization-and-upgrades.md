@@ -2,7 +2,7 @@
 
 2026-09-08. Design proposal for discussion; no contracts implemented, economic guarantees proved or performance benchmarks run.
 
-Follow-up: [RFQ protocol research](RFQ-PROTOCOL-RESEARCH.md) clarifies distinct signer keys and recommends evaluating two-of-three approval for production given the user's availability requirement. Two-of-two below remains the simpler comparison case, not a settled production choice.
+Follow-up: [RFQ protocol research](2026-09-08-rfq-protocol-research.md) clarifies distinct signer keys and recommends evaluating two-of-three approval for production given the user's availability requirement. Two-of-two below remains the simpler comparison case, not a settled production choice.
 
 ## Updated requirements
 

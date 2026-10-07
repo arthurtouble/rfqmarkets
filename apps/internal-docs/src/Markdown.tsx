@@ -1,12 +1,15 @@
 import React from"react";
 
-const inline=(text:string,onNavigate?:(href:string)=>void)=>text.split(/(`[^`]+`|\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*)/g).filter(Boolean).map((part,index)=>{
+// Returns a click handler when the link points at another manual page.
+export type Navigator=(href:string)=>(()=>void)|undefined;
+
+const inline=(text:string,onNavigate?:Navigator)=>text.split(/(`[^`]+`|\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*)/g).filter(Boolean).map((part,index)=>{
   if(part.startsWith("`"))return <code key={index}>{part.slice(1,-1)}</code>;
   if(part.startsWith("**"))return <strong key={index}>{part.slice(2,-2)}</strong>;
-  const link=part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);if(!link)return part;return onNavigate&&/^[A-Z0-9-]+\.md(?:#.*)?$/i.test(link[2])?<button className="doc-link" key={index} onClick={()=>onNavigate(link[2])}>{link[1]}</button>:<a key={index} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>;
+  const link=part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);if(!link)return part;const go=onNavigate?.(link[2]);return go?<button className="doc-link" key={index} onClick={go}>{link[1]}</button>:<a key={index} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>;
 });
 
-export function Markdown({source,onNavigate}:{source:string;onNavigate?:(href:string)=>void}){const lines=source.split("\n"),blocks:React.ReactNode[]=[];let index=0;
+export function Markdown({source,onNavigate}:{source:string;onNavigate?:Navigator}){const lines=source.split("\n"),blocks:React.ReactNode[]=[];let index=0;
   while(index<lines.length){const line=lines[index];if(!line.trim()){index++;continue;}
     if(line.startsWith("```")){const language=line.slice(3),body=[];index++;while(index<lines.length&&!lines[index].startsWith("```"))body.push(lines[index++]);index++;blocks.push(<pre key={blocks.length} data-language={language}><code>{body.join("\n")}</code></pre>);continue;}
     const heading=line.match(/^(#{1,4})\s+(.+)$/);if(heading){const level=heading[1].length,title=heading[2],id=title.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");blocks.push(React.createElement(`h${level}`,{key:blocks.length,id},inline(title,onNavigate)));index++;continue;}

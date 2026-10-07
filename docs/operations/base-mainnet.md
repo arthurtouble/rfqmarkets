@@ -1,6 +1,6 @@
 # Base mainnet deployment
 
-Status 2026-10-06: tooling targets the contracts v1 rewrite (draft PR #13) and is rehearsed locally. **No mainnet transaction has been sent.** Any deploy waits for an explicit go-ahead from the project owner.
+Status 2026-10-07: the dev profile is deployed and unpaused on Base mainnet (proxy `0x6e67c66f955D88EBD6D69eD3343359651C6f45a1`, ProxyAdmin `0x488A3181DC988A663d48f696b8cb01e37FBa64B6`, caps 25 USDC per trade and 100 USDC per market). It runs the v1 code from before the contract review fixes; a fresh deploy is planned once the oracle work lands. Every mainnet transaction waits for an explicit go-ahead from the project owner.
 
 There are two profiles:
 
@@ -18,7 +18,7 @@ There are two profiles:
 
 `dev-identities` generates the owner, emergency and three approver keys into `.local-state/base-mainnet-dev/identities.json` (mode 0600, never committed) and writes a ready `dev-manifest.json` that uses their addresses. To use a wallet you already hold as owner instead, set `owner` in the manifest and pass its key as `RFQ_MAINNET_DEPLOYER_KEY`.
 
-To run the dev profile from GitHub Actions with the UI and services hosted on Cloudflare instead of from a laptop, see [deploy/cloudflare/DEV-ENVIRONMENT.md](deploy/cloudflare/DEV-ENVIRONMENT.md).
+To run the dev profile from GitHub Actions with the UI and services hosted on Cloudflare instead of from a laptop, see [deploy/cloudflare/DEV-ENVIRONMENT.md](../../deploy/cloudflare/DEV-ENVIRONMENT.md).
 
 ### Dev caps
 
@@ -125,7 +125,7 @@ Every broadcasting command refuses to run until `RFQ_MAINNET_DEPLOY_CONFIRM` equ
 
 ## Blockers before real capital
 
-The deploy itself is cheap and can be undone by redeploying. Accepting customer funds or unpausing is a different decision. From `PRODUCTION-IMPLEMENTATION-PLAN.md` and `PRODUCTION-RELEASE-CHECKLIST.md`:
+The deploy itself is cheap and can be undone by redeploying. Accepting customer funds or unpausing is a different decision. From the [implementation plan](../release/implementation-plan.md) and [release checklist](../release/release-checklist.md):
 
 - R16 (qualification, independent audit, capped release) is pending, and R10 (deposit/direct exit app), R11 (persistent hosts, backup/restore) and R15 (calibration and 72-hour soak) are still implementing.
 - Every box in the release checklist is open except keeping cross-chain deposits disabled. That includes independent Solidity and economic reviews, an upgrade/rollback rehearsal with open positions, independently custodied approver keys, and the 72-hour soak on the frozen candidate.
