@@ -38,6 +38,53 @@ library RFQSignatureVerifier {
         view
         returns (bytes32 digest, address sessionSigner)
     {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                TRADE_INTENT_TYPEHASH,
+                intent.account,
+                intent.market,
+                intent.baseDelta,
+                intent.limitPrice,
+                intent.maxFee,
+                intent.nonce,
+                intent.deadline,
+                intent.reduceOnly
+            )
+        );
+        return _validateIntent(intent, approval, signature, structHash);
+    }
+
+    /// @notice Validates a triggered trade intent against its maker approval. The trigger is part of the
+    /// signed message, so neither the relayer nor the approvers can move it.
+    function validateTriggeredIntent(
+        TradeIntent calldata intent,
+        Trigger calldata trigger,
+        MakerApproval calldata approval,
+        bytes calldata signature
+    ) public view returns (bytes32 digest, address sessionSigner) {
+        // Every field is one 32-byte word, so the concatenation equals abi.encode of all of them.
+        bytes32 structHash = keccak256(
+            bytes.concat(
+                abi.encode(
+                    TRIGGERED_TRADE_INTENT_TYPEHASH,
+                    intent.account,
+                    intent.market,
+                    intent.baseDelta,
+                    intent.limitPrice,
+                    intent.maxFee
+                ),
+                abi.encode(intent.nonce, intent.deadline, intent.reduceOnly, trigger.triggerPrice, trigger.triggerAbove)
+            )
+        );
+        return _validateIntent(intent, approval, signature, structHash);
+    }
+
+    function _validateIntent(
+        TradeIntent calldata intent,
+        MakerApproval calldata approval,
+        bytes calldata signature,
+        bytes32 structHash
+    ) private view returns (bytes32 digest, address sessionSigner) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         // Approvals are fenced by the current leader epoch, signer set and policy versions.
         if (
@@ -53,21 +100,7 @@ library RFQSignatureVerifier {
             : approval.executionPrice < intent.limitPrice;
         if (worseThanLimit) revert InvalidTrade();
 
-        digest = _hashTypedData(
-            keccak256(
-                abi.encode(
-                    TRADE_INTENT_TYPEHASH,
-                    intent.account,
-                    intent.market,
-                    intent.baseDelta,
-                    intent.limitPrice,
-                    intent.maxFee,
-                    intent.nonce,
-                    intent.deadline,
-                    intent.reduceOnly
-                )
-            )
-        );
+        digest = _hashTypedData(structHash);
         if (approval.intentHash != digest) revert InvalidSignature();
         if (SignatureChecker.isValidSignatureNowCalldata(intent.account, digest, signature)) {
             return (digest, address(0));

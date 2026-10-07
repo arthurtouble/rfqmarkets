@@ -29,7 +29,7 @@ library RFQRiskMath {
     /// @notice Canonical on-chain exposure admission for a trade at `price`.
     /// @dev Checks the capital floor, gross/side/net caps per market and stress loss <= backing / 4.
     /// A reduction may proceed above a cap as long as it does not make that metric worse.
-    function checkExposureTrade(TradeIntent calldata intent, uint256 price) public view {
+    function checkExposureTrade(TradeIntent memory intent, uint256 price) public view {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Position storage position = $.accounts[intent.account].positions[intent.market];
         int256 previous = position.size;
@@ -85,7 +85,7 @@ library RFQRiskMath {
     /// @notice Checks per-trade and session limits and the on-chain inventory-impact price floor.
     /// @return notional The trade notional at the execution price.
     function validateEconomics(
-        TradeIntent calldata intent,
+        TradeIntent memory intent,
         MakerApproval calldata approval,
         uint256 bid,
         uint256 ask,
