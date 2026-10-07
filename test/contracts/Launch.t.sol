@@ -12,10 +12,18 @@ contract LaunchTest is ClearingFixture {
     function setUp() public override {
         super.setUp();
         MarketConfig memory btc = MarketConfig({
-            enabled: true, maxTradeNotional: 25_000e6, maxMarketNotional: 250_000e6, grossLimit: 500_000e6, sideLimit: 300_000e6
+            enabled: true,
+            maxTradeNotional: 25_000e6,
+            maxMarketNotional: 250_000e6,
+            grossLimit: 500_000e6,
+            sideLimit: 300_000e6
         });
         MarketConfig memory eth = MarketConfig({
-            enabled: false, maxTradeNotional: 10_000e6, maxMarketNotional: 100_000e6, grossLimit: 200_000e6, sideLimit: 150_000e6
+            enabled: false,
+            maxTradeNotional: 10_000e6,
+            maxMarketNotional: 100_000e6,
+            grossLimit: 200_000e6,
+            sideLimit: 150_000e6
         });
         clearing = deployClearing([btc, eth]);
     }
@@ -42,7 +50,8 @@ contract LaunchTest is ClearingFixture {
         fundMaker(FLOOR);
         Trader memory alice = newTrader("alice", 10_000e6);
         refreshAll();
-        (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) = quote(alice.account, 0, 1e16, false);
+        (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
+            quote(alice.account, 0, 1e16, false);
         bytes memory userSig = sign(alice.key, intent);
         bytes memory sigA = signApproval(approverKeys[0], approval);
         bytes memory sigB = signApproval(approverKeys[1], approval);
