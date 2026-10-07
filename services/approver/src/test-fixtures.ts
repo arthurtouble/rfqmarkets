@@ -138,8 +138,8 @@ export interface FakeChainState {
   backing: bigint;
   floor: bigint;
   oracle: string;
-  /** Observation returned by the fake Pyth adapter's `verify`. */
-  pythObservation?: { market: bigint; bid: bigint; ask: bigint; observedAt: bigint; validUntil: bigint };
+  /** Observations returned by the fake signed adapter's `verify`. */
+  signedObservations?: { market: bigint; bid: bigint; ask: bigint; observedAt: bigint; validUntil: bigint }[];
   /** Any read listed here throws. */
   failing?: string[];
 }
@@ -207,7 +207,7 @@ export function fakeChain(state: FakeChainState): ChainClients & { calls: string
           if (method === "eth_call") {
             const call = adapter.parseTransaction({ data: params[0].data })!;
             if (call.name === "updateFee") return adapter.encodeFunctionResult("updateFee", [1n]);
-            return adapter.encodeFunctionResult("verify", [state.pythObservation]);
+            return adapter.encodeFunctionResult("verify", [state.signedObservations ?? []]);
           }
           throw new Error(`unexpected ${method}`);
         }),

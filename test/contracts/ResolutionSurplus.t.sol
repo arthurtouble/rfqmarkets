@@ -24,8 +24,9 @@ contract ResolutionSurplusTest is ClearingFixture {
         clearing.declareResolution();
         for (uint256 sample; sample < RESOLUTION_SAMPLES; ++sample) {
             if (sample != 0) vm.warp(vm.getBlockTimestamp() + 15);
+            // One report prices every market; once markets with open exposure are priced, sampling ends.
+            if (clearing.resolutionPricesReady()) break;
             clearing.submitResolutionObservation(currentReport(0));
-            clearing.submitResolutionObservation(currentReport(1));
         }
         assertTrue(clearing.resolutionPricesReady());
         clearing.processResolution(100);

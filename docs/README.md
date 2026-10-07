@@ -10,6 +10,7 @@ Every file under `docs/` is published to the private internal manual (`npm run d
 
 - [Overview](architecture/overview.md): components, trust boundaries, request paths and launch gates. Read this first.
 - [Contracts](architecture/contracts.md): clearing state, settlement order, oracle adapter, liquidation and authority.
+- [Price oracle](architecture/oracle.md): our three signed oracle nodes, on-chain consensus, the market registry and price history.
 - [Economic specification](architecture/economic-specification.md): margin, funding, impact, loss waterfall and invariants.
 - [Gross approval reservations](architecture/gross-approval-reservations.md): how the API and approvers reserve gross exposure before signing.
 - [Hedging](architecture/hedging.md): venue capital, reconciliation and the hedge worker.

@@ -26,7 +26,7 @@ Primary references:
 
 Build the next model version behind a shadow-mode flag. Every signal has a validity window, hard range, fallback, owner, and telemetry field.
 
-1. Reference price: Pyth signed bid/ask for settlement; independent Coinbase and venue feeds for detection and quoting context.
+1. Reference price: our signed oracle's bid/ask for settlement; independent Coinbase and venue feeds for detection and quoting context.
 2. Volatility: time-weighted EWMA at 1 s, 10 s, and 1 min horizons plus a decaying jump signal. Sampling accounts for irregular tick arrival and gaps.
 3. Paid-flow toxicity: post-fill maker markout at 1 s, 5 s, 30 s, and 5 min. Only executed flow updates the score. Cap each fill's size weight so one trade cannot permanently poison the market.
 4. Hedge friction: executable venue spread, visible depth for the proposed hedge size, expected fees, recent slippage, rejection rate, and acknowledgement latency.

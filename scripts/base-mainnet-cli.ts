@@ -17,7 +17,7 @@ import { checkReleaseEvidence } from "./release-evidence.js";
 //   batches           MANIFEST
 //   basescan          MANIFEST
 // Development profile (owner EOA, no timelock, dev-capped; state in .local-state/base-mainnet-dev):
-//   dev-identities    [PYTH_CORE_ADDRESS]
+//   dev-identities    [ORACLE_SIGNER,ORACLE_SIGNER,ORACLE_SIGNER...]
 //   dev-preflight     DEV_MANIFEST
 //   dev-deploy        DEV_MANIFEST [--unpause]
 //   dev-configure     DEV_MANIFEST [--unpause]
@@ -89,7 +89,7 @@ switch(command){
     const record=await deployCore(deployer,manifest,{candidateHash:manifest.candidateHash,launchProfile:dormant?"dormant":"released",resume,onStep:(step,address,partial)=>{writePrivate(PARTIAL,partial);console.error(`${step}: ${address}`);}});
     writePrivate(RECORD,record);
     const batches=writeLaunchBatches(record,manifest);
-    console.log(JSON.stringify({record,operations:batches.operations,next:"The clearing is paused with the manifest caps. Run verify, then schedule go-live from the governance Safe when the runtime is ready."},null,2));break;
+    console.log(JSON.stringify({record,operations:batches.operations,pendingOwnerSteps:record.pendingOwnerSteps??[],next:"The clearing is paused with the manifest caps and the oracle is not yet bound (its setClearing is in the go-live batch). Run verify, then schedule go-live from the governance Safe when the runtime and oracle nodes are ready."},null,2));break;
   }
   case "verify":{
     const manifest=loadManifest(),record=loadRecord(),results=[];
@@ -105,7 +105,9 @@ switch(command){
   case "basescan":await submitBasescan(loadRecord(),loadManifest());break;
   case "dev-identities":{
     if(existsSync(DEV_IDENTITIES))throw new Error(`${DEV_IDENTITIES} already exists; refusing to overwrite keys`);
-    const {identities,manifest}=generateDevIdentities(target?getAddress(target):undefined);
+    // Oracle signer addresses as one comma-separated argument or several arguments; omitted leaves placeholders to fill in.
+    const oracleSigners=[target,...flags].filter(Boolean).flatMap(value=>value.split(",")).map(value=>value.trim()).filter(Boolean).map(value=>getAddress(value));
+    const {identities,manifest}=generateDevIdentities(oracleSigners.length?oracleSigners:undefined);
     writePrivate(DEV_IDENTITIES,identities);writePrivate(resolve(DEV_STATE,"dev-manifest.json"),manifest);
     console.log(JSON.stringify({owner:identities.owner.address,emergency:identities.emergency.address,approvers:identities.approvers.map(item=>item.address),manifest:resolve(DEV_STATE,"dev-manifest.json"),next:"Fund the owner address with ~0.01 ETH on Base, then run dev-preflight."},null,2));break;
   }

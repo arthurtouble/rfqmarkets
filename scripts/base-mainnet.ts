@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { AbiCoder, Contract, ContractFactory, Interface, ZeroHash, getAddress, getCreateAddress, id, keccak256, toUtf8Bytes, type Provider, type Signer } from "ethers";
+import { AbiCoder, Contract, ContractFactory, Interface, ZeroAddress, ZeroHash, decodeBytes32String, encodeBytes32String, getAddress, getCreateAddress, id, keccak256, toUtf8Bytes, type Provider, type Signer } from "ethers";
 import { linkArtifact } from "./link-artifact.mjs";
 import { validateMainnetManifest } from "./mainnet-manifest.js";
 
@@ -8,11 +8,20 @@ import { validateMainnetManifest } from "./mainnet-manifest.js";
 // local rehearsal (scripts/base-mainnet-rehearsal.ts) exercises the exact mainnet code path.
 export const BASE_MAINNET_CHAIN_ID=8453n;
 export type MainnetManifest=ReturnType<typeof validateMainnetManifest>;
-export type MarketCaps={maxTradeUsdc:bigint;netUsdc:bigint;grossUsdc:bigint;sideUsdc:bigint};
+export type MarketCaps={maxTradeUsdc:bigint;netUsdc:bigint;grossUsdc:bigint;sideUsdc:bigint;impactK:number;shockBps:number;marginScaleBps:number};
+export type OracleParams={maxDeviationBps:number;maxSkew:number;maxJumpBps:number;jumpWindow:number};
 /** The subset of a manifest the deployment consumes (shared by production and dev profiles). */
-export type CoreInputs={usdc:string;oracleSource:string;feedIds:[string,string];governance:string;emergencyCouncil:string;approvers:[string,string,string];policy:{makerCapitalUsdc:bigint;markets:{BTC:MarketCaps;ETH:MarketCaps}}};
-export type DeploymentContracts={libraries:Record<string,string>;clearingImplementation:string;oracleAdapter:string;clearingProxy:string;proxyAdmin:string;usdc:string;oracleSource:string};
-export type DeploymentRecord={network:"base-mainnet";chainId:string;candidateHash:string;launchProfile:"dormant"|"released"|"dev";deployer:string;contracts:DeploymentContracts;governance:string;governanceSafe:string|null;emergencyCouncil:string;approvers:[string,string,string];feedIds:[string,string];baseRiskCapitalTarget:string;transactions:Record<string,string>;gasUsed:Record<string,string>;deployedAt:string;proxyInitImplementation?:string;deploymentBlock?:number;upgrades?:{implementation:string;libraries:Record<string,string>;transaction:string;candidateHash:string;at:string}[]};
+export type CoreInputs={usdc:string;oracleSigners:string[];oracleThreshold:number;oracle:OracleParams;governance:string;emergencyCouncil:string;approvers:[string,string,string];policy:{makerCapitalUsdc:bigint;markets:{BTC:MarketCaps;ETH:MarketCaps}}};
+/** `oracleAdapter` is the SignedPriceOracle (the name is kept for the record's consumers). */
+export type DeploymentContracts={libraries:Record<string,string>;clearingImplementation:string;oracleAdapter:string;clearingProxy:string;proxyAdmin:string;usdc:string};
+/** The SignedPriceOracle configuration as deployed: checksummed signers, majority threshold and consensus parameters. */
+export type OracleRecord={signers:string[];threshold:number}&OracleParams;
+/**
+ * An owner-only call the deployer could not make because it does not own the target (production: the
+ * timelock owns the oracle). `launchBatches` puts these calls into the timelocked go-live operation.
+ */
+export type PendingOwnerStep={step:"oracleSetClearing";owner:string;target:string;data:string};
+export type DeploymentRecord={network:"base-mainnet";chainId:string;candidateHash:string;launchProfile:"dormant"|"released"|"dev";deployer:string;contracts:DeploymentContracts;governance:string;governanceSafe:string|null;emergencyCouncil:string;approvers:[string,string,string];oracle:OracleRecord;pendingOwnerSteps?:PendingOwnerStep[];baseRiskCapitalTarget:string;transactions:Record<string,string>;gasUsed:Record<string,string>;deployedAt:string;proxyInitImplementation?:string;deploymentBlock?:number;upgrades?:{implementation:string;libraries:Record<string,string>;transaction:string;candidateHash:string;at:string}[]};
 type Artifact={source:string;abi:any[];bytecode:string;deployedBytecode:string;linkReferences:Record<string,Record<string,{start:number;length:number}[]>>;immutableReferences?:Record<string,{start:number;length:number}[]>};
 // Measured in the local rehearsal (initialize + ProxyAdmin creation); used only by the preflight
 // estimate because the proxy constructor delegatecalls an implementation that does not exist yet.
@@ -36,14 +45,21 @@ export function libraryOrder(root=process.cwd()){
   const order:string[]=[],visit=(name:string)=>{for(const library of linkedNames(artifact(name,root)))if(!order.includes(library)){visit(library);order.push(library);}};
   visit("RFQClearing");return order;
 }
-/** Deployment steps: every library, then implementation, oracle adapter (bound to the predicted proxy) and proxy. */
+/**
+ * Deployment steps: every library, then implementation, the SignedPriceOracle (step `oracleAdapter`, owned by
+ * governance) and proxy. The oracle is bound to the proxy afterwards by its owner's `setClearing`.
+ */
 export const deploySteps=(root=process.cwd())=>[...libraryOrder(root),"clearingImplementation","oracleAdapter","clearingProxy"];
-const artifactFor=(step:string)=>step==="clearingImplementation"?"RFQClearing":step==="oracleAdapter"?"PythCoreAdapter":step==="clearingProxy"?PROXY_ARTIFACT:step;
+const artifactFor=(step:string)=>step==="clearingImplementation"?"RFQClearing":step==="oracleAdapter"?"SignedPriceOracle":step==="clearingProxy"?PROXY_ARTIFACT:step;
+// Upper bound for the owner's SignedPriceOracle.setClearing (one storage write); the oracle does not exist at preflight.
+export const SET_CLEARING_GAS_UPPER_BOUND=100_000n;
+export const MARKET_SYMBOLS=["BTC","ETH"] as const;
 
-export const marketConfigs=(manifest:CoreInputs)=>[manifest.policy.markets.BTC,manifest.policy.markets.ETH].map(item=>({enabled:true,maxTradeNotional:item.maxTradeUsdc,maxMarketNotional:item.netUsdc,grossLimit:item.grossUsdc,sideLimit:item.sideUsdc}));
+export const marketConfigs=(manifest:CoreInputs)=>MARKET_SYMBOLS.map(symbol=>{const item=manifest.policy.markets[symbol];return {symbol:encodeBytes32String(symbol),enabled:true,maxTradeNotional:item.maxTradeUsdc,maxMarketNotional:item.netUsdc,grossLimit:item.grossUsdc,sideLimit:item.sideUsdc,impactK:item.impactK,shockBps:item.shockBps,marginScaleBps:item.marginScaleBps};});
+export const oracleRecord=(manifest:CoreInputs):OracleRecord=>({signers:manifest.oracleSigners.map(item=>getAddress(item)),threshold:manifest.oracleThreshold,...manifest.oracle});
 /** Constructor arguments for a step, given deployed (or predicted) addresses. The proxy initializes paused with the manifest caps. */
-export function constructorArgs(step:string,manifest:CoreInputs,addresses:Record<string,string>,proxy:string,root=process.cwd()):unknown[]{
-  if(step==="oracleAdapter")return [manifest.oracleSource,proxy,manifest.feedIds];
+export function constructorArgs(step:string,manifest:CoreInputs,addresses:Record<string,string>,_proxy:string,root=process.cwd()):unknown[]{
+  if(step==="oracleAdapter")return [manifest.governance,manifest.oracleSigners,manifest.oracleThreshold,manifest.oracle.maxDeviationBps,manifest.oracle.maxSkew,manifest.oracle.maxJumpBps,manifest.oracle.jumpWindow];
   if(step!=="clearingProxy")return [];
   const init=new Interface(artifact("RFQClearing",root).abi).encodeFunctionData("initialize",[manifest.usdc,addresses.oracleAdapter,manifest.governance,manifest.emergencyCouncil,manifest.approvers,manifest.policy.makerCapitalUsdc,marketConfigs(manifest)]);
   return [addresses.clearingImplementation,manifest.governance,init];
@@ -57,7 +73,7 @@ const librariesOf=(addresses:Record<string,string>,root=process.cwd())=>Object.f
 /** Read-only checks against the target chain for the production (Safe + timelock) profile. */
 export async function preflight(provider:Provider,manifest:MainnetManifest,deployer:string,expectedChainId=BASE_MAINNET_CHAIN_ID){
   const network=await provider.getNetwork();if(network.chainId!==expectedChainId)throw new Error(`expected chain ${expectedChainId}, RPC reports ${network.chainId}`);
-  if([manifest.governance,manifest.governanceSafe,manifest.emergencyCouncil,...manifest.approvers].some(role=>same(role,deployer)))throw new Error("deployer must not hold any protocol role");
+  if([manifest.governance,manifest.governanceSafe,manifest.emergencyCouncil,...manifest.approvers,...manifest.oracleSigners].some(role=>same(role,deployer)))throw new Error("deployer must not hold any protocol role");
   await checkExternalDependencies(provider,manifest);
   for(const [name,address] of [["governance timelock",manifest.governance],["governance Safe",manifest.governanceSafe],["emergency Safe",manifest.emergencyCouncil]] as const)if(await provider.getCode(address)==="0x")throw new Error(`${name} ${address} has no code`);
   const safes:{label:string;address:string;threshold:number;owners:string[]}[]=[];for(const [label,address] of [["governance",manifest.governanceSafe],["emergency",manifest.emergencyCouncil]] as const){
@@ -72,11 +88,10 @@ export async function preflight(provider:Provider,manifest:MainnetManifest,deplo
   return {ready:true,chainId:network.chainId.toString(),...await estimateDeployCost(provider,manifest,deployer),timelockDelaySeconds:delay.toString(),safes};
 }
 
-/** USDC decimals and a responsive Pyth Core contract. */
-export async function checkExternalDependencies(provider:Provider,manifest:Pick<CoreInputs,"usdc"|"oracleSource">){
-  for(const [name,address] of [["USDC",manifest.usdc],["Pyth Core",manifest.oracleSource]] as const)if(await provider.getCode(address)==="0x")throw new Error(`${name} ${address} has no code`);
+/** USDC is the only external contract: it must have code and 6 decimals. The oracle is deployed with the stack. */
+export async function checkExternalDependencies(provider:Provider,manifest:Pick<CoreInputs,"usdc">){
+  if(await provider.getCode(manifest.usdc)==="0x")throw new Error(`USDC ${manifest.usdc} has no code`);
   if(await new Contract(manifest.usdc,["function decimals() view returns(uint8)"],provider).decimals()!==6n)throw new Error("USDC must expose 6 decimals");
-  await new Contract(manifest.oracleSource,["function getUpdateFee(bytes[]) view returns(uint256)"],provider).getUpdateFee([]).catch(()=>{throw new Error("Pyth Core address does not answer getUpdateFee")});
 }
 
 /** A self-administered timelock whose proposer and executor is the governance Safe, with no role for `outsiders`. */
@@ -101,6 +116,8 @@ export async function estimateDeployCost(provider:Provider,manifest:CoreInputs,d
     const tx=await factory(step,predicted,undefined,root).getDeployTransaction(...constructorArgs(step,manifest,predicted,predicted.clearingProxy,root));totalBytes+=(tx.data!.length-2)/2;
     gas[step]=step==="clearingProxy"?PROXY_GAS_UPPER_BOUND:await provider.estimateGas({...tx,from:deployer});
   }
+  // A deployer that owns the oracle (dev profile) binds it to the proxy in one more transaction.
+  if(same(deployer,manifest.governance))gas.oracleSetClearing=SET_CLEARING_GAS_UPPER_BOUND;
   const totalGas=Object.values(gas).reduce((sum,value)=>sum+value,0n),maxFeePerGas=fee.maxFeePerGas??fee.gasPrice??0n;
   let l1Fee:bigint|null=null;try{l1Fee=await new Contract("0x420000000000000000000000000000000000000F",["function getL1FeeUpperBound(uint256) view returns(uint256)"],provider).getL1FeeUpperBound(totalBytes+steps.length*120) as bigint;}catch{}
   const estimatedWei=totalGas*maxFeePerGas+(l1Fee??0n);
@@ -109,9 +126,12 @@ export async function estimateDeployCost(provider:Provider,manifest:CoreInputs,d
 }
 
 /**
- * Deploys every library, the implementation, the oracle adapter and the proxy in a fixed order. `resume`
- * holds addresses from an interrupted run; steps whose code is already on-chain are skipped, and the
- * oracle adapter is re-checked against the proxy address the remaining nonces will produce.
+ * Deploys every library, the implementation, the SignedPriceOracle and the proxy in a fixed order, then
+ * binds the oracle to the proxy. `resume` holds addresses from an interrupted run; steps whose code is
+ * already on-chain are skipped, and a resumed oracle must be owned by governance and not bound elsewhere.
+ * Binding (`setClearing`) is owner-only: a deployer that owns the oracle (dev) sends it here; otherwise
+ * (production, where the timelock owns it) the call is recorded in `pendingOwnerSteps` and runs in the
+ * timelocked go-live batch. Until then the oracle refuses every report, so the clearing cannot trade.
  */
 export async function deployCore(signer:Signer,manifest:CoreInputs&{governanceSafe?:string},options:{candidateHash:string;launchProfile:DeploymentRecord["launchProfile"];confirmations?:number;resume?:Record<string,string>;onStep?:(step:string,address:string,partial:Record<string,string>)=>void;root?:string}){
   const provider=signer.provider!;const deployer=await signer.getAddress(),root=options.root??process.cwd(),confirmations=options.confirmations??2,steps=deploySteps(root);
@@ -120,7 +140,12 @@ export async function deployCore(signer:Signer,manifest:CoreInputs&{governanceSa
   const remaining=steps.filter(step=>!addresses[step]);
   let nonce=await provider.getTransactionCount(deployer,"pending");
   const proxy=addresses.clearingProxy??getCreateAddress({from:deployer,nonce:nonce+remaining.indexOf("clearingProxy")});
-  if(addresses.oracleAdapter&&!addresses.clearingProxy){const bound=await new Contract(addresses.oracleAdapter,["function clearing() view returns(address)"],provider).clearing() as string;if(!same(bound,proxy))throw new Error(`existing oracle adapter is bound to ${bound}, but the next proxy will be ${proxy}; remove oracleAdapter from the resume file`);}
+  const oracleAbi=artifact("SignedPriceOracle",root).abi;
+  if(addresses.oracleAdapter){
+    const resumed=new Contract(addresses.oracleAdapter,oracleAbi,provider),bound=await resumed.clearing() as string;
+    if(!same(await resumed.owner(),manifest.governance))throw new Error("existing oracle is not owned by governance; remove oracleAdapter from the resume file");
+    if(bound!==ZeroAddress&&!same(bound,proxy))throw new Error(`existing oracle is bound to ${bound}, not the proxy ${proxy}; remove oracleAdapter from the resume file`);
+  }
   for(const step of remaining){
     const contract=await factory(step,addresses,signer,root).deploy(...constructorArgs(step,manifest,addresses,proxy,root),{nonce:nonce++});
     const receipt=await contract.deploymentTransaction()!.wait(confirmations);if(!receipt||receipt.status!==1)throw new Error(`${step} deployment failed`);
@@ -128,10 +153,17 @@ export async function deployCore(signer:Signer,manifest:CoreInputs&{governanceSa
     if(await provider.getCode(addresses[step])==="0x")throw new Error(`${step} has no code after ${confirmations} confirmations`);
     options.onStep?.(step,addresses[step],{...addresses});
   }
-  if(!same(addresses.clearingProxy,proxy))throw new Error("clearing proxy address does not match the address bound into the oracle adapter");
+  if(!same(addresses.clearingProxy,proxy))throw new Error("clearing proxy address does not match the predicted address");
+  const oracle=new Contract(addresses.oracleAdapter,oracleAbi,signer),pendingOwnerSteps:PendingOwnerStep[]=[];
+  if(!same(await oracle.clearing(),addresses.clearingProxy)){
+    if(same(deployer,manifest.governance)){
+      const receipt=await (await oracle.setClearing(addresses.clearingProxy,{nonce:nonce++})).wait(confirmations);if(!receipt||receipt.status!==1)throw new Error("oracle setClearing failed");
+      transactions.oracleSetClearing=receipt.hash;gasUsed.oracleSetClearing=receipt.gasUsed.toString();
+    }else pendingOwnerSteps.push({step:"oracleSetClearing",owner:manifest.governance,target:addresses.oracleAdapter,data:oracle.interface.encodeFunctionData("setClearing",[addresses.clearingProxy])});
+  }
   const record:DeploymentRecord={network:"base-mainnet",chainId:(await provider.getNetwork()).chainId.toString(),candidateHash:options.candidateHash,launchProfile:options.launchProfile,deployer,
-    contracts:{libraries:librariesOf(addresses,root),clearingImplementation:addresses.clearingImplementation,oracleAdapter:addresses.oracleAdapter,clearingProxy:addresses.clearingProxy,proxyAdmin:word(await provider.getStorage(addresses.clearingProxy,ADMIN_SLOT)),usdc:manifest.usdc,oracleSource:manifest.oracleSource},
-    governance:manifest.governance,governanceSafe:manifest.governanceSafe??null,emergencyCouncil:manifest.emergencyCouncil,approvers:manifest.approvers,feedIds:manifest.feedIds,baseRiskCapitalTarget:manifest.policy.makerCapitalUsdc.toString(),transactions,gasUsed,deployedAt:new Date().toISOString(),proxyInitImplementation:addresses.clearingImplementation,...(deploymentBlock===undefined?{}:{deploymentBlock})};
+    contracts:{libraries:librariesOf(addresses,root),clearingImplementation:addresses.clearingImplementation,oracleAdapter:addresses.oracleAdapter,clearingProxy:addresses.clearingProxy,proxyAdmin:word(await provider.getStorage(addresses.clearingProxy,ADMIN_SLOT)),usdc:manifest.usdc},
+    governance:manifest.governance,governanceSafe:manifest.governanceSafe??null,emergencyCouncil:manifest.emergencyCouncil,approvers:manifest.approvers,oracle:oracleRecord(manifest),...(pendingOwnerSteps.length?{pendingOwnerSteps}:{}),baseRiskCapitalTarget:manifest.policy.makerCapitalUsdc.toString(),transactions,gasUsed,deployedAt:new Date().toISOString(),proxyInitImplementation:addresses.clearingImplementation,...(deploymentBlock===undefined?{}:{deploymentBlock})};
   return record;
 }
 
@@ -167,17 +199,33 @@ export async function verifyCore(provider:Provider,record:DeploymentRecord,manif
   check(same(await new Contract(contracts.proxyAdmin,PROXY_ADMIN_ABI,provider).owner(),manifest.governance),"ProxyAdmin is owned by governance");
   const clearing=new Contract(contracts.clearingProxy,artifact("RFQClearing",root).abi,provider);
   check(same(await clearing.usdc(),manifest.usdc),"clearing collateral is Base USDC");
-  check(same(await clearing.oracle(),contracts.oracleAdapter),"clearing oracle is the recorded adapter");
+  check(same(await clearing.oracle(),contracts.oracleAdapter),"clearing oracle is the recorded SignedPriceOracle");
   check(same(await clearing.governance(),manifest.governance),"clearing governance matches the manifest");
   check(same(await clearing.emergencyCouncil(),manifest.emergencyCouncil),"clearing emergency council matches the manifest");
   for(let index=0;index<3;index++)check(same(await clearing.approvers(index),manifest.approvers[index]),`approver ${index+1} matches the manifest`);
   check(await clearing.baseRiskCapitalTarget()===manifest.policy.makerCapitalUsdc,"maker capital floor matches the manifest");
-  const adapter=new Contract(contracts.oracleAdapter,["function pyth() view returns(address)","function clearing() view returns(address)","function feedIds(uint256) view returns(bytes32)"],provider);
-  check(same(await adapter.pyth(),manifest.oracleSource)&&same(await adapter.clearing(),contracts.clearingProxy),"oracle adapter binds Pyth Core and the clearing proxy");
-  for(let index=0;index<2;index++)check((await adapter.feedIds(index)).toLowerCase()===manifest.feedIds[index].toLowerCase(),`oracle feed ${index===0?"BTC":"ETH"} matches the manifest`);
-  const mask=(1n<<128n)-1n,state={paused:await clearing.paused() as boolean,pendingGovernance:await clearing.pendingGovernance() as string,markets:[] as {enabled:boolean;maxTradeNotional:string;maxMarketNotional:string;grossLimit:string;sideLimit:string}[]};
-  for(let market=0;market<2;market++){const [info,limits,exposure]=await Promise.all([clearing.markets(market),clearing.marketLimitWord(market),clearing.exposureState(market)]);state.markets.push({enabled:info.enabled,maxTradeNotional:(limits&mask).toString(),maxMarketNotional:(limits>>128n).toString(),grossLimit:(exposure.limits&mask).toString(),sideLimit:(exposure.limits>>128n).toString()});}
-  marketConfigs(manifest).forEach((config,index)=>check(state.markets[index].maxTradeNotional===config.maxTradeNotional.toString()&&state.markets[index].maxMarketNotional===config.maxMarketNotional.toString()&&state.markets[index].grossLimit===config.grossLimit.toString()&&state.markets[index].sideLimit===config.sideLimit.toString(),`${index===0?"BTC":"ETH"} caps match the manifest`));
+  // SignedPriceOracle: code identity, owner, signer set, threshold, consensus parameters and binding.
+  check(runtimeMatches(await provider.getCode(contracts.oracleAdapter),"SignedPriceOracle",{},root),"oracle runtime bytecode equals the local SignedPriceOracle build");
+  const oracle=new Contract(contracts.oracleAdapter,artifact("SignedPriceOracle",root).abi,provider),expected=oracleRecord(manifest);
+  check(same(await oracle.owner(),manifest.governance),"oracle is owned by governance");
+  const signers=(await oracle.signers() as string[]).map(item=>getAddress(item)),wanted=new Set(expected.signers);
+  check(signers.length===expected.signers.length&&signers.every(item=>wanted.has(item)),`oracle signers are the ${expected.signers.length} manifest signers`);
+  for(const signer of expected.signers)check(await oracle.isSigner(signer) as boolean,`oracle accepts signer ${signer}`);
+  check(Number(await oracle.threshold())===expected.threshold&&expected.threshold*2>signers.length,`oracle threshold is the manifest majority (${expected.threshold} of ${signers.length})`);
+  check(Number(await oracle.maxDeviationBps())===expected.maxDeviationBps&&Number(await oracle.maxSkew())===expected.maxSkew,"oracle consensus parameters match the manifest");
+  check(Number(await oracle.defaultMaxJumpBps())===expected.maxJumpBps&&Number(await oracle.jumpWindow())===expected.jumpWindow,"oracle jump guard matches the manifest");
+  const oracleClearing=await oracle.clearing() as string,bindingPending=(record.pendingOwnerSteps??[]).some(step=>step.step==="oracleSetClearing"&&same(step.target,contracts.oracleAdapter));
+  if(same(oracleClearing,contracts.clearingProxy))check(true,"oracle is bound to the clearing proxy");
+  else check(oracleClearing===ZeroAddress&&bindingPending,"oracle binding to the clearing proxy is a recorded pending owner step (the oracle refuses reports until then)");
+  const mask=(1n<<128n)-1n,state={paused:await clearing.paused() as boolean,pendingGovernance:await clearing.pendingGovernance() as string,oracleBound:same(oracleClearing,contracts.clearingProxy),markets:[] as {symbol:string;enabled:boolean;maxTradeNotional:string;maxMarketNotional:string;grossLimit:string;sideLimit:string;impactK:number;shockBps:number;marginScaleBps:number}[]};
+  check(Number(await clearing.marketCount())===MARKET_SYMBOLS.length,`clearing lists exactly ${MARKET_SYMBOLS.length} markets`);
+  for(let market=0;market<MARKET_SYMBOLS.length;market++){const [info,limits,exposure,params]=await Promise.all([clearing.markets(market),clearing.marketLimitWord(market),clearing.exposureState(market),clearing.marketParams(market)]);state.markets.push({symbol:decodeBytes32String(params.symbol),enabled:info.enabled,maxTradeNotional:(limits&mask).toString(),maxMarketNotional:(limits>>128n).toString(),grossLimit:(exposure.limits&mask).toString(),sideLimit:(exposure.limits>>128n).toString(),impactK:Number(params.impactK),shockBps:Number(params.shockBps),marginScaleBps:Number(params.marginScaleBps)});}
+  for(const [index,config] of marketConfigs(manifest).entries()){
+    const name=MARKET_SYMBOLS[index],actual=state.markets[index];
+    check(actual.symbol===name&&Number(await clearing.marketId(config.symbol))===index,`market ${index} is ${name}`);
+    check(actual.maxTradeNotional===config.maxTradeNotional.toString()&&actual.maxMarketNotional===config.maxMarketNotional.toString()&&actual.grossLimit===config.grossLimit.toString()&&actual.sideLimit===config.sideLimit.toString(),`${name} caps match the manifest`);
+    check(actual.impactK===config.impactK&&actual.shockBps===config.shockBps&&actual.marginScaleBps===config.marginScaleBps,`${name} risk parameters match the manifest`);
+  }
   return {verified:true,checks,check,state};
 }
 
@@ -197,9 +245,9 @@ export function renounceTimelockAdminBatch(chainId:string,timelock:string,govern
   return safeBatch(chainId,governanceSafe,"RFQ timelock: renounce bootstrap admin","Leaves the timelock self-administered. Execute before the timelock takes over governance.",[{to:timelock,data:new Interface(["function renounceRole(bytes32,address)"]).encodeFunctionData("renounceRole",[ZeroHash,governanceSafe])}]);
 }
 
-/** A schedule batch and an execute batch for one timelock operation whose calls all target `target`. */
-export function timelockOperation(chainId:string,timelock:string,governanceSafe:string,target:string,payloads:string[],delaySeconds:number|bigint,label:string,salt:string,describe:{schedule:string;execute:string}){
-  const iface=new Interface(TIMELOCK_ABI),targets=payloads.map(()=>target),values=payloads.map(()=>0n),saltHash=id(salt);
+/** A schedule batch and an execute batch for one timelock operation running `calls` in order, atomically. */
+export function timelockOperation(chainId:string,timelock:string,governanceSafe:string,calls:{to:string;data:string}[],delaySeconds:number|bigint,label:string,salt:string,describe:{schedule:string;execute:string}){
+  const iface=new Interface(TIMELOCK_ABI),targets=calls.map(call=>call.to),payloads=calls.map(call=>call.data),values=calls.map(()=>0n),saltHash=id(salt);
   // Matches TimelockController.hashOperationBatch.
   const operationId=keccak256(AbiCoder.defaultAbiCoder().encode(["address[]","uint256[]","bytes[]","bytes32","bytes32"],[targets,values,payloads,ZeroHash,saltHash]));
   return {id:operationId,salt:saltHash,
@@ -208,12 +256,15 @@ export function timelockOperation(chainId:string,timelock:string,governanceSafe:
 }
 
 /**
- * Production go-live. v1 initializes paused with the manifest caps, so the only governance step left is
- * a timelocked `unpause`, held until approvers, keeper, hedger and monitoring are live.
+ * Production go-live. v1 initializes paused with the manifest caps, so the governance steps left are the
+ * recorded pending owner steps (binding the SignedPriceOracle to the proxy) and `unpause`, run atomically
+ * in one timelocked operation held until approvers, oracle nodes, keeper, hedger and monitoring are live.
  */
 export function launchBatches(record:DeploymentRecord,manifest:MainnetManifest,root=process.cwd()){
-  const unpause=new Interface(artifact("RFQClearing",root).abi).encodeFunctionData("unpause");
-  const op=timelockOperation(record.chainId,manifest.governance,manifest.governanceSafe,record.contracts.clearingProxy,[unpause],manifest.policy.timelockSeconds,"RFQ go-live",`rfq-markets:${record.candidateHash}:go-live`,{schedule:`Schedules unpause with the ${manifest.policy.timelockSeconds}s timelock delay.`,execute:"Execute only after approvers, keeper, hedger and monitoring are live and verified."});
+  const unpause=new Interface(artifact("RFQClearing",root).abi).encodeFunctionData("unpause"),pending=record.pendingOwnerSteps??[];
+  for(const step of pending)if(!same(step.owner,manifest.governance))throw new Error(`pending ${step.step} belongs to ${step.owner}, not the manifest governance`);
+  const calls=[...pending.map(step=>({to:step.target,data:step.data})),{to:record.contracts.clearingProxy,data:unpause}];
+  const op=timelockOperation(record.chainId,manifest.governance,manifest.governanceSafe,calls,manifest.policy.timelockSeconds,"RFQ go-live",`rfq-markets:${record.candidateHash}:go-live`,{schedule:`Schedules ${[...pending.map(step=>step.step),"unpause"].join(" + ")} with the ${manifest.policy.timelockSeconds}s timelock delay.`,execute:"Execute only after approvers, oracle nodes, keeper, hedger and monitoring are live and verified."});
   return {operations:{goLive:{id:op.id,salt:op.salt}},governanceSchedule:op.schedule,governanceGoLive:op.execute};
 }
 

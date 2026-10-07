@@ -3,11 +3,11 @@ import type { ApiContext } from "./context.js";
 import { unixSeconds } from "./markets.js";
 import type { ProtocolVersions } from "./quote-store.js";
 
-const LOCAL_REPORT_TYPE = "tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)";
+const LOCAL_REPORT_TYPE = "tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)[]";
 const ORACLE_ADAPTER_ABI = ["function updateFee(bytes) view returns(uint256)"];
 const LIMIT_MASK = (1n << 128n) - 1n;
 
-/** Encode the local development oracle report accepted by the mock adapter. */
+/** Encode the local development oracle report accepted by the mock adapter: a one-market batch. */
 export function encodeLocalReport(
   market: number,
   bid: bigint,
@@ -17,7 +17,7 @@ export function encodeLocalReport(
 ) {
   return AbiCoder.defaultAbiCoder().encode(
     [LOCAL_REPORT_TYPE],
-    [[market, bid, ask, BigInt(observedAt), BigInt(validUntil)]],
+    [[[market, bid, ask, BigInt(observedAt), BigInt(validUntil)]]],
   );
 }
 

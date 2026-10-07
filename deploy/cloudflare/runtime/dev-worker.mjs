@@ -7,7 +7,7 @@ import { ensureIdentities, matchesDeployment, publicIdentities } from "./dev-ide
 // Base mainnet dev runtime: one container runs every service (scripts/cloudflare-dev-container.ts).
 // The deployment record comes from the DEV_STATE KV namespace, written by the dev-contracts workflow.
 // Approver, sponsor and emergency keys are generated and kept in this Durable Object's storage
-// (dev-identities.mjs); RPC URLs and the Pyth key come from the RFQ_DEV_RUNTIME_SECRETS secret.
+// (dev-identities.mjs); RPC URLs and the oracle node URLs come from the RFQ_DEV_RUNTIME_SECRETS secret.
 // Journals also live in Durable Object storage, keyed by proxy address, so a fresh contract
 // deployment starts with empty journals.
 const CONTROL = 4099,

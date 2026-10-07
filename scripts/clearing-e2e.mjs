@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { network } from "hardhat";
-import { MAX_MARKET_CONFIG, deployLinked } from "./lib/contract-fixture.mjs";
+import { deployLinked, deploySignedOracle, launchMarkets, signedOracleReport } from "./lib/contract-fixture.mjs";
 
 const { ethers } = await network.create({ network: "hardhatOp", chainType: "op" });
 const [governance, emergency, approverA, approverB, approverC, maker, user, keeper, relayer] = await ethers.getSigners();
@@ -27,7 +27,7 @@ assert.deepEqual([...transition], [500_000_000_000_000_000n, 100_000_000n, 5_000
 transition = await riskMath.positionTransition(1_000_000_000_000_000_000n, 100_000_000n, -2_000_000_000_000_000_000n, 90_000_000n);
 assert.deepEqual([...transition], [-1_000_000_000_000_000_000n, 90_000_000n, -10_000_000n]);
 assert.equal(await riskMath.positionPnl(-2_000_000_000_000_000_000n, 100_000_000n, 90_000_000n), 20_000_000n);
-const assessment = await riskMath.tradeAssessment(0n, 0n, 2_000_000_000_000_000_000n, 0, -1_000_000_000_000_000_000n, 99_000_000n, 99_000_000n, 100_000_000n);
+const assessment = await riskMath.tradeAssessment(10_000, 0n, 2_000_000_000_000_000_000n, -1_000_000_000_000_000_000n, 99_000_000n, 99_000_000n, 100_000_000n);
 assert.equal(assessment.notional,99_000_000n);assert.equal(assessment.deliveredImpact,0n);assert.equal(assessment.reduces,true);
 const unchangedFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 100_000_000n, 123n, 1_000n, 1_000n, 1_000_000_000n);
 assert.deepEqual([...unchangedFunding], [123n, 1_000n]);
@@ -36,43 +36,32 @@ const cappedFunding = await riskMath.fundingStep(1_000_000_000_000_000_000n, 100
 assert.equal(cappedFunding.nextFundingTime,1_000n + 8n * 86_400n);
 assert(cappedFunding.nextIndex > weekFunding.nextIndex);
 
-// Chainlink v3 adapter verifies the configured feed and normalizes 8 decimals to USDC's 6.
-const streamsVerifier = await deploy("MockStreamsVerifier");
-const btcFeed = ethers.keccak256(ethers.toUtf8Bytes("BTC/USD"));
-const ethFeed = ethers.keccak256(ethers.toUtf8Bytes("ETH/USD"));
-const streamsAdapter = await deploy("ChainlinkDataStreamsV3Adapter", [
-  await streamsVerifier.getAddress(), governance.address, [btcFeed, ethFeed], [8, 8],
-]);
+// The signed oracle adapter takes the median of a node majority and only lets the clearing house consume it.
+const oracleNodes = [0, 1, 2].map(() => ethers.Wallet.createRandom());
+const signedAdapter = await deploySignedOracle(governance, governance, oracleNodes, { libraries: libraryAddresses });
+await (await signedAdapter.setClearing(governance.address)).wait();
 const nowBlock = await ethers.provider.getBlock("latest");
-const v3Type = "tuple(bytes32 feedId,uint32 validFromTimestamp,uint32 observationsTimestamp,uint192 nativeFee,uint192 linkFee,uint32 expiresAt,int192 price,int192 bid,int192 ask)";
-const verifiedV3 = ethers.AbiCoder.defaultAbiCoder().encode([v3Type], [[
-  btcFeed, nowBlock.timestamp, nowBlock.timestamp, 0, 0, nowBlock.timestamp + 60,
-  10_000_000_000_000n, 9_999_000_000_000n, 10_001_000_000_000n,
-]]);
-await (await streamsVerifier.setResponse(verifiedV3)).wait();
-const normalized = await streamsAdapter.connect(governance).verify.staticCall("0x1234");
-assert.equal(normalized.market, 0n);
-assert.equal(normalized.bid, 99_990_000_000n);
-await reject(streamsAdapter.connect(user).verify("0x1234"), "only clearing may consume verified stream reports");
-
-// Pyth Core is a credential-independent contract option once an authenticated update is acquired.
-const pyth = await deploy("MockPythCore");
-await (await pyth.setFee(7n)).wait();
-await (await pyth.setPrice(btcFeed, [10_000_000_000_000n, 1_000_000_000n, -8, nowBlock.timestamp])).wait();
-const pythAdapter = await deploy("PythCoreAdapter", [await pyth.getAddress(), governance.address, [btcFeed, ethFeed]]);
-const pythReport = ethers.AbiCoder.defaultAbiCoder().encode(["uint8", "bytes[]"], [0, ["0x1234"]]);
-assert.equal(await pythAdapter.updateFee(pythReport), 7n);
-const pythObservation = await pythAdapter.connect(governance).verify.staticCall(pythReport, {value:7n});
-assert.equal(pythObservation.bid, 99_990_000_000n);
-assert.equal(pythObservation.ask, 100_010_000_000n);
-await reject(pythAdapter.connect(governance).verify(pythReport, {value:6n}), "Pyth fee must be exact so ETH cannot be trapped");
-await reject(pythAdapter.connect(user).verify(pythReport, {value:7n}), "only clearing may consume Pyth reports");
+const chainId = (await ethers.provider.getNetwork()).chainId;
+const signedReport = await signedOracleReport({
+  adapter: signedAdapter, chainId, nodes: oracleNodes, observedAt: nowBlock.timestamp,
+  prices: [{ market: 0, bid: 99_990_000_000n, ask: 100_010_000_000n }, { market: 1, bid: 3_999_000_000n, ask: 4_001_000_000n }],
+});
+assert.equal(await signedAdapter.updateFee(signedReport), 0n);
+const signedObservations = await signedAdapter.connect(governance).verify.staticCall(signedReport);
+assert.deepEqual(signedObservations.map((item) => [item.market, item.bid, item.ask]), [[0n, 99_990_000_000n, 100_010_000_000n], [1n, 3_999_000_000n, 4_001_000_000n]]);
+const minority = await signedOracleReport({
+  adapter: signedAdapter, chainId, nodes: oracleNodes.slice(0, 1), observedAt: nowBlock.timestamp,
+  prices: { market: 0, bid: 99_990_000_000n, ask: 100_010_000_000n },
+});
+await reject(signedAdapter.connect(governance).verify(minority), "one node is not a majority");
+await reject(signedAdapter.connect(governance).verify(signedReport, { value: 1n }), "signed reports carry no fee");
+await reject(signedAdapter.connect(user).verify(signedReport), "only clearing may consume signed reports");
 
 const implementation = await deploy("RFQClearing");
 const clearingInterface = new ethers.Interface(artifact("RFQClearing").abi);
 const init = clearingInterface.encodeFunctionData("initialize", [
   await token.getAddress(), await oracle.getAddress(), governance.address, emergency.address,
-  [approverA.address, approverB.address, approverC.address], 600_000_000_000n, [MAX_MARKET_CONFIG, MAX_MARKET_CONFIG],
+  [approverA.address, approverB.address, approverC.address], 600_000_000_000n, launchMarkets(),
 ]);
 const proxy = await deploy("TestProxy", [await implementation.getAddress(), governance.address, init]);
 const clearing = new ethers.Contract(await proxy.getAddress(), artifact("RFQClearing").abi, governance);
@@ -110,7 +99,7 @@ const observationType = "tuple(uint8 market,uint256 bid,uint256 ask,uint64 obser
 const observation = async (market, bid, ask) => {
   const block = await ethers.provider.getBlock("latest");
   const value = [market, bid, ask, BigInt(block.timestamp), BigInt(block.timestamp + 60)];
-  return { value, report: coder.encode([observationType], [value]) };
+  return { value, report: coder.encode([`${observationType}[]`], [[value]]) };
 };
 const networkInfo = await ethers.provider.getNetwork();
 const domain = { name: "RFQ Markets", version: "1", chainId: networkInfo.chainId, verifyingContract: await clearing.getAddress() };
@@ -135,7 +124,7 @@ const closeTypes = { CloseIntent: [
   {name:"account",type:"address"},{name:"market",type:"uint8"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},
 ] };
 const sessionGrantTypes = { SessionGrant: [
-  {name:"account",type:"address"},{name:"session",type:"address"},{name:"marketMask",type:"uint8"},
+  {name:"account",type:"address"},{name:"session",type:"address"},{name:"marketMask",type:"uint256"},
   {name:"maxTradeNotional",type:"uint128"},{name:"maxCumulativeNotional",type:"uint128"},{name:"maxFee",type:"uint128"},
   {name:"validUntil",type:"uint64"},{name:"nonce",type:"uint256"},{name:"deadline",type:"uint64"},
 ] };

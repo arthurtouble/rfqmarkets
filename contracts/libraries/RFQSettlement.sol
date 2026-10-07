@@ -26,7 +26,7 @@ library RFQSettlement {
         bytes calldata makerSignatureTwo
     ) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        if ($.paused || $.resolutionRequired || intent.market >= MARKET_COUNT || intent.baseDelta == 0) {
+        if ($.paused || $.resolutionRequired || intent.market >= $.marketCount || intent.baseDelta == 0) {
             revert InvalidTrade();
         }
         IPriceOracle.Observation memory observation = RFQLedger.touchOracle(report, intent.market);

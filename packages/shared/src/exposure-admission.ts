@@ -36,21 +36,12 @@ export function isPositionReduction(previous: bigint, delta: bigint) {
   const next = previous + delta;
   return abs(next) < abs(previous) && (next === 0n || next > 0n === previous > 0n);
 }
-const floor100 = (value: bigint) => value / 100n - (value < 0n && value % 100n !== 0n ? 1n : 0n);
+/** Stress shocks the launch markets are registered with on chain (`marketParams(id).shockBps`). */
+export const STRESS_SHOCK_BPS = { BTC: 4_000n, ETH: 5_000n } as const;
+const ceilBps = (value: bigint, shockBps: bigint) => (abs(value) * shockBps + 9_999n) / 10_000n;
+/** Mirrors `RFQRiskMath.portfolioStress`: the sum of |net skew| x shock over markets, each rounded up. */
 export function makerStress(btc: bigint, eth: bigint) {
-  let result = 0n;
-  for (const [b, e] of [
-    [20n, 25n],
-    [-20n, -25n],
-    [15n, -20n],
-    [-15n, 20n],
-    [40n, 50n],
-    [-40n, -50n],
-  ]) {
-    const loss = floor100(btc * b) + floor100(eth * e);
-    if (loss > result) result = loss;
-  }
-  return result;
+  return ceilBps(btc, STRESS_SHOCK_BPS.BTC) + ceilBps(eth, STRESS_SHOCK_BPS.ETH);
 }
 /**
  * Order-independent upper envelope for maker cash that one escaped approval can

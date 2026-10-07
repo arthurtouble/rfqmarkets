@@ -1,0 +1,30 @@
+{
+ "source": "Recorded 2026-10-07 from wss://advanced-trade-ws.coinbase.com and api.exchange.coinbase.com",
+ "messages": [
+  "{\"channel\":\"ticker\",\"timestamp\":\"2026-10-07T07:56:41.433795363Z\",\"sequence_num\":0,\"events\":[{\"type\":\"snapshot\",\"tickers\":[{\"type\":\"ticker\",\"product_id\":\"BTC-USD\",\"price\":\"84076.5\",\"volume_24_h\":\"5993.87345549\",\"low_24_h\":\"83551\",\"high_24_h\":\"86698.35\",\"low_52_w\":\"57717.55\",\"high_52_w\":\"124254.31\",\"price_percent_chg_24_h\":\"-1.79024171609774\",\"best_bid\":\"84076.5\",\"best_ask\":\"84076.51\",\"best_bid_quantity\":\"0.00471345\",\"best_ask_quantity\":\"1.05158427\"}]}]}",
+  "{\"channel\":\"subscriptions\",\"timestamp\":\"2026-10-07T07:56:41.433820988Z\",\"sequence_num\":1,\"events\":[{\"subscriptions\":{\"ticker\":[\"BTC-USD\"]}}]}",
+  "{\"channel\":\"ticker\",\"timestamp\":\"2026-10-07T07:56:41.436460274Z\",\"sequence_num\":2,\"events\":[{\"type\":\"snapshot\",\"tickers\":[{\"type\":\"ticker\",\"product_id\":\"ETH-USD\",\"price\":\"2614.64\",\"volume_24_h\":\"104282.3119478\",\"low_24_h\":\"2590.25\",\"high_24_h\":\"2725.06\",\"low_52_w\":\"1505\",\"high_52_w\":\"4559.89\",\"price_percent_chg_24_h\":\"-3.41938748748712\",\"best_bid\":\"2614.63\",\"best_ask\":\"2614.64\",\"best_bid_quantity\":\"1.67081389\",\"best_ask_quantity\":\"0.0018267\"}]}]}",
+  "{\"channel\":\"subscriptions\",\"timestamp\":\"2026-10-07T07:56:41.436477117Z\",\"sequence_num\":3,\"events\":[{\"subscriptions\":{\"ticker\":[\"BTC-USD\",\"ETH-USD\"]}}]}",
+  "{\"channel\":\"ticker\",\"timestamp\":\"2026-10-07T07:56:41.436511072Z\",\"sequence_num\":4,\"events\":[{\"type\":\"snapshot\",\"tickers\":[{\"type\":\"ticker\",\"product_id\":\"PEPE-USD\",\"price\":\"0.00000415\",\"volume_24_h\":\"522112981943\",\"low_24_h\":\"0.00000401\",\"high_24_h\":\"0.00000438\",\"low_52_w\":\"0.00000222\",\"high_52_w\":\"0.00000975\",\"price_percent_chg_24_h\":\"-4.15704387990762\",\"best_bid\":\"0.00000414\",\"best_ask\":\"0.00000415\",\"best_bid_quantity\":\"3063748561\",\"best_ask_quantity\":\"2105107388\"}]}]}",
+  "{\"channel\":\"subscriptions\",\"timestamp\":\"2026-10-07T07:56:41.436520367Z\",\"sequence_num\":5,\"events\":[{\"subscriptions\":{\"ticker\":[\"BTC-USD\",\"ETH-USD\",\"PEPE-USD\"]}}]}",
+  "{\"channel\":\"ticker\",\"timestamp\":\"2026-10-07T07:56:41.436552382Z\",\"sequence_num\":6,\"events\":[{\"type\":\"snapshot\",\"tickers\":[{\"type\":\"ticker\",\"product_id\":\"USDT-USD\",\"price\":\"0.99964\",\"volume_24_h\":\"78629327.69\",\"low_24_h\":\"0.99959\",\"high_24_h\":\"1.00001\",\"low_52_w\":\"0.98\",\"high_52_w\":\"1.07264\",\"price_percent_chg_24_h\":\"-0.00500155048065\",\"best_bid\":\"0.99959\",\"best_ask\":\"0.9996\",\"best_bid_quantity\":\"201376.57\",\"best_ask_quantity\":\"17866.09\"}]}]}",
+  "{\"channel\":\"subscriptions\",\"timestamp\":\"2026-10-07T07:56:41.436561549Z\",\"sequence_num\":7,\"events\":[{\"subscriptions\":{\"ticker\":[\"BTC-USD\",\"ETH-USD\",\"PEPE-USD\",\"USDT-USD\"]}}]}",
+  "{\"channel\":\"subscriptions\",\"timestamp\":\"2026-10-07T07:56:41.436613117Z\",\"sequence_num\":8,\"events\":[{\"subscriptions\":{\"heartbeats\":[\"heartbeats\"],\"ticker\":[\"BTC-USD\",\"ETH-USD\",\"PEPE-USD\",\"USDT-USD\"]}}]}",
+  "{\"channel\":\"ticker\",\"timestamp\":\"2026-10-07T07:56:41.479700204Z\",\"sequence_num\":9,\"events\":[{\"type\":\"update\",\"tickers\":[{\"type\":\"ticker\",\"product_id\":\"BTC-USD\",\"price\":\"84076.5\",\"volume_24_h\":\"5993.87345549\",\"low_24_h\":\"83551\",\"high_24_h\":\"86698.35\",\"low_52_w\":\"57717.55\",\"high_52_w\":\"124254.31\",\"price_percent_chg_24_h\":\"-1.79024171609774\",\"best_bid\":\"84076.5\",\"best_ask\":\"84076.51\",\"best_bid_quantity\":\"0.00475721\",\"best_ask_quantity\":\"1.01261754\"}]}]}",
+  "{\"channel\":\"ticker\",\"timestamp\":\"2026-10-07T07:56:41.548839538Z\",\"sequence_num\":10,\"events\":[{\"type\":\"update\",\"tickers\":[{\"type\":\"ticker\",\"product_id\":\"USDT-USD\",\"price\":\"0.99966\",\"volume_24_h\":\"78629327.69\",\"low_24_h\":\"0.99959\",\"high_24_h\":\"1.00001\",\"low_52_w\":\"0.98\",\"high_52_w\":\"1.07264\",\"price_percent_chg_24_h\":\"-0.00300093028839\",\"best_bid\":\"0.99959\",\"best_ask\":\"0.9996\",\"best_bid_quantity\":\"201376.57\",\"best_ask_quantity\":\"17866.09\"}]}]}",
+  "{\"channel\":\"ticker\",\"timestamp\":\"2026-10-07T07:56:41.728611799Z\",\"sequence_num\":11,\"events\":[{\"type\":\"update\",\"tickers\":[{\"type\":\"ticker\",\"product_id\":\"BTC-USD\",\"price\":\"84076.5\",\"volume_24_h\":\"5993.87345549\",\"low_24_h\":\"83551\",\"high_24_h\":\"86698.35\",\"low_52_w\":\"57717.55\",\"high_52_w\":\"124254.31\",\"price_percent_chg_24_h\":\"-1.79024171609774\",\"best_bid\":\"84076.5\",\"best_ask\":\"84076.51\",\"best_bid_quantity\":\"0.00475721\",\"best_ask_quantity\":\"1.00667058\"}]}]}",
+  "{\"channel\":\"heartbeats\",\"timestamp\":\"2026-10-07T07:56:42.192460875Z\",\"sequence_num\":14,\"events\":[{\"current_time\":\"2026-10-07 07:56:42.19005422 +0000 UTC m=+27912.404279984\",\"heartbeat_counter\":27909}]}"
+ ],
+ "rest": {
+  "BTC-USD": {
+   "ask": "84070.01",
+   "bid": "84070",
+   "volume": "5976.91000164",
+   "trade_id": 1103289703,
+   "price": "84074.81",
+   "size": "0.01189417",
+   "time": "2026-10-07T07:56:46.003288780Z",
+   "rfq_volume": "84.337142"
+  }
+ }
+}

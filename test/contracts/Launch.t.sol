@@ -11,21 +11,14 @@ import "../../contracts/RFQTypes.sol";
 contract LaunchTest is ClearingFixture {
     function setUp() public override {
         super.setUp();
-        MarketConfig memory btc = MarketConfig({
-            enabled: true,
-            maxTradeNotional: 25_000e6,
-            maxMarketNotional: 250_000e6,
-            grossLimit: 500_000e6,
-            sideLimit: 300_000e6
-        });
-        MarketConfig memory eth = MarketConfig({
-            enabled: false,
-            maxTradeNotional: 10_000e6,
-            maxMarketNotional: 100_000e6,
-            grossLimit: 200_000e6,
-            sideLimit: 150_000e6
-        });
-        clearing = deployClearing([btc, eth]);
+        MarketConfig memory btc = maxConfig();
+        (btc.maxTradeNotional, btc.maxMarketNotional, btc.grossLimit, btc.sideLimit) =
+            (25_000e6, 250_000e6, 500_000e6, 300_000e6);
+        MarketConfig memory eth = maxConfig();
+        eth.enabled = false;
+        (eth.maxTradeNotional, eth.maxMarketNotional, eth.grossLimit, eth.sideLimit) =
+            (10_000e6, 100_000e6, 200_000e6, 150_000e6);
+        clearing = deployClearing(pair(btc, eth));
     }
 
     function test_startsPausedWithLaunchCaps() public view {
@@ -44,6 +37,10 @@ contract LaunchTest is ClearingFixture {
         assertEq(limits, uint256(200_000e6) | (uint256(150_000e6) << 128));
         assertTrue(ready);
         assertEq(proxyAdmin.owner(), governance);
+        assertEq(clearing.marketCount(), 2);
+        assertEq(clearing.marketId("ETH"), 1);
+        assertEq(clearing.marketParams(1).impactK, 12_000);
+        assertEq(clearing.marketParams(0).shockBps, 4_000);
     }
 
     function test_tradingWaitsForGovernanceToUnpause() public {
@@ -86,7 +83,7 @@ contract LaunchTest is ClearingFixture {
     }
 
     function test_cannotInitializeTwiceOrUseTheImplementation() public {
-        MarketConfig[2] memory configs = [maxConfig(), maxConfig()];
+        MarketConfig[] memory configs = pair(maxConfig(), maxConfig());
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         clearing.initialize(address(usdc), address(oracle), governance, emergency, approvers, FLOOR, configs);
 
@@ -98,18 +95,18 @@ contract LaunchTest is ClearingFixture {
     function test_rejectsInvalidLaunchConfiguration() public {
         MarketConfig memory sideAboveGross = maxConfig();
         sideAboveGross.sideLimit = sideAboveGross.grossLimit + 1;
-        expectInitializeRevert([maxConfig(), sideAboveGross]);
+        expectInitializeRevert(pair(maxConfig(), sideAboveGross));
 
         MarketConfig memory zeroTrade = maxConfig();
         zeroTrade.maxTradeNotional = 0;
-        expectInitializeRevert([zeroTrade, maxConfig()]);
+        expectInitializeRevert(pair(zeroTrade, maxConfig()));
 
         MarketConfig memory aboveCeiling = maxConfig();
         aboveCeiling.maxMarketNotional = uint128(ABSOLUTE_MAX_MARKET_NOTIONAL + 1);
-        expectInitializeRevert([aboveCeiling, maxConfig()]);
+        expectInitializeRevert(pair(aboveCeiling, maxConfig()));
     }
 
-    function expectInitializeRevert(MarketConfig[2] memory configs) internal {
+    function expectInitializeRevert(MarketConfig[] memory configs) internal {
         RFQClearing implementation = new RFQClearing();
         bytes memory init = abi.encodeCall(
             RFQClearing.initialize, (address(usdc), address(oracle), governance, emergency, approvers, FLOOR, configs)

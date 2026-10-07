@@ -22,7 +22,6 @@ import {
 } from "../packages/shared/src/numeric.js";
 import {
   decodeLocalReport,
-  decodePythReportMarket,
   encodeLocalReport,
   ORACLE_OBSERVATION_TUPLE,
 } from "../packages/shared/src/oracle-report.js";
@@ -48,15 +47,19 @@ test("market index mapping", () => {
   assert.throws(() => marketName(2), /unknown market index/);
 });
 
-test("local oracle report codec round-trips the adapter tuple", () => {
+test("local oracle report codec round-trips the adapter tuple array", () => {
   const observation = { market: 1n, bid: 10n, ask: 11n, observedAt: 12n, validUntil: 13n };
   const report = encodeLocalReport({ ...observation, market: 1 });
   assert.equal(
     report,
-    AbiCoder.defaultAbiCoder().encode([ORACLE_OBSERVATION_TUPLE], [[1, 10n, 11n, 12n, 13n]]),
+    AbiCoder.defaultAbiCoder().encode([`${ORACLE_OBSERVATION_TUPLE}[]`], [[[1, 10n, 11n, 12n, 13n]]]),
   );
-  assert.deepEqual(decodeLocalReport(report), observation);
-  assert.equal(decodePythReportMarket(AbiCoder.defaultAbiCoder().encode(["uint8", "bytes[]"], [1, []])), 1n);
+  assert.deepEqual(decodeLocalReport(report), [observation]);
+  const pair = encodeLocalReport([{ ...observation, market: 0 }, observation]);
+  assert.deepEqual(
+    decodeLocalReport(pair).map((item) => item.market),
+    [0n, 1n],
+  );
 });
 
 test("clearing struct converters normalize ethers results to bigint models", () => {

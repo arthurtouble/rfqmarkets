@@ -11,7 +11,7 @@ export const clearingStateAbi = [
   "function openingEquity(address) view returns(int256)",
   "function initialMargin(address) view returns(uint256)",
   "function maintenanceMargin(address) view returns(uint256)",
-  "function sessions(address) view returns(address account,uint64 validUntil,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 usedNotional,uint128 maxFee)",
+  "function sessions(address) view returns(address account,uint64 validUntil,uint256 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 usedNotional,uint128 maxFee)",
   "function leaderEpoch() view returns(uint64)",
   "function signerSetVersion() view returns(uint64)",
   "function policyVersion() view returns(uint64)",
@@ -20,6 +20,9 @@ export const clearingStateAbi = [
   "function oracle() view returns(address)",
   "function refreshOracle(bytes) payable returns((uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil))",
   "function declareResolution()",
+  "function marketCount() view returns(uint8)",
+  "function marketParams(uint8) view returns((bytes32 symbol,uint32 impactK,uint16 shockBps,uint16 marginScaleBps))",
+  "function openMarketsOf(address) view returns(uint256)",
 ] as const;
 
 export const clearingApiAbi = [
@@ -33,7 +36,7 @@ export const clearingApiAbi = [
   "function withdrawWithSignature(address,address,uint256,uint256,uint64,bytes)",
   "function cancelNonceWithSignature(address,uint256,uint64,bytes)",
   "function closePositionWithSignature(address,uint8,uint256,uint64,bytes,bytes) payable",
-  "function grantSessionWithSignature((address account,address session,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline),bytes)",
+  "function grantSessionWithSignature((address account,address session,uint256 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline),bytes)",
 ] as const;
 
 export const clearingApproverAbi = [

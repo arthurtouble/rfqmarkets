@@ -28,7 +28,8 @@ abstract contract ClearingFixture is Test {
     uint256[3] internal approverKeys = [uint256(0xA11CE), 0xB0B, 0xC0FFEE];
     address[3] internal approvers;
 
-    uint256[2] internal prices = [uint256(100_000e6), 4_000e6];
+    /// @notice Fixture price per market id; `listMarket` appends one.
+    uint256[] internal prices;
     uint256 internal nextNonce = 1;
 
     struct Trader {
@@ -38,25 +39,50 @@ abstract contract ClearingFixture is Test {
 
     function setUp() public virtual {
         vm.warp(1_800_000_000);
+        delete prices;
+        prices.push(100_000e6);
+        prices.push(4_000e6);
         usdc = new MockUSDC();
         oracle = new MockPriceOracle();
         for (uint256 i; i < 3; ++i) {
             approvers[i] = vm.addr(approverKeys[i]);
         }
-        clearing = deployClearing([maxConfig(), maxConfig()]);
+        clearing = deployClearing(pair(maxConfig(), maxConfig()));
     }
 
+    /// @notice BTC (id 0) or ETH (id 1) at the absolute caps, with the launch risk parameters.
     function maxConfig() internal pure returns (MarketConfig memory) {
+        return marketConfig("BTC", 10_000, 4_000);
+    }
+
+    function marketConfig(bytes32 symbol, uint32 impactK, uint16 shockBps) internal pure returns (MarketConfig memory) {
         return MarketConfig({
+            symbol: symbol,
             enabled: true,
             maxTradeNotional: uint128(ABSOLUTE_MAX_TRADE_NOTIONAL),
             maxMarketNotional: uint128(ABSOLUTE_MAX_MARKET_NOTIONAL),
             grossLimit: uint128(ABSOLUTE_MAX_MARKET_NOTIONAL),
-            sideLimit: uint128(ABSOLUTE_MAX_MARKET_NOTIONAL)
+            sideLimit: uint128(ABSOLUTE_MAX_MARKET_NOTIONAL),
+            impactK: impactK,
+            shockBps: shockBps,
+            marginScaleBps: 10_000
         });
     }
 
-    function deployClearing(MarketConfig[2] memory configs) internal returns (RFQClearing deployed) {
+    /// @notice A BTC/ETH market pair: `btc` and `eth` keep their limits and get the launch symbols and risk.
+    function pair(MarketConfig memory btc, MarketConfig memory eth) internal pure returns (MarketConfig[] memory configs) {
+        btc.symbol = "BTC";
+        btc.impactK = 10_000;
+        btc.shockBps = 4_000;
+        eth.symbol = "ETH";
+        eth.impactK = 12_000;
+        eth.shockBps = 5_000;
+        configs = new MarketConfig[](2);
+        configs[0] = btc;
+        configs[1] = eth;
+    }
+
+    function deployClearing(MarketConfig[] memory configs) internal returns (RFQClearing deployed) {
         RFQClearing implementation = new RFQClearing();
         bytes memory init = abi.encodeCall(
             RFQClearing.initialize, (address(usdc), address(oracle), governance, emergency, approvers, FLOOR, configs)
@@ -102,18 +128,39 @@ abstract contract ClearingFixture is Test {
         vm.stopPrank();
     }
 
+    /// @notice Governance registers `config` as the next market, priced at `price`.
+    function listMarket(MarketConfig memory config, uint256 price) internal returns (uint8 market) {
+        vm.prank(governance);
+        market = clearing.addMarket(config);
+        assertEq(market, prices.length);
+        prices.push(price);
+    }
+
     // ---- Oracle helpers ----
 
     function report(uint8 market, uint256 price, uint256 observedAt) internal pure returns (bytes memory) {
-        return abi.encode(IPriceOracle.Observation(market, price, price, uint64(observedAt), uint64(observedAt + 60)));
+        IPriceOracle.Observation[] memory observations = new IPriceOracle.Observation[](1);
+        observations[0] = IPriceOracle.Observation(market, price, price, uint64(observedAt), uint64(observedAt + 60));
+        return abi.encode(observations);
     }
 
-    function currentReport(uint8 market) internal view returns (bytes memory) {
+    /// @notice A report pricing every market at the fixture prices, observed now. The oracle signs every
+    /// market each round, so trades carry this.
+    function currentReport(uint8) internal view returns (bytes memory) {
+        uint256 now_ = vm.getBlockTimestamp();
+        IPriceOracle.Observation[] memory observations = new IPriceOracle.Observation[](prices.length);
+        for (uint256 i; i < prices.length; ++i) {
+            observations[i] = IPriceOracle.Observation(uint8(i), prices[i], prices[i], uint64(now_), uint64(now_ + 60));
+        }
+        return abi.encode(observations);
+    }
+
+    function singleReport(uint8 market) internal view returns (bytes memory) {
         return report(market, prices[market], vm.getBlockTimestamp());
     }
 
     function refresh(uint8 market) internal {
-        clearing.refreshOracle(currentReport(market));
+        clearing.refreshOracle(singleReport(market));
     }
 
     function refreshAll() internal {
@@ -164,11 +211,11 @@ abstract contract ClearingFixture is Test {
         returns (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof)
     {
         proof = currentReport(market);
-        (int256 btcBase,,,,,,) = clearing.markets(0);
-        (int256 ethBase,,,,,,) = clearing.markets(1);
-        int256 btc = btcBase * int256(prices[0]) / 1e18;
-        int256 eth = ethBase * int256(prices[1]) / 1e18;
-        int256 impact = RFQRiskMath.impactCost(btc, eth, market, delta * int256(prices[market]) / 1e18);
+        (int256 aggregateBase,,,,,,) = clearing.markets(market);
+        int256 skew = aggregateBase * int256(prices[market]) / 1e18;
+        int256 impact = RFQRiskMath.impactCost(
+            clearing.marketParams(market).impactK, skew, delta * int256(prices[market]) / 1e18
+        );
         uint256 charge = impact > 0 ? uint256(impact) : 0;
         uint256 quantity = uint256(delta < 0 ? -delta : delta);
         uint256 premium = (charge * 1e18 + quantity - 1) / quantity;

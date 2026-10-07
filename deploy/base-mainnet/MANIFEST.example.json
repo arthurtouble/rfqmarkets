@@ -4,11 +4,13 @@
   "chainId": "8453",
   "candidateHash": "REPLACE: output of `npm run candidate:base-mainnet` on the frozen commit",
   "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  "oracleSource": "REPLACE: Pyth Core contract on Base mainnet, confirmed against docs.pyth.network on deploy day",
-  "feedIds": [
-    "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
-    "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace"
+  "oracleSigners": [
+    "REPLACE: oracle node 1 signing address",
+    "REPLACE: oracle node 2 signing address",
+    "REPLACE: oracle node 3 signing address"
   ],
+  "oracleThreshold": 2,
+  "oracle": { "maxDeviationBps": 50, "maxSkew": 5, "maxJumpBps": 0, "jumpWindow": 0 },
   "governance": "REPLACE: RFQTimelock address from deploy:base-mainnet-timelock",
   "governanceSafe": "REPLACE: governance Safe (2-of-3 or stronger, hardware-wallet owners)",
   "emergencyCouncil": "REPLACE: emergency Safe (separate owners from the governance Safe)",
@@ -23,8 +25,8 @@
     "dailyLossLimitUsdc": "25000000000",
     "timelockSeconds": 259200,
     "markets": {
-      "BTC": { "enabled": true, "maxTradeUsdc": "10000000000", "grossUsdc": "100000000000", "sideUsdc": "75000000000", "netUsdc": "75000000000", "hedgeBandUsdc": "5000000000" },
-      "ETH": { "enabled": true, "maxTradeUsdc": "10000000000", "grossUsdc": "100000000000", "sideUsdc": "75000000000", "netUsdc": "75000000000", "hedgeBandUsdc": "5000000000" }
+      "BTC": { "enabled": true, "maxTradeUsdc": "10000000000", "grossUsdc": "100000000000", "sideUsdc": "75000000000", "netUsdc": "75000000000", "hedgeBandUsdc": "5000000000", "impactK": 10000, "shockBps": 4000, "marginScaleBps": 10000 },
+      "ETH": { "enabled": true, "maxTradeUsdc": "10000000000", "grossUsdc": "100000000000", "sideUsdc": "75000000000", "netUsdc": "75000000000", "hedgeBandUsdc": "5000000000", "impactK": 12000, "shockBps": 5000, "marginScaleBps": 10000 }
     }
   }
 }

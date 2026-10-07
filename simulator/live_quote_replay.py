@@ -4,8 +4,14 @@ from walk_forward_calibration import Observation,spread,CURRENT_WEIGHTS
 BASE=10**18
 USDC=10**6
 
+IMPACT_K={'BTC':10000,'ETH':12000}
+
+def market_potential(k,skew):
+    return k*skew*skew//(2*10**12*USDC)
+
 def potential(btc,eth):
-    return (10000*btc*btc+2*6573*btc*eth+12000*eth*eth)//(2*10**12*USDC)
+    # Per-market potentials, each floored, with no cross term (RFQRiskMath.potential).
+    return market_potential(IMPACT_K['BTC'],btc)+market_potential(IMPACT_K['ETH'],eth)
 
 def replay(item):
     request=item['request'];snapshot=item['snapshot'];market=request['market'];buy=request['side']=='buy'

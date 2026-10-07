@@ -19,13 +19,20 @@ import { validateDevManifest } from "./mainnet-manifest.js";
 //   fund-maker USDC                owner approves and deposits maker capital
 //   fund-sponsor ETH               owner tops the gas sponsor up to ETH
 //   unpause                        owner unpauses the clearing
-export const PYTH_CORE_BASE_MAINNET="0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a";
 const BASE_USDC="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-export type RuntimeIdentities={emergency:string;approvers:[string,string,string];sponsor:string};
+/** `oracleSigners`, when the runtime publishes its oracle nodes' addresses, names the SignedPriceOracle signer set. */
+export type RuntimeIdentities={emergency:string;approvers:[string,string,string];sponsor:string;oracleSigners?:string[]};
 
-/** The dev manifest for the owner plus the runtime's published keys, validated; `policy` overrides the defaults within the dev ceilings. */
-export function devManifestFor(owner:string,runtime:RuntimeIdentities,oracleSource:string,policy?:unknown){
-  const base=generateDevIdentities(getAddress(oracleSource)).manifest;
+/** Oracle signer addresses: RFQ_DEV_ORACLE_SIGNERS (comma-separated) wins over the runtime's published list. */
+export function oracleSignersFor(runtime:RuntimeIdentities,configured=process.env.RFQ_DEV_ORACLE_SIGNERS){
+  const signers=configured?configured.split(",").map(item=>item.trim()).filter(Boolean):runtime.oracleSigners;
+  if(!signers?.length)throw new Error("no oracle signers: deploy the oracle node workers (deploy-cloudflare-dev.yml) so they publish their addresses, or set RFQ_DEV_ORACLE_SIGNERS (comma-separated, at least 3)");
+  return signers.map(item=>getAddress(item));
+}
+
+/** The dev manifest for the owner plus the runtime's published keys and the oracle signers, validated; `policy` overrides the defaults within the dev ceilings. */
+export function devManifestFor(owner:string,runtime:RuntimeIdentities,oracleSigners:string[],policy?:unknown){
+  const base=generateDevIdentities(oracleSigners.map(item=>getAddress(item))).manifest;
   const manifest={...base,owner:getAddress(owner),emergencyCouncil:getAddress(runtime.emergency),approvers:runtime.approvers.map(item=>getAddress(item)),...(policy?{policy:policy as typeof base.policy}:{})};
   validateDevManifest(manifest);
   return manifest;
@@ -46,7 +53,9 @@ async function ownerWallet(){
   const provider=new JsonRpcProvider(rpcUrl());const chainId=(await provider.getNetwork()).chainId;if(chainId!==8453n)throw new Error(`expected Base mainnet 8453, RPC reports ${chainId}`);
   return new Wallet(ownerKey(),provider);
 }
-const runtimeIdentities=()=>{if(!existsSync(RUNTIME))throw new Error("the Cloudflare dev runtime has not published its keys yet; deploy it (deploy-cloudflare-dev.yml) and wait a minute");return JSON.parse(readFileSync(RUNTIME,"utf8")) as RuntimeIdentities;};
+/** Oracle node addresses each node worker publishes (KV `oracle-node-<n>.json`, fetched by dev-contracts.sh). */
+const publishedOracleSigners=()=>{const files=[1,2,3].map(n=>resolve(STATE,`oracle-node-${n}.json`));if(!files.every(existsSync))return undefined;return files.map(file=>getAddress((JSON.parse(readFileSync(file,"utf8")) as {address:string}).address));};
+const runtimeIdentities=()=>{if(!existsSync(RUNTIME))throw new Error("the Cloudflare dev runtime has not published its keys yet; deploy it (deploy-cloudflare-dev.yml) and wait a minute");const runtime=JSON.parse(readFileSync(RUNTIME,"utf8")) as RuntimeIdentities;return {...runtime,oracleSigners:runtime.oracleSigners??publishedOracleSigners()};};
 const loadRecord=()=>{if(!existsSync(RECORD))throw new Error("no dev deployment yet; run the deploy action first");return JSON.parse(readFileSync(RECORD,"utf8")) as DeploymentRecord;};
 
 if(import.meta.url===`file://${process.argv[1]}`){
@@ -55,7 +64,8 @@ if(import.meta.url===`file://${process.argv[1]}`){
     case "identities":console.log(JSON.stringify({owner:new Wallet(ownerKey()).address,...runtimeIdentities()},null,2));break;
     case "prepare":{
       const policy=process.env.RFQ_DEV_POLICY_JSON?JSON.parse(process.env.RFQ_DEV_POLICY_JSON):undefined;
-      writePrivate(MANIFEST,devManifestFor(new Wallet(ownerKey()).address,runtimeIdentities(),process.env.RFQ_PYTH_CORE_ADDRESS||PYTH_CORE_BASE_MAINNET,policy));
+      const runtime=runtimeIdentities();
+      writePrivate(MANIFEST,devManifestFor(new Wallet(ownerKey()).address,runtime,oracleSignersFor(runtime),policy));
       console.log("prepared dev manifest");break;
     }
     case "cli":{
