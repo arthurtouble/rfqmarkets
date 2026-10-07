@@ -155,7 +155,7 @@ switch (role) {
       expectedQuoteModelVersion: QUOTE_MODEL_VERSION,
       rpcUrl: config.rpcUrl,
       secondaryRpcUrl: config.secondaryRpcUrl,
-      oracleMode: "pyth",
+      oracleMode: "signed",
       hedgeRisk: { url: config.hedgeRiskUrl, token: secrets.hedgeToken, maxAgeMs: 3000 },
     });
     break;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { encodeSignedReport } from "../../../packages/shared/src/oracle-report.js";
 import { AbiCoder, keccak256 } from "ethers";
 import {
   checkChainTimeOracle,
@@ -85,13 +86,14 @@ test("checkSubmittedReport rejects non-positive prices even when they match the 
   assert.equal(error(result.rejection), "oracle report rejected");
 });
 
-test("Pyth reports only carry a market until verified on chain", () => {
-  const report = AbiCoder.defaultAbiCoder().encode(["uint8", "bytes[]"], [0, ["0x01"]]),
-    other = AbiCoder.defaultAbiCoder().encode(["uint8", "bytes[]"], [1, ["0x01"]]);
-  const pyth = { oracle: { oracleMode: "pyth" as const } };
-  assert.deepEqual(submitted({}, { ...pyth, report, oracleReportHash: keccak256(report) }), {});
+test("signed reports only need to cover the market until verified on chain", () => {
+  const batch = (market: bigint) => [{ observedAt: 1n, prices: [{ market, bid: 10n, ask: 11n }], signature: "0x01" }],
+    report = encodeSignedReport(batch(0n)),
+    other = encodeSignedReport(batch(1n));
+  const signed = { oracle: { oracleMode: "signed" as const } };
+  assert.deepEqual(submitted({}, { ...signed, report, oracleReportHash: keccak256(report) }), {});
   assert.equal(
-    error(submitted({}, { ...pyth, report: other, oracleReportHash: keccak256(other) }).rejection),
+    error(submitted({}, { ...signed, report: other, oracleReportHash: keccak256(other) }).rejection),
     "oracle report rejected",
   );
   const observation = { market: 0n, bid: 10n, ask: 11n, observedAt: 1n, validUntil: 2n };

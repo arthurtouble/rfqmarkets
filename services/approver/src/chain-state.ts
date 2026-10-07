@@ -21,6 +21,7 @@ import { otherMarketIndex, type MarketIndex } from "../../../packages/shared/src
 import {
   oracleAdapterAbi,
   toOracleObservation,
+  type OracleObservationInput,
   type OracleObservation,
 } from "../../../packages/shared/src/oracle-report.js";
 import { reject, type Rejection } from "./rejection.js";
@@ -220,13 +221,14 @@ export function checkChainPolicy(snapshot: ChainSnapshot, approval: MakerApprova
 /**
  * Dry-run the oracle adapter's `verify` from the clearing contract at the read
  * block, paying its quoted update fee, and return the observation it would
- * settle against.
+ * settle `market` against. Throws when consensus left the market out.
  */
-export async function verifyPythReport(
+export async function verifySignedReport(
   chain: ChainClients,
   report: string,
   clearingAddress: string,
   blockNumber: number,
+  market: number,
 ): Promise<OracleObservation> {
   const adapter = new Interface(oracleAdapterAbi),
     oracleAddress = await chain.clearing.oracle({ blockTag: blockNumber }),
@@ -246,6 +248,10 @@ export async function verifyPythReport(
       },
       toBeHex(blockNumber),
     ]),
-    [value] = adapter.decodeFunctionResult("verify", raw);
-  return toOracleObservation(value);
+    [values] = adapter.decodeFunctionResult("verify", raw),
+    observation = Array.from(values as OracleObservationInput[], toOracleObservation).find(
+      (item) => item.market === BigInt(market),
+    );
+  if (!observation) throw new Error("oracle consensus omitted the market");
+  return observation;
 }

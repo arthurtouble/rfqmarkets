@@ -2,19 +2,31 @@
 // end-to-end tests. Artifacts come from `npm run compile:contracts`.
 import fs from "node:fs";
 import path from "node:path";
-import { AbiCoder, Contract, ContractFactory, Interface } from "ethers";
+import { AbiCoder, Contract, ContractFactory, Interface, encodeBytes32String } from "ethers";
 import { linkArtifact } from "../link-artifact.mjs";
 
 export const BASE = 10n ** 18n;
 
-/** The pre-v1 maximum limits: 1M USDC per trade, 5M USDC net, gross and per side, both markets enabled. */
+/** The maximum limits: 1M USDC per trade, 5M USDC net, gross and per side, enabled, BTC risk parameters. */
 export const MAX_MARKET_CONFIG = {
+  symbol: encodeBytes32String("BTC"),
   enabled: true,
   maxTradeNotional: 1_000_000_000_000n,
   maxMarketNotional: 5_000_000_000_000n,
   grossLimit: 5_000_000_000_000n,
   sideLimit: 5_000_000_000_000n,
+  impactK: 10_000,
+  shockBps: 4_000,
+  marginScaleBps: 10_000,
 };
+
+/** BTC (id 0) and ETH (id 1) with `limits` applied to both, and the launch risk parameters. */
+export function launchMarkets(limits = {}) {
+  return [
+    { ...MAX_MARKET_CONFIG, ...limits, symbol: encodeBytes32String("BTC"), impactK: 10_000, shockBps: 4_000 },
+    { ...MAX_MARKET_CONFIG, ...limits, symbol: encodeBytes32String("ETH"), impactK: 12_000, shockBps: 5_000 },
+  ];
+}
 
 export const TRADE_INTENT_TYPES = { TradeIntent: [
   { name: "account", type: "address" }, { name: "market", type: "uint8" }, { name: "baseDelta", type: "int256" },
@@ -62,7 +74,7 @@ export async function deployLinked(signer, name, args = [], libraries = {}) {
  */
 export async function deployClearing({
   deployer, governance, usdc, oracle, emergencyCouncil, approvers, baseRiskCapitalTarget,
-  markets = [MAX_MARKET_CONFIG, MAX_MARKET_CONFIG], unpause = true, libraries = {},
+  markets = launchMarkets(), unpause = true, libraries = {},
 }) {
   const implementation = await deployLinked(deployer, "RFQClearing", [], libraries);
   const abi = artifact("RFQClearing").abi;
@@ -79,10 +91,11 @@ export async function deployClearing({
   return { clearing, proxy, implementation, libraries };
 }
 
-/** ABI-encodes a MockPriceOracle observation. */
-export function encodeObservation({ market, bid, ask = bid, observedAt, validUntil }) {
+/** ABI-encodes a MockPriceOracle report: one observation, or several in ascending market order. */
+export function encodeObservation(observations) {
+  const list = Array.isArray(observations) ? observations : [observations];
   return AbiCoder.defaultAbiCoder().encode(
-    ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],
-    [[market, bid, ask, observedAt, validUntil]],
+    ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)[]"],
+    [list.map(({ market, bid, ask = bid, observedAt, validUntil }) => [market, bid, ask, observedAt, validUntil])],
   );
 }

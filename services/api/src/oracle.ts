@@ -3,6 +3,7 @@ import { AbiCoder, parseUnits } from "ethers";
 import { decodeStreamsV3Envelope } from "../../../packages/shared/src/streams.js";
 import type { PriceSnapshot } from "../../../packages/shared/src/policy.js";
 import { readSseEvents } from "../../lib/src/sse.js";
+import { encodeLocalReport } from "../../../packages/shared/src/oracle-report.js";
 import { MarketSignalTracker } from "./market-signals.js";
 
 export type OracleMarket = "BTC" | "ETH";
@@ -40,10 +41,13 @@ function localQuote(snapshot: PriceSnapshot): OracleQuote {
   return {
     snapshot,
     validUntil,
-    report: AbiCoder.defaultAbiCoder().encode(
-      ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],
-      [[marketId(snapshot.market as OracleMarket), snapshot.bid, snapshot.ask, observedAt, validUntil]],
-    ),
+    report: encodeLocalReport({
+      market: marketId(snapshot.market as OracleMarket),
+      bid: snapshot.bid,
+      ask: snapshot.ask,
+      observedAt,
+      validUntil,
+    }),
   };
 }
 

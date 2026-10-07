@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AbiCoder } from "ethers";
+import { decodeLocalReport } from "../../../packages/shared/src/oracle-report.js";
 import {
   ChainlinkDataStreamsSource,
   CoinbaseMarketDataSource,
@@ -191,10 +192,7 @@ test("uses Coinbase WebSocket BBO and produces a local on-chain report", async (
   });
   const moved = await source.latest("BTC");
   assert((moved.snapshot.volatilityBps ?? 0) > 90);
-  const decoded = AbiCoder.defaultAbiCoder().decode(
-    ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],
-    quote.report,
-  )[0];
+  const [decoded] = decodeLocalReport(quote.report);
   assert.equal(decoded.market, 0n);
   assert.equal(decoded.bid, quote.snapshot.bid);
   assert(decoded.validUntil > decoded.observedAt);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
+import { encodeSignedReport } from "../../../packages/shared/src/oracle-report.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -223,33 +224,36 @@ test("chain mode turns read failures into 503 and rejects excess gross capacity"
   );
 });
 
-test("Pyth mode validates the adapter's verified observation", async () => {
+test("signed mode validates the adapter's consensus observation", async () => {
   const fixture = buildFixture(),
     nowSeconds = BigInt(Math.floor(fixture.nowMs / 1000)),
-    report = AbiCoder.defaultAbiCoder().encode(["uint8", "bytes[]"], [0, ["0x01"]]);
+    report = encodeSignedReport([
+      { observedAt: nowSeconds, prices: [{ market: 0n, bid: PRICES.BTC, ask: PRICES.BTC }], signature: "0x01" },
+    ]);
   const payload = {
     ...fixture.payload,
     report,
     approval: { ...fixture.payload.approval, oracleReportHash: keccak256(report) },
   };
   const state = chainState(fixture.nowMs);
-  state.pythObservation = {
+  const consensus = {
     market: 0n,
     bid: PRICES.BTC + 1_000n,
     ask: PRICES.BTC + 1_000n,
     observedAt: nowSeconds,
     validUntil: nowSeconds + 60n,
   };
-  const result = await approve(context({ oracleMode: "pyth" }, state), payload);
+  state.signedObservations = [consensus];
+  const result = await approve(context({ oracleMode: "signed" }, state), payload);
   assert(!("status" in result), JSON.stringify(result));
-  state.pythObservation = { ...state.pythObservation, market: 1n };
+  state.signedObservations = [{ ...consensus, market: 1n }];
   assert.equal(
-    errorOf(await approve(context({ oracleMode: "pyth" }, state), payload)),
+    errorOf(await approve(context({ oracleMode: "signed" }, state), payload)),
     "oracle report rejected",
   );
-  state.pythObservation = { ...state.pythObservation, market: 0n, observedAt: nowSeconds - 20n };
+  state.signedObservations = [{ ...consensus, observedAt: nowSeconds - 20n }];
   assert.equal(
-    errorOf(await approve(context({ oracleMode: "pyth" }, state), payload)),
+    errorOf(await approve(context({ oracleMode: "signed" }, state), payload)),
     "chain-time oracle rejected",
   );
 });

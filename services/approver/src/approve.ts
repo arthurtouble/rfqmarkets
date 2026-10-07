@@ -6,7 +6,7 @@ import { MARKETS, marketIndex, type MarketIndex } from "../../../packages/shared
 import { BASE, abs } from "../../../packages/shared/src/numeric.js";
 import type { OracleObservation } from "../../../packages/shared/src/oracle-report.js";
 import { checkUserAuthorization, checkUserSignature, recoverSigner } from "./authorization.js";
-import { checkChainPolicy, readChainState, verifyPythReport, type ChainClients } from "./chain-state.js";
+import { checkChainPolicy, readChainState, verifySignedReport, type ChainClients } from "./chain-state.js";
 import {
   checkDomain,
   checkEnvelopeConsistency,
@@ -176,8 +176,18 @@ async function chainChecks(
   if (policy) return policy;
 
   let observation = request.observation;
-  if (options.oracleMode === "pyth") {
-    observation = await verifyPythReport(chain, input.report, domain.verifyingContract, snapshot.blockNumber);
+  if (options.oracleMode === "signed") {
+    try {
+      observation = await verifySignedReport(
+        chain,
+        input.report,
+        domain.verifyingContract,
+        snapshot.blockNumber,
+        market,
+      );
+    } catch {
+      return reject("oracle report rejected");
+    }
     const verified = checkVerifiedObservation(observation, market);
     if (verified) return verified;
   }

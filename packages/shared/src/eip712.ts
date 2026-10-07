@@ -70,7 +70,7 @@ export const sessionGrantTypes: Record<string, Array<{ name: string; type: strin
   SessionGrant: [
     { name: "account", type: "address" },
     { name: "session", type: "address" },
-    { name: "marketMask", type: "uint8" },
+    { name: "marketMask", type: "uint256" },
     { name: "maxTradeNotional", type: "uint128" },
     { name: "maxCumulativeNotional", type: "uint128" },
     { name: "maxFee", type: "uint128" },

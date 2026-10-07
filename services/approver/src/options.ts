@@ -1,10 +1,7 @@
 import type { JsonRpcProvider } from "ethers";
 
-export type OracleMode = "local" | "chainlink" | "pyth";
-export interface DataStreamsConfig {
-  feedIds: [string, string];
-  feedDecimals: [number, number];
-}
+/** "local" decodes MockPriceOracle reports; "signed" dry-runs the SignedPriceOracle adapter on chain. */
+export type OracleMode = "local" | "signed";
 export interface HedgeRiskConfig {
   url: string;
   token: string;
@@ -27,7 +24,6 @@ export interface ApproverOptions {
   rpcBatchMaxCount?: number;
   maxFutureSeconds?: number;
   oracleMode?: OracleMode;
-  dataStreams?: DataStreamsConfig;
   hedgeRisk?: HedgeRiskConfig;
   /** Transport for the hedger risk snapshot; defaults to global `fetch`. */
   fetchImpl?: typeof fetch;

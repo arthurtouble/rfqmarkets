@@ -3,11 +3,10 @@ import type { ApproverPayload } from "../../../packages/shared/src/approver-payl
 import type { MarketIndex } from "../../../packages/shared/src/markets.js";
 import {
   decodeLocalReport,
-  decodePythReportMarket,
+  signedReportMarkets,
   type OracleObservation,
 } from "../../../packages/shared/src/oracle-report.js";
-import { decodeStreamsV3Envelope } from "../../../packages/shared/src/streams.js";
-import type { DataStreamsConfig, OracleMode } from "./options.js";
+import type { OracleMode } from "./options.js";
 import { reject, type Rejection } from "./rejection.js";
 
 /** Oldest oracle observation accepted, matching the contract's settlement freshness. */
@@ -29,34 +28,22 @@ export function observationOutsideWindow(
 }
 
 /**
- * Decode the observation carried by a leader-supplied report. Pyth reports only
- * carry the market here (their price is read from the adapter on chain later),
- * so the result is undefined in Pyth mode. Throws on malformed reports.
+ * Decode the observation for `market` carried by a leader-supplied report.
+ * Signed-oracle reports carry node batches whose consensus price only the
+ * adapter computes, so in signed mode the result is undefined once the market
+ * is present; `approve` dry-runs the adapter for the real observation. Throws
+ * on malformed reports or a report without the market.
  */
 export function decodeReportObservation(
   report: string,
   market: MarketIndex,
-  oracle: { oracleMode?: OracleMode; dataStreams?: DataStreamsConfig },
+  oracle: { oracleMode?: OracleMode },
 ): OracleObservation | undefined {
-  if (oracle.oracleMode === "pyth") {
-    if (decodePythReportMarket(report) !== BigInt(market)) throw new Error("Pyth market mismatch");
+  if (oracle.oracleMode === "signed") {
+    if (!signedReportMarkets(report).has(BigInt(market))) throw new Error("signed report lacks market");
     return undefined;
   }
-  if (oracle.dataStreams) {
-    const observation = decodeStreamsV3Envelope(
-      report,
-      oracle.dataStreams.feedIds[market],
-      oracle.dataStreams.feedDecimals[market],
-    );
-    return {
-      market: BigInt(market),
-      bid: observation.bid,
-      ask: observation.ask,
-      observedAt: BigInt(observation.observedAt),
-      validUntil: BigInt(observation.validUntil),
-    };
-  }
-  return decodeLocalReport(report);
+  return decodeLocalReport(report).find((observation) => observation.market === BigInt(market));
 }
 
 /**
@@ -70,7 +57,7 @@ export function checkSubmittedReport(input: {
   oracleReportHash: string;
   market: MarketIndex;
   quote: Pick<ApproverPayload["quote"], "bid" | "ask">;
-  oracle: { oracleMode?: OracleMode; dataStreams?: DataStreamsConfig };
+  oracle: { oracleMode?: OracleMode };
   nowMs: number;
   maxFutureSeconds: number;
   checkWallClock: boolean;
@@ -80,7 +67,7 @@ export function checkSubmittedReport(input: {
   try {
     if (keccak256(report) !== input.oracleReportHash) return { rejection: reject("oracle hash mismatch") };
     const observation = decodeReportObservation(report, market, input.oracle);
-    if (input.oracle.oracleMode !== "pyth" && !observation) throw new Error("missing oracle observation");
+    if (input.oracle.oracleMode !== "signed" && !observation) throw new Error("missing oracle observation");
     if (!observation) return {};
     const wallTimeInvalid =
       input.checkWallClock &&
@@ -101,10 +88,9 @@ export function checkSubmittedReport(input: {
 }
 
 /**
- * Pyth `updatePriceFeeds` does not overwrite a newer on-chain update, so the
- * adapter's verified observation can be newer than the signed quote's payload.
- * Validate that actual observation instead of rejecting a safe monotonic
- * oracle update merely because its price differs.
+ * The signed adapter's consensus (median across nodes) can differ from any one
+ * node's price in the quote payload. Validate that actual observation instead
+ * of rejecting it merely because its price differs.
  */
 export function checkVerifiedObservation(
   observation: OracleObservation,

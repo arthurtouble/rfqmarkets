@@ -153,6 +153,11 @@ contract SignedPriceOracle is IPriceOracle, EIP712, Ownable2Step {
         }
     }
 
+    /// @notice Signed reports carry no update fee; kept so fee-quoting callers work unchanged.
+    function updateFee(bytes calldata) external pure returns (uint256) {
+        return 0;
+    }
+
     function hashBatch(uint64 observedAt, Price[] memory prices) public pure returns (bytes32) {
         bytes32[] memory hashes = new bytes32[](prices.length);
         for (uint256 i; i < prices.length; ++i) {
