@@ -42,11 +42,10 @@ library RFQLedger {
         Position storage p = $.accounts[account].positions[market];
         (int256 next, uint256 entry, int256 pnl) = RFQRiskMath.positionTransition(p.size, p.entryPrice, delta, price);
         if (!transferPnl(account, pnl)) return;
-        RFQRiskMath.updateExposure(market, p.size, next);
+        RFQRiskMath.moveLeg(market, p.size, p.entryPrice, next, entry);
         p.size = next;
         p.entryPrice = entry;
         p.lastFundingIndex = $.markets[market].fundingIndex;
-        $.markets[market].aggregateBase += delta;
     }
 
     /// @notice Closes every leg at the stored exit prices, netting PnL against the maker once.
@@ -66,19 +65,29 @@ library RFQLedger {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         uint256 debt;
         (debt, insuranceUsed, makerUsed, unresolved) = RFQRiskMath.deficitAssessment(account);
-        if (debt != 0) {
-            changeCollateral(account, int256(debt));
-            $.insuranceBalance -= insuranceUsed;
-            $.makerBacking -= makerUsed;
-        }
+        if (debt == 0) return (0, 0, 0);
+        changeCollateral(account, int256(debt));
+        $.insuranceBalance -= insuranceUsed;
+        $.makerBacking -= makerUsed;
         emit IRFQClearingEvents.DeficitAbsorbed(account, insuranceUsed, makerUsed, unresolved);
         if (unresolved != 0) startResolution();
     }
 
+    /// @notice Requires non-negative collateral and opening equity (unrealized losses only) of at least
+    /// initial margin.
     function requireInitialMargin(address account) internal view {
         if (
             RFQClearingStorage.layout().accounts[account].collateral < 0
                 || RFQRiskMath.accountEquity(account, false) < int256(RFQRiskMath.accountMargin(account, true))
+        ) revert Margin();
+    }
+
+    /// @notice Requires non-negative collateral and an account that is not liquidatable. Used after
+    /// reductions, which must stay possible for an account between maintenance and initial margin.
+    function requireMaintenanceMargin(address account) internal view {
+        if (
+            RFQClearingStorage.layout().accounts[account].collateral < 0
+                || RFQRiskMath.accountEquity(account, true) < int256(RFQRiskMath.accountMargin(account, false))
         ) revert Margin();
     }
 
@@ -128,8 +137,8 @@ library RFQLedger {
     {
         o = RFQClearingStorage.layout().oracle.verify{value: msg.value}(report);
         if (
-            o.market >= MARKET_COUNT || (expectedMarket != type(uint8).max && o.market != expectedMarket)
-                || o.bid == 0 || o.ask < o.bid
+            o.market >= MARKET_COUNT || (expectedMarket != type(uint8).max && o.market != expectedMarket) || o.bid == 0
+                || o.ask < o.bid
         ) revert OracleInvalid();
         if (
             block.timestamp < o.observedAt || block.timestamp > o.validUntil
@@ -149,7 +158,9 @@ library RFQLedger {
     // ---- Funding ----
 
     function updateAllFunding() internal {
-        for (uint8 i; i < MARKET_COUNT; ++i) updateFunding(i);
+        for (uint8 i; i < MARKET_COUNT; ++i) {
+            updateFunding(i);
+        }
     }
 
     /// @notice Accrues a market's funding index up to now at the stored mid.
@@ -166,20 +177,12 @@ library RFQLedger {
         );
     }
 
-    /// @notice Settles accrued funding on every leg. No-op if the maker cannot pay and resolution starts.
+    /// @notice Accrues both markets and settles the account's funding on every leg as one net transfer.
+    /// No-op if the maker cannot pay and resolution starts.
     function settleAllFunding(address account) internal {
+        updateAllFunding();
         (int256[2] memory payments, int256 total) = RFQRiskMath.fundingPayments(account);
         if (!transferPnl(account, -total)) return;
         RFQRiskMath.recordFunding(account, payments);
-    }
-
-    function settleFunding(address account, uint8 market) internal {
-        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        Position storage p = $.accounts[account].positions[market];
-        int256 index = $.markets[market].fundingIndex;
-        int256 payment = p.size * (index - p.lastFundingIndex) / int256(BASE_UNIT);
-        if (!transferPnl(account, -payment)) return;
-        p.lastFundingIndex = index;
-        if (payment != 0) emit IRFQClearingEvents.FundingSettled(account, market, payment);
     }
 }

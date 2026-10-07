@@ -68,8 +68,8 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         MarketConfig[2] calldata markets_
     ) external initializer {
         if (
-            usdc_ == address(0) || oracle_ == address(0) || governance_ == address(0)
-                || emergencyCouncil_ == address(0) || governance_ == emergencyCouncil_ || baseRiskCapitalTarget_ == 0
+            usdc_ == address(0) || oracle_ == address(0) || governance_ == address(0) || emergencyCouncil_ == address(0)
+                || governance_ == emergencyCouncil_ || baseRiskCapitalTarget_ == 0
         ) revert InvalidConfiguration();
         RFQClearingNamespace.Layout storage $ = _s();
         $.usdc = IERC20(usdc_);
@@ -114,8 +114,7 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
     // =======================================================================
 
     function deposit(uint256 amount) external nonReentrant {
-        _requireLiveAmount(amount);
-        RFQRiskMath.pullExact(_s().usdc, msg.sender, amount);
+        _pull(amount);
         _creditDeposit(msg.sender, amount);
     }
 
@@ -130,12 +129,12 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         bytes32 r,
         bytes32 s
     ) external nonReentrant {
-        _requireLiveAmount(amount);
-        IERC20 usdc_ = _s().usdc;
+        RFQClearingNamespace.Layout storage $ = _s();
+        if (amount == 0 || $.resolutionRequired) revert InvalidTrade();
+        IERC20 usdc_ = $.usdc;
         uint256 beforeBalance = usdc_.balanceOf(address(this));
-        IERC3009(address(usdc_)).receiveWithAuthorization(
-            from, address(this), amount, validAfter, validBefore, authorizationNonce, v, r, s
-        );
+        IERC3009(address(usdc_))
+            .receiveWithAuthorization(from, address(this), amount, validAfter, validBefore, authorizationNonce, v, r, s);
         if (usdc_.balanceOf(address(this)) - beforeBalance != amount) revert InvalidTrade();
         _creditDeposit(from, amount);
     }
@@ -165,32 +164,30 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
 
     /// @notice Adds maker backing. Anyone may top up.
     function fundMaker(uint256 amount) external nonReentrant {
-        RFQClearingNamespace.Layout storage $ = _s();
-        _requireLiveAmount(amount);
-        RFQRiskMath.pullExact($.usdc, msg.sender, amount);
-        $.makerBacking += amount;
+        _pull(amount);
+        _s().makerBacking += amount;
         emit MakerFunded(msg.sender, amount);
     }
 
     /// @notice Adds to the insurance fund. Anyone may top up.
     function fundInsurance(uint256 amount) external nonReentrant {
-        RFQClearingNamespace.Layout storage $ = _s();
-        _requireLiveAmount(amount);
-        RFQRiskMath.pullExact($.usdc, msg.sender, amount);
-        $.insuranceBalance += amount;
+        _pull(amount);
+        _s().insuranceBalance += amount;
         emit InsuranceFunded(msg.sender, amount);
     }
 
-    /// @notice Releases maker capital above both the opening floor and four times the live stress loss.
+    /// @notice Releases maker capital. What remains, after setting aside customers' unrealized gains, must
+    /// cover both the opening floor and four times the live stress loss.
     function withdrawMakerExcess(address recipient, uint256 amount) external onlyGovernance nonReentrant {
         RFQClearingNamespace.Layout storage $ = _s();
         if ($.resolutionRequired || recipient == address(0) || amount == 0 || amount > $.makerBacking) {
             revert InvalidTrade();
         }
         uint256 remaining = $.makerBacking - amount;
-        if (remaining < $.baseRiskCapitalTarget) revert Margin();
+        uint256 owed = RFQRiskMath.customerUnrealizedGain();
+        if (remaining < $.baseRiskCapitalTarget + owed) revert Margin();
         (int256 btc, int256 eth) = RFQRiskMath.portfolioExposure();
-        if (RFQRiskMath.stressLoss(btc, eth) > remaining / 4) revert Margin();
+        if (RFQRiskMath.stressLoss(btc, eth) > (remaining - owed) / 4) revert Margin();
         $.makerBacking = remaining;
         $.usdc.safeTransfer(recipient, amount);
         emit MakerWithdrawn(recipient, amount);
@@ -234,7 +231,9 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
                 grant.deadline
             )
         );
-        RFQSignatureVerifier.consumeOwnerAuthorization(grant.account, grant.nonce, grant.deadline, structHash, signature);
+        RFQSignatureVerifier.consumeOwnerAuthorization(
+            grant.account, grant.nonce, grant.deadline, structHash, signature
+        );
         RFQRiskMath.validateSessionConfiguration(grant);
         _s().sessions[grant.session] = Session(
             grant.account,
@@ -342,9 +341,11 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         RFQLedger.advanceEpoch();
     }
 
+    /// @notice Replaces the oracle adapter. Allowed during resolution until its prices are fixed, so a broken
+    /// feed cannot strand the wind-down.
     function setOracle(address next) external onlyGovernance {
         RFQClearingNamespace.Layout storage $ = _s();
-        if ($.resolutionRequired || next == address(0)) revert InvalidConfiguration();
+        if ($.resolution.pricesReady || next == address(0)) revert InvalidConfiguration();
         $.oracle = IPriceOracle(next);
         ++$.policyVersion;
         emit OracleUpdated(next);
@@ -362,7 +363,9 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         MarketLimits storage limits = $.limits[market];
         if (
             msg.sender != $.governance
-                && (enabled || maxTradeNotional > limits.maxTradeNotional || maxMarketNotional > limits.maxMarketNotional)
+                && (enabled
+                    || maxTradeNotional > limits.maxTradeNotional
+                    || maxMarketNotional > limits.maxMarketNotional)
         ) revert Unauthorized();
         // The net limit is the funding-rate denominator: accrue at the old rate before changing it.
         if (!$.resolutionRequired) RFQLedger.updateFunding(market);
@@ -601,6 +604,10 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         return _s().makerIncidentGracePeriod;
     }
 
+    function customerUnrealizedGain() external view returns (uint256) {
+        return RFQRiskMath.customerUnrealizedGain();
+    }
+
     function makerIncident() external view returns (bool) {
         return RFQRiskMath.makerIncident();
     }
@@ -669,8 +676,11 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         return RFQClearingStorage.layout();
     }
 
-    function _requireLiveAmount(uint256 amount) private view {
-        if (amount == 0 || _s().resolutionRequired) revert InvalidTrade();
+    /// @dev Pulls exactly `amount` from the caller; deposits and top-ups stop once resolution starts.
+    function _pull(uint256 amount) private {
+        RFQClearingNamespace.Layout storage $ = _s();
+        if (amount == 0 || $.resolutionRequired) revert InvalidTrade();
+        RFQRiskMath.pullExact($.usdc, msg.sender, amount);
     }
 
     function _creditDeposit(address account, uint256 amount) private {
