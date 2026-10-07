@@ -195,12 +195,16 @@ export class ExecutionService {
     // The user authorizes quantity, price protection, fee and a short execution
     // interval. Oracle proof freshness is independent: a fresh proof is fetched
     // after wallet signing and bound by the approvers immediately before submit.
-    // A sell has no upper price bound, so its fee cap allows the same move above the expected price
-    // that its price protection allows below it: a better fill must not fail on a larger fee.
-    const feeCeilingPrice =
-        quote.baseDelta < 0n ? 2n * quote.expectedPrice - quote.worstPrice : quote.worstPrice,
-      protectedNotional = (abs(quote.baseDelta) * feeCeilingPrice) / BASE,
-      feeNotional = protectedNotional > quote.notional ? protectedNotional : quote.notional;
+    // The fee follows the notional at the fill's mid. A buy's protection bounds that; a sell has no
+    // upper bound, so its fee cap allows the notional to rise by as much as its protection lets the
+    // price fall: a better fill must not fail on a larger fee.
+    const protectedNotional = (abs(quote.baseDelta) * quote.worstPrice) / BASE,
+      feeNotional =
+        quote.baseDelta < 0n
+          ? ceilDiv(quote.notional * (2n * quote.expectedPrice - quote.worstPrice), quote.expectedPrice)
+          : protectedNotional > quote.notional
+            ? protectedNotional
+            : quote.notional;
     return {
       account: getAddress(account),
       market: marketIndex(quote.market),

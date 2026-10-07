@@ -12,7 +12,7 @@ type Fixtures = {
 
 export const test = base.extend<Fixtures & { pageErrors: void }>({
   stack: async ({}, use) => use(stack),
-  isMobile: async ({}, use, testInfo) => use(testInfo.project.name === "mobile"),
+  isMobile: async ({}, use, testInfo) => use(testInfo.project.name.endsWith("mobile")),
   // Any uncaught exception in the page fails the test; console errors are attached for triage.
   pageErrors: [
     async ({ page }, use, testInfo) => {

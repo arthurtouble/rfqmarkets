@@ -5,6 +5,8 @@ export default defineConfig({
   plugins: [hardhatEthers],
   networks: {
     hardhatOp: { type: "edr-simulated", chainType: "op" },
+    // `npm run dev:chain:timed`: mines once a second, so chain time stays on the wall clock under load.
+    hardhatTimed: { type: "edr-simulated", chainType: "op", mining: { auto: false, interval: 1_000 } },
     // Local chain that reports Base mainnet's chain ID; used only by the mainnet deployment rehearsal.
     hardhatBaseRehearsal: { type: "edr-simulated", chainType: "op", chainId: 8_453 },
     base: {

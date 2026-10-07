@@ -335,10 +335,10 @@ export class QuoteEngine {
    * Read the block-pinned quote snapshot. When another market carries live or reserved gross risk
    * and its on-chain price is stale, refresh it on chain first so cross-margin checks stay valid.
    */
-  private async readFreshQuoteSnapshot(market: Market) {
+  private async readFreshQuoteSnapshot(market: Market | null) {
     const { ctx } = this,
       clearing = ctx.clearing!,
-      selected = marketIndex(market);
+      selected = market === null ? -1 : marketIndex(market);
     let snapshot = await this.chain.readQuoteSnapshot();
     if (!snapshot.block || snapshot.paused || snapshot.resolutionRequired)
       throw new Error("market is paused");
@@ -379,6 +379,15 @@ export class QuoteEngine {
         throw new Error("market is paused");
     }
     return snapshot as typeof snapshot & { block: NonNullable<typeof snapshot.block> };
+  }
+
+  /**
+   * Refresh the on-chain price of every market with open interest whose price is stale, so an
+   * account with positions passes the contract's freshness check outside a trade (withdrawals).
+   */
+  async refreshOpenMarketPrices() {
+    if (this.ctx.devFund) await this.dev.advanceTime();
+    await this.readFreshQuoteSnapshot(null);
   }
 
   /** Push a fresh price for `otherMarket` on chain (`refreshOracle`), sponsored by the leader. */

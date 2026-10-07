@@ -1,5 +1,5 @@
 // One command for the whole local venue: compile, chain, deploy, services.
-// Usage: npm run dev:stack [-- --web] [-- --coinbase] [-- --skip-compile]
+// Usage: npm run dev:stack [-- --web] [-- --coinbase] [-- --skip-compile] [-- --mine-every-second]
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdirSync, openSync } from "node:fs";
 
@@ -78,7 +78,15 @@ const waitForHttp = async (url: string) => {
 try {
   if (!args.has("--skip-compile")) run("compile:contracts");
   mkdirSync(".local-state", { recursive: true });
-  start("chain", "dev:chain", {}, ".local-state/chain.log");
+  // Automine (the default) mines each transaction at once but a second or more after the last block,
+  // so a burst pushes chain time ahead of the wall clock until oracle reports look stale. Long
+  // time-sensitive suites (the browser tests) mine once a second instead, as Base does.
+  start(
+    "chain",
+    args.has("--mine-every-second") ? "dev:chain:timed" : "dev:chain",
+    {},
+    ".local-state/chain.log",
+  );
   await waitForRpc();
   run("deploy:local");
   start("services", "dev:services", { RFQ_MARKET_DATA: args.has("--coinbase") ? "coinbase" : "sim" });

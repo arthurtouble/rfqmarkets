@@ -3,7 +3,9 @@
 Playwright specs that drive the browser apps against the local stack: a Hardhat
 chain with the contracts deployed, every service, simulated prices and the
 apps' Vite dev servers. Each spec runs twice, in a `desktop` project
-(1440×900) and a `mobile` project (Pixel 7: 412×915, touch).
+(1440×900) and a `mobile` project (Pixel 7: 412×915, touch). The emergency exit
+spec moves chain time forward, which the shared Hardhat chain cannot undo, so it
+runs last in its own `exit desktop` and `exit mobile` projects.
 
 ```
 npm run test:e2e                       # starts the stack if it is not running
@@ -14,7 +16,10 @@ npx playwright show-report             # last HTML report
 ```
 
 Outside CI an already running stack is reused, so keep
-`npm run dev:stack -- --web` open in another terminal while iterating. The
+`npm run dev:stack -- --web --mine-every-second` open in another terminal while
+iterating. The flag mines a block once a second, as Base does; with automine each
+transaction gets its own later second, and a long run pushes chain time far
+enough ahead of the wall clock that oracle reports look stale. The
 docs site (`npm run dev:docs`) is started the same way.
 
 In a cloud session the pre-installed Chromium may not match this Playwright

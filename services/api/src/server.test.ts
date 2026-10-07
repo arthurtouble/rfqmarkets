@@ -1029,12 +1029,12 @@ test("market intents bind reduce-only and cannot be re-prepared with weaker sema
 test("a sell's fee cap covers a fill above the expected price as far as its protection allows below", async () => {
   const target = buildApi();
   await target.ready();
-  const prepare = async (side: "buy" | "sell", nonce: string) => {
+  const prepare = async (side: "buy" | "sell", nonce: string, amount = "200") => {
     const quote = (
       await target.inject({
         method: "POST",
         url: "/v1/quote",
-        payload: { market: "ETH", side, amount: "200" },
+        payload: { market: "ETH", side, amount },
       })
     ).json();
     const prepared = await target.inject({
@@ -1045,14 +1045,24 @@ test("a sell's fee cap covers a fill above the expected price as far as its prot
     assert.equal(prepared.statusCode, 200, prepared.body);
     return { quote, intent: prepared.json().intent };
   };
-  const sell = await prepare("sell", "881001");
-  const sellCeiling = 2n * BigInt(sell.quote.expectedPrice) - BigInt(sell.quote.worstPrice);
-  const sellNotional = (-BigInt(sell.quote.baseDelta) * sellCeiling) / 10n ** 18n;
-  assert.ok(
-    BigInt(sell.intent.maxFee) > BigInt(sell.quote.fee),
-    "a sell may fill higher and pay a larger fee",
-  );
-  assert.ok(BigInt(sell.intent.maxFee) * BigInt(sell.quote.amount) >= sellNotional * BigInt(sell.quote.fee));
+  // The fee follows the notional at the fill's mid, so a sell filled higher pays more. Its cap allows
+  // the notional to rise by the protection's width, even on a 10 USDC sell where a 1-unit rise matters.
+  for (const [amount, nonce] of [
+    ["200", "881001"],
+    ["10", "881003"],
+  ] as const) {
+    const sell = await prepare("sell", nonce, amount);
+    const expected = BigInt(sell.quote.expectedPrice),
+      width = expected - BigInt(sell.quote.worstPrice);
+    assert.ok(
+      BigInt(sell.intent.maxFee) > BigInt(sell.quote.fee),
+      `a ${amount} USDC sell may pay a larger fee`,
+    );
+    assert.ok(
+      BigInt(sell.intent.maxFee) * expected >= BigInt(sell.quote.fee) * (expected + width),
+      `a ${amount} USDC sell's fee cap covers its protection width`,
+    );
+  }
   const buy = await prepare("buy", "881002");
   const buyNotional = (BigInt(buy.quote.baseDelta) * BigInt(buy.quote.worstPrice)) / 10n ** 18n;
   assert.ok(BigInt(buy.intent.maxFee) * BigInt(buy.quote.amount) >= buyNotional * BigInt(buy.quote.fee));

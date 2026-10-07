@@ -9,7 +9,6 @@ const COPY: Array<[RegExp, string]> = [
   [/market trade limit exceeded/i, "This trade is over the market's per-trade limit. Lower the amount or leverage."],
   [/hedge risk requires exposure reduction|hedging unavailable: only exposure-reducing/i, "This direction is closed for now while the venue rebalances. Nothing was traded."],
   [/guarded hedge limit exceeded/i, "The venue is limiting trade sizes for now. Try a smaller amount."],
-  [/insufficient margin/i, "Not enough margin for this trade. Add funds or lower the amount or leverage."],
   [/capacity reached|admission inventory changed|too many requests|rate limit/i, "The venue is busy right now. Nothing was traded. Try again in a moment."],
   [/approver quorum unavailable|settlement simulation failed|lacks safe inclusion budget/i, "The trade couldn't be confirmed right now. Nothing was traded. Try again."],
   [/^Failed to fetch$|NetworkError|Load failed/i, "Can't reach the trading service. Check your connection and try again."],

@@ -26,7 +26,7 @@ const prepared=await Promise.all(clients.map(async client=>{
 }));
 const started=Date.now(),results=await Promise.all(prepared.map(async item=>({...item,result:await post("/v1/approve",item.payload)}))),elapsed=Date.now()-started;
 const accepted=results.filter(item=>item.result.response.ok),rejected=results.filter(item=>!item.result.response.ok);
-for(const item of rejected){assert([409,503].includes(item.result.response.status),JSON.stringify(item.result.payload));assert.match(String(item.result.payload.error),/price moved|chain submission|inclusion|quorum|settlement|admission inventory changed/);}
+for(const item of rejected){assert([409,503].includes(item.result.response.status),JSON.stringify(item.result.payload));assert.match(String(item.result.payload.error),/price moved|chain submission|inclusion|quorum|settlement|admission inventory changed|approval risk changed/);}
 assert(accepted.length>=Math.floor(count*0.75),`only ${accepted.length}/${count} parallel settlements succeeded: ${JSON.stringify(rejected.map(item=>item.result.payload))}`);
 assert.equal(new Set(accepted.map(item=>item.result.payload.transaction.hash)).size,accepted.length,"two settlements reported the same transaction");
 for(const item of accepted){assert.equal(await clearing.nonceUsed(item.wallet.address,item.nonce),true);const position=await clearing.positionOf(item.wallet.address,item.market==="BTC"?0:1);assert.equal(position.size.toString(),item.intent.baseDelta);}
@@ -41,7 +41,7 @@ const closed=await Promise.all(accepted.map(async item=>{
     const closeNonce=nonce(),preparedClose=await post("/v1/prepare",{quoteId:closeQuote.payload.quoteId,account:item.wallet.address,nonce:closeNonce,reduceOnly:true});assert(preparedClose.response.ok,JSON.stringify(preparedClose.payload));
     const signature=await item.wallet.signTypedData(preparedClose.payload.domain,preparedClose.payload.types,preparedClose.payload.intent),result=await post("/v1/approve",{quoteId:closeQuote.payload.quoteId,account:item.wallet.address,nonce:closeNonce,reduceOnly:true,userSignature:signature});
     if(result.response.ok)return {...item,closeNonce,result};
-    assert.match(String(result.payload.error),/price moved|chain submission|inclusion|settlement|admission inventory changed/);
+    assert.match(String(result.payload.error),/price moved|chain submission|inclusion|settlement|admission inventory changed|approval risk changed/);
   }
   throw new Error(`close retries exhausted for ${item.wallet.address}`);
 }));

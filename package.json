@@ -37,6 +37,7 @@
     "dev:web": "vite apps/web",
     "dev:admin": "vite apps/admin",
     "dev:chain": "hardhat --verbosity 0 node --network hardhatOp --hostname 127.0.0.1 --port 8545",
+    "dev:chain:timed": "hardhat --verbosity 0 node --network hardhatTimed --hostname 127.0.0.1 --port 8545",
     "deploy:local": "node --import tsx scripts/deploy-local.ts",
     "smoke:hyperliquid-testnet": "node --import tsx scripts/hyperliquid-testnet-smoke.ts",
     "smoke:local": "node --import tsx scripts/live-smoke.ts",

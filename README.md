@@ -32,6 +32,7 @@ The Base mainnet deployment is a **development** deployment: owner-controlled, n
 ```sh
 npm ci
 npm run dev:stack -- --web   # chain, v1 contracts, every service and the trading UI, offline
+                             # (add --mine-every-second for real-time blocks, as the browser tests use)
 npm run dev:scenario         # optional: scripted fills, an approver outage and a leader failover
 ```
 
