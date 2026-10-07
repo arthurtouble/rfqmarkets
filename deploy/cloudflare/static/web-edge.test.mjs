@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleRequest, serviceForPath } from "./web-edge.mjs";
+import { readFileSync } from "node:fs";
+import { SECURITY_HEADERS, handleRequest, serviceForPath } from "./web-edge.mjs";
 const limiter={limit:async()=>({success:true})},edge={PUBLIC_READ_LIMIT:limiter,PUBLIC_WRITE_LIMIT:limiter,GLOBAL_READ_LIMIT:limiter,GLOBAL_WRITE_LIMIT:limiter},request=(url,init={})=>new Request(url,{...init,headers:{'cf-connecting-ip':'192.0.2.1',...(init.headers??{})}});
 
 test("routes public reads to the indexer and market streams to the gateway", () => {
@@ -75,6 +76,33 @@ test("contains upstream failures and still serves non-service assets", async () 
     ASSETS: { fetch: () => new Response("terminal") },
   });
   assert.equal(await asset.text(), "terminal");
+});
+
+test("asset responses carry the app's security headers, the same as apps/web/public/_headers", async () => {
+  const asset = await handleRequest(new Request("https://example.test/portfolio"), {
+    ASSETS: {
+      fetch: () =>
+        new Response("<html></html>", {
+          status: 200,
+          headers: { "content-type": "text/html", "cache-control": "public, max-age=0" },
+        }),
+    },
+  });
+  assert.equal(asset.status, 200);
+  assert.equal(await asset.text(), "<html></html>");
+  assert.equal(asset.headers.get("content-type"), "text/html");
+  assert.equal(asset.headers.get("cache-control"), "public, max-age=0");
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) assert.equal(asset.headers.get(name), value, name);
+  // The worker's copy must match the Pages-style _headers file the app ships.
+  const shipped = {};
+  const block = readFileSync(new URL("../../../apps/web/public/_headers", import.meta.url), "utf8")
+    .split(/\n\s*\n/)
+    .find((section) => section.trimStart().startsWith("/*\n"));
+  for (const line of block.split("\n").slice(1)) {
+    const index = line.indexOf(":");
+    if (index > 0) shipped[line.slice(0, index).trim().toLowerCase()] = line.slice(index + 1).trim();
+  }
+  assert.deepEqual(shipped, { ...SECURITY_HEADERS });
 });
 
 test("reports edge readiness separately from runtime readiness", async () => {

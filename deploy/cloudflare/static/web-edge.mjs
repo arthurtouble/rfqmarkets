@@ -84,7 +84,28 @@ export async function handleRequest(request, env) {
 
   if(url.pathname.startsWith("/v1/")||url.pathname.startsWith("/internal/")||url.pathname==="/approve")return json({error:"route_not_allowed"},404);
   if(request.method!=="GET"&&request.method!=="HEAD")return json({error:"method_not_allowed"},405);
-  return env.ASSETS.fetch(request);
+  return withSecurityHeaders(await env.ASSETS.fetch(request));
+}
+
+/**
+ * The trading app's browser policy, the same values as apps/web/public/_headers (web-edge.test.mjs keeps
+ * them in step). Cloudflare applies `_headers` only to assets it serves directly, not to responses this
+ * worker returns from env.ASSETS.fetch (the SPA fallback included), so the worker sets them itself.
+ */
+export const SECURITY_HEADERS = Object.freeze({
+  "content-security-policy":
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' https://fonts.reown.com; img-src 'self' data: blob: https:; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+  "permissions-policy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+  "referrer-policy": "no-referrer",
+  "strict-transport-security": "max-age=31536000; includeSubDomains",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+});
+
+function withSecurityHeaders(asset) {
+  const response = new Response(asset.body, asset);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.headers.set(name, value);
+  return response;
 }
 
 export default {

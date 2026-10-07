@@ -466,7 +466,18 @@ test("a recent finalized snapshot survives a transient indexer failure", async (
   ).json();
   assert.equal(risk.healthy, true);
   assert.equal(risk.indexedBlock, 91);
-  assert.match((await hedge.inject({ method: "GET", url: "/health" })).json().error, /indexer unavailable/);
+  // The public health route reports a code; the detail needs the operations token.
+  assert.equal((await hedge.inject({ method: "GET", url: "/health" })).json().error, "indexer_unavailable");
+  assert.match(
+    (
+      await hedge.inject({
+        method: "GET",
+        url: "/v1/status",
+        headers: { authorization: "Bearer risk-secret" },
+      })
+    ).json().error,
+    /indexer unavailable/,
+  );
   await hedge.close();
   rmSync(directory, { recursive: true, force: true });
 });
@@ -610,4 +621,95 @@ test("the default hedge coin map is data", () => {
   const coins = loadHedgeCoins();
   assert.equal(coins.BTC, "BTC");
   assert.equal(coins.ETH, "ETH");
+});
+
+test("public health never echoes venue errors", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-hedge-health-")),
+    payload = {
+      blockNumber: 95,
+      markets: { BTC: { aggregateBase: "1000000000000000000", bid: "99990000000", ask: "100010000000" } },
+    },
+    fetchImpl = (async () => new Response(JSON.stringify(payload), { status: 200 })) as typeof fetch;
+  const venue: HedgeVenue = {
+    mode: "failing",
+    position: async () => 0n,
+    find: async () => null,
+    submit: async () => {
+      throw new Error("bridge stderr: agent 0xabc nonce 7 signature rejected");
+    },
+  };
+  const hedge = buildHedger({
+    healthToken: TOKEN,
+    indexerUrl: "http://indexer",
+    databasePath: join(directory, "hedge.sqlite"),
+    fetchImpl,
+    pollMs: 60_000,
+    venue,
+  });
+  await hedge.ready();
+  const health = (await hedge.inject({ method: "GET", url: "/health" })).json();
+  assert.equal(health.ok, false);
+  assert.equal(health.error, "hedge_failed");
+  assert.doesNotMatch(JSON.stringify(health), /bridge|0xabc|signature/);
+  const status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
+  assert.match(status.error, /bridge stderr/);
+  assert.equal(
+    (await hedge.inject({ method: "GET", url: "/v1/status", headers: { authorization: `Bearer ${TOKEN}x` } }))
+      .statusCode,
+    401,
+  );
+  await hedge.close();
+  rmSync(directory, { recursive: true, force: true });
+});
+
+test("a venue position never grows past the per-market cap", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-hedge-cap-")),
+    logged: string[] = [],
+    payload = {
+      blockNumber: 100,
+      // 10 BTC of reported customer exposure at ~$100k.
+      markets: { BTC: { aggregateBase: "10000000000000000000", bid: "99990000000", ask: "100010000000" } },
+    },
+    fetchImpl = (async () => new Response(JSON.stringify(payload), { status: 200 })) as typeof fetch;
+  const hedge = buildHedger({
+    healthToken: TOKEN,
+    indexerUrl: "http://indexer",
+    databasePath: join(directory, "hedge.sqlite"),
+    fetchImpl,
+    pollMs: 60_000,
+    bandUsdc: 1_000_000n,
+    maxOrderUsdc: 1_000_000n * 1_000_000n,
+    maxPositionUsdc: 250_000n * 1_000_000n,
+    log: (message) => logged.push(message),
+  });
+  await hedge.ready();
+  const cap = (250_000n * 1_000_000n * 10n ** 18n) / 100_000_000_000n;
+  for (let tick = 0; tick < 4; tick++) {
+    payload.blockNumber++;
+    // A spoofed indexer keeps raising the exposure it reports.
+    payload.markets.BTC.aggregateBase = (BigInt(payload.markets.BTC.aggregateBase) * 2n).toString();
+    await hedge.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+  }
+  let status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
+  assert.equal(BigInt(status.positions.BTC), cap);
+  assert.equal(status.orders.length, 1, "no orders once the cap is reached");
+  assert.ok(logged.some((line) => /BTC venue position is at its/.test(line)));
+  // Reducing the position is always allowed.
+  payload.blockNumber++;
+  payload.markets.BTC.aggregateBase = "0";
+  await hedge.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+  status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
+  assert.ok(BigInt(status.positions.BTC) < cap);
+  assert.throws(
+    () =>
+      buildHedger({
+        healthToken: TOKEN,
+        indexerUrl: "http://indexer",
+        databasePath: ":memory:",
+        maxPositionUsdc: 0n,
+      }),
+    /maxPositionUsdc must be positive/,
+  );
+  await hedge.close();
+  rmSync(directory, { recursive: true, force: true });
 });

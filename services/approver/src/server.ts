@@ -6,6 +6,7 @@ import {
   watchMarketRegistry,
   type MarketRegistryWatch,
 } from "../../../packages/shared/src/markets.js";
+import { bearerMatches } from "../../lib/src/auth.js";
 import { approve, type ApproverContext } from "./approve.js";
 import { createChainClients } from "./chain-state.js";
 import { ApprovalJournal } from "./journal.js";
@@ -20,6 +21,8 @@ export const requestSchema = approverPayloadSchema;
  * journal before co-signing the `MakerApproval` digest.
  */
 export function buildApprover(options: ApproverOptions) {
+  // Entrypoints additionally require a strong token (requireStrongToken); an empty one is never valid.
+  if (!options.transportToken) throw new Error("approver transport token is required");
   const wallet = new Wallet(options.privateKey);
   // Some independent RPC providers reject JSON-RPC batches. Explicit single
   // requests keep an approver compatible with those providers and preserve quorum.
@@ -49,7 +52,7 @@ export function buildApprover(options: ApproverOptions) {
     chain,
   };
   const authorized = (request: FastifyRequest) =>
-    request.headers.authorization === `Bearer ${options.transportToken}`;
+    bearerMatches(request.headers.authorization, options.transportToken);
 
   const app = Fastify({ logger: false, bodyLimit: 16_384 });
   app.get("/health", async () => ({ ok: !journal.incompleteLegacy, signer: wallet.address }));

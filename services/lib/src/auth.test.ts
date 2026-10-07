@@ -6,6 +6,7 @@ import {
   isLoopbackHost,
   isSecureOrLoopbackUrl,
   requireSecureOrLoopbackUrl,
+  requireStrongToken,
 } from "./auth.js";
 
 test("constant-time comparison matches only identical secrets", () => {
@@ -44,4 +45,10 @@ test("service URLs must be https unless they point at loopback", () => {
     (error: Error) =>
       /RPC_URL must be an https URL/.test(error.message) && !error.message.includes("key-123"),
   );
+});
+
+test("service tokens must be at least 32 characters", () => {
+  assert.equal(requireStrongToken("TOKEN", "x".repeat(32)), "x".repeat(32));
+  for (const token of [undefined, "", "short", "x".repeat(31)])
+    assert.throws(() => requireStrongToken("TOKEN", token), /TOKEN must be at least 32 characters/);
 });

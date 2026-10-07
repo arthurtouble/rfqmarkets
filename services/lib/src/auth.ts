@@ -22,6 +22,16 @@ export function bearerMatches(header: string | string[] | undefined, token: stri
   return constantTimeEqual(value ?? "", `Bearer ${token}`);
 }
 
+/** Shortest bearer token a deployed service accepts (32 characters, e.g. 16 random bytes as hex). */
+export const MIN_SERVICE_TOKEN_LENGTH = 32;
+
+/** Throws unless `token` is at least MIN_SERVICE_TOKEN_LENGTH characters; never echoes the token. */
+export function requireStrongToken(name: string, token: string | undefined) {
+  if (!token || token.length < MIN_SERVICE_TOKEN_LENGTH)
+    throw new Error(`${name} must be at least ${MIN_SERVICE_TOKEN_LENGTH} characters`);
+  return token;
+}
+
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /** True for `localhost`, `*.localhost`, 127.0.0.0/8 and ::1. */

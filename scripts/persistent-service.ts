@@ -13,11 +13,19 @@ import { HttpHedgeRiskSource } from "../services/api/src/hedge-risk.js";
 import { QUOTE_MODEL_VERSION } from "../packages/shared/src/pricing.js";
 import { buildKeeper } from "../services/keeper/src/server.js";
 import { validateRuntimeIdentity } from "./runtime-identity.js";
-import { feedIdsByMarket, hedgeVenueApiUrl, persistentConfigSchema } from "./persistent-config.js";
+import { MIN_SERVICE_TOKEN_LENGTH } from "../services/lib/src/auth.js";
+import {
+  feedIdsByMarket,
+  hedgeVenueApiUrl,
+  persistentConfigSchema,
+  rpcEndpointsMatch,
+} from "./persistent-config.js";
 import { clearingStateAbi } from "../packages/shared/src/abi.js";
 import { marketRegistry, syncMarketRegistry } from "../packages/shared/src/markets.js";
 const role = z.enum(["api", "approver", "indexer", "gateway", "hedger", "keeper"]).parse(process.argv[2]);
 const config = persistentConfigSchema.parse(JSON.parse(readFileSync(process.argv[3], "utf8")));
+if (rpcEndpointsMatch(config.rpcUrl, config.secondaryRpcUrl))
+  console.warn("secondaryRpcUrl equals rpcUrl: approver chain reads are not independently cross-checked");
 // Separate secret files and host users are required for every signing role.
 if (statSync(process.argv[3]).mode & 0o077) throw new Error("Role configuration must be private (0600)");
 const secretPath = process.argv[4];
@@ -44,7 +52,14 @@ const secretSchemas = {
       maxOracleValueWei: z.string(),
     })
     .strict(),
-  approver: z.object({ privateKey: z.string(), transportToken: z.string(), hedgeToken: z.string() }).strict(),
+  approver: z
+    .object({
+      privateKey: z.string(),
+      // The leader authenticates with this bearer token; a short one is guessable.
+      transportToken: z.string().min(MIN_SERVICE_TOKEN_LENGTH),
+      hedgeToken: z.string(),
+    })
+    .strict(),
   hedger: z
     .object({
       agentKey: z.string(),
@@ -209,6 +224,7 @@ switch (role) {
       bandUsdc: BigInt(config.hedgeBandUsdc),
       maxOrderUsdc: BigInt(config.hedgeMaxOrderUsdc),
       minOrderUsdc: BigInt(config.hedgeMinOrderUsdc),
+      maxPositionUsdc: config.hedgeMaxPositionUsdc ? BigInt(config.hedgeMaxPositionUsdc) : undefined,
     });
     break;
   }
