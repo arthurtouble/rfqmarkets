@@ -1,10 +1,28 @@
 import { z } from "zod";
+import { isSecureOrLoopbackUrl } from "../services/lib/src/auth.js";
 
 const OFFICIAL_USDC = {
   "base-sepolia": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
   "base-mainnet": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
 } as const;
 const CHAINS = { "base-sepolia": "84532", "base-mainnet": "8453" } as const;
+
+/**
+ * True when two RPC URLs name the same endpoint (scheme, host, port, path and query; a trailing slash
+ * and host case are ignored). A secondary RPC that equals the primary is no independent check.
+ */
+export function rpcEndpointsMatch(first: string, second: string) {
+  const normalize = (value: string) => {
+    try {
+      const url = new URL(value.trim());
+      url.hash = "";
+      return url.href.replace(/\/+$/, "");
+    } catch {
+      return value.trim().replace(/\/+$/, "");
+    }
+  };
+  return normalize(first) === normalize(second);
+}
 
 export const persistentConfigSchema = z
   .object({
@@ -45,8 +63,15 @@ export const persistentConfigSchema = z
       .url()
       .refine((value) => value.startsWith("https://"), "public RPC must use HTTPS"),
     corsOrigin: z.string().url(),
-    hedgeRiskUrl: z.string().url(),
-    indexerUrl: z.string().url(),
+    // The hedger trusts the indexer's fills and approvers trust the hedger's risk state: https off loopback.
+    hedgeRiskUrl: z
+      .string()
+      .url()
+      .refine(isSecureOrLoopbackUrl, "hedge risk URL must use HTTPS unless it is loopback"),
+    indexerUrl: z
+      .string()
+      .url()
+      .refine(isSecureOrLoopbackUrl, "indexer URL must use HTTPS unless it is loopback"),
     apiUrl: z.string().url(),
     /** Pyth feed ids: `[BTC, ETH]`, or a map from market symbol to feed id for any registered market. */
     feedIds: z.union([
@@ -60,6 +85,11 @@ export const persistentConfigSchema = z
     hedgeBandUsdc: z.string().regex(/^[1-9]\d*$/),
     hedgeMaxOrderUsdc: z.string().regex(/^[1-9]\d*$/),
     hedgeMinOrderUsdc: z.string().regex(/^[1-9]\d*$/),
+    /** Maximum absolute venue position per market (USDC units); defaults to the contract's market ceiling. */
+    hedgeMaxPositionUsdc: z
+      .string()
+      .regex(/^[1-9]\d*$/)
+      .optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -70,6 +100,13 @@ export const persistentConfigSchema = z
         code: "custom",
         path: ["tokenAddress"],
         message: "settlement token is not official USDC for environment",
+      });
+    // Approvers cross-check chain reads against the secondary RPC; on mainnet it must be independent.
+    if (value.environment === "base-mainnet" && rpcEndpointsMatch(value.rpcUrl, value.secondaryRpcUrl))
+      context.addIssue({
+        code: "custom",
+        path: ["secondaryRpcUrl"],
+        message: "secondary RPC must differ from the primary RPC on base-mainnet",
       });
     if (BigInt(value.hedgeMinOrderUsdc) > BigInt(value.hedgeMaxOrderUsdc))
       context.addIssue({

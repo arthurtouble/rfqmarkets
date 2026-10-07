@@ -54,7 +54,10 @@ export function parseMarkets(text: string | undefined): OracleMarketDefinition[]
 }
 
 export interface ChainMarketSourceOptions {
-  /** Only these symbols are priced (ORACLE_MARKETS when set alongside the chain source). */
+  /**
+   * Only these id:symbol pairs are priced (ORACLE_MARKETS when set alongside the chain source); a
+   * registered market whose index or symbol disagrees with the list is skipped (fail closed).
+   */
   allow?: readonly OracleMarketDefinition[];
   /** The node's symbol table; a registered market without an entry is skipped and logged. */
   known?: Record<string, SymbolSpec>;
@@ -94,6 +97,16 @@ export class ChainMarketSource implements MarketSource {
     const markets: OracleMarketDefinition[] = [];
     for (const { index, symbol } of registered) {
       if (allow) {
+        // The signed price carries only the market index, so with an allowlist each index is pinned to
+        // its symbol: an RPC that reports a different symbol for an index gets nothing signed for it.
+        const pinned = allow.find((market) => market.id === index);
+        if (pinned && pinned.symbol !== symbol) {
+          this.skip(
+            `${index}:${symbol}`,
+            `ORACLE_MARKETS pins market ${index} to ${pinned.symbol}, the chain reports ${symbol}`,
+          );
+          continue;
+        }
         const allowed = allow.find((market) => market.symbol === symbol);
         if (!allowed) continue;
         if (allowed.id !== index) {

@@ -10,6 +10,7 @@ import type {
   HedgeRiskSnapshot,
 } from "../../../packages/shared/src/hedge-risk.js";
 import { marketRegistry } from "../../../packages/shared/src/markets.js";
+import { bearerMatches } from "../../lib/src/auth.js";
 import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 
 /**
@@ -44,6 +45,14 @@ export function loadHedgeCoins(
 type ExposureResponse = z.infer<typeof exposureResponse>;
 
 const ONE = 10n ** 18n;
+/**
+ * Default cap on one market's absolute venue position, in USDC (6 decimals): the clearing contract's
+ * ABSOLUTE_MAX_MARKET_NOTIONAL (contracts/RFQTypes.sol). Customer exposure in a market can never exceed
+ * it, so a larger hedge only follows a wrong (or spoofed) exposure report.
+ */
+export const DEFAULT_MAX_POSITION_USDC = 5_000_000n * 1_000_000n;
+/** Public /health error codes; the detail stays on the authenticated /v1/status. */
+export const HEDGER_ERROR_CODES = { indexer: "indexer_unavailable", hedge: "hedge_failed" } as const;
 const abs = (value: bigint) => (value < 0n ? -value : value);
 /** USDC notional (6 decimals) of a signed 18-decimal base amount at `mid`. */
 const notional = (base: bigint, mid: bigint) => (abs(base) * mid) / ONE;
@@ -88,6 +97,11 @@ export interface HedgeOptions {
   bandUsdc?: bigint;
   maxOrderUsdc?: bigint;
   minOrderUsdc?: bigint;
+  /**
+   * Maximum absolute venue position per market, in USDC at the reported mid. Orders that would grow a
+   * position past it are trimmed (reductions are always allowed). Default DEFAULT_MAX_POSITION_USDC.
+   */
+  maxPositionUsdc?: bigint;
   riskStaleMs?: number;
   venue?: HedgeVenue;
   /** Bearer token for /internal/risk, /v1/status, /v1/status/stream and /v1/tick. Required. */
@@ -154,7 +168,9 @@ export function buildHedger(options: HedgeOptions) {
   if (!options.healthToken) throw new Error("hedger requires an operations token");
   const corsOrigin = options.corsOrigin ?? "http://127.0.0.1:4174",
     band = options.bandUsdc ?? 25_000n * 1_000_000n,
-    riskStaleMs = options.riskStaleMs ?? 3_000;
+    riskStaleMs = options.riskStaleMs ?? 3_000,
+    maxPositionUsdc = options.maxPositionUsdc ?? DEFAULT_MAX_POSITION_USDC;
+  if (maxPositionUsdc <= 0n) throw new Error("hedger maxPositionUsdc must be positive");
   const app = Fastify({ logger: false });
   app.register(cors, { origin: corsOrigin });
   const db = new DatabaseSync(options.databasePath);
@@ -170,7 +186,8 @@ export function buildHedger(options: HedgeOptions) {
   const venue: HedgeVenue = options.venue ?? new LocalHedgeVenue(db),
     hedgeCoins = options.hedgeCoins ?? loadHedgeCoins(),
     log = options.log ?? ((message: string) => console.error(message)),
-    unmappedLogged = new Set<string>();
+    unmappedLogged = new Set<string>(),
+    cappedLogged = new Set<string>();
   /** The venue coin for `market`, or undefined (logged once) when the market is not hedged. */
   const coinOf = (market: HedgeMarket) => {
     const coin = Object.hasOwn(hedgeCoins, market) ? hedgeCoins[market] : undefined;
@@ -191,6 +208,7 @@ export function buildHedger(options: HedgeOptions) {
   let ticking: Promise<void> | undefined,
     timer: ReturnType<typeof setInterval> | undefined,
     lastError: string | undefined,
+    lastErrorCode: string | undefined,
     lastFailureCritical = false,
     lastIndexedBlock = -1,
     lastExposure: ExposureResponse | undefined,
@@ -294,6 +312,19 @@ export function buildHedger(options: HedgeOptions) {
       const maxBase = ((options.maxOrderUsdc ?? 25_000n * 1_000_000n) * ONE) / mid;
       if (delta > maxBase) delta = maxBase;
       if (delta < -maxBase) delta = -maxBase;
+      // Never grow a venue position past the per-market cap, whatever the exposure report says; an
+      // order that reduces the position is always allowed.
+      const maxPositionBase = (maxPositionUsdc * ONE) / mid,
+        next = current + delta;
+      if (abs(next) > maxPositionBase && abs(next) > abs(current)) {
+        const capped = next > 0n ? maxPositionBase - current : -maxPositionBase - current;
+        delta = capped > 0n === delta > 0n ? capped : 0n;
+        if (!cappedLogged.has(market)) {
+          cappedLogged.add(market);
+          log(`hedger: market ${market} venue position is at its ${maxPositionUsdc} USDC cap; not adding`);
+        }
+        if (delta === 0n) continue;
+      } else cappedLogged.delete(market);
       if (notional(delta, mid) < minOrder) continue;
       const limit = gap > 0n ? (ask * 10_020n) / 10_000n : (bid * 9_980n) / 10_000n,
         clientId = keccak256(toUtf8Bytes(`rfq:${exposure.blockNumber}:${market}:${target}:${current}`));
@@ -371,12 +402,14 @@ export function buildHedger(options: HedgeOptions) {
     ticking = doTick()
       .then(() => {
         lastError = undefined;
+        lastErrorCode = undefined;
         lastFailureCritical = false;
         lastSuccessAtMs = Date.now();
       })
       .catch((error) => {
         lastError = String(error);
         lastFailureCritical = !(error instanceof IndexerUnavailable);
+        lastErrorCode = lastFailureCritical ? HEDGER_ERROR_CODES.hedge : HEDGER_ERROR_CODES.indexer;
       })
       .finally(() => {
         ticking = undefined;
@@ -386,7 +419,7 @@ export function buildHedger(options: HedgeOptions) {
   }
   const effectivelyHealthy = () => !lastFailureCritical && Date.now() - lastSuccessAtMs <= riskStaleMs;
   const authorized = (request: { headers: { authorization?: string } }) =>
-    request.headers.authorization === `Bearer ${options.healthToken}`;
+    bearerMatches(request.headers.authorization, options.healthToken);
   /** The trading mode the API enforces for `market`: the same rules /internal/risk reports. */
   function marketRisk(market: HedgeMarket, healthy = effectivelyHealthy()): HedgeMarketRisk {
     const minOrder = options.minOrderUsdc ?? 0n,
@@ -422,10 +455,11 @@ export function buildHedger(options: HedgeOptions) {
     for (const market of exposureMarkets()) markets[market] = marketRisk(market, healthy);
     return { observedAtMs: lastSuccessAtMs, healthy, indexedBlock: lastIndexedBlock, markets };
   }
+  // Unauthenticated: a generic code only. Venue responses and bridge stderr stay on /v1/status.
   app.get("/health", async () => ({
     ok: effectivelyHealthy(),
     indexedBlock: lastIndexedBlock,
-    error: lastError,
+    error: lastErrorCode,
   }));
   app.get("/internal/risk", async (request, reply) => {
     if (!authorized(request)) return reply.code(401).send({ error: "unauthorized" });

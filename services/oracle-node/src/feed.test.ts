@@ -174,3 +174,33 @@ test("changing tickers reconnects with the new subscription", () => {
   assert.deepEqual(JSON.parse(sockets[1].sent[0]).args, ["orderbook.1.BTCUSDT", "orderbook.1.ETHUSDT"]);
   feed.close();
 });
+
+test("connection liveness vouches for a quote only up to the absolute age cap", () => {
+  const { feed, clock, sockets } = harness("binance", ["BTCUSDT", "PEPEUSDT"]);
+  feed.start();
+  sockets[0].open();
+  sockets[0].message(binanceMessage("PEPEUSDT", "0.000004", "0.0000041"));
+  clock.now += 29_000;
+  sockets[0].message(binanceMessage("BTCUSDT", "84000", "84000.01"));
+  assert.equal(feed.quote("PEPEUSDT")!.asOfMs, 39_000, "still within the cap");
+  clock.now += 2_000;
+  sockets[0].message(binanceMessage("BTCUSDT", "84000", "84000.01"));
+  assert.equal(feed.quote("PEPEUSDT")!.asOfMs, 10_000, "a frozen ticker ages by its receive time");
+  assert.equal(feed.status().freshTickers, 1);
+  feed.close();
+});
+
+test("a crossed or one-sided book update drops the stored quote", () => {
+  const { feed, sockets } = harness("binance", ["BTCUSDT"]);
+  feed.start();
+  sockets[0].open();
+  sockets[0].message(binanceMessage("BTCUSDT", "84000", "84000.01"));
+  assert.ok(feed.quote("BTCUSDT"));
+  sockets[0].message(binanceMessage("BTCUSDT", "84001", "84000"));
+  assert.equal(feed.quote("BTCUSDT"), undefined, "crossed");
+  sockets[0].message(binanceMessage("BTCUSDT", "84000", "84000.01"));
+  assert.ok(feed.quote("BTCUSDT"));
+  sockets[0].message(binanceMessage("BTCUSDT", "0", "84000.01"));
+  assert.equal(feed.quote("BTCUSDT"), undefined, "one-sided");
+  feed.close();
+});

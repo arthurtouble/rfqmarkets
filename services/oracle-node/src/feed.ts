@@ -22,6 +22,12 @@ export interface FeedOptions {
   /** A ticker older than this is refreshed over REST. */
   staleMs?: number;
   restTimeoutMs?: number;
+  /**
+   * Absolute cap on how long connection liveness may vouch for a websocket quote. Past it the quote
+   * ages by its receive time, so a ticker the venue stopped updating (while the connection keeps
+   * talking about others) is refreshed over REST or falls out of the aggregate. Default 30 s.
+   */
+  maxLiveQuoteAgeMs?: number;
   /** Cap on per-ticker REST requests in one poll (batch endpoints need one request). */
   maxRestRequests?: number;
   now?: () => number;
@@ -35,6 +41,8 @@ export interface FeedQuote {
   asOfMs: number;
   transport: "websocket" | "rest";
 }
+
+export const DEFAULT_MAX_LIVE_QUOTE_AGE_MS = 30_000;
 
 interface StoredQuote {
   bid: bigint;
@@ -106,7 +114,8 @@ export class ExchangeFeed {
       this.adapter.bboComplete &&
       stored.connection !== 0 &&
       stored.connection === this.openConnection &&
-      this.connected;
+      this.connected &&
+      this.now() - stored.receivedAtMs <= (this.options.maxLiveQuoteAgeMs ?? DEFAULT_MAX_LIVE_QUOTE_AGE_MS);
     return {
       bid: stored.bid,
       ask: stored.ask,
@@ -119,6 +128,12 @@ export class ExchangeFeed {
   private store(updates: QuoteUpdate[], connection: number, nowMs: number) {
     for (const update of updates) {
       if (!this.tickers.includes(update.ticker)) continue;
+      if (update.cleared) {
+        // Crossed or one-sided book: drop the last quote instead of serving it as current.
+        this.quotes.delete(update.ticker);
+        this.updates++;
+        continue;
+      }
       this.quotes.set(update.ticker, { bid: update.bid, ask: update.ask, receivedAtMs: nowMs, connection });
       this.updates++;
     }

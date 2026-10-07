@@ -75,6 +75,7 @@ export interface ServiceStackConfig {
     bandUsdc?: bigint;
     maxOrderUsdc?: bigint;
     minOrderUsdc?: bigint;
+    maxPositionUsdc?: bigint;
   };
   /** Extra API options (public RPC, trusted proxies, dev funding). */
   api?: Omit<
@@ -167,6 +168,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
       bandUsdc: config.hedge.bandUsdc,
       maxOrderUsdc: config.hedge.maxOrderUsdc,
       minOrderUsdc: config.hedge.minOrderUsdc,
+      maxPositionUsdc: config.hedge.maxPositionUsdc,
       riskStaleMs: config.hedge.riskMaxAgeMs,
     });
     await hedger.listen({ host: config.exposeHedger ? bindHost : "127.0.0.1", port: ports.hedger });

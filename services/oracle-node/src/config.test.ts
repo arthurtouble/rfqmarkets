@@ -108,6 +108,15 @@ test("the chain market source prices every registered market the symbol table kn
   });
   assert.deepEqual(await restricted.markets(), [{ id: 0, symbol: "BTC" }]);
   assert.match(logged.at(-1)!, /lists SOL as market 5, the chain as 2/);
+  // An RPC that reports another symbol for a pinned index gets nothing signed for that index.
+  const swapped = new ChainMarketSource(registryReader(["ETH", "BTC", "SOL"]), {
+    allow: parseMarkets("0:BTC,1:ETH,2:SOL"),
+    log: (message) => logged.push(message),
+  });
+  assert.deepEqual(await swapped.markets(), [{ id: 2, symbol: "SOL" }]);
+  assert.ok(logged.some((line) => /pins market 0 to BTC, the chain reports ETH/.test(line)));
+  const spoofed = new ChainMarketSource(registryReader(["PEPE"]), { allow: parseMarkets("0:BTC") });
+  assert.deepEqual(await spoofed.markets(), []);
   // A node can start on its configured list while the RPC is down.
   const starting = new ChainMarketSource(registryReader(["BTC"], { now: true }), {
     fallback: parseMarkets("0:BTC"),
@@ -129,6 +138,24 @@ test("config reads the market registry location", () => {
   assert.equal(config.marketsConfigured, false);
   assert.equal(loadConfig(base).registry, undefined);
   assert.throws(() => loadConfig({ ...base, ORACLE_RPC_URL: "http://127.0.0.1:8545" }), /set together/);
+  // A remote registry RPC must be https: it decides which symbol each signed index is priced as.
+  assert.throws(
+    () =>
+      loadConfig({
+        ...base,
+        ORACLE_RPC_URL: "http://rpc.example",
+        ORACLE_CLEARING_ADDRESS: "0x000000000000000000000000000000000000beef",
+      }),
+    /ORACLE_RPC_URL must be an https URL/,
+  );
+  assert.equal(
+    loadConfig({
+      ...base,
+      ORACLE_RPC_URL: "https://rpc.example",
+      ORACLE_CLEARING_ADDRESS: "0x000000000000000000000000000000000000beef",
+    }).registry?.rpcUrl,
+    "https://rpc.example",
+  );
 });
 
 test("symbol table derives venue tickers by convention with exclusions", () => {

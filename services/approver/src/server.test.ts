@@ -70,6 +70,18 @@ test("a valid envelope is signed, journaled and exported for recovery", async ()
   assert.equal(JSON.parse(exported.approvals[0].payload).quote.quoteId, payload.quote.quoteId);
 });
 
+test("an approver without a transport token does not start", () => {
+  assert.throws(
+    () =>
+      buildApprover({
+        privateKey: key.privateKey,
+        transportToken: "",
+        databasePath: join(directory, "tokenless.sqlite"),
+      }),
+    /transport token is required/,
+  );
+});
+
 test("chain signing requires a pinned chain and clearing contract", () => {
   assert.throws(
     () =>

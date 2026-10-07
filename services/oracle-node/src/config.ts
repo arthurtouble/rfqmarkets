@@ -1,4 +1,5 @@
 import { getAddress } from "ethers";
+import { requireSecureOrLoopbackUrl } from "../../lib/src/auth.js";
 import type { AggregationConfig, StableConfig } from "./aggregate.js";
 import { parseMarkets, type OracleMarketDefinition } from "./markets.js";
 import { EXCHANGES, type ExchangeName } from "./symbols.js";
@@ -28,7 +29,9 @@ export interface OracleNodeConfig {
  *
  * ORACLE_SIGNER_KEY (required), ORACLE_CHAIN_ID (required), ORACLE_VERIFYING_CONTRACT (required),
  * ORACLE_MARKETS (`0:BTC,1:ETH` or JSON), ORACLE_RPC_URL + ORACLE_CLEARING_ADDRESS (price every
- * market the clearing registry lists; ORACLE_MARKETS then restricts it), ORACLE_MARKET_REFRESH_MS
+ * market the clearing registry lists; ORACLE_MARKETS then pins each index to its symbol and the node
+ * refuses to price an index whose on-chain symbol differs; the RPC must be https or loopback),
+ * ORACLE_MARKET_REFRESH_MS
  * (60000), ORACLE_EXCHANGES (comma list, default all),
  * ORACLE_TICK_MS (1000), ORACLE_MAX_SOURCE_AGE_MS (2000), ORACLE_MAX_DEVIATION_BPS (50),
  * ORACLE_MIN_SOURCES (3), ORACLE_MAX_WIDTH_BPS (100), ORACLE_STABLE_MIN_SOURCES (2),
@@ -75,6 +78,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): OracleNodeConf
     } catch {
       throw new Error("invalid ORACLE_CLEARING_ADDRESS");
     }
+    // The registry decides which symbol each market index is priced as: no plaintext RPC off loopback.
+    requireSecureOrLoopbackUrl("ORACLE_RPC_URL", rpcUrl);
     registry = { rpcUrl, clearing, refreshMs: integer("ORACLE_MARKET_REFRESH_MS", 60_000, 1_000) };
   }
   return {

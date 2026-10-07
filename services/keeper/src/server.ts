@@ -15,6 +15,7 @@ import {
 } from "../../../packages/shared/src/markets.js";
 import { DurableSender, type SenderOptions } from "../../api/src/sender.js";
 import type { OracleSource } from "../../api/src/oracle.js";
+import { bearerMatches } from "../../lib/src/auth.js";
 import { KeeperEngine, type KeeperAction, type KeeperDependencies } from "./engine.js";
 
 /** Maximum indexer lag, in blocks, before the keeper stops trusting its account scan. */
@@ -219,7 +220,7 @@ export function buildKeeper(options: KeeperOptions) {
   let timer: ReturnType<typeof setInterval> | undefined;
   app.get("/health", async () => engine.status());
   app.get("/internal/metrics", async (request, reply) => {
-    if (request.headers.authorization !== `Bearer ${options.operationsToken}`)
+    if (!bearerMatches(request.headers.authorization, options.operationsToken))
       return reply.code(401).send({ error: "unauthorized" });
     return { ...engine.status(), sender: sender.status() };
   });

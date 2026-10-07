@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hedgeVenueApiUrl, persistentConfigSchema } from "./persistent-config.js";
+import { hedgeVenueApiUrl, persistentConfigSchema, rpcEndpointsMatch } from "./persistent-config.js";
 
 const address = (digit: string) => `0x${digit.repeat(40)}`;
 const base = {
@@ -58,4 +58,38 @@ test("test profile cannot select production venue", () => {
     tokenAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
   });
   assert.equal(hedgeVenueApiUrl(parsed.environment), "https://api.hyperliquid-testnet.xyz");
+});
+
+test("mainnet requires an independent secondary RPC", () => {
+  assert.throws(
+    () => persistentConfigSchema.parse({ ...base, secondaryRpcUrl: "https://PRIMARY.example/" }),
+    /secondary RPC must differ from the primary RPC on base-mainnet/,
+  );
+  assert.equal(rpcEndpointsMatch("https://a.example/v1/key", "https://a.example/v1/key/"), true);
+  assert.equal(rpcEndpointsMatch("https://a.example/v1/key", "https://a.example/v1/other"), false);
+  // The test profile accepts a shared RPC (persistent-service warns).
+  assert.equal(
+    persistentConfigSchema.parse({
+      ...base,
+      environment: "base-sepolia",
+      chainId: "84532",
+      tokenAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      secondaryRpcUrl: base.rpcUrl,
+    }).secondaryRpcUrl,
+    base.rpcUrl,
+  );
+});
+
+test("hedger and approver upstreams must be https unless loopback", () => {
+  for (const field of ["indexerUrl", "hedgeRiskUrl"]) {
+    assert.throws(
+      () => persistentConfigSchema.parse({ ...base, [field]: "http://indexer.example" }),
+      /must use HTTPS unless it is loopback/,
+      field,
+    );
+    assert.equal(
+      persistentConfigSchema.parse({ ...base, [field]: "http://127.0.0.1:4100" })[field as "indexerUrl"],
+      "http://127.0.0.1:4100",
+    );
+  }
 });
