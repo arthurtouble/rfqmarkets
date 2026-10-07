@@ -14,6 +14,9 @@
     "test:web": "node --import tsx --test 'apps/web/src/**/*.test.ts'",
     "test:services": "node --import tsx --test \"services/**/*.test.ts\" \"packages/shared/src/*.test.ts\" \"scripts/*.test.ts\" \"scripts/*.test.mjs\"",
     "typecheck": "tsc",
+    "test:coverage": "mkdir -p coverage && node --import tsx --enable-source-maps --test --experimental-test-coverage --test-coverage-include='{apps,packages,services,scripts,deploy}/**' --test-coverage-exclude='**/*.test.*' --test-reporter=dot --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info \"services/**/*.test.ts\" \"packages/shared/src/*.test.ts\" \"scripts/*.test.ts\" \"scripts/*.test.mjs\" \"apps/web/src/**/*.test.ts\" \"deploy/cloudflare/static/*.test.mjs\" \"deploy/cloudflare/runtime/*.test.mjs\" && node scripts/coverage-summary.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "build:web": "vite build apps/web --outDir ../../dist/web --emptyOutDir",
     "build:admin": "vite build apps/admin --outDir ../../dist/admin --emptyOutDir",
     "build:docs": "vite build apps/docs --outDir ../../dist/docs --emptyOutDir",
@@ -73,8 +76,8 @@
     "basescan:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts basescan",
     "check:operations-alerts": "node --import tsx scripts/operations-alerts.ts",
     "validate:production-topology": "node --import tsx scripts/production-topology.ts",
-    "format": "prettier --write \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/{local-stack,base-mainnet-dev-stack,approver-process,persistent-service,persistent-config,cloudflare-dev-container,dev-stack,dev-scenario}.ts\" \"scripts/lib/service-stack.ts\"",
-    "format:check": "prettier --check \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/{local-stack,base-mainnet-dev-stack,approver-process,persistent-service,persistent-config,cloudflare-dev-container,dev-stack,dev-scenario}.ts\" \"scripts/lib/service-stack.ts\""
+    "format": "prettier --write \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/{local-stack,base-mainnet-dev-stack,approver-process,persistent-service,persistent-config,cloudflare-dev-container,dev-stack,dev-scenario}.ts\" \"scripts/lib/service-stack.ts\" \"scripts/coverage-summary.mjs\" playwright.config.ts \"test/e2e/**/*.ts\"",
+    "format:check": "prettier --check \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/{local-stack,base-mainnet-dev-stack,approver-process,persistent-service,persistent-config,cloudflare-dev-container,dev-stack,dev-scenario}.ts\" \"scripts/lib/service-stack.ts\" \"scripts/coverage-summary.mjs\" playwright.config.ts \"test/e2e/**/*.ts\""
   },
   "devDependencies": {
     "@base-org/account": "2.5.13",
@@ -84,6 +87,7 @@
     "@openzeppelin/contracts": "5.6.1",
     "@openzeppelin/contracts-upgradeable": "5.6.1",
     "@openzeppelin/upgrades-core": "1.46.0",
+    "@playwright/test": "1.63.0",
     "@safe-global/protocol-kit": "8.0.7",
     "@tanstack/react-query": "5.104.1",
     "@tanstack/react-router": "1.170.41",
