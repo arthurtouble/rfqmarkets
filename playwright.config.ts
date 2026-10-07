@@ -8,6 +8,9 @@ const ci = Boolean(process.env.CI);
 // Cloud sessions ship a Chromium that may not match this Playwright release.
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 const launchOptions = executablePath ? { executablePath } : {};
+const desktop = { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, launchOptions };
+const mobile = { ...devices["Pixel 7"], launchOptions };
+const EXIT_SPEC = /exit\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "test/e2e",
@@ -31,17 +34,23 @@ export default defineConfig({
   projects: [
     {
       name: "desktop",
-      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, launchOptions },
+      testIgnore: EXIT_SPEC,
+      use: desktop,
     },
     {
       // Chromium with phone metrics and touch, so CI needs one browser only.
       name: "mobile",
-      use: { ...devices["Pixel 7"], launchOptions },
+      testIgnore: EXIT_SPEC,
+      use: mobile,
     },
+    // The exit spec moves chain time forward (evm_increaseTime), which Hardhat cannot undo. Oracle
+    // reports then look stale to the contract and every later trade fails, so it runs last.
+    { name: "exit desktop", testMatch: EXIT_SPEC, use: desktop, dependencies: ["desktop", "mobile"] },
+    { name: "exit mobile", testMatch: EXIT_SPEC, use: mobile, dependencies: ["exit desktop"] },
   ],
   webServer: [
     {
-      command: "npm run dev:stack -- --web",
+      command: "npm run dev:stack -- --web --mine-every-second",
       url: urls.web,
       // dev:stack stops its chain and services on SIGTERM.
       gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },

@@ -206,6 +206,9 @@ export function registerSignedActions(
     }),
     toWire: withdrawalToWire,
     async execute(intent, signature, { sender, clearing, provider, config }) {
+      // The contract needs fresh prices for markets the account holds. Trades keep them fresh; between
+      // trades they lapse after 15 seconds. Best effort: a paused venue still lets the withdrawal try.
+      await quoting.refreshOpenMarketPrices().catch(() => undefined);
       const receipt = await sender.submit(
         `withdraw:${intent.account}:${intent.nonce}`,
         {

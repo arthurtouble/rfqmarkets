@@ -75,12 +75,11 @@ class ExitVenue {
   private nonce = 1n;
 
   async setup(project: string) {
+    const mobile = project.endsWith("mobile");
     this.chainId = (await this.provider.getNetwork()).chainId;
     // Accounts the local stack does not use, so this spec never races the services for a nonce.
     const [governance, emergency, maker, trader, other, claimant] = await Promise.all(
-      [12, 13, 14, project === "mobile" ? 15 : 16, project === "mobile" ? 17 : 18, 19].map((index) =>
-        this.provider.getSigner(index),
-      ),
+      [12, 13, 14, mobile ? 15 : 16, mobile ? 17 : 18, 19].map((index) => this.provider.getSigner(index)),
     );
     this.signers = { governance, emergency, maker, trader, other, claimant };
     const libraries: Record<string, string> = {};

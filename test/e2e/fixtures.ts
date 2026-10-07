@@ -15,7 +15,7 @@ type Fixtures = {
 
 export const test = base.extend<Fixtures & { pageErrors: void; termsAccepted: void }>({
   stack: async ({}, use) => use(stack),
-  isMobile: async ({}, use, testInfo) => use(testInfo.project.name === "mobile"),
+  isMobile: async ({}, use, testInfo) => use(testInfo.project.name.endsWith("mobile")),
   acceptTerms: [true, { option: true }],
   termsAccepted: [
     async ({ page, acceptTerms }, use) => {
