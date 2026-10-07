@@ -9,7 +9,7 @@ The ticket sits on the right of the trade page on a computer. On a phone, tap **
 | Control | What it does |
 | --- | --- |
 | **Long** and **Short** | The direction. Long opens or adds to a long, or reduces a short. Short does the opposite. |
-| **Market** and **Limit** | The order type, shown in Advanced view only. Market orders fill now. Limit orders wait for your price; see [Limit orders](limit-orders.md). In Simple view every order is a market order. |
+| **Market**, **Limit** and **Stop** | The order type, shown in Advanced view only. Market orders fill now. Limit orders wait for your price; see [Limit orders](limit-orders.md). Stop orders wait for the price to break a level, then trade; see [Stop loss and take profit](stop-orders.md). In Simple view every order is a market order. |
 | **You pay** | The margin you put up, in USDC. The position is this amount times your leverage. |
 | **25%, 50%, 75%, Max** | Shortcuts that fill in a share of the most you can pay at the chosen leverage. Max leaves room for the fee and stays within your **Available** margin, the market's per-trade limit and the margin tier for that leverage. |
 | **Leverage** | Presets up to the market's maximum (20× on BTC and ETH). Beside it the ticket shows the position you will open, for example "Position $1,250 · 0.0125 BTC". |

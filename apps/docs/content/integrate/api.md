@@ -90,8 +90,6 @@ The API re-prices, collects two approver signatures, submits the trade and waits
 
 ## Stop orders
 
-> **Note.** The two endpoints below exist in the venue's API, but the public dev endpoint does not accept them yet, and neither does `POST /v1/close/all/quote`. They return `404 route_not_allowed` until they are opened.
-
 | Step | Endpoint |
 | --- | --- |
 | Prepare a single order | `POST /v1/orders/trigger/prepare` with `{account, market, kind, side, sizing, amount, triggerPrice, slippageBps, durationSeconds, nonce}`. `kind` is `stop-loss`, `take-profit` or `stop-entry`. `sizing` is `amount` (with `side` and a USDC `amount` at the trigger price) or `position` (the whole current position). `slippageBps` is 1 to 500, default 100. |

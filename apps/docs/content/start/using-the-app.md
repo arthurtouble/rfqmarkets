@@ -35,7 +35,7 @@ Once you are connected, the wallet button shows your account value. Click it to 
 The app has two views, and you can switch between them at any time.
 
 - **Simple**, the default, shows what most trades need: direction, amount, the expected entry price, the fee and your leverage after the trade. Every order is a market order.
-- **Advanced** adds [limit orders](../trading/limit-orders.md), **Reduce only**, the price protection, spread and inventory adjustment on the ticket, the bid, ask and limits for each market, funding on each position, and more detail on the Markets page.
+- **Advanced** adds [limit orders](../trading/limit-orders.md) and [stop orders](../trading/stop-orders.md#placing-a-stop-order), **Reduce only**, the slippage choice for take profit and stop loss, the price protection, spread and inventory adjustment on the ticket, the bid, ask and limits for each market, funding on each position, and more detail on the Markets page.
 
 Switch with **View** in the top bar on a computer, or under **Account** on a phone. The choice is saved in this browser. Switching back to Simple resets the ticket to a market order with Reduce only off.
 

@@ -38,7 +38,7 @@ Browser extensions such as Rabby, MetaMask and Coinbase Wallet; phone wallets th
 
 ## Can I set a stop loss or take profit?
 
-Not in the app yet. The contract supports stop loss, take profit and stop entry orders, and they are coming to the app. [Stop loss and take profit](../trading/stop-orders.md) describes how they will work. Until then, keep leverage low and close positions yourself.
+Yes. Click **TP/SL** on the position, enter a take-profit price, a stop-loss price or both, and sign. Whichever fills first cancels the other. A stop protects your price, not your exit: if the price gaps past the slippage band, it waits for the price to come back. See [Stop loss and take profit](../trading/stop-orders.md).
 
 ## Can I close part of a position?
 
