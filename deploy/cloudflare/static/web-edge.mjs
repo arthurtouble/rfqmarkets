@@ -114,7 +114,7 @@ export async function handleRequest(request, env) {
  */
 export const SECURITY_HEADERS = Object.freeze({
   "content-security-policy":
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' https://fonts.reown.com; img-src 'self' data: blob: https:; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data: https://fonts.reown.com; img-src 'self' data: blob: https:; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; connect-src 'self' https: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
   "permissions-policy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
   "referrer-policy": "no-referrer",
   "strict-transport-security": "max-age=31536000; includeSubDomains",
