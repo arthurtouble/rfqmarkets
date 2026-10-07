@@ -14,7 +14,12 @@ import {
   type TradeIntent,
   type Trigger,
 } from "../../../packages/shared/src/eip712.js";
-import { marketIndex, type Market } from "../../../packages/shared/src/markets.js";
+import {
+  encodeMarketSymbol,
+  marketIndex,
+  marketRegistry,
+  type Market,
+} from "../../../packages/shared/src/markets.js";
 import { encodeLocalReport, oracleAdapterAbi } from "../../../packages/shared/src/oracle-report.js";
 import { adaptiveSpread, constructQuote, launchPricing } from "../../../packages/shared/src/pricing.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
@@ -138,9 +143,10 @@ export interface FakeChainState {
   paused: boolean;
   resolutionRequired: boolean;
   isApprover: boolean;
-  markets: [Record<string, bigint | boolean>, Record<string, bigint | boolean>];
-  books: [Record<string, bigint | boolean>, Record<string, bigint | boolean>];
-  limitWords: [bigint, bigint];
+  /** One entry per registered market (the launch fixture has BTC and ETH). */
+  markets: Array<Record<string, bigint | boolean>>;
+  books: Array<Record<string, bigint | boolean>>;
+  limitWords: bigint[];
   position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
   sessions: Record<string, ClearingSessionStruct>;
   erc1271: boolean;
@@ -229,6 +235,17 @@ export function fakeChain(state: FakeChainState): ChainClients & { calls: string
     paused: (_: At) => read("paused", () => state.paused),
     resolutionRequired: (_: At) => read("resolutionRequired", () => state.resolutionRequired),
     isApprover: (_account: string, _: At) => read("isApprover", () => state.isApprover),
+    marketCount: () => read("marketCount", () => BigInt(state.markets.length)),
+    marketParams: (index: number) =>
+      read("marketParams", () => {
+        const market = marketRegistry.at(index);
+        return {
+          symbol: encodeMarketSymbol(market.symbol),
+          impactK: market.impactK,
+          shockBps: market.shockBps,
+          marginScaleBps: BigInt(market.marginScaleBps),
+        };
+      }),
     markets: (index: number) => read("markets", () => state.markets[index] as never),
     marketLimitWord: (index: number) => read("marketLimitWord", () => state.limitWords[index]),
     exposureState: (index: number) => read("exposureState", () => state.books[index] as never),

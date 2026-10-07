@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MARKETS } from "./markets.js";
+import { MAX_MARKETS, isMarketSymbol } from "./markets.js";
 
 const unsigned = z.string().regex(/^\d+$/),
   signed = z.string().regex(/^-?\d+$/),
@@ -15,7 +15,11 @@ export const approverPayloadSchema = z.object({
   }),
   intent: z.object({
     account: z.string(),
-    market: z.number().int().min(0).max(1),
+    market: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_MARKETS - 1),
     baseDelta: signed,
     limitPrice: unsigned,
     maxFee: unsigned,
@@ -39,7 +43,7 @@ export const approverPayloadSchema = z.object({
   }),
   quote: z.object({
     quoteId: z.string().uuid(),
-    market: z.enum(MARKETS),
+    market: z.string().refine(isMarketSymbol, "invalid market symbol"),
     side: z.enum(["buy", "sell"]),
     amount: unsigned,
     baseDelta: signed,

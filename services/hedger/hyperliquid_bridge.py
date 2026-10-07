@@ -180,8 +180,10 @@ def submit(params):
     ensure_authorized()
     usable_perp_usdc(force=True)
     market = params["market"]
-    if market not in ("BTC", "ETH"):
-        raise ValueError("unsupported market")
+    # The hedger sends venue coins from its data map (services/hedger/hedge-markets.json); accept any
+    # listed perp and refuse anything else.
+    if market not in sz_decimals:
+        raise ValueError(f"unsupported market {market}")
     signed_base = Decimal(params["baseDelta"]) / ONE_E18
     quantum = Decimal(1).scaleb(-sz_decimals[market])
     size = abs(signed_base).quantize(quantum, rounding=ROUND_DOWN)

@@ -1,3 +1,4 @@
+import { LAUNCH_MARKETS, MAX_MARKETS, isMarketSymbol } from "../../../packages/shared/src/markets.js";
 import type { HistoryMarket } from "./history.js";
 
 /** OHLC of the market mid in USDC micro-units; `start` is the bucket open, unix milliseconds. */
@@ -20,7 +21,8 @@ export const CANDLE_INTERVALS = {
   "1d": 86_400_000,
 } as const;
 export type CandleInterval = keyof typeof CANDLE_INTERVALS;
-const MARKET_IDS: Record<HistoryMarket, number> = { BTC: 0, ETH: 1 };
+/** Launch markets' contract indexes, used until the stream has named a market's index. */
+const LAUNCH_IDS = new Map(LAUNCH_MARKETS.map(({ symbol, index }) => [symbol, index]));
 const DIGITS = /^\d{1,30}$/;
 
 /**
@@ -28,7 +30,9 @@ const DIGITS = /^\d{1,30}$/;
  * `retentionMs` (default seven days) per market. Chart context only, never an accounting record.
  */
 export class CandleBook {
-  private minutes: Record<HistoryMarket, Candle[]> = { BTC: [], ETH: [] };
+  private minutes = new Map<HistoryMarket, Candle[]>();
+  /** Contract market index per symbol, as the stream frames carry it (`markets.SOL.index`). */
+  private ids = new Map<HistoryMarket, number>(LAUNCH_IDS);
   private readonly slots: number;
   constructor(retentionMs = 7 * 86_400_000) {
     if (!Number.isInteger(retentionMs) || retentionMs < MINUTE_MS)
@@ -45,9 +49,12 @@ export class CandleBook {
     }
     const markets = (value as { markets?: unknown } | null)?.markets;
     if (!markets || typeof markets !== "object") return;
-    for (const market of ["BTC", "ETH"] as const) {
-      const item = (markets as Record<string, { observedAtMs?: unknown; mid?: unknown } | undefined>)[market];
-      if (!item || typeof item !== "object") continue;
+    for (const [market, item] of Object.entries(
+      markets as Record<string, { observedAtMs?: unknown; mid?: unknown; index?: unknown } | undefined>,
+    )) {
+      if (!isMarketSymbol(market) || !item || typeof item !== "object") continue;
+      const index = Number(item.index);
+      if (Number.isInteger(index) && index >= 0 && index < MAX_MARKETS) this.ids.set(market, index);
       const observedAtMs = Number(item.observedAtMs),
         mid = String(item.mid ?? "");
       if (!Number.isSafeInteger(observedAtMs) || observedAtMs <= 0 || !DIGITS.test(mid)) continue;
@@ -55,8 +62,13 @@ export class CandleBook {
     }
   }
   add(market: HistoryMarket, timeMs: number, price: bigint) {
-    const list = this.minutes[market],
-      start = Math.floor(timeMs / MINUTE_MS) * MINUTE_MS,
+    let list = this.minutes.get(market);
+    if (!list) {
+      if (this.minutes.size >= MAX_MARKETS) return;
+      list = [];
+      this.minutes.set(market, list);
+    }
+    const start = Math.floor(timeMs / MINUTE_MS) * MINUTE_MS,
       last = list.at(-1);
     if (last && start < last.start) return; // late observation for a closed minute
     if (last && last.start === start) {
@@ -74,17 +86,25 @@ export class CandleBook {
   }
   /** One-minute candles with start in [fromMs, toMs], ascending. */
   range(market: HistoryMarket, fromMs: number, toMs: number) {
-    return this.minutes[market]
+    return (this.minutes.get(market) ?? [])
       .filter((candle) => candle.start >= fromMs && candle.start <= toMs)
       .map((candle) => ({ ...candle }));
   }
   earliest(market: HistoryMarket) {
-    return this.minutes[market][0]?.start ?? null;
+    return this.minutes.get(market)?.[0]?.start ?? null;
+  }
+  /** Whether `market` is a launch market or the stream has carried it. */
+  has(market: HistoryMarket) {
+    return this.ids.has(market) || this.minutes.has(market);
+  }
+  /** The contract market index the oracle nodes key candles by, when known. */
+  marketId(market: HistoryMarket) {
+    return this.ids.get(market);
   }
   status() {
     return {
       retentionMinutes: this.slots,
-      minutes: { BTC: this.minutes.BTC.length, ETH: this.minutes.ETH.length },
+      minutes: Object.fromEntries([...this.minutes].map(([market, list]) => [market, list.length])),
     };
   }
 }
@@ -160,14 +180,21 @@ export class CandleBackfill {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? Date.now;
   }
-  async get(market: HistoryMarket, interval: CandleInterval, fromMs: number) {
+  /** `marketId` is the contract index the nodes key candles by (defaults to the launch index). */
+  async get(
+    market: HistoryMarket,
+    interval: CandleInterval,
+    fromMs: number,
+    marketId: number | undefined = LAUNCH_IDS.get(market),
+  ) {
+    if (marketId === undefined) return null;
     const key = `${market}:${interval}`,
       cached = this.cache.get(key);
     if (cached && this.now() - cached.atMs < (this.options.ttlMs ?? 60_000) && cached.fromMs <= fromMs)
       return cached.candles;
     let pending = this.inflight.get(key);
     if (!pending) {
-      pending = this.fetch(market, interval, fromMs)
+      pending = this.fetch(marketId, interval, fromMs)
         .then((candles) => {
           this.cache.set(key, { atMs: this.now(), fromMs, candles });
           return candles;
@@ -177,9 +204,9 @@ export class CandleBackfill {
     }
     return pending;
   }
-  private async fetch(market: HistoryMarket, interval: CandleInterval, fromMs: number) {
+  private async fetch(marketId: number, interval: CandleInterval, fromMs: number) {
     const intervalMs = CANDLE_INTERVALS[interval],
-      query = `market=${MARKET_IDS[market]}&interval=${interval}&from=${Math.floor(fromMs / 1_000)}&to=${Math.floor(this.now() / 1_000)}`;
+      query = `market=${marketId}&interval=${interval}&from=${Math.floor(fromMs / 1_000)}&to=${Math.floor(this.now() / 1_000)}`;
     for (const url of this.options.urls) {
       try {
         const response = await this.fetchImpl(`${url}?${query}`, {

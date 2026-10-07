@@ -42,7 +42,8 @@ export interface ClearingSessionStruct {
 export interface SessionState {
   account: string;
   validUntil: bigint;
-  marketMask: number;
+  /** Bit n allows market n. */
+  marketMask: bigint;
   maxTradeNotional: bigint;
   maxCumulativeNotional: bigint;
   usedNotional: bigint;
@@ -75,12 +76,16 @@ export const toPosition = (value: ClearingPositionStruct): PositionState => ({
 export const toSession = (value: ClearingSessionStruct): SessionState => ({
   account: value.account,
   validUntil: BigInt(value.validUntil),
-  marketMask: Number(value.marketMask),
+  marketMask: BigInt(value.marketMask),
   maxTradeNotional: BigInt(value.maxTradeNotional),
   maxCumulativeNotional: BigInt(value.maxCumulativeNotional),
   usedNotional: BigInt(value.usedNotional),
   maxFee: BigInt(value.maxFee),
 });
+
+/** True when a session's `marketMask` allows market index `market` (any of the 128 markets). */
+export const maskAllows = (mask: BigNumberish, market: number | bigint) =>
+  ((BigInt(mask) >> BigInt(market)) & 1n) === 1n;
 
 export const marketMid = (market: Pick<ExposureMarket, "lastBid" | "lastAsk">) =>
   (market.lastBid + market.lastAsk) / 2n;

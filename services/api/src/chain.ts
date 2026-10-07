@@ -1,7 +1,7 @@
 import { AbiCoder, Contract, type Block } from "ethers";
 import { DEFAULT_MARGIN_SCALE_BPS } from "../../../packages/shared/src/pricing.js";
 import type { ApiContext } from "./context.js";
-import { MARKETS, unixSeconds, type Market } from "./markets.js";
+import { marketRegistry, unixSeconds, type Market } from "./markets.js";
 import type { ProtocolVersions } from "./quote-store.js";
 
 const LOCAL_REPORT_TYPE = "tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)[]";
@@ -43,8 +43,9 @@ export type ChainMarketState = {
 export type QuoteSnapshot = {
   blockNumber: number;
   block: Block | null;
-  markets: [ChainMarketState, ChainMarketState];
-  limitWords: [bigint, bigint];
+  /** Every registered market at this block, by index. */
+  markets: ChainMarketState[];
+  limitWords: bigint[];
   leaderEpoch: bigint;
   signerSetVersion: bigint;
   policyVersion: bigint;
@@ -74,7 +75,7 @@ export class ChainReader {
    */
   async marginScales(blockTag?: number): Promise<Record<Market, number>> {
     const { clearing } = this.ctx;
-    if (!clearing) return { BTC: DEFAULT_MARGIN_SCALE_BPS, ETH: DEFAULT_MARGIN_SCALE_BPS };
+    if (!clearing) return marketRegistry.record(() => DEFAULT_MARGIN_SCALE_BPS);
     const now = Date.now();
     if (
       blockTag === undefined &&
@@ -83,10 +84,11 @@ export class ChainReader {
     )
       return this.marginScaleCache.promise;
     const at = blockTag === undefined ? {} : { blockTag };
-    const promise = Promise.all(MARKETS.map((_, index) => clearing.marketParams(index, at))).then(
+    const markets = marketRegistry.all();
+    const promise = Promise.all(markets.map(({ index }) => clearing.marketParams(index, at))).then(
       (params) =>
         Object.fromEntries(
-          MARKETS.map((market, index) => [market, Number(params[index].marginScaleBps)]),
+          markets.map(({ symbol }, index) => [symbol, Number(params[index].marginScaleBps)]),
         ) as Record<Market, number>,
     );
     if (blockTag !== undefined) return promise;
@@ -170,12 +172,13 @@ export class ChainReader {
       return this.quoteSnapshotCache.promise;
     const blockTag = { blockTag: blockNumber };
     const promise = (async (): Promise<QuoteSnapshot> => {
+      // Cross-market checks cover every market the chain has at this block.
+      await marketRegistry.ensureCount(await clearing.marketCount(blockTag));
+      const indexes = marketRegistry.all().map((market) => market.index);
       const [
         block,
-        btc,
-        eth,
-        btcLimits,
-        ethLimits,
+        markets,
+        limitWords,
         leaderEpoch,
         signerSetVersion,
         policyVersion,
@@ -183,10 +186,8 @@ export class ChainReader {
         resolutionRequired,
       ] = await Promise.all([
         provider.getBlock(blockNumber),
-        clearing.markets(0, blockTag),
-        clearing.markets(1, blockTag),
-        clearing.marketLimitWord(0, blockTag),
-        clearing.marketLimitWord(1, blockTag),
+        Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
+        Promise.all(indexes.map((index) => clearing.marketLimitWord(index, blockTag))),
         clearing.leaderEpoch(blockTag),
         clearing.signerSetVersion(blockTag),
         clearing.policyVersion(blockTag),
@@ -196,8 +197,8 @@ export class ChainReader {
       return {
         blockNumber,
         block,
-        markets: [btc, eth],
-        limitWords: [btcLimits, ethLimits],
+        markets,
+        limitWords,
         leaderEpoch,
         signerSetVersion,
         policyVersion,

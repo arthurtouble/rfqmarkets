@@ -2,18 +2,22 @@ import { Container } from "@cloudflare/containers";
 import { admitAtEdge } from "./edge-admission.mjs";
 import { OracleHistory, handleHistoryRequest, syncHistory } from "./oracle-history.mjs";
 import { ensureOracleSigner, oracleDomainFor, publicOracleSigner } from "./oracle-identity.mjs";
-import { oracleRequestRoute, oracleWorkerSettings } from "./oracle-worker-routes.mjs";
+import {
+  oracleNodeMarketEnv,
+  oracleRequestRoute,
+  oracleSyncMarkets,
+  oracleWorkerMarkets,
+  oracleWorkerSettings,
+} from "./oracle-worker-routes.mjs";
 
 // One oracle node (services/oracle-node) per worker: oracle-1/-2/-3, deployed one at a time
 // from wrangler.oracle.jsonc. The Durable Object owns the node's signer key (oracle-identity.mjs), starts
 // the container only for the adapter recorded in KV `deployment.json` when this node is one of its
 // signers, and keeps price history in its SQLite storage (oracle-history.mjs).
+// Markets: the ORACLE_MARKETS var, or with an ORACLE_RPC_URL secret every market the clearing registry
+// lists (oracleNodeMarketEnv; docs/operations/adding-a-market.md).
 const PORT = 4900,
-  CHAIN_ID = "8453",
-  MARKETS = [
-    { id: 0, symbol: "BTC" },
-    { id: 1, symbol: "ETH" },
-  ];
+  CHAIN_ID = "8453";
 const json = (value, status = 200, headers = {}) =>
   new Response(JSON.stringify(value), {
     status,
@@ -80,7 +84,7 @@ export class RFQOracleNode extends Container {
       return this.remember({ ...domain, signer: signer.address }, 30_000);
     }
     try {
-      await this.startSigning(signer, domain.verifyingContract);
+      await this.startSigning(signer, domain.verifyingContract, deployment);
     } catch {
       return this.remember({ ready: false, reason: "node_start_failed", signer: signer.address }, 10_000);
     }
@@ -90,14 +94,14 @@ export class RFQOracleNode extends Container {
     );
   }
 
-  async startSigning(signer, verifyingContract) {
+  async startSigning(signer, verifyingContract, deployment) {
     const envVars = {
       ORACLE_SIGNER_KEY: signer.privateKey,
       ORACLE_CHAIN_ID: CHAIN_ID,
       ORACLE_VERIFYING_CONTRACT: verifyingContract,
       ORACLE_HOST: "0.0.0.0",
       ORACLE_PORT: String(PORT),
-      ORACLE_MARKETS: MARKETS.map((market) => `${market.id}:${market.symbol}`).join(","),
+      ...oracleNodeMarketEnv(this.env, deployment),
     };
     // Any implicit restart by the Container class must use the same domain.
     this.envVars = envVars;
@@ -143,7 +147,9 @@ export class RFQOracleNode extends Container {
     try {
       return {
         ...ready,
-        sync: await syncHistory(this.history, (path) => this.nodeJson(path), { markets: MARKETS }),
+        sync: await syncHistory(this.history, (path) => this.nodeJson(path), {
+          markets: oracleSyncMarkets(await this.nodeHealth(), oracleWorkerMarkets(this.env)),
+        }),
       };
     } catch (error) {
       return { ...ready, sync: { error: error.message } };

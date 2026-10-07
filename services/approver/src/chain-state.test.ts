@@ -81,7 +81,7 @@ test("readChainState resolves ERC-1271 accounts and session signers", async () =
   const result = await readChainState(chain, request(fixture, session));
   assert("snapshot" in result);
   assert.equal(result.snapshot.accountSignatureValid, false);
-  assert.equal(result.snapshot.session?.marketMask, 3);
+  assert.equal(result.snapshot.session?.marketMask, 3n);
   assert(chain.calls.includes("isValidSignature"));
   state.erc1271 = true;
   const contract = await snapshotOf(state, request(fixture, undefined));

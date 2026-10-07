@@ -27,6 +27,8 @@ export interface ApproverOptions {
   hedgeRisk?: HedgeRiskConfig;
   /** Transport for the hedger risk snapshot; defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
+  /** Market registry refresh interval (default 60 s; `RFQ_MARKET_REFRESH_MS`). */
+  marketRefreshMs?: number;
 }
 
 /** Tolerated clock skew between this approver, the leader and the chain. */

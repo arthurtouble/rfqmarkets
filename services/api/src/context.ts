@@ -19,7 +19,10 @@ export interface ApiOptions {
   senderBudget?: Pick<SenderOptions, "maxFeePerGas" | "maxGasLimit" | "maxValue" | "dailyBudgetWei">;
   provider?: JsonRpcProvider;
   sender?: ApiSender;
-  prices?: Record<Market, PriceSnapshot>;
+  /** How often the market registry is re-read from the clearing contract (default 60 s). */
+  marketRefreshMs?: number;
+  /** Configured prices for a leader without an oracle source (development and tests). */
+  prices?: Partial<Record<Market, PriceSnapshot>>;
   approvers?: Array<{ url: string; token: string }>;
   fetchImpl?: typeof fetch;
   corsOrigin?: string;
@@ -71,7 +74,7 @@ const DEFAULT_VERIFYING_CONTRACT = "0x0000000000000000000000000000000000000001";
 const LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1"];
 
 /** Development and test prices; production profiles always configure an oracle source. */
-function configuredPrices(): Record<Market, PriceSnapshot> {
+function configuredPrices(): Partial<Record<Market, PriceSnapshot>> {
   const now = Date.now();
   return {
     BTC: { market: "BTC", bid: 99_990n * 1_000_000n, ask: 100_010n * 1_000_000n, observedAtMs: now },
@@ -93,10 +96,10 @@ export class ApiContext {
   readonly devFund: boolean;
   readonly maxActiveQuotes: number;
 
-  /** Latest market prices; quoting refreshes them from the oracle source. */
-  readonly prices: Record<Market, PriceSnapshot>;
-  /** Settled maker inventory notional per market, refreshed from chain reads. */
-  readonly settled: Exposure = { BTC: 0n, ETH: 0n };
+  /** Latest market prices; quoting refreshes them from the oracle source. A market may have none yet. */
+  readonly prices: Partial<Record<Market, PriceSnapshot>>;
+  /** Settled maker inventory notional per market, refreshed from chain reads (missing = none). */
+  readonly settled: Exposure = {};
   readonly pending = new PendingExposureBook();
   readonly grossReservations = new GrossReservationBook();
   readonly flowRisk: FlowRiskTracker;

@@ -14,6 +14,7 @@ import {
   type TransactionRequest,
 } from "ethers";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
+import { LAUNCH_MARKETS, encodeMarketSymbol } from "../../../packages/shared/src/markets.js";
 import { buildIndexer } from "./server.js";
 
 const account = "0x0000000000000000000000000000000000000002",
@@ -21,6 +22,18 @@ const account = "0x0000000000000000000000000000000000000002",
   hash = "0x" + "11".repeat(32),
   tx = "0x" + "22".repeat(32),
   iface = new Interface(clearingIndexerAbi);
+/** Clearing view results: one deposited account without positions, and the two launch markets. */
+function chainResult(name: string, args: ReadonlyArray<unknown>): unknown[] {
+  if (name === "collateralOf") return [100_000_000n];
+  if (name === "openMarketsOf") return [0n];
+  if (name === "marketCount") return [2n];
+  if (name === "marketParams") {
+    const market = LAUNCH_MARKETS[Number(args[0])];
+    return [[encodeMarketSymbol(market.symbol), market.impactK, market.shockBps, market.marginScaleBps]];
+  }
+  if (name === "markets") return [0n, 0n, 0n, 0n, 0n, 0n, true];
+  return [0n, 0n, 0n];
+}
 class Chain extends JsonRpcProvider {
   failReads = true;
   override async getBlockNumber() {
@@ -38,10 +51,7 @@ class Chain extends JsonRpcProvider {
   override async call(request: TransactionRequest) {
     if (this.failReads) throw new Error("injected account RPC failure");
     const decoded = iface.parseTransaction({ data: String(request.data) })!;
-    return iface.encodeFunctionResult(
-      decoded.name,
-      decoded.name === "collateralOf" ? [100_000_000n] : [0n, 0n, 0n],
-    );
+    return iface.encodeFunctionResult(decoded.name, chainResult(decoded.name, decoded.args));
   }
 }
 
@@ -104,8 +114,13 @@ test("database failure rolls back headers, events, accounts and finalized cursor
     );
     provider.failReads = false;
     assert.equal((await app.inject({ method: "GET", url: "/health" })).json().ok, false);
-    for (const table of ["blocks", "activity", "accounts", "finalized_accounts", "metadata"])
+    for (const table of ["blocks", "activity", "accounts", "finalized_accounts", "positions"])
       assert.equal(db.prepare(`SELECT count(*) n FROM ${table}`).get()!.n, 0, table);
+    assert.equal(
+      db.prepare("SELECT count(*) n FROM metadata WHERE key != 'schema_version'").get()!.n,
+      0,
+      "metadata",
+    );
     db.exec("DROP TRIGGER fail_accounts");
     assert.equal((await app.inject({ method: "GET", url: "/health" })).json().ok, true);
     assert.equal(db.prepare("SELECT max(number) n FROM blocks").get()!.n, 10);
@@ -129,7 +144,9 @@ test("sync failures are logged once per distinct error and clear on recovery", a
       startBlock: 10,
       confirmations: 0,
       pollMs: 60_000,
-      logError: (message, error) => logged.push(`${message} ${String(error)}`),
+      logError: (message, error) => {
+        if (message.startsWith("indexer sync failed")) logged.push(`${message} ${String(error)}`);
+      },
     });
   try {
     await app.ready();
@@ -311,7 +328,7 @@ test("portfolio endpoints replay realized PnL, fees, funding and deposits from i
         return iface.encodeFunctionResult("markets", [0n, 0n, 0n, 0n, usdc(90n), usdc(91n), true]);
       return iface.encodeFunctionResult(
         decoded.name,
-        decoded.name === "collateralOf" ? [usdc(905n)] : [0n, 0n, 0n],
+        decoded.name === "collateralOf" ? [usdc(905n)] : chainResult(decoded.name, decoded.args),
       );
     }
   }

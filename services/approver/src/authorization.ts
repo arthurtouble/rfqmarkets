@@ -1,5 +1,5 @@
 import { getAddress } from "ethers";
-import type { SessionState } from "../../../packages/shared/src/clearing-structs.js";
+import { maskAllows, type SessionState } from "../../../packages/shared/src/clearing-structs.js";
 import {
   recoverDigestSigner,
   type MakerApproval,
@@ -63,7 +63,7 @@ export function checkUserAuthorization(input: {
     (!session ||
       getAddress(session.account) !== intent.account ||
       session.validUntil < intent.deadline ||
-      (session.marketMask & (1 << intent.market)) === 0 ||
+      !maskAllows(session.marketMask, intent.market) ||
       session.maxFee < fee ||
       session.usedNotional + notional > session.maxCumulativeNotional ||
       notional > session.maxTradeNotional)

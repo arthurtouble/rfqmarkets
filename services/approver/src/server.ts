@@ -1,6 +1,11 @@
 import Fastify, { type FastifyRequest } from "fastify";
 import { JsonRpcProvider, Wallet } from "ethers";
 import { approverPayloadSchema } from "../../../packages/shared/src/approver-payload.js";
+import {
+  marketRefreshIntervalMs,
+  watchMarketRegistry,
+  type MarketRegistryWatch,
+} from "../../../packages/shared/src/markets.js";
 import { approve, type ApproverContext } from "./approve.js";
 import { createChainClients } from "./chain-state.js";
 import { ApprovalJournal } from "./journal.js";
@@ -70,8 +75,16 @@ export function buildApprover(options: ApproverOptions) {
   // The first approval after boot otherwise pays for provider network detection, ABI coder setup and
   // cold RPC connections, which can exceed the leader's approver timeout. Warm those paths before
   // listening. Failures are ignored: every request still performs and checks its own reads.
+  let registryWatch: MarketRegistryWatch | undefined;
   app.addHook("onReady", async () => {
     if (!chain) return;
+    // Markets come from this approver's own RPC; a load failure keeps the last list and the
+    // per-request `marketCount` check fails closed until a refresh succeeds.
+    registryWatch = await watchMarketRegistry(chain.clearing, {
+      intervalMs: options.marketRefreshMs ?? marketRefreshIntervalMs(),
+      requireInitial: false,
+      onError: (error) => console.error("approver market registry refresh failed", error),
+    });
     const latest = { blockTag: "latest" };
     await Promise.allSettled([
       chain.provider.getNetwork(),
@@ -85,6 +98,9 @@ export function buildApprover(options: ApproverOptions) {
       chain.clearing.makerBacking(latest),
     ]);
   });
-  app.addHook("onClose", async () => journal.close());
+  app.addHook("onClose", async () => {
+    registryWatch?.stop();
+    journal.close();
+  });
   return app;
 }

@@ -5,7 +5,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Wallet } from "ethers";
+import { Contract, JsonRpcProvider, Wallet } from "ethers";
+import { clearingStateAbi } from "../../packages/shared/src/abi.js";
+import { syncMarketRegistry } from "../../packages/shared/src/markets.js";
 import { childEnvironment } from "../../packages/shared/src/process-environment.js";
 import { buildApi, type ApiOptions } from "../../services/api/src/server.js";
 import { HttpHedgeRiskSource } from "../../services/api/src/hedge-risk.js";
@@ -209,6 +211,15 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     }
 
     const { chain: apiChain, ...apiOptions } = config.api ?? {};
+    // Load the clearing registry before the API rebuilds journaled quotes for markets beyond BTC/ETH.
+    {
+      const provider = new JsonRpcProvider(config.rpcUrl, undefined, { staticNetwork: true });
+      try {
+        await syncMarketRegistry(new Contract(config.clearingAddress, clearingStateAbi, provider));
+      } finally {
+        provider.destroy();
+      }
+    }
     const api = buildApi({
       ...apiOptions,
       approvers,

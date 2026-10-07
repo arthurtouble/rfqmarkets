@@ -173,3 +173,29 @@ test("gateway serves bounded candles from the relayed stream, older buckets from
     await gateway.close();
   }
 });
+
+test("candles and backfill follow markets the stream adds, keyed by their contract index", async () => {
+  const book = new CandleBook(),
+    requested: string[] = [];
+  assert.equal(book.has("SOL"), false);
+  book.record(JSON.stringify({ markets: { SOL: { index: 2, observedAtMs: 60_000, mid: "150000000" } } }));
+  assert.equal(book.has("SOL"), true);
+  assert.equal(book.marketId("SOL"), 2);
+  assert.equal(book.marketId("BTC"), 0, "launch markets keep their index before any frame");
+  assert.deepEqual(
+    book.range("SOL", 0, 120_000).map((candle) => candle.close),
+    [150_000_000n],
+  );
+  const backfill = new CandleBackfill({
+    urls: ["http://node"],
+    now: () => 1_000_000_000,
+    fetchImpl: (async (url: string) => {
+      requested.push(url);
+      return new Response(JSON.stringify({ candles: [] }), { status: 200 });
+    }) as unknown as typeof fetch,
+  });
+  await backfill.get("SOL", "1m", 999_000_000, book.marketId("SOL"));
+  assert.match(requested[0], /market=2&/);
+  assert.equal(await backfill.get("DOGE", "1m", 999_000_000), null, "an unknown index is never guessed");
+  assert.equal(requested.length, 1);
+});

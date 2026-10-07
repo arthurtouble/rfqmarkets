@@ -1,15 +1,16 @@
 import { BASE, RATE, USDC, abs, ceilDiv } from "./numeric.js";
-import type { Market } from "./markets.js";
+import { marketRegistry, type Market } from "./markets.js";
 
 export { BASE, RATE, USDC, ceilDiv } from "./numeric.js";
 export type { Market } from "./markets.js";
 
 /**
- * Inventory-impact coefficients the launch markets are registered with on chain (`marketParams(id).impactK`).
- * The charge is per market: there is no cross-market term.
+ * A market's inventory-impact coefficient, as registered on chain (`marketParams(id).impactK`, kept in
+ * the market registry). The charge is per market: there is no cross-market term.
  */
-export const IMPACT_K = { BTC: 10_000n, ETH: 12_000n } as const;
-export type Exposure = Record<Market, bigint>;
+export const impactK = (market: Market) => marketRegistry.get(market).impactK;
+/** Settled maker inventory notional per market; a market with no entry has none. */
+export type Exposure = Partial<Record<Market, bigint>>;
 export type QuoteRequest = {
   market: Market;
   side: "buy" | "sell";
@@ -40,39 +41,39 @@ export function marketPotential(impactK: bigint, skew: bigint): bigint {
   return floorDiv(impactK * skew * skew, 2n * RATE * USDC);
 }
 export function potential(exposure: Exposure): bigint {
-  return marketPotential(IMPACT_K.BTC, exposure.BTC) + marketPotential(IMPACT_K.ETH, exposure.ETH);
+  let total = 0n;
+  for (const [market, skew] of Object.entries(exposure))
+    total += marketPotential(impactK(market), skew ?? 0n);
+  return total;
 }
 /** Mirrors `RFQRiskMath.impactCost(impactK, skew, delta)` for the market being traded. */
 export function impactCost(exposure: Exposure, market: Market, delta: bigint): bigint {
-  const skew = exposure[market];
-  return marketPotential(IMPACT_K[market], skew + delta) - marketPotential(IMPACT_K[market], skew);
+  const skew = exposure[market] ?? 0n,
+    k = impactK(market);
+  return marketPotential(k, skew + delta) - marketPotential(k, skew);
 }
+/**
+ * The greatest impact charge over every subset of pending reservations that may settle first. The
+ * charge depends only on the traded market's skew, so the extremes are its settled skew plus all
+ * pending sells or plus all pending buys.
+ */
 export function requiredPendingImpact(
   settled: Exposure,
   pending: Array<{ market: Market; delta: bigint }>,
   market: Market,
   delta: bigint,
 ): bigint {
-  let btcLow = settled.BTC,
-    btcHigh = settled.BTC,
-    ethLow = settled.ETH,
-    ethHigh = settled.ETH;
+  const settledSkew = settled[market] ?? 0n;
+  let low = settledSkew,
+    high = settledSkew;
   for (const item of pending) {
-    if (item.market === "BTC") {
-      if (item.delta < 0n) btcLow += item.delta;
-      else btcHigh += item.delta;
-    } else {
-      if (item.delta < 0n) ethLow += item.delta;
-      else ethHigh += item.delta;
-    }
+    if (item.market !== market) continue;
+    if (item.delta < 0n) low += item.delta;
+    else high += item.delta;
   }
-  let greatest: bigint | undefined;
-  for (const btc of [btcLow, btcHigh])
-    for (const eth of [ethLow, ethHigh]) {
-      const cost = impactCost({ BTC: btc, ETH: eth }, market, delta);
-      if (greatest === undefined || cost > greatest) greatest = cost;
-    }
-  return greatest ?? impactCost(settled, market, delta);
+  const lowCost = impactCost({ [market]: low }, market, delta),
+    highCost = impactCost({ [market]: high }, market, delta);
+  return lowCost > highCost ? lowCost : highCost;
 }
 export interface PriceSnapshot {
   market: Market;

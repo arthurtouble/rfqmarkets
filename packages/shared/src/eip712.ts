@@ -155,7 +155,8 @@ export interface CloseIntent {
 export interface SessionGrant {
   account: string;
   session: string;
-  marketMask: number;
+  /** Bit n allows market n. */
+  marketMask: bigint;
   maxTradeNotional: bigint;
   maxCumulativeNotional: bigint;
   maxFee: bigint;
@@ -302,6 +303,11 @@ export const closeToWire = (intent: CloseIntent) => ({
 });
 export const sessionGrantToWire = (grant: SessionGrant) => ({
   ...grant,
+  // A JSON number while it is exact (up to 53 markets), so existing wallets sign it unchanged.
+  marketMask:
+    grant.marketMask <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(grant.marketMask)
+      : grant.marketMask.toString(),
   maxTradeNotional: grant.maxTradeNotional.toString(),
   maxCumulativeNotional: grant.maxCumulativeNotional.toString(),
   maxFee: grant.maxFee.toString(),

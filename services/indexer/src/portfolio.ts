@@ -3,9 +3,11 @@
 // collateral = netDeposits + realizedPnl - fees + funding - liquidationPenalties + deficitCovered.
 // Amounts are USDC micro-units, sizes are 1e18 base units, prices are USDC micro-units per whole base unit.
 
+import { marketRegistry, type Market } from "../../../packages/shared/src/markets.js";
+
 export const BASE_UNIT = 10n ** 18n;
-const MARKET_NAMES = ["BTC", "ETH"] as const;
-export type PortfolioMarket = (typeof MARKET_NAMES)[number];
+/** A market symbol from the registry (`market #i` for an index the registry does not know yet). */
+export type PortfolioMarket = Market;
 
 /** One activity row as stored by the indexer (payload already JSON-decoded). */
 export interface PortfolioEvent {
@@ -83,6 +85,7 @@ export interface PortfolioPoint {
 
 export interface PortfolioReplay {
   totals: PortfolioTotals;
+  /** Every registered market, plus any other market the account traded. */
   positions: Record<PortfolioMarket, { size: bigint; entryPrice: bigint }>;
   fills: Fill[];
   funding: FundingItem[];
@@ -114,8 +117,10 @@ export function positionTransition(oldSize: bigint, oldEntry: bigint, delta: big
   return { nextSize, nextEntry, realizedPnl };
 }
 
-const marketOf = (value: string | undefined): PortfolioMarket | undefined =>
-  value === "0" ? "BTC" : value === "1" ? "ETH" : undefined;
+const marketOf = (value: string | undefined): PortfolioMarket | undefined => {
+  if (value === undefined || !/^\d+$/.test(value)) return undefined;
+  return marketRegistry.hasIndex(Number(value)) ? marketRegistry.symbol(Number(value)) : `market #${value}`;
+};
 
 /** Replays an account's events, which must be in ascending (blockNumber, logIndex) order. */
 export function replayPortfolio(events: readonly PortfolioEvent[]): PortfolioReplay {
@@ -130,10 +135,7 @@ export function replayPortfolio(events: readonly PortfolioEvent[]): PortfolioRep
       volume: 0n,
       tradeCount: 0,
     },
-    positions: PortfolioReplay["positions"] = {
-      BTC: { size: 0n, entryPrice: 0n },
-      ETH: { size: 0n, entryPrice: 0n },
-    },
+    positions: PortfolioReplay["positions"] = marketRegistry.record(() => ({ size: 0n, entryPrice: 0n })),
     fills: Fill[] = [],
     funding: FundingItem[] = [],
     points: PortfolioPoint[] = [];
@@ -147,7 +149,7 @@ export function replayPortfolio(events: readonly PortfolioEvent[]): PortfolioRep
     price: bigint,
     fee: bigint,
   ) => {
-    const position = positions[market],
+    const position = (positions[market] ??= { size: 0n, entryPrice: 0n }),
       next = positionTransition(position.size, position.entryPrice, delta, price),
       notional = (abs(delta) * price) / BASE_UNIT;
     totals.realizedPnl += next.realizedPnl;
@@ -203,7 +205,7 @@ export function replayPortfolio(events: readonly PortfolioEvent[]): PortfolioRep
       if (event.kind !== "Liquidated") return false;
       const market = marketOf(event.payload.market);
       if (!market) return false;
-      const size = abs(positions[market].size);
+      const size = abs(positions[market]?.size ?? 0n);
       return !tx.some(
         (other) =>
           other.kind === "PositionClosed" &&
@@ -217,14 +219,14 @@ export function replayPortfolio(events: readonly PortfolioEvent[]): PortfolioRep
       partialsApplied = true;
       for (const event of partials) {
         const market = marketOf(event.payload.market)!,
-          size = positions[market].size,
+          size = positions[market]?.size ?? 0n,
           closed = BigInt(event.payload.closedBase);
         if (size === 0n || closed === 0n) continue;
         const delta = size > 0n ? -min(closed, size) : min(closed, -size);
         if (!event.liquidationMark) {
           incomplete = true;
           // Keep sizes right even when the price is unknown: close at entry (zero realized PnL).
-          fill(event, "liquidation", market, delta, positions[market].entryPrice, 0n);
+          fill(event, "liquidation", market, delta, positions[market]?.entryPrice ?? 0n, 0n);
           continue;
         }
         fill(

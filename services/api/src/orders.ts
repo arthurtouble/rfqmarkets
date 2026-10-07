@@ -27,7 +27,7 @@ import type { ApiContext } from "./context.js";
 import type { ExecutionService } from "./execution.js";
 import type { HttpGuards } from "./http.js";
 import { LimitTriggerBook, StopTriggerBook } from "./limit-book.js";
-import { abs, MARKETS, marketIndex, type Market, type Side } from "./markets.js";
+import { abs, marketIndex, marketSymbols, type Market, type Side } from "./markets.js";
 import { validOwnerSignature } from "./owner-signature.js";
 import { publicError } from "./public-error.js";
 import type { QuoteEngine } from "./quoting.js";
@@ -281,7 +281,9 @@ export class LimitOrders {
         return undefined;
       }
     }
-    const { bid, ask } = this.ctx.prices[market];
+    const price = this.ctx.prices[market];
+    if (!price) return undefined;
+    const { bid, ask } = price;
     return (bid + ask) / 2n;
   }
 
@@ -297,16 +299,18 @@ export class LimitOrders {
       }
       await this.sweepReduceOnly();
       const { prices } = this.ctx;
-      const candidates = [
-        ...this.triggers.takeMarketable("BTC", prices.BTC.bid, prices.BTC.ask, MAX_TRIGGERS_PER_MARKET),
-        ...this.triggers.takeMarketable("ETH", prices.ETH.bid, prices.ETH.ask, MAX_TRIGGERS_PER_MARKET),
-      ];
+      const candidates = marketSymbols().flatMap((market) => {
+        const price = prices[market];
+        return price
+          ? this.triggers.takeMarketable(market, price.bid, price.ask, MAX_TRIGGERS_PER_MARKET)
+          : [];
+      });
       for (const id of candidates) {
         const order = this.orders.get(id);
         if (order && order.status === "open" && order.userSignature)
           await this.tryExecute(order, order.userSignature);
       }
-      for (const market of MARKETS) {
+      for (const market of marketSymbols()) {
         if (this.stops.size === 0) break;
         const mid = await this.currentMid(market);
         if (mid === undefined) continue;
@@ -379,8 +383,9 @@ export class LimitOrders {
     const { ctx } = this;
     if (await this.nonceSpent(order)) return;
     try {
-      const snapshot = ctx.prices[order.market],
-        notional = (abs(order.intent.baseDelta) * ((snapshot.bid + snapshot.ask) / 2n)) / BASE;
+      const snapshot = ctx.prices[order.market];
+      if (!snapshot) return this.arm(order);
+      const notional = (abs(order.intent.baseDelta) * ((snapshot.bid + snapshot.ask) / 2n)) / BASE;
       if (notional <= 0n) return;
       const request = { market: order.market, side: order.side, amount: formatUsdc(notional) };
       // An indicative quote first, so a stored firm quote is only spent on orders that cross.

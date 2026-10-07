@@ -37,7 +37,7 @@ export function indicativeQuote(snapshot: MarketSnapshot, market: Market, side: 
       nowMs, crypto.randomUUID(),
       { maxNotional, baseSpreadBps: spread.totalBps, feeBps: BigInt(pricing.feeBps), toleranceBps: BigInt(pricing.toleranceBps), spread, maxSnapshotAgeMs: STALE_AFTER_MS },
     );
-    return { quote: { ...quoteToWire(value), quoteId: undefined } };
+    return { quote: { ...quoteToWire(value), market, quoteId: undefined } };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Quote unavailable" };
   }

@@ -3,7 +3,12 @@ import { finalizedClock } from "../../../packages/shared/src/finalized-clock.js"
 import type { GrossReservation } from "../../../packages/shared/src/gross-reservations.js";
 import { hashApproval, intentDigest } from "../../../packages/shared/src/eip712.js";
 import { triggerReached, triggeredFillDelta } from "../../../packages/shared/src/trigger.js";
-import { MARKETS, marketIndex, type MarketIndex } from "../../../packages/shared/src/markets.js";
+import {
+  marketIndex,
+  marketName,
+  marketRegistry,
+  type MarketIndex,
+} from "../../../packages/shared/src/markets.js";
 import { BASE, abs } from "../../../packages/shared/src/numeric.js";
 import type { OracleObservation } from "../../../packages/shared/src/oracle-report.js";
 import { checkUserAuthorization, checkUserSignature, recoverSigner } from "./authorization.js";
@@ -75,6 +80,11 @@ export async function approve(
   if (!envelope) return reject("invalid typed data", 400);
   // `fill` is the trade the approval prices: the signed intent, or a clamped reduce-only trigger.
   const { domain, intent, approval, trigger, fill } = envelope;
+  // A market added on chain since the last registry refresh: refresh once before judging it.
+  if (!marketRegistry.has(input.quote.market) || !marketRegistry.hasIndex(intent.market))
+    await marketRegistry.ensureCount(intent.market + 1).catch(() => {});
+  if (!marketRegistry.has(input.quote.market) || !marketRegistry.hasIndex(intent.market))
+    return reject("unknown market");
   const nowMs = Date.now();
   const offChain: Check =
     checkDomain(domain, {
@@ -243,7 +253,7 @@ async function chainChecks(
     }
     const hedge = checkHedgeRisk({
       risk,
-      market: MARKETS[market],
+      market: marketName(market),
       nowMs,
       maxAgeMs: options.hedgeRisk.maxAgeMs,
       aggregateBase: selected.aggregateBase,

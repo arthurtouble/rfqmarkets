@@ -13,6 +13,7 @@ import {
   type TradeIntent,
   type Trigger,
 } from "../../../packages/shared/src/eip712.js";
+import { maskAllows } from "../../../packages/shared/src/clearing-structs.js";
 import type { ExposureBook, ExposureMarket } from "../../../packages/shared/src/exposure-admission.js";
 import { pendingMakerDebit } from "../../../packages/shared/src/exposure-admission.js";
 import { finalizedClock } from "../../../packages/shared/src/finalized-clock.js";
@@ -28,7 +29,7 @@ import type { DevChain } from "./dev-chain.js";
 import { Reply } from "./http.js";
 import { recordFlowFill } from "./journal.js";
 import type { MarketStream } from "./market-stream.js";
-import { abs, unixSeconds } from "./markets.js";
+import { abs, marketIndex, marketRegistry, unixSeconds } from "./markets.js";
 import { validOwnerSignature } from "./owner-signature.js";
 import { publicError } from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
@@ -61,10 +62,11 @@ type CompletedSubmission = {
 type GrossSnapshot = {
   blockNumber: number;
   blockTimestamp: number;
-  books: [ExposureBook, ExposureBook];
-  states: [ExposureMarket, ExposureMarket];
+  /** Every registered market, by index. */
+  books: ExposureBook[];
+  states: ExposureMarket[];
   position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
-  netLimits: [bigint, bigint];
+  netLimits: bigint[];
   backing: bigint;
   floor: bigint;
   clock: Awaited<ReturnType<typeof finalizedClock>>;
@@ -192,7 +194,7 @@ export class ExecutionService {
       feeNotional = protectedNotional > quote.notional ? protectedNotional : quote.notional;
     return {
       account: getAddress(account),
-      market: quote.market === "BTC" ? 0 : 1,
+      market: marketIndex(quote.market),
       baseDelta: quote.baseDelta,
       limitPrice: quote.worstPrice,
       maxFee: ceilDiv(feeNotional * quote.fee, quote.notional),
@@ -290,7 +292,7 @@ export class ExecutionService {
       return (
         getAddress(session.account) === intent.account &&
         BigInt(session.validUntil) >= intent.deadline &&
-        (Number(session.marketMask) & (1 << intent.market)) !== 0 &&
+        maskAllows(session.marketMask, intent.market) &&
         BigInt(session.maxFee) >= intent.maxFee
       );
     } catch {
@@ -374,30 +376,34 @@ export class ExecutionService {
       block = await provider.getBlock(blockNumber);
     if (!block) return null;
     const blockTag = { blockTag: blockNumber };
-    const [btcBook, ethBook, btcRaw, ethRaw, positionRaw, btcLimit, ethLimit, backing, floor, clock] =
-      await Promise.all([
-        clearing.exposureState(0, blockTag),
-        clearing.exposureState(1, blockTag),
-        clearing.markets(0, blockTag),
-        clearing.markets(1, blockTag),
-        clearing.positionOf(intent.account, intent.market, blockTag),
-        clearing.marketLimitWord(0, blockTag),
-        clearing.marketLimitWord(1, blockTag),
-        clearing.makerBacking(blockTag),
-        clearing.baseRiskCapitalTarget(blockTag),
-        finalizedClock(provider, blockNumber, block.timestamp),
-      ]);
+    // Gross, net and stress admission covers every market the chain has at this block.
+    await marketRegistry.ensureCount(await clearing.marketCount(blockTag));
+    const indexes = marketRegistry.all().map((market) => market.index);
+    const [books, rawStates, limitWords, positionRaw, backing, floor, clock] = await Promise.all([
+      Promise.all(indexes.map((index) => clearing.exposureState(index, blockTag))),
+      Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
+      Promise.all(indexes.map((index) => clearing.marketLimitWord(index, blockTag))),
+      clearing.positionOf(intent.account, intent.market, blockTag),
+      clearing.makerBacking(blockTag),
+      clearing.baseRiskCapitalTarget(blockTag),
+      finalizedClock(provider, blockNumber, block.timestamp),
+    ]);
     return {
       blockNumber,
       blockTimestamp: block.timestamp,
-      books: [btcBook, ethBook],
-      states: [toExposureMarket(btcRaw), toExposureMarket(ethRaw)],
+      books: books.map((book) => ({
+        longBase: BigInt(book.longBase),
+        shortBase: BigInt(book.shortBase),
+        limits: BigInt(book.limits),
+        ready: Boolean(book.ready),
+      })),
+      states: rawStates.map(toExposureMarket),
       position: {
         size: BigInt(positionRaw.size),
         entryPrice: BigInt(positionRaw.entryPrice),
         lastFundingIndex: BigInt(positionRaw.lastFundingIndex),
       },
-      netLimits: [BigInt(btcLimit), BigInt(ethLimit)],
+      netLimits: limitWords.map((word) => BigInt(word)),
       backing: BigInt(backing),
       floor: BigInt(floor),
       clock,
@@ -582,7 +588,7 @@ export class ExecutionService {
     ctx.prune();
     if (pending.revision !== input.reservationRevision) return RESERVATION_CONFLICT;
     let grossItem: GrossReservation = {
-      market: intent.market as 0 | 1,
+      market: intent.market,
       baseDelta: fill.baseDelta,
       reduceOnly: intent.reduceOnly,
       deadline: Number(approval.deadline),
@@ -592,21 +598,23 @@ export class ExecutionService {
       const { blockNumber, blockTimestamp, books, states, position, netLimits, backing, floor, clock } =
         grossSnapshot;
       if (clock) this.finalizeReservations(clock.block, clock.timestamp, clock.hash);
-      const asks: [bigint, bigint] = [BigInt(states[0].lastAsk), BigInt(states[1].lastAsk)];
+      if (intent.market >= states.length) return Reply.error(409, "unknown market");
+      const asks = states.map((state) => BigInt(state.lastAsk));
       asks[intent.market] = quote.snapshot.ask;
-      const other = 1 - intent.market,
-        otherState = states[other],
-        priorGross = grossReservations.bounds(quote.quoteId)[other];
-      if (
-        priorGross.longBase + priorGross.shortBase > 0n &&
-        (Number(otherState.lastPriceTime) === 0 ||
-          blockTimestamp - Number(otherState.lastPriceTime) > CROSS_MARKET_PRICE_MAX_AGE_SECONDS)
-      )
-        return Reply.error(503, "outstanding gross risk requires fresh cross-market price");
+      const priorGross = grossReservations.bounds(quote.quoteId, states.length);
+      for (const [other, otherState] of states.entries()) {
+        if (other === intent.market) continue;
+        if (
+          priorGross[other].longBase + priorGross[other].shortBase > 0n &&
+          (Number(otherState.lastPriceTime) === 0 ||
+            blockTimestamp - Number(otherState.lastPriceTime) > CROSS_MARKET_PRICE_MAX_AGE_SECONDS)
+        )
+          return Reply.error(503, "outstanding gross risk requires fresh cross-market price");
+      }
       const net = states.map(
         (state) =>
           (BigInt(state.aggregateBase) * (BigInt(state.lastBid) + BigInt(state.lastAsk))) / 2n / BASE,
-      ) as [bigint, bigint];
+      );
       const capitalMarket = {
         ...states[intent.market],
         lastBid: quote.snapshot.bid,
@@ -786,7 +794,8 @@ export class ExecutionService {
       journal
         ?.prepare("UPDATE commitments SET status='included', updated_ms=? WHERE quote_id=?")
         .run(Date.now(), quote.quoteId);
-      if (ctx.pending.delete(quote.quoteId)) ctx.settled[quote.market] += quote.delta;
+      if (ctx.pending.delete(quote.quoteId))
+        ctx.settled[quote.market] = (ctx.settled[quote.market] ?? 0n) + quote.delta;
       const fill = {
         market: quote.market,
         side: quote.side,

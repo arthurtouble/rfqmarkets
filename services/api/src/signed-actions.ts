@@ -240,6 +240,7 @@ export function registerSignedActions(
     }
     const timestamp = ctx.devFund ? await dev.advanceTime() : await chain.latestBlockTimestamp(),
       price = observed ?? ctx.prices[market];
+    if (!price) throw new Error(`no price for ${market}`);
     return encodeLocalReport(
       intent.market,
       price.bid,
@@ -345,6 +346,7 @@ export function registerSignedActions(
       ...grant,
       account: getAddress(grant.account),
       session: getAddress(grant.session),
+      marketMask: BigInt(grant.marketMask),
       maxTradeNotional: BigInt(grant.maxTradeNotional),
       maxCumulativeNotional: BigInt(grant.maxCumulativeNotional),
       maxFee: BigInt(grant.maxFee),

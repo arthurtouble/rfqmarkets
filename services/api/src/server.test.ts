@@ -1373,9 +1373,9 @@ test("config and market snapshots expose per-market margin multipliers and lever
 
 /** An API whose oracle mid the test moves; `tick` notifies subscribers as a live feed would. */
 function triggerApi(options: { journalPath?: string; approverFetch?: typeof fetch } = {}) {
-  const prices = { BTC: 100_000n * 1_000_000n, ETH: 4_000n * 1_000_000n },
-    listeners: Array<(market: "BTC" | "ETH") => void> = [];
-  const observation = (market: "BTC" | "ETH") => {
+  const prices: Record<string, bigint> = { BTC: 100_000n * 1_000_000n, ETH: 4_000n * 1_000_000n },
+    listeners: Array<(market: string) => void> = [];
+  const observation = (market: string) => {
     const now = Math.floor(Date.now() / 1_000),
       price = prices[market];
     return {
@@ -1393,7 +1393,7 @@ function triggerApi(options: { journalPath?: string; approverFetch?: typeof fetc
     fetchImpl: options.approverFetch ?? routedFetch,
     oracleSource: {
       latest: async (market) => observation(market),
-      subscribe: (listener: (market: "BTC" | "ETH") => void) => {
+      subscribe: (listener: (market: string) => void) => {
         listeners.push(listener);
         return () => {};
       },

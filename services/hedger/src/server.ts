@@ -1,20 +1,42 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { keccak256, toUtf8Bytes } from "ethers";
 import { z } from "zod";
 import type { HedgeExecutionSignal, HedgeRiskSnapshot } from "../../../packages/shared/src/hedge-risk.js";
+import { marketRegistry } from "../../../packages/shared/src/markets.js";
 import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 
-export type HedgeMarket = "BTC" | "ETH";
-const HEDGE_MARKETS = ["BTC", "ETH"] as const satisfies readonly HedgeMarket[];
+/**
+ * A market symbol as the indexer's exposure reports it. Venues are addressed by venue coin (see
+ * `hedgeCoins`); the local venue uses the symbol itself.
+ */
+export type HedgeMarket = string;
 const integerString = z.string().regex(/^-?\d+$/);
 const exposureMarket = z.object({ aggregateBase: integerString, bid: integerString, ask: integerString });
-/** The indexer's finalized `/v1/exposure` response. */
+/** The indexer's finalized `/v1/exposure` response: every market the chain has. */
 const exposureResponse = z.object({
   blockNumber: z.number().int().nonnegative(),
-  markets: z.object({ BTC: exposureMarket, ETH: exposureMarket }),
+  markets: z.record(z.string(), exposureMarket),
 });
+/** The reason a market without a hedge venue mapping reports while reduce-only. */
+export const NO_HEDGE_MAPPING = "no_hedge_mapping";
+const hedgeMarketsFile = z.object({
+  coins: z.record(
+    z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,30}$/),
+    z.string().regex(/^[A-Za-z0-9:._-]{1,32}$/),
+  ),
+});
+/**
+ * The market symbol -> venue coin map, from a JSON data file (`{ "coins": { "BTC": "BTC" } }`). The
+ * default file is `services/hedger/hedge-markets.json`; `RFQ_HEDGE_MARKETS_FILE` overrides it.
+ */
+export function loadHedgeCoins(
+  path = process.env.RFQ_HEDGE_MARKETS_FILE ?? new URL("../hedge-markets.json", import.meta.url),
+): Record<string, string> {
+  return hedgeMarketsFile.parse(JSON.parse(readFileSync(path, "utf8"))).coins;
+}
 type ExposureResponse = z.infer<typeof exposureResponse>;
 
 const ONE = 10n ** 18n;
@@ -34,6 +56,7 @@ function marketGap(exposure: ExposureResponse | undefined, market: HedgeMarket, 
 }
 export interface VenueOrder {
   clientId: string;
+  /** The venue coin (`hedgeCoins[symbol]`). */
   market: HedgeMarket;
   baseDelta: bigint;
   limitPrice: bigint;
@@ -44,6 +67,7 @@ export interface VenueResult {
   filledBase: bigint;
   reason?: string;
 }
+/** A hedge venue, addressed by venue coin. */
 export interface HedgeVenue {
   readonly mode: string;
   position(market: HedgeMarket): Promise<bigint>;
@@ -66,6 +90,14 @@ export interface HedgeOptions {
   healthToken: string;
   /** Origins allowed to read the operations endpoints from a browser (defaults to the local admin UI). */
   corsOrigin?: string | string[];
+  /**
+   * Market symbol -> venue coin. A market without an entry is never hedged and reports reduce-only
+   * (`no_hedge_mapping`), the same fail-closed policy as an unhealthy venue. Defaults to
+   * `loadHedgeCoins()`.
+   */
+  hedgeCoins?: Record<string, string>;
+  /** Where hedger notices (e.g. an unmapped market) are logged; defaults to stderr. */
+  log?: (message: string) => void;
 }
 class IndexerUnavailable extends Error {}
 
@@ -73,17 +105,13 @@ export class LocalHedgeVenue implements HedgeVenue {
   readonly mode = "local-simulator";
   constructor(private db: DatabaseSync) {
     db.exec(
-      "CREATE TABLE IF NOT EXISTS local_venue_positions(market TEXT PRIMARY KEY,base_size TEXT NOT NULL); INSERT OR IGNORE INTO local_venue_positions VALUES('BTC','0'),('ETH','0'); CREATE TABLE IF NOT EXISTS local_venue_orders(client_id TEXT PRIMARY KEY,venue_order_id TEXT NOT NULL,market TEXT NOT NULL,base_delta TEXT NOT NULL,status TEXT NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS local_venue_positions(market TEXT PRIMARY KEY,base_size TEXT NOT NULL); CREATE TABLE IF NOT EXISTS local_venue_orders(client_id TEXT PRIMARY KEY,venue_order_id TEXT NOT NULL,market TEXT NOT NULL,base_delta TEXT NOT NULL,status TEXT NOT NULL)",
     );
   }
   async position(market: HedgeMarket) {
-    return BigInt(
-      (
-        this.db.prepare("SELECT base_size FROM local_venue_positions WHERE market=?").get(market) as {
-          base_size: string;
-        }
-      ).base_size,
-    );
+    const row = this.db.prepare("SELECT base_size FROM local_venue_positions WHERE market=?").get(market) as
+      { base_size: string } | undefined;
+    return BigInt(row?.base_size ?? "0");
   }
   async find(clientId: string) {
     const row = this.db
@@ -105,8 +133,10 @@ export class LocalHedgeVenue implements HedgeVenue {
         .prepare("INSERT INTO local_venue_orders VALUES(?,?,?,?, 'filled')")
         .run(order.clientId, venueOrderId, order.market, order.baseDelta.toString());
       this.db
-        .prepare("UPDATE local_venue_positions SET base_size=? WHERE market=?")
-        .run((current + order.baseDelta).toString(), order.market);
+        .prepare(
+          "INSERT INTO local_venue_positions VALUES(?,?) ON CONFLICT(market) DO UPDATE SET base_size=excluded.base_size",
+        )
+        .run(order.market, (current + order.baseDelta).toString());
       this.db.exec("COMMIT");
       return { venueOrderId, status: "filled", filledBase: order.baseDelta } as VenueResult;
     } catch (error) {
@@ -133,7 +163,27 @@ export function buildHedger(options: HedgeOptions) {
     db.exec("ALTER TABLE hedge_orders ADD COLUMN filled_base TEXT NOT NULL DEFAULT '0'");
   if (!columns.some((column) => column.name === "reason"))
     db.exec("ALTER TABLE hedge_orders ADD COLUMN reason TEXT");
-  const venue: HedgeVenue = options.venue ?? new LocalHedgeVenue(db);
+  const venue: HedgeVenue = options.venue ?? new LocalHedgeVenue(db),
+    hedgeCoins = options.hedgeCoins ?? loadHedgeCoins(),
+    log = options.log ?? ((message: string) => console.error(message)),
+    unmappedLogged = new Set<string>();
+  /** The venue coin for `market`, or undefined (logged once) when the market is not hedged. */
+  const coinOf = (market: HedgeMarket) => {
+    const coin = Object.hasOwn(hedgeCoins, market) ? hedgeCoins[market] : undefined;
+    if (!coin && !unmappedLogged.has(market)) {
+      unmappedLogged.add(market);
+      log(
+        `hedger: market ${market} has no hedge venue mapping; it is not hedged and stays reduce-only until one is configured`,
+      );
+    }
+    return coin;
+  };
+  /** Markets in the latest exposure report (every market the chain has). */
+  // Every market in the latest exposure report (all markets the chain has), plus the registry's markets so
+  // a snapshot taken before the first report still names them (as reduce-only).
+  const exposureMarkets = () => [
+    ...new Set([...marketRegistry.symbols(), ...Object.keys(lastExposure?.markets ?? {})]),
+  ];
   let ticking: Promise<void> | undefined,
     timer: ReturnType<typeof setInterval> | undefined,
     lastError: string | undefined,
@@ -141,7 +191,7 @@ export function buildHedger(options: HedgeOptions) {
     lastIndexedBlock = -1,
     lastExposure: ExposureResponse | undefined,
     lastSuccessAtMs = 0;
-  const lastVenuePositions: Record<HedgeMarket, bigint> = { BTC: 0n, ETH: 0n },
+  const lastVenuePositions: Record<HedgeMarket, bigint> = {},
     lastExecution: Partial<Record<HedgeMarket, HedgeExecutionSignal>> = {},
     executionErrors: Partial<Record<HedgeMarket, string>> = {},
     statusClients = new SseClients(64 * 1024);
@@ -181,13 +231,17 @@ export function buildHedger(options: HedgeOptions) {
         "SELECT client_id,market,base_delta,limit_price FROM hedge_orders WHERE status IN ('planned','submitted','open') ORDER BY created_ms",
       )
       .all() as Array<{ client_id: string; market: HedgeMarket; base_delta: string; limit_price: string }>;
-    for (const order of outstanding)
+    for (const order of outstanding) {
+      // Orders are journaled by market symbol and sent to the venue by coin.
+      const coin = coinOf(order.market);
+      if (!coin) throw new Error(`outstanding hedge order for unmapped market ${order.market}`);
       await reconcileOrSubmit({
         clientId: order.client_id,
-        market: order.market,
+        market: coin,
         baseDelta: BigInt(order.base_delta),
         limitPrice: BigInt(order.limit_price),
       });
+    }
     // An open venue order already reserves risk. Do not stack another order on the
     // same exposure until the venue reports a terminal fill or rejection.
     const blockedMarkets = new Set(
@@ -209,14 +263,16 @@ export function buildHedger(options: HedgeOptions) {
     }
     lastExposure = exposure;
     lastIndexedBlock = exposure.blockNumber;
-    for (const market of HEDGE_MARKETS) {
-      const current = await venue.position(market);
+    for (const market of Object.keys(exposure.markets)) {
+      const coin = coinOf(market);
+      if (!coin) continue;
+      const current = await venue.position(coin);
       lastVenuePositions[market] = current;
       const { bid, ask, mid, target, gap, gapNotional } = marketGap(exposure, market, current);
       if (bid === 0n || ask === 0n) continue;
       if (venue.execution)
         try {
-          lastExecution[market] = await venue.execution(market, mid, gapNotional > band ? gapNotional : band);
+          lastExecution[market] = await venue.execution(coin, mid, gapNotional > band ? gapNotional : band);
           delete executionErrors[market];
         } catch (error) {
           executionErrors[market] = String(error);
@@ -241,7 +297,7 @@ export function buildHedger(options: HedgeOptions) {
         { status: string } | undefined;
       if (exists) {
         if (exists.status === "planned" || exists.status === "submitted")
-          await reconcileOrSubmit({ clientId, market, baseDelta: delta, limitPrice: limit });
+          await reconcileOrSubmit({ clientId, market: coin, baseDelta: delta, limitPrice: limit });
         continue;
       }
       db.prepare(
@@ -255,19 +311,20 @@ export function buildHedger(options: HedgeOptions) {
         Date.now(),
         Date.now(),
       );
-      await reconcileOrSubmit({ clientId, market, baseDelta: delta, limitPrice: limit });
-      lastVenuePositions[market] = await venue.position(market);
+      await reconcileOrSubmit({ clientId, market: coin, baseDelta: delta, limitPrice: limit });
+      lastVenuePositions[market] = await venue.position(coin);
     }
   }
   const statusSnapshot = () => {
-    const positions = { BTC: lastVenuePositions.BTC.toString(), ETH: lastVenuePositions.ETH.toString() },
+    const positions = venuePositions(),
       markets = Object.fromEntries(
-        HEDGE_MARKETS.map((market) => {
-          const { target, current, gap, gapNotional } = marketGap(
-            lastExposure,
-            market,
-            lastVenuePositions[market],
-          );
+        exposureMarkets().map((market) => {
+          const coin = coinOf(market),
+            { target, current, gap, gapNotional } = marketGap(
+              lastExposure,
+              market,
+              lastVenuePositions[market] ?? 0n,
+            );
           return [
             market,
             {
@@ -276,7 +333,8 @@ export function buildHedger(options: HedgeOptions) {
               gapBase: gap.toString(),
               gapNotional: gapNotional.toString(),
               bandUsdc: band.toString(),
-              state: gapNotional <= band ? "within_band" : "hedge_required",
+              coin: coin ?? null,
+              state: !coin ? "unhedged" : gapNotional <= band ? "within_band" : "hedge_required",
               execution: lastExecution[market],
               executionError: executionErrors[market],
             },
@@ -294,6 +352,13 @@ export function buildHedger(options: HedgeOptions) {
       orders: db.prepare("SELECT * FROM hedge_orders ORDER BY created_ms DESC LIMIT 20").all(),
     };
   };
+  /** Venue position per hedged market symbol. */
+  const venuePositions = () =>
+    Object.fromEntries(
+      exposureMarkets()
+        .filter((market) => coinOf(market))
+        .map((market) => [market, (lastVenuePositions[market] ?? 0n).toString()]),
+    );
   const broadcastStatus = () => statusClients.broadcast(sseFrame("status", statusSnapshot()));
   async function tick() {
     if (ticking) return ticking;
@@ -321,9 +386,19 @@ export function buildHedger(options: HedgeOptions) {
       executableBand = minOrder > band ? minOrder : band,
       healthy = effectivelyHealthy(),
       markets = {} as HedgeRiskSnapshot["markets"];
-    for (const market of HEDGE_MARKETS) {
-      const { gapNotional } = marketGap(lastExposure, market, lastVenuePositions[market]),
-        execution = lastExecution[market],
+    for (const market of exposureMarkets()) {
+      const { gapNotional } = marketGap(lastExposure, market, lastVenuePositions[market] ?? 0n);
+      if (!coinOf(market)) {
+        // Unhedgeable: only exposure-reducing trades, as when the venue is down.
+        markets[market] = {
+          mode: "reduce_only",
+          gapNotional: gapNotional.toString(),
+          bandUsdc: band.toString(),
+          reason: NO_HEDGE_MAPPING,
+        };
+        continue;
+      }
+      const execution = lastExecution[market],
         executionHealthy =
           !venue.execution || (execution !== undefined && Date.now() - execution.observedAtMs <= riskStaleMs),
         mode =
@@ -365,7 +440,7 @@ export function buildHedger(options: HedgeOptions) {
     return {
       ok: !lastError,
       error: lastError,
-      positions: { BTC: lastVenuePositions.BTC.toString(), ETH: lastVenuePositions.ETH.toString() },
+      positions: venuePositions(),
     };
   });
   app.addHook("onReady", async () => {

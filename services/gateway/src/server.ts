@@ -13,6 +13,7 @@ import {
 } from "./candles.js";
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
 import { openSse } from "../../lib/src/sse.js";
+import { isMarketSymbol } from "../../../packages/shared/src/markets.js";
 
 export interface GatewayOptions {
   upstreamUrl: string;
@@ -49,6 +50,9 @@ export function buildGateway(options: GatewayOptions) {
     candleCache = new Map<string, { second: number; body: unknown }>(),
     fetchImpl = options.fetchImpl ?? fetch,
     corsOrigin = options.corsOrigin ?? "http://127.0.0.1:4173";
+  /** A launch market or one the relayed stream has carried (markets are added by governance, not code). */
+  const knownMarket = (market: string) =>
+    isMarketSymbol(market) && (candles.has(market) || history.has(market));
   /** Candles for the `limit` buckets ending with the current one; older buckets come from the backfill. */
   async function candleWindow(market: HistoryMarket, interval: CandleInterval, limit: number) {
     const intervalMs = CANDLE_INTERVALS[interval],
@@ -61,7 +65,7 @@ export function buildGateway(options: GatewayOptions) {
     // The first local bucket is only complete when the book began at its boundary.
     const cutoff = earliest === null ? Infinity : Math.ceil(earliest / intervalMs) * intervalMs;
     if (backfill && cutoff > fromMs) {
-      const older = await backfill.get(market, interval, fromMs);
+      const older = await backfill.get(market, interval, fromMs, candles.marketId(market));
       if (older?.length) {
         merged = [
           ...older.filter((candle) => candle.start >= fromMs && candle.start < cutoff),
@@ -136,8 +140,7 @@ export function buildGateway(options: GatewayOptions) {
     async (request, reply) => {
       reply.header("access-control-allow-origin", corsOrigin).header("cache-control", "public, max-age=1");
       const { market, interval = "1m" } = request.query;
-      if (market !== "BTC" && market !== "ETH")
-        return reply.code(400).send({ error: "market must be BTC or ETH" });
+      if (!market || !knownMarket(market)) return reply.code(400).send({ error: "unknown market" });
       if (!Object.hasOwn(CANDLE_INTERVALS, interval))
         return reply.code(400).send({ error: "interval must be one of 1m, 5m, 15m, 1h, 4h, 1d" });
       const limit = Number(request.query.limit ?? DEFAULT_CANDLES);
@@ -166,8 +169,7 @@ export function buildGateway(options: GatewayOptions) {
     async (request, reply) => {
       reply.header("access-control-allow-origin", corsOrigin).header("cache-control", "private, max-age=1");
       const market = request.query.market;
-      if (market !== "BTC" && market !== "ETH")
-        return reply.code(400).send({ error: "market must be BTC or ETH" });
+      if (!market || !knownMarket(market)) return reply.code(400).send({ error: "unknown market" });
       const limit = Number(request.query.limit ?? 300);
       if (!Number.isInteger(limit) || limit < 2 || limit > 1_800)
         return reply.code(400).send({ error: "limit must be an integer between 2 and 1800" });

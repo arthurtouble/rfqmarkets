@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { MARKETS } from "./markets.js";
+import { isKnownMarket } from "./markets.js";
 import { MAX_SLIPPAGE_BPS, MIN_SLIPPAGE_BPS } from "./pricing.js";
 export * from "./pricing.js";
 
 export const quoteRequestSchema = z.object({
-  market: z.enum(MARKETS),
+  market: z.string().refine(isKnownMarket, "unknown market"),
   side: z.enum(["buy", "sell"]),
   amount: z.string().regex(/^\d+(\.\d{1,6})?$/),
   /** Optional price protection in bps; the default is the launch tolerance (8 bps). */

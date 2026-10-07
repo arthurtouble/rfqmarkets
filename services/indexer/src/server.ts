@@ -5,8 +5,17 @@ import { Contract, Interface, JsonRpcProvider, getAddress, type Log } from "ethe
 import { z } from "zod";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
+import {
+  MAX_MARKETS,
+  isKnownMarket,
+  marketIndex,
+  marketRefreshIntervalMs,
+  marketRegistry,
+  watchMarketRegistry,
+  type MarketRegistryWatch,
+} from "../../../packages/shared/src/markets.js";
 import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
-import { RiskProjection, type AccountProjection } from "./risk-projection.js";
+import { RiskProjection, marketLabel } from "./risk-projection.js";
 import {
   HISTORY_INTERVALS,
   bucketPoints,
@@ -35,7 +44,12 @@ export interface IndexerOptions {
   maxStreamConnectionsPerClient?: number;
   /** Where sync failures are reported; defaults to stderr. Each distinct failure is logged once. */
   logError?: (message: string, error: unknown) => void;
+  /** Market registry refresh interval (default 60 s; `RFQ_MARKET_REFRESH_MS`). */
+  marketRefreshMs?: number;
 }
+
+/** Bumped when the tables change shape; an older database is dropped and reindexed from `startBlock`. */
+const SCHEMA_VERSION = "2";
 
 const ACTIVITY_KINDS = [
   "Deposited",
@@ -87,11 +101,18 @@ const activityQuery = z.object({
   cursor: activityCursor,
   limit: pageLimit(25),
   kind: z.enum(ACTIVITY_KINDS, { message: "invalid activity kind" }).optional(),
-  market: z.enum(["0", "1"], { message: "invalid market" }).transform(Number).optional(),
+  market: z
+    .string()
+    .regex(/^\d{1,3}$/, "invalid market")
+    .transform(Number)
+    .refine((value) => value < MAX_MARKETS && marketRegistry.hasIndex(value), "invalid market")
+    .optional(),
   finalized: isTrue,
 });
 const finalityQuery = z.object({ finalized: isTrue });
-const fillMarket = z.enum(["BTC", "ETH"], { message: "invalid market" }).optional();
+/** A registered market symbol (the registry refreshes from chain). */
+const knownMarket = z.string().refine(isKnownMarket, "invalid market");
+const fillMarket = knownMarket.optional();
 const portfolioHistoryQuery = z.object({
   interval: z
     .enum(Object.keys(HISTORY_INTERVALS) as [HistoryInterval, ...HistoryInterval[]], {
@@ -120,7 +141,7 @@ const positionsQuery = z.object({
     .string()
     .optional()
     .transform((value) => value !== "false"),
-  market: z.enum(["BTC", "ETH"], { message: "invalid market" }).optional(),
+  market: knownMarket.optional(),
   cursor: address("invalid cursor").optional(),
 });
 
@@ -146,19 +167,84 @@ export function buildIndexer(options: IndexerOptions) {
   const iface = new Interface(clearingIndexerAbi);
   const db = new DatabaseSync(options.databasePath);
   db.exec(
-    "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS blocks(number INTEGER PRIMARY KEY,hash TEXT NOT NULL,parent_hash TEXT NOT NULL,timestamp INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS activity(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,block_number INTEGER NOT NULL,block_hash TEXT NOT NULL,timestamp INTEGER NOT NULL,kind TEXT NOT NULL,account TEXT,market INTEGER,payload TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index)); CREATE INDEX IF NOT EXISTS activity_account_block ON activity(account,block_number DESC,log_index DESC); CREATE TABLE IF NOT EXISTS accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,btc_size TEXT NOT NULL,btc_entry TEXT NOT NULL,eth_size TEXT NOT NULL,eth_entry TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS finalized_accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,btc_size TEXT NOT NULL,btc_entry TEXT NOT NULL,eth_size TEXT NOT NULL,eth_entry TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE INDEX IF NOT EXISTS accounts_open ON accounts(account) WHERE btc_size != '0' OR eth_size != '0'; CREATE INDEX IF NOT EXISTS finalized_accounts_open ON finalized_accounts(account) WHERE btc_size != '0' OR eth_size != '0'; CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS liquidation_marks(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,bid TEXT NOT NULL,ask TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index))",
+    "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
   );
+  // Schema 1 kept one column pair per launch market (btc_size, eth_size). Positions now live in their own
+  // table keyed by market index, so an older database is dropped and rebuilt from chain.
+  const schema = db.prepare("SELECT value FROM metadata WHERE key='schema_version'").get() as
+    { value: string } | undefined;
+  if (schema?.value !== SCHEMA_VERSION) {
+    db.exec(
+      "DROP TABLE IF EXISTS blocks; DROP TABLE IF EXISTS activity; DROP TABLE IF EXISTS accounts; DROP TABLE IF EXISTS finalized_accounts; DROP TABLE IF EXISTS positions; DROP TABLE IF EXISTS finalized_positions; DROP TABLE IF EXISTS liquidation_marks; DELETE FROM metadata",
+    );
+    db.prepare("INSERT INTO metadata VALUES('schema_version',?)").run(SCHEMA_VERSION);
+  }
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS blocks(number INTEGER PRIMARY KEY,hash TEXT NOT NULL,parent_hash TEXT NOT NULL,timestamp INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS activity(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,block_number INTEGER NOT NULL,block_hash TEXT NOT NULL,timestamp INTEGER NOT NULL,kind TEXT NOT NULL,account TEXT,market INTEGER,payload TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index)); CREATE INDEX IF NOT EXISTS activity_account_block ON activity(account,block_number DESC,log_index DESC); CREATE TABLE IF NOT EXISTS accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS finalized_accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS positions(account TEXT NOT NULL,market INTEGER NOT NULL,size TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(account,market)); CREATE TABLE IF NOT EXISTS finalized_positions(account TEXT NOT NULL,market INTEGER NOT NULL,size TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(account,market)); CREATE INDEX IF NOT EXISTS positions_market ON positions(market,account); CREATE INDEX IF NOT EXISTS finalized_positions_market ON finalized_positions(market,account); CREATE TABLE IF NOT EXISTS liquidation_marks(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,bid TEXT NOT NULL,ask TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index))",
+  );
+  /** Accounts and their position tables, live (included) or finalized. */
+  const tables = (finalized: boolean) =>
+    finalized
+      ? ({ accounts: "finalized_accounts", positions: "finalized_positions" } as const)
+      : ({ accounts: "accounts", positions: "positions" } as const);
+  /** Open positions per account, by market index. */
+  function storedPositions(finalized: boolean, accounts: string[]) {
+    const result = new Map<string, Map<number, { size: string; entry: string }>>();
+    if (!accounts.length) return result;
+    const rows = db
+      .prepare(
+        `SELECT account,market,size,entry FROM ${tables(finalized).positions} WHERE account IN (${accounts.map(() => "?").join(",")})`,
+      )
+      .all(...accounts) as Array<{ account: string; market: number; size: string; entry: string }>;
+    for (const row of rows) {
+      let positions = result.get(row.account);
+      if (!positions) result.set(row.account, (positions = new Map()));
+      positions.set(Number(row.market), { size: row.size, entry: row.entry });
+    }
+    return result;
+  }
+  /** `{ [symbol]: { size, entryPrice } }` for every registered market and any other open one. */
+  function positionView(positions: Map<number, { size: string; entry: string }> | undefined) {
+    const indexes = new Set([
+      ...marketRegistry.all().map((market) => market.index),
+      ...(positions?.keys() ?? []),
+    ]);
+    return Object.fromEntries(
+      [...indexes]
+        .sort((left, right) => left - right)
+        .map((index) => {
+          const position = positions?.get(index);
+          return [marketLabel(index), { size: position?.size ?? "0", entryPrice: position?.entry ?? "0" }];
+        }),
+    );
+  }
   const portfolioCache = new Map<string, PortfolioReplay>();
   const liveRisk = new RiskProjection(),
     finalizedRisk = new RiskProjection();
-  for (const row of db
-    .prepare("SELECT account,collateral,btc_size,eth_size FROM accounts")
-    .all() as AccountProjection[])
-    liveRisk.update(row);
-  for (const row of db
-    .prepare("SELECT account,collateral,btc_size,eth_size FROM finalized_accounts")
-    .all() as AccountProjection[])
-    finalizedRisk.update(row);
+  for (const [finalized, risk] of [
+    [false, liveRisk],
+    [true, finalizedRisk],
+  ] as const) {
+    const rows = db.prepare(`SELECT account,collateral FROM ${tables(finalized).accounts}`).all() as Array<{
+        account: string;
+        collateral: string;
+      }>,
+      positions = db
+        .prepare(`SELECT account,market,size FROM ${tables(finalized).positions}`)
+        .all() as Array<{
+        account: string;
+        market: number;
+        size: string;
+      }>,
+      sizes = new Map<string, Map<number, string>>();
+    for (const row of positions) {
+      let map = sizes.get(row.account);
+      if (!map) sizes.set(row.account, (map = new Map()));
+      map.set(Number(row.market), row.size);
+    }
+    for (const row of rows) risk.update({ ...row, sizes: sizes.get(row.account) ?? new Map() });
+  }
+  let registryWatch: MarketRegistryWatch | undefined;
   let syncing: Promise<{ accounts: Set<string>; reset: boolean }> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -197,44 +283,55 @@ export function buildIndexer(options: IndexerOptions) {
   const reset = () => {
     atomic(() =>
       db.exec(
-        "DELETE FROM blocks; DELETE FROM activity; DELETE FROM accounts; DELETE FROM finalized_accounts; DELETE FROM metadata; DELETE FROM liquidation_marks",
+        "DELETE FROM blocks; DELETE FROM activity; DELETE FROM accounts; DELETE FROM finalized_accounts; DELETE FROM positions; DELETE FROM finalized_positions; DELETE FROM metadata WHERE key != 'schema_version'; DELETE FROM liquidation_marks",
       ),
     );
     liveRisk.clear();
     finalizedRisk.clear();
     portfolioCache.clear();
   };
+  /** Collateral and every open position (`openMarketsOf` bit i = market i) at `blockTag`. */
   async function readAccount(account: string, blockTag: number, txHash?: string) {
-    const [collateral, btc, eth] = await Promise.all([
+    const [collateral, openMask] = await Promise.all([
       contract.collateralOf(account, { blockTag }),
-      contract.positionOf(account, 0, { blockTag }),
-      contract.positionOf(account, 1, { blockTag }),
+      contract.openMarketsOf(account, { blockTag }),
     ]);
+    const open: number[] = [];
+    for (let index = 0, mask = BigInt(openMask); mask !== 0n; index++, mask >>= 1n)
+      if (mask & 1n) open.push(index);
+    const positions = await Promise.all(
+      open.map(async (market) => {
+        const position = await contract.positionOf(account, market, { blockTag });
+        return { market, size: position.size.toString(), entry: position.entryPrice.toString() };
+      }),
+    );
     return {
       account,
       collateral: collateral.toString(),
-      btc_size: btc.size.toString(),
-      btc_entry: btc.entryPrice.toString(),
-      eth_size: eth.size.toString(),
-      eth_entry: eth.entryPrice.toString(),
+      positions: positions.filter((position) => position.size !== "0"),
       blockTag,
       txHash,
     };
   }
   type AccountRow = Awaited<ReturnType<typeof readAccount>>;
-  function writeAccount(row: AccountRow, table: "accounts" | "finalized_accounts") {
+  const projection = (row: AccountRow) => ({
+    account: row.account,
+    collateral: row.collateral,
+    sizes: new Map(row.positions.map((position) => [position.market, position.size])),
+  });
+  function writeAccount(row: AccountRow, finalized: boolean) {
+    const table = tables(finalized);
     db.prepare(
-      `INSERT INTO ${table} VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(account) DO UPDATE SET collateral=excluded.collateral,btc_size=excluded.btc_size,btc_entry=excluded.btc_entry,eth_size=excluded.eth_size,eth_entry=excluded.eth_entry,indexed_block=excluded.indexed_block,indexed_tx=excluded.indexed_tx`,
-    ).run(
-      row.account,
-      row.collateral,
-      row.btc_size,
-      row.btc_entry,
-      row.eth_size,
-      row.eth_entry,
-      row.blockTag,
-      row.txHash ?? null,
-    );
+      `INSERT INTO ${table.accounts} VALUES(?,?,?,?) ON CONFLICT(account) DO UPDATE SET collateral=excluded.collateral,indexed_block=excluded.indexed_block,indexed_tx=excluded.indexed_tx`,
+    ).run(row.account, row.collateral, row.blockTag, row.txHash ?? null);
+    db.prepare(`DELETE FROM ${table.positions} WHERE account=?`).run(row.account);
+    for (const position of row.positions)
+      db.prepare(`INSERT INTO ${table.positions} VALUES(?,?,?,?)`).run(
+        row.account,
+        position.market,
+        position.size,
+        position.entry,
+      );
   }
   async function stageFinalized(
     head: number,
@@ -267,7 +364,7 @@ export function buildIndexer(options: IndexerOptions) {
   }
   function writeFinalized(stage: Awaited<ReturnType<typeof stageFinalized>>) {
     if (!stage) return;
-    for (const row of stage.rows) writeAccount(row, "finalized_accounts");
+    for (const row of stage.rows) writeAccount(row, true);
     db.prepare(
       "INSERT INTO metadata VALUES('finalized_cursor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
     ).run(String(stage.target));
@@ -289,7 +386,7 @@ export function buildIndexer(options: IndexerOptions) {
     if (from > head) {
       const finalized = await stageFinalized(head);
       atomic(() => writeFinalized(finalized));
-      for (const item of finalized?.rows ?? []) finalizedRisk.update(item);
+      for (const item of finalized?.rows ?? []) finalizedRisk.update(projection(item));
       return { accounts: new Set<string>(), reset: rebuilt };
     }
     // Stage every network read before opening a synchronous transaction. A failed
@@ -387,11 +484,11 @@ export function buildIndexer(options: IndexerOptions) {
           mark.bid,
           mark.ask,
         );
-      for (const item of included) writeAccount(item, "accounts");
+      for (const item of included) writeAccount(item, false);
       writeFinalized(finalized);
     });
-    for (const item of included) liveRisk.update(item);
-    for (const item of finalized?.rows ?? []) finalizedRisk.update(item);
+    for (const item of included) liveRisk.update(projection(item));
+    for (const item of finalized?.rows ?? []) finalizedRisk.update(projection(item));
     return { accounts: new Set(affected.keys()), reset: rebuilt };
   }
   async function doSync() {
@@ -490,10 +587,7 @@ export function buildIndexer(options: IndexerOptions) {
     return {
       account: params.address,
       collateral: row.collateral,
-      positions: {
-        BTC: { size: row.btc_size, entryPrice: row.btc_entry },
-        ETH: { size: row.eth_size, entryPrice: row.eth_entry },
-      },
+      positions: positionView(storedPositions(false, [params.address]).get(params.address)),
       indexedBlock: row.indexed_block,
       indexedTransaction: row.indexed_tx,
     };
@@ -618,10 +712,7 @@ export function buildIndexer(options: IndexerOptions) {
           `SELECT collateral FROM ${query.finalized ? "finalized_accounts" : "accounts"} WHERE account=?`,
         )
         .get(params.address) as { collateral: string } | undefined;
-    const position = (market: "BTC" | "ETH") => ({
-      size: replay.positions[market].size.toString(),
-      entryPrice: replay.positions[market].entryPrice.toString(),
-    });
+
     return {
       account: params.address,
       finality: query.finalized ? "finalized" : "included",
@@ -641,7 +732,12 @@ export function buildIndexer(options: IndexerOptions) {
       volume: totals.volume.toString(),
       tradeCount: totals.tradeCount,
       fundingCount: replay.funding.length,
-      positions: { BTC: position("BTC"), ETH: position("ETH") },
+      positions: Object.fromEntries(
+        Object.entries(replay.positions).map(([market, position]) => [
+          market,
+          { size: position.size.toString(), entryPrice: position.entryPrice.toString() },
+        ]),
+      ),
       firstEventMs: replay.firstEventMs,
       lastEventMs: replay.lastEventMs,
       incomplete: replay.incomplete,
@@ -701,16 +797,22 @@ export function buildIndexer(options: IndexerOptions) {
       blockTag = query.finalized
         ? Math.max(options.startBlock ?? 0, head - (options.confirmations ?? 2))
         : head;
-    const [btc, eth] = await Promise.all([
-      readContract.markets(0, { blockTag }),
-      readContract.markets(1, { blockTag }),
-    ]);
+    // Every market the chain has at this block. One the registry has not loaded yet is reported as
+    // `market #i`, which the hedger cannot map and so does not hedge.
+    const count = Number(await readContract.marketCount({ blockTag }));
+    if (count > marketRegistry.count) await marketRegistry.ensureCount(count).catch(() => {});
+    const states = await Promise.all(
+      Array.from({ length: count }, (_, index) => readContract.markets(index, { blockTag })),
+    );
     const market = (state: { aggregateBase: bigint; lastBid: bigint; lastAsk: bigint }) => ({
       aggregateBase: state.aggregateBase.toString(),
       bid: state.lastBid.toString(),
       ask: state.lastAsk.toString(),
     });
-    return { blockNumber: blockTag, markets: { BTC: market(btc), ETH: market(eth) } };
+    return {
+      blockNumber: blockTag,
+      markets: Object.fromEntries(states.map((state, index) => [marketLabel(index), market(state)])),
+    };
   });
   app.get("/v1/risk", async (request, reply) => {
     await sync();
@@ -722,30 +824,33 @@ export function buildIndexer(options: IndexerOptions) {
     await sync();
     const query = parse(positionsQuery, request.query, reply);
     if (!query) return;
-    const table = query.finalized ? "finalized_accounts" : "accounts",
-      open =
-        query.market === "BTC"
-          ? "btc_size != '0'"
-          : query.market === "ETH"
-            ? "eth_size != '0'"
-            : "(btc_size != '0' OR eth_size != '0')",
-      where = query.cursor ? `${open} AND account > ?` : open,
-      params = query.cursor ? [query.cursor, query.limit] : [query.limit],
+    const table = tables(query.finalized),
+      market = query.market === undefined ? undefined : marketIndex(query.market),
+      // Only open positions are stored, so an account is open when it has a position row.
+      open = `EXISTS (SELECT 1 FROM ${table.positions} p WHERE p.account=a.account${market === undefined ? "" : " AND p.market=?"})`,
+      openParams = market === undefined ? [] : [market],
+      where = query.cursor ? `${open} AND a.account > ?` : open,
+      params = query.cursor ? [...openParams, query.cursor, query.limit] : [...openParams, query.limit],
       rows = db
         .prepare(
-          `SELECT account,collateral,btc_size,btc_entry,eth_size,eth_entry,indexed_block FROM ${table} WHERE ${where} ORDER BY account LIMIT ?`,
+          `SELECT a.account,a.collateral,a.indexed_block FROM ${table.accounts} a WHERE ${where} ORDER BY a.account LIMIT ?`,
         )
         .all(...params) as Array<Record<string, string | number>>,
       total = Number(
-        (db.prepare(`SELECT count(*) value FROM ${table} WHERE ${open}`).get() as { value: number }).value,
+        (
+          db.prepare(`SELECT count(*) value FROM ${table.accounts} a WHERE ${open}`).get(...openParams) as {
+            value: number;
+          }
+        ).value,
+      ),
+      positions = storedPositions(
+        query.finalized,
+        rows.map((row) => String(row.account)),
       ),
       items = rows.map((row) => ({
         account: String(row.account),
         collateral: String(row.collateral),
-        positions: {
-          BTC: { size: String(row.btc_size), entryPrice: String(row.btc_entry) },
-          ETH: { size: String(row.eth_size), entryPrice: String(row.eth_entry) },
-        },
+        positions: positionView(positions.get(String(row.account))),
       }));
     return {
       items,
@@ -775,6 +880,13 @@ export function buildIndexer(options: IndexerOptions) {
     };
   });
   app.addHook("onReady", async () => {
+    // Market names for responses; the index is the stored key, so a lagging registry only delays names.
+    registryWatch = await watchMarketRegistry(readContract, {
+      intervalMs: options.marketRefreshMs ?? marketRefreshIntervalMs(),
+      requireInitial: false,
+      onChange: () => portfolioCache.clear(),
+      onError: (error) => logError("indexer market registry refresh failed:", error),
+    });
     await sync();
     timer = setInterval(() => void sync(), options.pollMs ?? 500);
     timer.unref();
@@ -782,6 +894,7 @@ export function buildIndexer(options: IndexerOptions) {
     heartbeat.unref();
   });
   app.addHook("onClose", async () => {
+    registryWatch?.stop();
     if (timer) clearInterval(timer);
     if (heartbeat) clearInterval(heartbeat);
     updateClients.close();
