@@ -17,15 +17,16 @@ const clients=Array.from({length:count},(_,index)=>({wallet:Wallet.createRandom(
 for(const client of clients){
   const deposit=await post("/v1/dev/fund",{account:client.wallet.address,amount:"2500"});assert(deposit.response.ok,JSON.stringify(deposit.payload));
 }
+// Quotes allow 1% slippage so the check isolates concurrency from simulated price drift.
 const prepared=await Promise.all(clients.map(async client=>{
-  const quote=await post("/v1/quote",{market:client.market,side:client.side,amount:client.amount});assert(quote.response.ok,JSON.stringify(quote.payload));
+  const quote=await post("/v1/quote",{market:client.market,side:client.side,amount:client.amount,slippageBps:100});assert(quote.response.ok,JSON.stringify(quote.payload));
   const intent=await post("/v1/prepare",{quoteId:quote.payload.quoteId,account:client.wallet.address,nonce:client.nonce});assert(intent.response.ok,JSON.stringify(intent.payload));
   const signature=await client.wallet.signTypedData(intent.payload.domain,intent.payload.types,intent.payload.intent);
   return {...client,quoteId:quote.payload.quoteId,intent:intent.payload.intent,payload:{quoteId:quote.payload.quoteId,account:client.wallet.address,nonce:client.nonce,userSignature:signature}};
 }));
 const started=Date.now(),results=await Promise.all(prepared.map(async item=>({...item,result:await post("/v1/approve",item.payload)}))),elapsed=Date.now()-started;
 const accepted=results.filter(item=>item.result.response.ok),rejected=results.filter(item=>!item.result.response.ok);
-for(const item of rejected){assert([409,503].includes(item.result.response.status),JSON.stringify(item.result.payload));assert.match(String(item.result.payload.error),/price moved|chain submission|inclusion|quorum|settlement/);}
+for(const item of rejected){assert([409,503].includes(item.result.response.status),JSON.stringify(item.result.payload));assert.match(String(item.result.payload.error),/price moved|chain submission|inclusion|quorum|settlement|admission inventory changed/);}
 assert(accepted.length>=Math.floor(count*0.75),`only ${accepted.length}/${count} parallel settlements succeeded: ${JSON.stringify(rejected.map(item=>item.result.payload))}`);
 assert.equal(new Set(accepted.map(item=>item.result.payload.transaction.hash)).size,accepted.length,"two settlements reported the same transaction");
 for(const item of accepted){assert.equal(await clearing.nonceUsed(item.wallet.address,item.nonce),true);const position=await clearing.positionOf(item.wallet.address,item.market==="BTC"?0:1);assert.equal(position.size.toString(),item.intent.baseDelta);}
@@ -40,7 +41,7 @@ const closed=await Promise.all(accepted.map(async item=>{
     const closeNonce=nonce(),preparedClose=await post("/v1/prepare",{quoteId:closeQuote.payload.quoteId,account:item.wallet.address,nonce:closeNonce,reduceOnly:true});assert(preparedClose.response.ok,JSON.stringify(preparedClose.payload));
     const signature=await item.wallet.signTypedData(preparedClose.payload.domain,preparedClose.payload.types,preparedClose.payload.intent),result=await post("/v1/approve",{quoteId:closeQuote.payload.quoteId,account:item.wallet.address,nonce:closeNonce,reduceOnly:true,userSignature:signature});
     if(result.response.ok)return {...item,closeNonce,result};
-    assert.match(String(result.payload.error),/price moved|inclusion|settlement/);
+    assert.match(String(result.payload.error),/price moved|chain submission|inclusion|settlement|admission inventory changed/);
   }
   throw new Error(`close retries exhausted for ${item.wallet.address}`);
 }));

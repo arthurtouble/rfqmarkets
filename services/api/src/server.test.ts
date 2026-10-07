@@ -1026,6 +1026,43 @@ test("market intents bind reduce-only and cannot be re-prepared with weaker sema
   await target.close();
 });
 
+test("a sell's fee cap covers a fill above the expected price as far as its protection allows below", async () => {
+  const target = buildApi();
+  await target.ready();
+  const prepare = async (side: "buy" | "sell", nonce: string) => {
+    const quote = (
+      await target.inject({
+        method: "POST",
+        url: "/v1/quote",
+        payload: { market: "ETH", side, amount: "200" },
+      })
+    ).json();
+    const prepared = await target.inject({
+      method: "POST",
+      url: "/v1/prepare",
+      payload: { quoteId: quote.quoteId, account: user.address, nonce },
+    });
+    assert.equal(prepared.statusCode, 200, prepared.body);
+    return { quote, intent: prepared.json().intent };
+  };
+  const sell = await prepare("sell", "881001");
+  const sellCeiling = 2n * BigInt(sell.quote.expectedPrice) - BigInt(sell.quote.worstPrice);
+  const sellNotional = (-BigInt(sell.quote.baseDelta) * sellCeiling) / 10n ** 18n;
+  assert.ok(
+    BigInt(sell.intent.maxFee) > BigInt(sell.quote.fee),
+    "a sell may fill higher and pay a larger fee",
+  );
+  assert.ok(BigInt(sell.intent.maxFee) * BigInt(sell.quote.amount) >= sellNotional * BigInt(sell.quote.fee));
+  const buy = await prepare("buy", "881002");
+  const buyNotional = (BigInt(buy.quote.baseDelta) * BigInt(buy.quote.worstPrice)) / 10n ** 18n;
+  assert.ok(BigInt(buy.intent.maxFee) * BigInt(buy.quote.amount) >= buyNotional * BigInt(buy.quote.fee));
+  assert.ok(
+    BigInt(buy.intent.maxFee) > BigInt(buy.quote.fee),
+    "a buy's fee cap still follows its price protection",
+  );
+  await target.close();
+});
+
 test("approvers reject an API that requests signatures for an unpinned chain domain", async () => {
   const approvers = apps.map((_, index) => ({
     url: `http://approver-${index}`,

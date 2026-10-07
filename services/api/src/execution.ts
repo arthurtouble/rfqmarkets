@@ -31,7 +31,7 @@ import { recordFlowFill } from "./journal.js";
 import type { MarketStream } from "./market-stream.js";
 import { abs, marketIndex, marketRegistry, unixSeconds } from "./markets.js";
 import { validOwnerSignature } from "./owner-signature.js";
-import { publicError } from "./public-error.js";
+import { approverPolicyRejection, publicError } from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
 import type { CreatedQuote, QuoteEngine } from "./quoting.js";
 import { archiveApiCommitments } from "./recovery.js";
@@ -48,6 +48,11 @@ const DEFAULT_MIN_INCLUSION_SECONDS = 4;
 /** An approval for a market with outstanding gross risk needs the other market priced this recently. */
 const CROSS_MARKET_PRICE_MAX_AGE_SECONDS = 15;
 const MAX_RESERVATION_CONFLICTS = 8;
+/**
+ * Optimistic admissions that lose to another reservation this many times re-price while holding
+ * the admission lock, so a burst of simultaneous trades settles in turn instead of starving.
+ */
+const OPTIMISTIC_RESERVATION_ATTEMPTS = 2;
 const COMPLETED_RETENTION_MS = 300_000;
 const TRADE_GAS_LIMIT = 2_000_000n;
 
@@ -190,7 +195,11 @@ export class ExecutionService {
     // The user authorizes quantity, price protection, fee and a short execution
     // interval. Oracle proof freshness is independent: a fresh proof is fetched
     // after wallet signing and bound by the approvers immediately before submit.
-    const protectedNotional = (abs(quote.baseDelta) * quote.worstPrice) / BASE,
+    // A sell has no upper price bound, so its fee cap allows the same move above the expected price
+    // that its price protection allows below it: a better fill must not fail on a larger fee.
+    const feeCeilingPrice =
+        quote.baseDelta < 0n ? 2n * quote.expectedPrice - quote.worstPrice : quote.worstPrice,
+      protectedNotional = (abs(quote.baseDelta) * feeCeilingPrice) / BASE,
       feeNotional = protectedNotional > quote.notional ? protectedNotional : quote.notional;
     return {
       account: getAddress(account),
@@ -430,140 +439,154 @@ export class ExecutionService {
     // Optimistic reads precede a synchronous durable admission section. Remote
     // quorum and simulation run after publication and outside the lock.
     for (let attempt = 0, conflicts = 0; attempt < 2; attempt++) {
-      let refreshed: CreatedQuote;
+      // After repeated conflicts the lock is taken before re-pricing (queued, FIFO) and handed to the
+      // admission section below; `finally` releases it on every path that leaves before then.
+      let queued =
+        conflicts >= OPTIMISTIC_RESERVATION_ATTEMPTS ? await this.acquireReservationLock() : undefined;
       try {
-        refreshed = await this.quoting.createQuote(
-          { market: quote.market, side: quote.side, amount: formatUsdc(quote.notional) },
-          {
-            persist: false,
-            exactBaseDelta: fill.baseDelta,
-            reductionAccount: intent.account,
-            excludeReservation: original.quoteId,
-          },
-        );
-      } catch (error) {
-        return Reply.error(503, publicError(error, "fresh settlement price unavailable"));
-      }
-      if (exceedsProtection(intent, refreshed.quote))
-        return Reply.error(409, "price moved beyond signed protection");
-      // The settlement report carries this snapshot's touch; the contract checks its mid.
-      if (trigger && !triggerReached(refreshed.quote.snapshot.bid, refreshed.quote.snapshot.ask, trigger))
-        return Reply.error(409, "trigger no longer reached");
-      quote = { ...refreshed.quote, quoteId: original.quoteId };
-      const { versions, oracleReport, reservationRevision } = refreshed;
-      ctx.prune();
-      const reportExpiry = oracleReport?.validUntil ?? versions.blockTimestamp + APPROVAL_TTL_SECONDS,
-        approvalDeadline = BigInt(
-          Math.min(Number(intent.deadline), versions.blockTimestamp + APPROVAL_TTL_SECONDS, reportExpiry),
-        );
-      if (Number(approvalDeadline) <= versions.blockTimestamp)
-        return Reply.error(503, "fresh settlement proof lacks inclusion time", { retriable: true });
-      const report = await this.settlementReport(intent, quote, oracleReport);
-      const oracleReportHash =
-        report === "0x"
-          ? keccak256(
-              toUtf8Bytes(
-                JSON.stringify({
-                  market: quote.market,
-                  bid: quote.snapshot.bid.toString(),
-                  ask: quote.snapshot.ask.toString(),
-                  observedAtMs: quote.snapshot.observedAtMs,
-                }),
-              ),
-            )
-          : keccak256(report);
-      const approval: MakerApproval = {
-        intentHash,
-        executionPrice: quote.expectedPrice,
-        impactCharge: quote.impactCharge,
-        fee: quote.fee,
-        oracleReportHash,
-        deadline: approvalDeadline,
-        leaderEpoch: versions.leaderEpoch,
-        signerSetVersion: versions.signerSetVersion,
-        policyVersion: versions.policyVersion,
-      };
-      const digest = hashApproval(ctx.domain, approval),
-        approverPayload = {
-          domain: ctx.wireDomain,
-          intent: intentToWire(intent),
-          userSignature,
-          approval: approvalToWire(approval),
-          quote: quoteToWire(quote),
-          ...(trigger ? { trigger: triggerToWire(trigger) } : {}),
-          report,
-          oracleAgeMs: Math.max(0, Date.now() - quote.snapshot.observedAtMs),
-        };
-      let grossSnapshot: GrossSnapshot | undefined;
-      if (ctx.clearing && ctx.provider) {
-        const snapshot = await this.readGrossSnapshot(intent);
-        if (!snapshot) return Reply.error(503, "gross reservation snapshot unavailable");
-        if (trigger && triggeredFillDelta(intent, snapshot.position.size) !== fill.baseDelta)
-          return Reply.error(409, "position changed since the trigger was priced");
-        grossSnapshot = snapshot;
-      }
-      const release = await this.acquireReservationLock();
-      let reserved: Reply | typeof RESERVATION_CONFLICT | undefined;
-      try {
-        reserved = this.reserveLocked({
-          intent,
-          fill,
-          quote,
-          approval,
-          digest,
-          approverPayload,
-          userSignature,
-          reservationRevision,
-          grossSnapshot,
-        });
-      } finally {
-        release();
-      }
-      if (reserved === RESERVATION_CONFLICT) {
-        if (++conflicts >= MAX_RESERVATION_CONFLICTS)
-          return Reply.error(503, "admission inventory changed; request a fresh quote", { retriable: true });
-        attempt--;
-        continue;
-      }
-      if (reserved) return reserved;
-
-      const responses = await this.approvals.collect(digest, approverPayload),
-        distinct = distinctSigners(responses);
-      if (distinct.size < APPROVAL_QUORUM)
-        return Reply.error(503, "approver quorum unavailable", {
-          details:
-            ctx.devFund || process.env.NODE_ENV === "test"
-              ? responses.filter((item) => item.status === "rejected").map((item) => String(item.reason))
-              : undefined,
-        });
-      const selected = [...distinct.values()].slice(0, APPROVAL_QUORUM);
-      const currentChainTime = ctx.provider ? await this.chain.chainTimestamp() : versions.blockTimestamp;
-      if (Number(approval.deadline) - currentChainTime < minimumBudget) {
-        if (attempt === 1)
-          return Reply.error(503, "settlement proof lacks safe inclusion budget", { retriable: true });
-        continue;
-      }
-      let oracleFee = 0n;
-      const chain = ctx.chain;
-      if (chain && ctx.sponsor && !ctx.devFund) {
+        let refreshed: CreatedQuote;
         try {
-          const adapter = await this.chain.oracleAdapter();
-          oracleFee = BigInt(await adapter.updateFee(report).catch(() => 0n));
-          await chain.provider.call({
-            from: ctx.sponsor.address,
-            to: chain.config.clearingAddress,
-            data: this.executeTradeData(intent, approval, report, userSignature, selected, trigger),
-            value: oracleFee,
-          });
+          refreshed = await this.quoting.createQuote(
+            { market: quote.market, side: quote.side, amount: formatUsdc(quote.notional) },
+            {
+              persist: false,
+              exactBaseDelta: fill.baseDelta,
+              reductionAccount: intent.account,
+              excludeReservation: original.quoteId,
+            },
+          );
         } catch (error) {
-          if (attempt === 0 && staleOracleFailure(error)) continue;
-          return Reply.error(409, "settlement simulation failed", {
-            retriable: staleOracleFailure(error),
-            details: process.env.NODE_ENV === "test" ? errorText(error) : undefined,
+          return Reply.error(503, publicError(error, "fresh settlement price unavailable"));
+        }
+        if (exceedsProtection(intent, refreshed.quote))
+          return Reply.error(409, "price moved beyond signed protection");
+        // The settlement report carries this snapshot's touch; the contract checks its mid.
+        if (trigger && !triggerReached(refreshed.quote.snapshot.bid, refreshed.quote.snapshot.ask, trigger))
+          return Reply.error(409, "trigger no longer reached");
+        quote = { ...refreshed.quote, quoteId: original.quoteId };
+        const { versions, oracleReport, reservationRevision } = refreshed;
+        ctx.prune();
+        const reportExpiry = oracleReport?.validUntil ?? versions.blockTimestamp + APPROVAL_TTL_SECONDS,
+          approvalDeadline = BigInt(
+            Math.min(Number(intent.deadline), versions.blockTimestamp + APPROVAL_TTL_SECONDS, reportExpiry),
+          );
+        if (Number(approvalDeadline) <= versions.blockTimestamp)
+          return Reply.error(503, "fresh settlement proof lacks inclusion time", { retriable: true });
+        const report = await this.settlementReport(intent, quote, oracleReport);
+        const oracleReportHash =
+          report === "0x"
+            ? keccak256(
+                toUtf8Bytes(
+                  JSON.stringify({
+                    market: quote.market,
+                    bid: quote.snapshot.bid.toString(),
+                    ask: quote.snapshot.ask.toString(),
+                    observedAtMs: quote.snapshot.observedAtMs,
+                  }),
+                ),
+              )
+            : keccak256(report);
+        const approval: MakerApproval = {
+          intentHash,
+          executionPrice: quote.expectedPrice,
+          impactCharge: quote.impactCharge,
+          fee: quote.fee,
+          oracleReportHash,
+          deadline: approvalDeadline,
+          leaderEpoch: versions.leaderEpoch,
+          signerSetVersion: versions.signerSetVersion,
+          policyVersion: versions.policyVersion,
+        };
+        const digest = hashApproval(ctx.domain, approval),
+          approverPayload = {
+            domain: ctx.wireDomain,
+            intent: intentToWire(intent),
+            userSignature,
+            approval: approvalToWire(approval),
+            quote: quoteToWire(quote),
+            ...(trigger ? { trigger: triggerToWire(trigger) } : {}),
+            report,
+            oracleAgeMs: Math.max(0, Date.now() - quote.snapshot.observedAtMs),
+          };
+        let grossSnapshot: GrossSnapshot | undefined;
+        if (ctx.clearing && ctx.provider) {
+          const snapshot = await this.readGrossSnapshot(intent);
+          if (!snapshot) return Reply.error(503, "gross reservation snapshot unavailable");
+          if (trigger && triggeredFillDelta(intent, snapshot.position.size) !== fill.baseDelta)
+            return Reply.error(409, "position changed since the trigger was priced");
+          grossSnapshot = snapshot;
+        }
+        const release = queued ?? (await this.acquireReservationLock());
+        queued = undefined;
+        let reserved: Reply | typeof RESERVATION_CONFLICT | undefined;
+        try {
+          reserved = this.reserveLocked({
+            intent,
+            fill,
+            quote,
+            approval,
+            digest,
+            approverPayload,
+            userSignature,
+            reservationRevision,
+            grossSnapshot,
+          });
+        } finally {
+          release();
+        }
+        if (reserved === RESERVATION_CONFLICT) {
+          if (++conflicts >= MAX_RESERVATION_CONFLICTS)
+            return Reply.error(503, "admission inventory changed; request a fresh quote", {
+              retriable: true,
+            });
+          attempt--;
+          continue;
+        }
+        if (reserved) return reserved;
+
+        const responses = await this.approvals.collect(digest, approverPayload),
+          distinct = distinctSigners(responses);
+        if (distinct.size < APPROVAL_QUORUM) {
+          const policy = approverPolicyRejection(responses, this.approvals.size, APPROVAL_QUORUM);
+          if (policy) return Reply.error(409, policy);
+          return Reply.error(503, "approver quorum unavailable", {
+            details:
+              ctx.devFund || process.env.NODE_ENV === "test"
+                ? responses.filter((item) => item.status === "rejected").map((item) => String(item.reason))
+                : undefined,
           });
         }
+        const selected = [...distinct.values()].slice(0, APPROVAL_QUORUM);
+        const currentChainTime = ctx.provider ? await this.chain.chainTimestamp() : versions.blockTimestamp;
+        if (Number(approval.deadline) - currentChainTime < minimumBudget) {
+          if (attempt === 1)
+            return Reply.error(503, "settlement proof lacks safe inclusion budget", { retriable: true });
+          continue;
+        }
+        let oracleFee = 0n;
+        const chain = ctx.chain;
+        if (chain && ctx.sponsor && !ctx.devFund) {
+          try {
+            const adapter = await this.chain.oracleAdapter();
+            oracleFee = BigInt(await adapter.updateFee(report).catch(() => 0n));
+            await chain.provider.call({
+              from: ctx.sponsor.address,
+              to: chain.config.clearingAddress,
+              data: this.executeTradeData(intent, approval, report, userSignature, selected, trigger),
+              value: oracleFee,
+            });
+          } catch (error) {
+            if (attempt === 0 && staleOracleFailure(error)) continue;
+            return Reply.error(409, "settlement simulation failed", {
+              retriable: staleOracleFailure(error),
+              details: process.env.NODE_ENV === "test" ? errorText(error) : undefined,
+            });
+          }
+        }
+        return { quote, approval, report, approvals: selected, oracleFee, trigger };
+      } finally {
+        queued?.();
       }
-      return { quote, approval, report, approvals: selected, oracleFee, trigger };
     }
     // Every path through the final attempt returns; a conflict retries the same attempt.
     throw new Error("approval admission did not converge");

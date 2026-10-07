@@ -7,7 +7,7 @@ A limit order waits until the maker's executable price for your size reaches you
 Limit orders are part of the Advanced view. If the ticket shows no order types, switch **View** to **Advanced** in the top bar, or under **Account** on a phone.
 
 1. On the ticket, switch the order type to **Limit**. The **Limit price** field is pre-filled with the current mid.
-2. Choose **Long** or **Short** and enter the amount in USDC.
+2. Choose **Long** or **Short**, enter what you pay in USDC and pick a leverage.
 3. Set your limit price. For a long, it is the most you will pay. For a short, it is the least you will accept.
 4. Read the hint under the price. "Fills now at the current price" means your limit is already at or through the executable price, so the order will fill as soon as it is placed. "Fills when the price reaches your limit" means it will wait.
 5. Click **Place limit · Long BTC · $20.00** (or the equivalent) and sign the *TradeIntent* in your wallet.

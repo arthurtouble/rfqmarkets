@@ -1,5 +1,6 @@
 // Indicative quotes built locally from the market stream so the ticket updates
 // every tick. The firm quote still comes from POST /v1/quote at submit time.
+import { marketRegistry } from "../../../../packages/shared/src/markets.js";
 import { adaptiveSpread, constructQuote, type SpreadBreakdown } from "../../../../packages/shared/src/pricing.js";
 import { quoteToWire } from "../../../../packages/shared/src/wire.js";
 import { microToInput } from "./format.js";
@@ -19,18 +20,37 @@ function spreadOf(live: MarketState): SpreadBreakdown {
   };
 }
 
+/**
+ * The bundled market registry knows only the launch markets. Markets governance
+ * added later join it here, without an inventory-impact estimate (the firm
+ * quote prices impact), so their tickets quote locally too.
+ */
+function registerListedMarkets(snapshot: MarketSnapshot) {
+  const known = marketRegistry.all();
+  const listed = Object.values(snapshot.markets)
+    .filter(state => !marketRegistry.has(state.market))
+    .sort((left, right) => (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER));
+  if (!listed.length) return;
+  try {
+    marketRegistry.replace([...known, ...listed.map((state, offset) => ({
+      index: known.length + offset, symbol: state.market, impactK: 0n, shockBps: 0n,
+      marginScaleBps: state.marginScaleBps ?? 10_000, enabled: state.enabled,
+    }))]);
+  } catch { /* a malformed symbol stays unknown and that market's quote reports the error */ }
+}
+
 export type IndicativeQuote = { quote: Quote } | { error: string };
 
 /**
  * `slippageBps` (1..500) sets the indicative worst price, as POST /v1/quote does;
- * omitted, the launch tolerance applies. Markets added after launch have no
- * local impact parameters, so they return an error until the firm quote.
+ * omitted, the launch tolerance applies. A paused market still quotes, since
+ * reductions trade while paused; the caller decides whether the trade may go.
  */
 export function indicativeQuote(snapshot: MarketSnapshot, market: Market, side: Side, amountMicro: bigint, nowMs: number, slippageBps?: number): IndicativeQuote {
   const live = snapshot.markets[market];
   if (!live) return { error: `No price for ${market}` };
+  registerListedMarkets(snapshot);
   if (nowMs - live.observedAtMs > STALE_AFTER_MS) return { error: "Waiting for fresh prices" };
-  if (!live.enabled) return { error: `${market} trading is disabled` };
   if (!(side === "buy" ? live.canBuy : live.canSell)) return { error: `Only exposure-reducing ${side === "buy" ? "buys" : "sells"} are available` };
   const maxNotional = BigInt(live.operatingMaxTradeNotional);
   if (amountMicro > maxNotional) return { error: `Maximum per trade is ${Number(maxNotional) / 1e6} USDC` };

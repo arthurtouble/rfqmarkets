@@ -12,6 +12,8 @@ export const abs = (value: bigint) => (value < 0n ? -value : value);
 export const scaled = (value: string | bigint, decimals: number) => Number(toBig(value)) / 10 ** decimals;
 
 export const usdc = (micro?: string | bigint | null) => (micro === undefined || micro === null ? "—" : usd.format(scaled(micro, 6)));
+/** Like `usdc`, without cents on whole amounts ("$250", "$12.50"). */
+export const usdcCompact = (micro?: string | bigint | null) => usdc(micro).replace(/\.00$/, "");
 export const signedUsdc = (micro?: string | bigint | null) => {
   if (micro === undefined || micro === null) return "—";
   return `${toBig(micro) >= 5_000n ? "+" : ""}${usdc(micro)}`;
