@@ -19,7 +19,7 @@ Checked on 2026-10-06. "Verified live" means fetched today (Cloudflare URLs over
 
 | Worker | URL | Serves | How it is deployed | State |
 | --- | --- | --- | --- | --- |
-| `rfq-markets-testnet` | https://rfq-markets-testnet.rfq-markets.workers.dev | `apps/web` + `deploy/cloudflare/static/web-edge.mjs` | `.github/workflows/deploy-cloudflare.yml` after CI on `main`, gated by repo variable `CLOUDFLARE_DEPLOY_ENABLED` | Live. `/edge/health` returns `{"ok":true,"edge":"ready","runtime":{"api":false,"indexer":false,"marketGateway":false}}`. |
+| `rfq-markets-testnet` | https://rfq-markets-testnet.rfq-markets.workers.dev | `apps/web` + `deploy/cloudflare/static/web-edge.mjs` | `.github/workflows/deploy-cloudflare.yml` after CI on `main`, gated by repo variable `CLOUDFLARE_DEPLOY_ENABLED` | **Deleted 2026-10-07.** Was live with no service bindings, so every API call returned 503. Replaced by `rfq-markets-dev` (see `deploy/cloudflare/DEV-ENVIRONMENT.md`); its config and workflow steps were removed. |
 | `rfq-markets-docs-testnet` | https://rfq-markets-docs-testnet.rfq-markets.workers.dev | `apps/docs` | Same workflow | Live. |
 | `rfq-markets-internal-docs-testnet` | none | `apps/internal-docs` | Config only (`wrangler.internal-docs.jsonc`) | Not deployed (needs Cloudflare Access). |
 | `rfq-markets-runtime-testnet` | none | Worker + Durable Object + Container running every service | Manual only | **Dead.** Containers need Workers Paid, and `scripts/cloudflare-container.ts` now throws on start because Container disk is ephemeral. |
