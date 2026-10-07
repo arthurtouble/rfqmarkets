@@ -29,6 +29,10 @@ interface IRFQClearingEvents {
         uint8 indexed market, bool enabled, uint128 maxTradeNotional, uint128 maxMarketNotional, uint64 policyVersion
     );
     event ExposurePolicyUpdated(uint8 indexed market, uint128 grossLimit, uint128 sideLimit);
+    event MarketAdded(uint8 indexed market, bytes32 symbol);
+    event MarketRiskUpdated(
+        uint8 indexed market, uint32 impactK, uint16 shockBps, uint16 marginScaleBps, uint64 policyVersion
+    );
     event OracleUpdated(address indexed oracle);
     event ApproversRotated(address[3] approvers, uint64 signerSetVersion);
     event GovernanceTransferStarted(address indexed current, address indexed pending);

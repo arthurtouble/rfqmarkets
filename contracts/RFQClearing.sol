@@ -31,14 +31,15 @@ interface IERC3009 {
 }
 
 /// @title RFQ Markets clearing house
-/// @notice Custody and clearing for USDC-margined BTC and ETH perpetuals filled by request-for-quote.
+/// @notice Custody and clearing for USDC-margined perpetuals filled by request-for-quote. Markets are
+/// registered by governance (`addMarket`), each with its own limits and risk parameters.
 /// The protocol's maker is the only counterparty. Every fill needs the trader's signature (or a scoped
 /// session key) plus two of three approvers, and this contract re-checks price limits, the
 /// inventory-impact floor, exposure caps, stress loss and margin before applying it.
 ///
 /// Roles:
 /// - `governance` unpauses, upgrades (through the ProxyAdmin it owns), rotates approvers, sets the oracle,
-///   loosens limits and moves maker capital. It is any address: an EOA or Safe while the venue is in
+///   adds markets, loosens limits and moves maker capital. It is any address: an EOA or Safe while the venue is in
 ///   development, a timelock in production. Handover is two-step (`transferGovernance` / `acceptGovernance`).
 /// - `emergencyCouncil` pauses, fences approvals and disables or tightens markets. It cannot unpause.
 /// - Anyone may liquidate, refresh prices, top up maker or insurance capital and run resolution steps.
@@ -65,7 +66,7 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         address emergencyCouncil_,
         address[3] calldata approvers_,
         uint256 baseRiskCapitalTarget_,
-        MarketConfig[2] calldata markets_
+        MarketConfig[] calldata markets_
     ) external initializer {
         if (
             usdc_ == address(0) || oracle_ == address(0) || governance_ == address(0) || emergencyCouncil_ == address(0)
@@ -82,15 +83,8 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         $.policyVersion = 1;
         $.paused = true;
         $.makerIncidentGracePeriod = DEFAULT_INCIDENT_GRACE_PERIOD;
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            MarketConfig calldata config = markets_[i];
-            _validateLimits(config.maxTradeNotional, config.maxMarketNotional);
-            _validateExposureLimits(config.grossLimit, config.sideLimit);
-            $.markets[i].enabled = config.enabled;
-            $.markets[i].fundingTime = uint64(block.timestamp);
-            $.limits[i] = MarketLimits(config.maxTradeNotional, config.maxMarketNotional);
-            $.exposure[i].grossLimit = config.grossLimit;
-            $.exposure[i].sideLimit = config.sideLimit;
+        for (uint256 i; i < markets_.length; ++i) {
+            _addMarket(markets_[i]);
         }
         RFQRiskMath.setApprovers(approvers_);
         emit GovernanceTransferred(address(0), governance_);
@@ -186,8 +180,7 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         uint256 remaining = $.makerBacking - amount;
         uint256 owed = RFQRiskMath.customerUnrealizedGain();
         if (remaining < $.baseRiskCapitalTarget + owed) revert Margin();
-        (int256 btc, int256 eth) = RFQRiskMath.portfolioExposure();
-        if (RFQRiskMath.stressLoss(btc, eth) > (remaining - owed) / 4) revert Margin();
+        if (RFQRiskMath.portfolioStress() > (remaining - owed) / 4) revert Margin();
         $.makerBacking = remaining;
         $.usdc.safeTransfer(recipient, amount);
         emit MakerWithdrawn(recipient, amount);
@@ -358,7 +351,7 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         onlyEmergencyOrGovernance
     {
         RFQClearingNamespace.Layout storage $ = _s();
-        if (market >= MARKET_COUNT) revert InvalidTrade();
+        if (market >= $.marketCount) revert InvalidTrade();
         _validateLimits(maxTradeNotional, maxMarketNotional);
         MarketLimits storage limits = $.limits[market];
         if (
@@ -378,12 +371,37 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
     /// @notice Sets a market's gross and per-side limits (valued at the ask). Only while paused.
     function setExposurePolicy(uint8 market, uint128 grossLimit, uint128 sideLimit) external onlyGovernance {
         RFQClearingNamespace.Layout storage $ = _s();
-        if (!$.paused || $.resolutionRequired || market >= MARKET_COUNT) revert InvalidTrade();
+        if (!$.paused || $.resolutionRequired || market >= $.marketCount) revert InvalidTrade();
         _validateExposureLimits(grossLimit, sideLimit);
         $.exposure[market].grossLimit = grossLimit;
         $.exposure[market].sideLimit = sideLimit;
         ++$.policyVersion;
         emit ExposurePolicyUpdated(market, grossLimit, sideLimit);
+    }
+
+    /// @notice Registers a new market with the next id. Its funding clock starts now; it trades once the
+    /// oracle prices it and, if `config.enabled` is false, once governance enables it.
+    function addMarket(MarketConfig calldata config) external onlyGovernance returns (uint8 market) {
+        if (_s().resolutionRequired) revert InvalidTrade();
+        market = _addMarket(config);
+        ++_s().policyVersion;
+    }
+
+    /// @notice Sets a market's inventory-impact coefficient, stress shock and margin multiplier. Higher margin
+    /// applies to open positions at once, so raise it with notice.
+    function setMarketRisk(uint8 market, uint32 impactK, uint16 shockBps, uint16 marginScaleBps)
+        external
+        onlyGovernance
+    {
+        RFQClearingNamespace.Layout storage $ = _s();
+        if (market >= $.marketCount || $.resolutionRequired) revert InvalidTrade();
+        _validateRisk(impactK, shockBps, marginScaleBps);
+        MarketParams storage params = $.marketParams[market];
+        params.impactK = impactK;
+        params.shockBps = shockBps;
+        params.marginScaleBps = marginScaleBps;
+        uint64 version = ++$.policyVersion;
+        emit MarketRiskUpdated(market, impactK, shockBps, marginScaleBps, version);
     }
 
     /// @notice First step of a governance handover. Pass zero to cancel a pending transfer.
@@ -518,6 +536,30 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         return _s().sessions[session];
     }
 
+    function marketCount() external view returns (uint8) {
+        return _s().marketCount;
+    }
+
+    function marketParams(uint8 market) external view returns (MarketParams memory) {
+        return _s().marketParams[market];
+    }
+
+    /// @notice The id of the market registered under `symbol`; reverts if there is none.
+    function marketId(bytes32 symbol) external view returns (uint8) {
+        uint8 idPlusOne = _s().marketIdPlusOne[symbol];
+        if (idPlusOne == 0) revert InvalidTrade();
+        return idPlusOne - 1;
+    }
+
+    /// @notice Bit i is set while `account` holds a position in market i.
+    function openMarketsOf(address account) external view returns (uint256) {
+        return _s().accounts[account].openMarkets;
+    }
+
+    function portfolioStress() external view returns (uint256) {
+        return RFQRiskMath.portfolioStress();
+    }
+
     function markets(uint256 market)
         external
         view
@@ -531,7 +573,7 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
             bool enabled
         )
     {
-        Market storage m = _s().markets[market];
+        Market storage m = _s().markets[uint8(market)];
         return (m.aggregateBase, m.fundingIndex, m.fundingTime, m.lastPriceTime, m.lastBid, m.lastAsk, m.enabled);
     }
 
@@ -555,7 +597,7 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         view
         returns (uint256 longBase, uint256 shortBase, uint256 limits, uint256 cursor, bool ready)
     {
-        if (market >= MARKET_COUNT) revert InvalidTrade();
+        if (market >= _s().marketCount) revert InvalidTrade();
         ExposureBook storage book = _s().exposure[market];
         return (book.longBase, book.shortBase, uint256(book.grossLimit) | (uint256(book.sideLimit) << 128), 0, true);
     }
@@ -633,11 +675,11 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
     }
 
     function resolutionSampleCount(uint256 market) external view returns (uint8) {
-        return _s().resolution.sampleCount[market];
+        return _s().resolution.sampleCount[uint8(market)];
     }
 
     function resolutionPrice(uint256 market) external view returns (uint256) {
-        return _s().resolution.price[market];
+        return _s().resolution.price[uint8(market)];
     }
 
     function resolutionPricesReady() external view returns (bool) {
@@ -692,6 +734,39 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         }
         RFQLedger.changeCollateral(account, int256(amount));
         emit Deposited(account, amount);
+    }
+
+    function _addMarket(MarketConfig calldata config) private returns (uint8 market) {
+        RFQClearingNamespace.Layout storage $ = _s();
+        market = $.marketCount;
+        if (market >= MAX_MARKETS || config.symbol == bytes32(0) || $.marketIdPlusOne[config.symbol] != 0) {
+            revert InvalidConfiguration();
+        }
+        _validateLimits(config.maxTradeNotional, config.maxMarketNotional);
+        _validateExposureLimits(config.grossLimit, config.sideLimit);
+        _validateRisk(config.impactK, config.shockBps, config.marginScaleBps);
+        $.marketCount = market + 1;
+        $.marketIdPlusOne[config.symbol] = market + 1;
+        $.marketParams[market] = MarketParams(config.symbol, config.impactK, config.shockBps, config.marginScaleBps);
+        $.markets[market].enabled = config.enabled;
+        $.markets[market].fundingTime = uint64(block.timestamp);
+        $.limits[market] = MarketLimits(config.maxTradeNotional, config.maxMarketNotional);
+        $.exposure[market].grossLimit = config.grossLimit;
+        $.exposure[market].sideLimit = config.sideLimit;
+        emit MarketAdded(market, config.symbol);
+        emit MarketPolicyUpdated(
+            market, config.enabled, config.maxTradeNotional, config.maxMarketNotional, $.policyVersion
+        );
+        emit ExposurePolicyUpdated(market, config.grossLimit, config.sideLimit);
+        emit MarketRiskUpdated(market, config.impactK, config.shockBps, config.marginScaleBps, $.policyVersion);
+    }
+
+    /// @dev Margin may only be scaled up from the base tiers; the stress shock must be a real move.
+    function _validateRisk(uint32 impactK, uint16 shockBps, uint16 marginScaleBps) private pure {
+        if (
+            impactK == 0 || impactK > 1_000_000 || shockBps < 500 || shockBps > 10_000 || marginScaleBps < 10_000
+                || marginScaleBps > 50_000
+        ) revert InvalidConfiguration();
     }
 
     function _validateLimits(uint128 maxTradeNotional, uint128 maxMarketNotional) private pure {

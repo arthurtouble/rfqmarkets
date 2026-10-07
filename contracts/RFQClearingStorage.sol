@@ -8,6 +8,8 @@ import "./RFQTypes.sol";
 /// @notice ERC-7201 namespaced storage shared by the clearing proxy and its linked libraries.
 /// @dev Declared in a contract that RFQClearing inherits so OpenZeppelin's upgrade validator checks the
 /// namespace layout. Append new fields at the end of `Layout`; never reorder or remove existing ones.
+/// The market registry (v1.1) replaced the fixed two-market arrays, so v1.1 is a fresh deployment and cannot
+/// upgrade a v1.0 proxy in place.
 abstract contract RFQClearingNamespace {
     /// @custom:storage-location erc7201:rfq.clearing.v1
     struct Layout {
@@ -25,10 +27,14 @@ abstract contract RFQClearingNamespace {
         address[] accountList;
         mapping(address => mapping(uint256 => bool)) nonceUsed;
         mapping(address => Session) sessions;
-        // Markets and risk
-        Market[2] markets;
-        MarketLimits[2] limits;
-        ExposureBook[2] exposure;
+        // Markets and risk, keyed by market id (0 .. marketCount - 1)
+        uint8 marketCount;
+        mapping(uint8 => Market) markets;
+        mapping(uint8 => MarketLimits) limits;
+        mapping(uint8 => ExposureBook) exposure;
+        mapping(uint8 => MarketParams) marketParams;
+        mapping(bytes32 symbol => uint8) marketIdPlusOne; // 0 = unregistered
+        mapping(uint8 => int256) costBasis; // per market: sum of size * entryPrice / 1e18 over open positions
         // Capital buckets; their sum always equals the USDC balance until resolution finalizes
         uint256 makerBacking;
         uint256 insuranceBalance;
@@ -44,8 +50,6 @@ abstract contract RFQClearingNamespace {
         uint64 makerIncidentSince;
         uint64 makerIncidentGracePeriod;
         ResolutionState resolution;
-        // Appended after the first v1 deployment.
-        int256[2] costBasis; // per market: sum of size * entryPrice / 1e18 over open positions
     }
 }
 

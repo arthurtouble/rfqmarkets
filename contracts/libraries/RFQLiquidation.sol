@@ -17,7 +17,7 @@ library RFQLiquidation {
     /// and only then by global resolution. The keeper reward is paid to `keeper`.
     function liquidate(address account, uint8 market, bytes calldata report, address keeper) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        if ($.resolutionRequired || market >= MARKET_COUNT) revert InvalidTrade();
+        if ($.resolutionRequired || market >= $.marketCount) revert InvalidTrade();
         RFQLedger.touchOracle(report, market);
         RFQLedger.requireFreshPositions(account);
         RFQLedger.settleAllFunding(account);
@@ -35,7 +35,7 @@ library RFQLiquidation {
             closedNotional = RFQLedger.closePortfolio(account);
         } else {
             uint256 price = RFQRiskMath.exitPrice($.markets[market], size);
-            closed = RFQRiskMath.liquidationClose(size, price, equity);
+            closed = RFQRiskMath.liquidationClose(size, price, equity, $.marketParams[market].marginScaleBps);
             RFQLedger.applyPosition(account, market, size > 0 ? -int256(closed) : int256(closed), price);
             if ($.resolutionRequired) return;
             closedNotional = closed * price / BASE_UNIT;
@@ -57,7 +57,7 @@ library RFQLiquidation {
     /// @notice Closes one leg at the oracle side while trading is paused (not during resolution).
     function closePosition(address account, uint8 market, bytes calldata report) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        if (!$.paused || $.resolutionRequired || market >= MARKET_COUNT) revert InvalidTrade();
+        if (!$.paused || $.resolutionRequired || market >= $.marketCount) revert InvalidTrade();
         RFQLedger.touchOracle(report, market);
         RFQLedger.settleAllFunding(account);
         if ($.resolutionRequired) return;
@@ -68,11 +68,7 @@ library RFQLiquidation {
         uint256 price = RFQRiskMath.exitPrice($.markets[market], size);
         RFQLedger.applyPosition(account, market, -size, price);
         if ($.resolutionRequired) return;
-        bool flat = true;
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            if (owner.positions[i].size != 0) flat = false;
-        }
-        if (flat) RFQLedger.absorbDeficit(account);
+        if (owner.openMarkets == 0) RFQLedger.absorbDeficit(account);
         emit IRFQClearingEvents.PositionClosed(account, market, -size, price);
     }
 }
