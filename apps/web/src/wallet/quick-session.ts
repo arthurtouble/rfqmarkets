@@ -38,6 +38,9 @@ const SAFETY_MARGIN_MS = 30_000;
 const live = (session: QuickSession | null) => !!session && session.validUntil > Date.now() + SAFETY_MARGIN_MS;
 const keys = new Map<string, Hex>();
 
+/** Drops every session key this tab holds; the grants stay on chain until they expire or are revoked. */
+export const forgetSessionKeys = () => keys.clear();
+
 function load(account: string | null): QuickSession | null {
   if (!account) return null;
   try {

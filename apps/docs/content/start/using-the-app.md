@@ -4,7 +4,7 @@ The app at [dev.rfq-markets.workers.dev](https://dev.rfq-markets.workers.dev) ha
 
 ## Connecting a wallet
 
-Click **Connect** in the top right, or **Connect to trade** on the ticket. The **Connect a wallet** dialog groups your options:
+Click **Connect** in the top right, or **Connect to trade** on the ticket. The **Connect a wallet** dialog (a sheet from the bottom of the screen on a phone) groups your options:
 
 | Section | Option | When to use it |
 | --- | --- | --- |
@@ -12,13 +12,15 @@ Click **Connect** in the top right, or **Connect to trade** on the ticket. The *
 | **No wallet yet** | **Base Account** | You have no wallet. It signs in with a passkey on your device, so there is nothing to install and no seed phrase to write down. |
 | **Phone and other wallets** | **WalletConnect** | Your wallet is on your phone, or is one of the hundreds of wallets WalletConnect supports. Scan the QR code it shows with your wallet app. |
 
-If the dialog finds no browser extension, it says so and links to a few wallets you can install.
+If the dialog finds no browser extension, it says so and links to a few wallets you can install. On a phone it suggests opening the page in your wallet app's own browser, or using WalletConnect, which opens the wallet app directly.
+
+If you cancel in your wallet, or the wallet cannot connect, the dialog says why in one line and you can pick again. A wallet window you closed without answering never blocks the others.
 
 RFQ Markets never holds your keys. Your wallet signs each order, and the venue only ever sees signatures.
 
 ### The right network
 
-Everything happens on Base. If your wallet is on another network, the wallet button becomes **Switch to Base**. Click it and approve the switch in your wallet. The app also asks for the switch automatically whenever it needs a signature or a transaction.
+Everything happens on Base. If your wallet is on another network, a **Switch to Base** button appears next to the wallet button, and the Account page shows the same warning with a **Switch** button. Click it and approve the switch in your wallet; if the wallet refuses, a notice says why. The app also asks for the switch automatically whenever it needs a signature or a transaction.
 
 ### Passkey and smart wallets
 
@@ -26,7 +28,7 @@ Base Account, and other smart-contract wallets, work the same way as an ordinary
 
 ### The wallet menu
 
-Once you are connected, the wallet button shows your account value. Click it to see the connected network and address, copy the address, open it on the block explorer, go to **Settings** (the Account page) or **Disconnect**.
+Once you are connected, the wallet button shows your account value. Click it to see which wallet is connected, its address and network, copy the address, open it on the block explorer, go to **Account settings** (marked "One-click on" while [one-click trading](../trading/one-click-trading.md) is on) or **Disconnect**. If you switch accounts inside your wallet, the app follows.
 
 ## Simple and Advanced
 

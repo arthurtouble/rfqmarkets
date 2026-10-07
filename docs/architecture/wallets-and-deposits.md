@@ -2,14 +2,17 @@
 
 ## Wallet boundary
 
-The frontend consumes a small trader interface (`apps/web/src/wallet/trader.tsx`): connect an account, switch to the settlement chain from `GET /v1/config`, sign typed data and send transactions. Browser wallets connect through wagmi/viem with EIP-6963 discovery; the local stack's funded dev key implements the same interface. A production shell can implement the same interface with Privy or Dynamic after recovery, export, session-key, passkey and account-linking policies are chosen.
+The frontend consumes a small trader interface (`apps/web/src/wallet/trader.tsx`): connect an account, switch to the settlement chain from `GET /v1/config`, sign typed data and send transactions. The local stack's funded dev key implements the same interface, so every screen works the same with either.
 
-Both hosted-wallet products require project credentials. Privy uses an app ID and client ID in its React provider, while Dynamic uses an environment ID. Those are public application identifiers rather than signing secrets, but selecting either service creates an operational and recovery dependency. The clearing and API protocols therefore must never accept provider-specific identity as authority: the recovered EVM signature and the on-chain account remain authoritative.
+Wallets connect through wagmi 3 with our own connect sheet (`ConnectDialog.tsx`), in the style of RainbowKit, which only supports wagmi 2:
 
-Primary references:
+- **Installed extensions** found through EIP-6963, each listed by name.
+- **Base Account**, Coinbase's passkey smart wallet, on Base networks only.
+- **WalletConnect** for phone and QR wallets, using the public Reown project id in `apps/web/src/lib/env.ts`.
 
-- Privy React setup and embedded-wallet configuration: <https://docs.privy.io/basics/react/setup>
-- Dynamic React provider and embedded-wallet hooks: <https://docs.dynamic.xyz/react-sdk/providers/dynamiccontextprovider> and <https://docs.dynamic.xyz/react-sdk/hooks/useembeddedwallet>
+The Base Account and WalletConnect SDKs are loaded only when picked, or on reload when one was the last wallet used (`lazyConnector` in `chain.ts`). No hosted-wallet provider (Privy, Dynamic) is used, and the protocol never accepts a provider's identity as authority: the recovered EVM signature, or ERC-1271 for smart wallets, and the on-chain account remain authoritative.
+
+One-click trading is a contract session key (`grantSessionWithSignature`), generated in the tab and held only in memory (`quick-session.ts`). The grant is sponsored; revoking it is the owner's own transaction (`revokeSession`), so a wallet with no ETH cannot revoke until the grant expires. Disconnecting drops the key from the tab.
 
 ## Deposit invariant
 

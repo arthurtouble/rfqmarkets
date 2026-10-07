@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { QUICK_LIMITS, allMarketsMask, maskIncludes, quickSessionRequest, sessionCovers, type QuickSession } from "./quick-session.js";
+import { QUICK_LIMITS, allMarketsMask, forgetSessionKeys, maskIncludes, quickSessionRequest, sessionCovers, type QuickSession } from "./quick-session.js";
 
 test("the session mask covers every registered market", () => {
   assert.equal(allMarketsMask(1), 1);
@@ -25,4 +25,12 @@ test("mask membership and session coverage by market", () => {
   assert.equal(sessionCovers({ ...session, marketMask: undefined }, 1n, 1), true);
   assert.equal(sessionCovers({ ...session, marketMask: undefined }, 1n, 2), false);
   assert.equal(sessionCovers({ ...session, privateKey: undefined }, 1n), false);
+});
+
+test("sessions expire 30 seconds early and keys can be forgotten", () => {
+  const base: QuickSession = { account: "0x1", sessionAddress: "0x2", validUntil: Date.now() + 3_600_000, privateKey: "0x01", marketMask: "3" };
+  assert.equal(sessionCovers({ ...base, validUntil: Date.now() + 20_000 }, 1n, 0), false);
+  assert.equal(sessionCovers({ ...base, validUntil: Date.now() + 60_000 }, 1n, 0), true);
+  assert.equal(sessionCovers(null, 1n, 0), false);
+  assert.doesNotThrow(() => forgetSessionKeys());
 });

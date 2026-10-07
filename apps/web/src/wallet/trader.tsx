@@ -9,6 +9,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
 import { getJson } from "../lib/http.js";
 import type { ChainConfig, Prepared } from "../lib/types.js";
+import { forgetSessionKeys } from "./quick-session.js";
+import { walletLabel } from "./wallets.js";
 
 type DevWallet = { account: Address; privateKey: Hex };
 type Call = { to: Address; data: Hex };
@@ -16,6 +18,8 @@ type Call = { to: Address; data: Hex };
 export type Trader = {
   address: Address | null;
   source: "wallet" | "dev" | null;
+  /** The connected browser wallet's name and icon, when one is connected. */
+  wallet: { name: string; icon?: string } | null;
   chain: Chain;
   settlement: ChainConfig | null;
   /** A browser wallet is connected but on another chain. */
@@ -84,11 +88,13 @@ export function TraderProvider({ chain, settlement, children }: { chain: Chain; 
   const value: Trader = {
     address: walletAddress ?? (usingDev ? devWallet!.account : null),
     source: walletAddress ? "wallet" : usingDev ? "dev" : null,
+    wallet: walletAddress && connection.connector ? { name: walletLabel(connection.connector), icon: connection.connector.icon } : null,
     chain, settlement,
     wrongChain: !!walletAddress && connection.chainId !== chain.id,
     devWalletAvailable: !!devWallet,
     useDevWallet: () => { if (walletAddress) disconnectWallet(); setDevOptOut(false); },
-    disconnect: () => { if (walletAddress) disconnectWallet(); setDevOptOut(true); },
+    // Disconnecting also drops this tab's one-click keys, so a shared computer keeps no signing key behind.
+    disconnect: () => { forgetSessionKeys(); if (walletAddress) disconnectWallet(); setDevOptOut(true); },
     signIntent, send,
   };
   return <TraderContext.Provider value={value}>{children}</TraderContext.Provider>;

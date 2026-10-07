@@ -7,7 +7,7 @@ One-click trading lets you place market orders and closes without a wallet promp
 There are two ways:
 
 - **From the review sheet.** When you place a market order without a session, the **Review order** sheet has a box, ticked by default, that reads "Then turn on one-click trading". Leave it ticked and your wallet asks for one more signature after the trade.
-- **From the Account page.** Open **Account** (on a computer, through **Settings** in the wallet menu; on a phone, from the tab bar) and click **Turn on** in the **One-click trading** row.
+- **From the Account page.** Open **Account** (on a computer, through **Account settings** in the wallet menu; on a phone, from the tab bar) and click **Turn on** in the **One-click trading** row.
 
 Either way, the app generates a fresh key in your browser tab and your wallet asks you to sign a *SessionGrant*. The venue submits the grant on chain and pays the gas. When it is active, the row reads "On until" a time, and the ticket shows "One-click trading is on. No wallet prompt." under the button for any order the session covers.
 
@@ -40,11 +40,13 @@ So the worst a stolen session key can do is trade your account, within those lim
 
 The session's private key is held only in the memory of the browser tab that created it. It is never sent to the venue and never written to disk. The tab remembers the session's public address so that it can show you the session and let you turn it off.
 
-That means **reloading the tab or opening another one loses the key**. The grant itself is still valid on chain until it expires. The One-click trading row then says "Reloading the page cleared this tab's key" and offers **Turn off** and **Turn on**. Turning it on again creates a new key; the old grant stays valid until it expires unless you turn it off, but with its key gone nothing can sign with it.
+That means **reloading the tab or opening another one loses the key**. The grant itself is still valid on chain until it expires. The One-click trading row then reads "Paused" and offers **Turn on again** and **Revoke**. Turning it on again creates a new key; the old grant stays valid until it expires unless you revoke it, but with its key gone nothing can sign with it.
+
+**Disconnecting** your wallet also drops the key from the tab, so a shared computer keeps nothing that can sign for you. Reconnect and turn it on again to carry on.
 
 ## Turning it off
 
-Click **Turn off** in the One-click trading row. This is a transaction from your own wallet to the clearing contract, so it costs a little gas; it is not sponsored. Once it confirms, the session key can no longer trade.
+Click **Turn off** in the One-click trading row (**Revoke** when the row is paused). This is a transaction from your own wallet to the clearing contract, so it costs a little gas; it is not sponsored. Once it confirms, the session key can no longer trade.
 
 You do not need to turn off a session that has simply expired. You can also revoke any session address from the [exit page](../protocol/safety-and-exits.md).
 

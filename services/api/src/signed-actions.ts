@@ -20,7 +20,7 @@ import { encodeLocalReport, type ChainReader } from "./chain.js";
 import type { ApiContext, ApiSender, ChainHandles } from "./context.js";
 import type { DevChain } from "./dev-chain.js";
 import { Reply } from "./http.js";
-import { marketIndex, marketName } from "./markets.js";
+import { marketIndex, marketName, unixSeconds } from "./markets.js";
 import { validOwnerSignature } from "./owner-signature.js";
 import { publicError } from "./public-error.js";
 import type { QuoteEngine } from "./quoting.js";
@@ -93,11 +93,16 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
     const parsed = action.prepareSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send(invalid);
     let chainFailed = false;
+    // Deadlines start from the later of chain and wall time: execute checks them against wall time, and
+    // an idle local chain's latest block can be minutes old, which would expire the intent on arrival.
     const chainTime = () =>
-      chain.chainTimestamp().catch((error: unknown) => {
-        chainFailed = true;
-        throw error;
-      });
+      chain.chainTimestamp().then(
+        (timestamp) => Math.max(timestamp, unixSeconds()),
+        (error: unknown) => {
+          chainFailed = true;
+          throw error;
+        },
+      );
     let intent: I;
     try {
       intent = await action.build(parsed.data, chainTime);
