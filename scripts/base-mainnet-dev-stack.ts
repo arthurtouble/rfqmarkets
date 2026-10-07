@@ -5,9 +5,10 @@ import { startServiceStack, stopOnSignals } from "./lib/service-stack.js";
 
 // All RFQ services for the Base mainnet dev deployment in one process tree (Cloudflare dev container).
 // Inputs: RFQ_DEV_DEPLOYMENT_JSON (the dev deployment record) and RFQ_DEV_RUNTIME_SECRETS_JSON
-// ({rpcUrl, secondaryRpcUrl, oracleNodes[], sponsorKey, approverKeys[3]}). Prices come from our own
+// ({rpcUrl, secondaryRpcUrl, oracleNodes[], sponsorKey, approverKeys[3], hedgeToken?}). Prices come from our own
 // oracle nodes, checked against the signer set recorded at deployment. Hedging uses the local simulator.
-// Approvers and the hedger stay on loopback; RFQ_BIND_HOST exposes only the API, indexer and gateway.
+// Approvers stay on loopback; RFQ_BIND_HOST exposes the API, indexer and gateway, and the hedger too when
+// a hedgeToken is given (its routes then need that token; the runtime worker holds it for the operations dashboard).
 type Record = {
   chainId: string;
   launchProfile: string;
@@ -25,6 +26,8 @@ type Secrets = {
   oracleNodes: string[];
   sponsorKey: string;
   approverKeys: [string, string, string];
+  /** Hedger operations token from the runtime's Durable Object. */
+  hedgeToken?: string;
 };
 const json = <T>(name: string): T => {
   const value = process.env[name];
@@ -47,6 +50,7 @@ const clearing = getAddress(record.contracts.clearingProxy);
 const stack = await startServiceStack({
   stateDirectory: resolve(process.env.RFQ_DEV_RUNTIME_DIR ?? ".local-state/base-mainnet-dev-runtime"),
   bindHost: process.env.RFQ_BIND_HOST,
+  exposeHedger: Boolean(secrets.hedgeToken),
   chainId: 8453n,
   clearingAddress: clearing,
   tokenAddress: record.contracts.usdc,
@@ -73,7 +77,7 @@ const stack = await startServiceStack({
     tokenPrefix: "dev-transport",
   },
   hedge: {
-    token: `dev-hedge-${crypto.randomUUID()}`,
+    token: secrets.hedgeToken ?? `dev-hedge-${crypto.randomUUID()}`,
     riskMaxAgeMs: 10_000,
     bandUsdc: parseUnits("25000", 6),
     maxOrderUsdc: parseUnits("25000", 6),

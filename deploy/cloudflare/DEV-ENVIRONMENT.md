@@ -6,6 +6,9 @@ A development deployment people can open in a browser: the trading UI and docs o
 | --- | --- | --- |
 | Trading UI | Worker `dev` → `https://dev.<account>.workers.dev` | Every green CI run on `main` (`deploy-cloudflare-dev.yml`) |
 | Docs | Worker `docs` → `https://docs.<account>.workers.dev` | Same |
+| Hedge operations dashboard (`apps/admin`) | Worker `admin`, behind Cloudflare Access | Same |
+| Internal docs (`apps/internal-docs`) | Worker `internal-docs`, behind Cloudflare Access | Same |
+| Direct exit page (`apps/exit`) | Worker `exit`, public, built for the clearing address in KV `deployment.json` | Same, once contracts exist |
 | Oracle nodes 1-3 | Workers `oracle-1` (`wnam`), `-2` (`weur`), `-3` (`apac`), each one container | Same, one node at a time |
 | API, 3 approvers, indexer, simulated hedger, gateway | Container behind Worker `rfq-markets-runtime-dev` (no public route; reached only through the UI worker's service bindings) | Same |
 | Contracts | Base mainnet, dev profile | Manually, `dev-contracts.yml`, each run approved in GitHub |
@@ -33,11 +36,19 @@ Each node is its own Worker (`deploy/cloudflare/runtime/oracle-worker.mjs`, rend
 - **Routes** (GET only, per-IP and global rate limits): `/health`, `/v1/batch/latest`, `/v1/batch/stream` (SSE) from the node; `/v1/history/candles?market=&interval=1m|5m|15m|1h|4h|1d&from=&to=` and `/v1/history/batches?market=&from=&to=&limit=` from storage. Times are unix seconds.
 - **History.** A cron every minute keeps the container running and copies what it signed into the Durable Object's SQLite: every signed batch for 30 days and one-minute candles permanently (coarser intervals are resampled on read). History routes read only SQLite, so they keep working while the container restarts; a crash loses at most the last minute. `/v1/history/batches` returns each batch exactly as signed, with `signature`, `signer`, `chainId` and `verifyingContract`, so anyone can check a trade's price by recovering the signer from the adapter's EIP-712 domain (`recoverBatchSigner` in `packages/shared/src/signed-oracle.ts`). Pages hold at most 1,000 batches; follow `next`.
 
+## Private pages (Cloudflare Access)
+
+The hedge operations dashboard and the internal docs sit behind a Cloudflare Access application each, which lets in only the listed emails (one-time code by email). Their worker (`deploy/cloudflare/static/private-edge.mjs`) also checks the Access token on every request, assets included, against the application's audience tag, so a missing or misconfigured Access application leaves the page locked rather than public.
+
+- `scripts/cloudflare-access.mjs` runs during the deploy: it creates the Access application on first use, allowing the emails in `RFQ_ACCESS_EMAILS` (or KV `access-emails`, comma-separated), and passes the team domain and audience tag to the worker. An existing application keeps its policy; change who may sign in under Zero Trust → Access → Applications.
+- It needs Zero Trust enabled on the account (any plan) and the API token permissions *Account → Access: Apps and Policies → Edit* and *Account → Access: Organizations, Identity Providers, and Groups → Read*. Without them the deploy warns and the pages answer 503.
+- The dashboard reads the indexer's `/v1/risk` and update stream and the hedger's `/v1/status[/stream]` through the runtime's service binding (`/ops/hedger/...`). The runtime adds the hedger's operations token, which it keeps in its Durable Object; the browser never sees it. The public UI worker does not forward `/ops/` paths.
+
 ## Deploying without GitHub secrets
 
 Both workflows run shell scripts that work from any machine with Docker, Node and a Cloudflare token (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`):
 
-- `scripts/cloudflare-dev-deploy.sh` builds and publishes the oracle nodes (`scripts/cloudflare-oracle-deploy.sh`, which waits for each node before deploying the next), the runtime, UI and docs, and records the commit in KV `deployed-commit`. Set `CLOUDFLARE_WORKERS_SUBDOMAIN` if the account's `workers.dev` subdomain is not `rfq-markets`. Behind a TLS-intercepting proxy, set `RFQ_DOCKER_BUILD_CA` to the proxy's CA bundle.
+- `scripts/cloudflare-dev-deploy.sh` builds and publishes the oracle nodes (`scripts/cloudflare-oracle-deploy.sh`, which waits for each node before deploying the next), the runtime, UI, docs, the private pages and the exit page, and records the commit in KV `deployed-commit`. Set `CLOUDFLARE_WORKERS_SUBDOMAIN` if the account's `workers.dev` subdomain is not `rfq-markets`. Behind a TLS-intercepting proxy, set `RFQ_DOCKER_BUILD_CA` to the proxy's CA bundle.
 - `scripts/dev-contracts.sh ACTION [AMOUNT]` runs a dev-contracts action with the state from KV. Everything except `identities` and `preflight` sends Base mainnet transactions.
 
 The live environment is on the RFQ Markets account: UI `https://dev.rfq-markets.workers.dev`, docs `https://docs.rfq-markets.workers.dev`.
@@ -63,6 +74,5 @@ Later: `upgrade` after contract changes land on `main` (storage-checked against 
 
 ## Not covered yet
 
-- The hedge operations dashboard (`apps/admin`) and internal docs need Cloudflare Access first, so they are not deployed.
 - No custom domain; the `workers.dev` address is used.
 - Live hedging on Hyperliquid mainnet.

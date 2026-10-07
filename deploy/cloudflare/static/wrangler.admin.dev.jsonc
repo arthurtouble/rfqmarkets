@@ -1,0 +1,17 @@
+// Hedge operations dashboard (apps/admin) for the Base mainnet dev deployment. Behind Cloudflare Access:
+// private-edge.mjs refuses every request, assets included, without a valid Access token for ACCESS_AUD.
+// ACCESS_TEAM_DOMAIN and ACCESS_AUD are passed by scripts/cloudflare-dev-deploy.sh.
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "admin",
+  "main": "private-edge.mjs",
+  "compatibility_date": "2026-09-11",
+  "assets": {
+    "directory": "../../../dist/admin",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+  "services": [{"binding": "RUNTIME", "service": "rfq-markets-runtime-dev"}],
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}
