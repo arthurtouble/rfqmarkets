@@ -1,4 +1,5 @@
 @import "../../../packages/design-system/tokens.css";
+@import "../../../packages/design-system/legacy.css";
 
 /* Base ------------------------------------------------------------------ */
 * { box-sizing: border-box; }
