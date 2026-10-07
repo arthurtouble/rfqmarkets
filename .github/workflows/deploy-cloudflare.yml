@@ -1,4 +1,4 @@
-name: Deploy Cloudflare testnet
+name: Deploy Cloudflare testnet docs
 on:
   workflow_dispatch:
   workflow_run:
@@ -11,7 +11,7 @@ concurrency:
   group: cloudflare-testnet
   cancel-in-progress: false
 jobs:
-  public-static:
+  public-docs:
     if: ${{ vars.CLOUDFLARE_DEPLOY_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -26,9 +26,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run build:web && npm run build:docs
-      - run: npx wrangler deploy --dry-run --config deploy/cloudflare/static/wrangler.web.jsonc
-      - run: npx wrangler deploy --config deploy/cloudflare/static/wrangler.web.jsonc
+      - run: npm run build:docs
       - run: npx wrangler deploy --dry-run --config deploy/cloudflare/static/wrangler.docs.jsonc
       - run: npx wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
     env:
