@@ -51,11 +51,13 @@ export default defineConfig({
       stderr: "pipe",
     },
     {
-      // Bound to IPv4 explicitly: Vite's default "localhost" can resolve to ::1 only on CI runners.
-      command: "npm run dev:docs -- --host 127.0.0.1 --strictPort",
+      // The docs site is static, so test the production build. Vite's dev server can answer the first
+      // load with "504 Outdated Optimize Dep" while it re-bundles dependencies.
+      command:
+        "npm run build:docs && vite preview apps/docs --outDir ../../dist/docs --host 127.0.0.1 --port 4175 --strictPort",
       url: urls.docs,
       reuseExistingServer: !ci,
-      timeout: 60_000,
+      timeout: 120_000,
     },
   ],
 });
