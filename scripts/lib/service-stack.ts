@@ -145,6 +145,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
   try {
     const indexer = buildIndexer({
       rpcUrl: config.indexerRpcUrl ?? config.rpcUrl,
+      readRpcUrl: config.rpcUrl,
       clearingAddress: config.clearingAddress,
       databasePath: state("indexer.sqlite"),
       startBlock: config.startBlock,

@@ -16,6 +16,9 @@ export interface IndexerOptions {
   confirmations?: number;
   /** Most blocks one eth_getLogs call may span; public Base RPCs cap this well below the default 10,000. */
   maxLogRange?: number;
+  /** RPC for the direct contract reads behind /v1/exposure; defaults to rpcUrl. Lets the hedger's hot path
+   * use a faster provider than the one with the wide eth_getLogs range. */
+  readRpcUrl?: string;
   pollMs?: number;
   corsOrigin?: string | string[];
   provider?: JsonRpcProvider;
@@ -105,6 +108,11 @@ export function buildIndexer(options: IndexerOptions) {
   app.register(cors, { origin: corsOrigins });
   const provider = options.provider ?? new JsonRpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1 });
   const contract = new Contract(options.clearingAddress, clearingIndexerAbi, provider);
+  const readProvider =
+      options.readRpcUrl && !options.provider
+        ? new JsonRpcProvider(options.readRpcUrl, undefined, { batchMaxCount: 1 })
+        : provider,
+    readContract = new Contract(options.clearingAddress, clearingIndexerAbi, readProvider);
   const iface = new Interface(clearingIndexerAbi);
   const db = new DatabaseSync(options.databasePath);
   db.exec(
@@ -478,17 +486,18 @@ export function buildIndexer(options: IndexerOptions) {
       .all(...params, query.limit) as Array<Record<string, string | number>>;
     return { ...activityPage(rows, query.limit, finalized), finalizedBlock: finalized };
   });
+  // Reads contract state directly, so it does not wait on a log sync: a slow sync must not starve the
+  // hedger's once-a-second exposure check.
   app.get("/v1/exposure", async (request, reply) => {
-    await sync();
     const query = parse(finalityQuery, request.query, reply);
     if (!query) return;
-    const head = await provider.getBlockNumber(),
+    const head = await readProvider.getBlockNumber(),
       blockTag = query.finalized
         ? Math.max(options.startBlock ?? 0, head - (options.confirmations ?? 2))
         : head;
     const [btc, eth] = await Promise.all([
-      contract.markets(0, { blockTag }),
-      contract.markets(1, { blockTag }),
+      readContract.markets(0, { blockTag }),
+      readContract.markets(1, { blockTag }),
     ]);
     const market = (state: { aggregateBase: bigint; lastBid: bigint; lastAsk: bigint }) => ({
       aggregateBase: state.aggregateBase.toString(),
