@@ -33,6 +33,17 @@ interface IRFQClearingEvents {
     event MarketRiskUpdated(
         uint8 indexed market, uint32 impactK, uint16 shockBps, uint16 marginScaleBps, uint64 policyVersion
     );
+    event MarketSpreadUpdated(uint8 indexed market, uint16 baseSpreadBps);
+    event DefaultSpreadUpdated(uint16 baseSpreadBps);
+    event RiskOperatorUpdated(address indexed riskOperator);
+    event RiskOperatorBoundsUpdated(
+        uint128 maxTradeNotional,
+        uint128 maxMarketNotional,
+        uint128 maxGrossLimit,
+        uint32 minImpactK,
+        uint16 minShockBps,
+        uint16 minMarginScaleBps
+    );
     event OracleUpdated(address indexed oracle);
     event ApproversRotated(address[3] approvers, uint64 signerSetVersion);
     event GovernanceTransferStarted(address indexed current, address indexed pending);

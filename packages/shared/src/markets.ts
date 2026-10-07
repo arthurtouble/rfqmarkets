@@ -24,7 +24,22 @@ export interface MarketDefinition {
   marginScaleBps: number;
   /** `markets(i).enabled`: a disabled market accepts only position reductions. */
   enabled: boolean;
+  /**
+   * Base quote spread in bps: `marketSpread(i)`, else `defaultSpread()`, else `DEFAULT_BASE_SPREAD_BPS`.
+   * Absent on contracts deployed before the risk operator (v1.2) and in fixtures.
+   */
+  baseSpreadBps?: number;
 }
+
+/** Base spread the services quote with when the chain sets none (`launchPricing.baseSpreadBps`). */
+export const DEFAULT_BASE_SPREAD_BPS = 2;
+/** `RFQTypes.MIN_BASE_SPREAD_BPS` and `MAX_BASE_SPREAD_BPS`. */
+export const MIN_BASE_SPREAD_BPS = 2;
+export const MAX_BASE_SPREAD_BPS = 50;
+
+/** The base spread a market quotes with. */
+export const baseSpreadOf = (market: Pick<MarketDefinition, "baseSpreadBps">) =>
+  market.baseSpreadBps || DEFAULT_BASE_SPREAD_BPS;
 
 /** The launch markets, as `deploy-local` and the production deploy register them. */
 export const LAUNCH_MARKETS: readonly MarketDefinition[] = Object.freeze([
@@ -174,7 +189,8 @@ function sameMarket(left: MarketDefinition, right: MarketDefinition | undefined)
     left.impactK === right.impactK &&
     left.shockBps === right.shockBps &&
     left.marginScaleBps === right.marginScaleBps &&
-    left.enabled === right.enabled
+    left.enabled === right.enabled &&
+    left.baseSpreadBps === right.baseSpreadBps
   );
 }
 
@@ -199,6 +215,29 @@ export interface MarketRegistryReader {
     overrides?: object,
   ): Promise<{ symbol: string; impactK: unknown; shockBps: unknown; marginScaleBps: unknown }>;
   markets(index: number, overrides?: object): Promise<{ enabled: unknown }>;
+  /** v1.2 spread views; readers without them (older contracts, fixtures) quote the default spread. */
+  defaultSpread?(overrides?: object): Promise<unknown>;
+  marketSpread?(index: number, overrides?: object): Promise<unknown>;
+}
+
+/** Ethers errors for a view the contract does not have (empty return data) or rejects. */
+const isMissingView = (error: unknown) => {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return code === "BAD_DATA" || code === "CALL_EXCEPTION";
+};
+
+/**
+ * Read `defaultSpread()`. Undefined when the contract predates it; any other failure (a network error)
+ * propagates so a sync never silently drops an operator-set spread to the narrower default.
+ */
+async function readDefaultSpread(clearing: MarketRegistryReader, overrides: object) {
+  if (typeof clearing.defaultSpread !== "function" || typeof clearing.marketSpread !== "function") return;
+  try {
+    return Number(await clearing.defaultSpread(overrides));
+  } catch (error) {
+    if (isMissingView(error)) return;
+    throw error;
+  }
 }
 
 /** Read every registered market from the clearing contract. */
@@ -211,12 +250,15 @@ export async function readMarketsFromChain(
   const overrides = blockTag === undefined ? {} : { blockTag };
   const count = Number(await clearing.marketCount(overrides));
   if (!Number.isInteger(count) || count < 0 || count > MAX_MARKETS) throw new Error("invalid market count");
+  const defaultSpread = await readDefaultSpread(clearing, overrides);
   return Promise.all(
     Array.from({ length: count }, async (_, index) => {
-      const [params, state] = await Promise.all([
+      const [params, state, ownSpread] = await Promise.all([
         clearing.marketParams(index, overrides),
         clearing.markets(index, overrides),
+        defaultSpread === undefined ? undefined : clearing.marketSpread!(index, overrides),
       ]);
+      const spread = Number(ownSpread ?? 0) || defaultSpread || 0;
       return {
         index,
         symbol: decodeMarketSymbol(params.symbol),
@@ -224,6 +266,7 @@ export async function readMarketsFromChain(
         shockBps: BigInt(params.shockBps as bigint),
         marginScaleBps: Number(params.marginScaleBps),
         enabled: Boolean(state.enabled),
+        ...(spread ? { baseSpreadBps: spread } : {}),
       };
     }),
   );

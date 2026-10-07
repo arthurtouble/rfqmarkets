@@ -31,6 +31,7 @@ Every file under `docs/` is published to the private internal manual (`npm run d
 - [Cloudflare dev environment](../deploy/cloudflare/DEV-ENVIRONMENT.md): the hosted dev stack wired to the mainnet dev contracts.
 - [Market lifecycle](operations/market-lifecycle.md): enabling, tightening, pausing and retiring markets.
 - [Adding a market](operations/adding-a-market.md): the governance listing, oracle coverage, hedge mapping and caps for a new market.
+- [Risk operator and the market console](operations/risk-operator.md): who may list and tune markets without the timelock, its envelope, spreads and the console.
 - [Market making](operations/market-making.md) and [market-flow calibration](operations/market-flow-calibration.md): quote policy and the research pipeline behind it.
 - The incident runbook and alert rules live in [deploy/operations](../deploy/operations/INCIDENT-RUNBOOK.md).
 

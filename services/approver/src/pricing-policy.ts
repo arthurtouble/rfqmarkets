@@ -24,10 +24,15 @@ export function checkQuoteModel(
 }
 
 /**
- * Recompute the leader's adaptive spread: the components must sum to the capped
- * total, and the expected price must equal anchor +/- (spread + impact) premium.
+ * Recompute the leader's adaptive spread: the base component must reach the market's base spread, the
+ * components must sum to the capped total, and the expected price must equal anchor +/- (spread + impact)
+ * premium.
  */
-export function checkQuoteSpread(quote: WireQuote, wireBaseDelta: string): Rejection | undefined {
+export function checkQuoteSpread(
+  quote: WireQuote,
+  wireBaseDelta: string,
+  minBaseBps = Number(MIN_BASE_SPREAD_BPS),
+): Rejection | undefined {
   const spread = quote.spread;
   if (!spread) return;
   const components = [
@@ -46,6 +51,8 @@ export function checkQuoteSpread(quote: WireQuote, wireBaseDelta: string): Rejec
     total !== (sum > MAX_SPREAD_BPS ? MAX_SPREAD_BPS : sum)
   )
     return reject("quote spread rejected");
+  // The market's on-chain base spread (set by governance or the risk operator) is a floor on the base component.
+  if (components[0] < BigInt(minBaseBps)) return reject("quote spread below market base");
   const selling = wireBaseDelta.startsWith("-"),
     notional = BigInt(quote.amount),
     impact = BigInt(quote.impactCharge) > 0n ? BigInt(quote.impactCharge) : 0n,

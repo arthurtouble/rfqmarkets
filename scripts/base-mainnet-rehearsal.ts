@@ -12,10 +12,12 @@ import {
   ZeroAddress,
   formatEther,
   getAddress,
+  parseEther,
   parseUnits,
   type Signer,
 } from "ethers";
 import {
+  appointRiskOperatorDev,
   devPreflight,
   generateDevIdentities,
   handoverDev,
@@ -140,7 +142,7 @@ assert.equal(
   partial[firstLibrary],
   "resume reuses deployed libraries",
 );
-assert.equal(Object.keys(record.contracts.libraries).length, 5);
+assert.equal(Object.keys(record.contracts.libraries).length, libraryOrder().length);
 assert.equal(
   record.deploymentBlock,
   (await provider.getTransactionReceipt(record.transactions.clearingProxy))!.blockNumber,
@@ -248,7 +250,7 @@ await (await clearing.connect(ceremony).getFunction("deposit")(amount)).wait();
 assert.equal(await usdc.balanceOf(record.contracts.clearingProxy), amount);
 
 const submissions = basescanSubmissions(record, manifest);
-assert.equal(submissions.length, 8);
+assert.equal(submissions.length, libraryOrder().length + 3);
 assert.ok(submissions.every((item) => item.compilerVersion.startsWith("v0.8.34+commit.")));
 assert.ok(submissions.find((item) => item.step === "clearingProxy")!.constructorArguments.length > 0);
 
@@ -320,6 +322,14 @@ assert.equal(
   collateralBefore,
   "account collateral survives the dev upgrade",
 );
+
+// The upgraded dev proxy takes a risk operator, which then tightens a market without the owner key.
+const devOperator = Wallet.createRandom().connect(provider);
+await (await ceremony.sendTransaction({ to: devOperator.address, value: parseEther("0.1") })).wait();
+await appointRiskOperatorDev(devOwner, devRecord, devOperator.address, 1);
+assert.equal(await devClearing.riskOperator(), devOperator.address);
+await (await (devClearing.connect(devOperator) as Contract).getFunction("setSpread")(0, 6)).wait();
+assert.equal(await devClearing.marketSpread(0), 6n, "the risk operator sets a spread at once");
 
 // Handover: a new Safe-run timelock takes governance and the ProxyAdmin of the same dev proxy.
 const handoverSafe = await deploy("MockSafe", [[g1.address, g2.address, g3.address], 2]),

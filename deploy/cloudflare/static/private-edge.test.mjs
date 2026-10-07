@@ -71,8 +71,9 @@ test("refuses assets without Access and serves them with private headers with it
 });
 
 test("forwards only the dashboard's reads to the runtime, without the Access token or cookies", async () => {
-  assert.ok(runtimeRead("/v1/risk") && runtimeRead("/v1/updates/stream"));
+  assert.ok(runtimeRead("/v1/risk") && runtimeRead("/v1/updates/stream") && runtimeRead("/v1/config"));
   assert.ok(runtimeRead("/ops/hedger/v1/status") && runtimeRead("/ops/hedger/v1/status/stream"));
+  assert.ok(!runtimeRead("/v1/dev/risk-operator") && !runtimeRead("/v1/config/x"));
   assert.ok(!runtimeRead("/v1/quote") && !runtimeRead("/ops/hedger/v1/tick") && !runtimeRead("/ops/hedger/internal/risk"));
   const seen = [];
   const RUNTIME = { fetch: async (forwarded) => (seen.push(forwarded), Response.json({ ok: true })) };

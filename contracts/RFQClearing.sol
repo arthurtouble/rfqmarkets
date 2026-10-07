@@ -10,6 +10,7 @@ import {RFQClearingNamespace, RFQClearingStorage} from "./RFQClearingStorage.sol
 import {IRFQClearingEvents} from "./interfaces/IRFQClearingEvents.sol";
 import {RFQLedger} from "./libraries/RFQLedger.sol";
 import {RFQLiquidation} from "./libraries/RFQLiquidation.sol";
+import {RFQMarketAdmin} from "./libraries/RFQMarketAdmin.sol";
 import {RFQResolution} from "./libraries/RFQResolution.sol";
 import {RFQRiskMath} from "./libraries/RFQRiskMath.sol";
 import {RFQSettlement} from "./libraries/RFQSettlement.sol";
@@ -41,6 +42,10 @@ interface IERC3009 {
 /// - `governance` unpauses, upgrades (through the ProxyAdmin it owns), rotates approvers, sets the oracle,
 ///   adds markets, loosens limits and moves maker capital. It is any address: an EOA or Safe while the venue is in
 ///   development, a timelock in production. Handover is two-step (`transferGovernance` / `acceptGovernance`).
+/// - `riskOperator` lists markets and sets their limits, risk parameters, spreads and reduce-only flag at once,
+///   with no timelock. It may always tighten; it may loosen only within the `RiskOperatorBounds` governance
+///   sets. It cannot move funds, unpause, upgrade or change approvers or the oracle. Governance appoints it and
+///   governance or the emergency council can revoke it.
 /// - `emergencyCouncil` pauses, fences approvals and disables or tightens markets. It cannot unpause.
 /// - Anyone may liquidate, refresh prices, top up maker or insurance capital and run resolution steps.
 ///
@@ -84,7 +89,7 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         $.paused = true;
         $.makerIncidentGracePeriod = DEFAULT_INCIDENT_GRACE_PERIOD;
         for (uint256 i; i < markets_.length; ++i) {
-            _addMarket(markets_[i]);
+            RFQMarketAdmin.registerMarket(markets_[i]);
         }
         RFQRiskMath.setApprovers(approvers_);
         emit GovernanceTransferred(address(0), governance_);
@@ -360,64 +365,63 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         emit OracleUpdated(next);
     }
 
-    /// @notice Sets a market's per-trade and net limits. The emergency council may only disable the market
-    /// while keeping or tightening limits; governance may change anything.
+    /// @notice Sets whether a market opens new risk (`enabled`; a disabled market only accepts reductions) and
+    /// its per-trade and net limits. Governance may change anything; the risk operator may toggle the market and
+    /// loosen limits within its bounds; the emergency council may only disable it and tighten. See RFQMarketAdmin.
     function setMarketPolicy(uint8 market, bool enabled, uint128 maxTradeNotional, uint128 maxMarketNotional)
         external
-        onlyEmergencyOrGovernance
     {
-        RFQClearingNamespace.Layout storage $ = _s();
-        if (market >= $.marketCount) revert InvalidTrade();
-        _validateLimits(maxTradeNotional, maxMarketNotional);
-        MarketLimits storage limits = $.limits[market];
-        if (
-            msg.sender != $.governance
-                && (enabled
-                    || maxTradeNotional > limits.maxTradeNotional
-                    || maxMarketNotional > limits.maxMarketNotional)
-        ) revert Unauthorized();
-        // The net limit is the funding-rate denominator: accrue at the old rate before changing it.
-        if (!$.resolutionRequired) RFQLedger.updateFunding(market);
-        $.markets[market].enabled = enabled;
-        $.limits[market] = MarketLimits(maxTradeNotional, maxMarketNotional);
-        uint64 version = ++$.policyVersion;
-        emit MarketPolicyUpdated(market, enabled, maxTradeNotional, maxMarketNotional, version);
+        RFQMarketAdmin.setMarketPolicy(market, enabled, maxTradeNotional, maxMarketNotional);
     }
 
-    /// @notice Sets a market's gross and per-side limits (valued at the ask). Only while paused.
-    function setExposurePolicy(uint8 market, uint128 grossLimit, uint128 sideLimit) external onlyGovernance {
-        RFQClearingNamespace.Layout storage $ = _s();
-        if (!$.paused || $.resolutionRequired || market >= $.marketCount) revert InvalidTrade();
-        _validateExposureLimits(grossLimit, sideLimit);
-        $.exposure[market].grossLimit = grossLimit;
-        $.exposure[market].sideLimit = sideLimit;
-        ++$.policyVersion;
-        emit ExposurePolicyUpdated(market, grossLimit, sideLimit);
+    /// @notice Sets a market's gross and per-side limits (valued at the ask), effective at once. A book already
+    /// over a lowered limit may still shrink, and the policy version bump fences approvals priced against the
+    /// old limits. Same roles as `setMarketPolicy`.
+    function setExposurePolicy(uint8 market, uint128 grossLimit, uint128 sideLimit) external {
+        RFQMarketAdmin.setExposurePolicy(market, grossLimit, sideLimit);
     }
 
     /// @notice Registers a new market with the next id. Its funding clock starts now; it trades once the
-    /// oracle prices it and, if `config.enabled` is false, once governance enables it.
-    function addMarket(MarketConfig calldata config) external onlyGovernance returns (uint8 market) {
-        if (_s().resolutionRequired) revert InvalidTrade();
-        market = _addMarket(config);
-        ++_s().policyVersion;
+    /// oracle prices it and, if `config.enabled` is false, once it is enabled. Governance, or the risk operator
+    /// within its bounds.
+    function addMarket(MarketConfig calldata config) external returns (uint8 market) {
+        return RFQMarketAdmin.addMarket(config);
     }
 
     /// @notice Sets a market's inventory-impact coefficient, stress shock and margin multiplier. Higher margin
-    /// applies to open positions at once, so raise it with notice.
-    function setMarketRisk(uint8 market, uint32 impactK, uint16 shockBps, uint16 marginScaleBps)
-        external
-        onlyGovernance
-    {
+    /// applies to open positions at once, so raise it with notice. Governance, or the risk operator, which may
+    /// lower a parameter only down to its bounds' floor.
+    function setMarketRisk(uint8 market, uint32 impactK, uint16 shockBps, uint16 marginScaleBps) external {
+        RFQMarketAdmin.setMarketRisk(market, impactK, shockBps, marginScaleBps);
+    }
+
+    /// @notice Sets a market's base quote spread in bps (2 to 50; zero uses the default spread), or with
+    /// `market` 255 the default itself. The quoting services and approvers read it; it does not fence approvals.
+    /// Governance or the risk operator.
+    function setSpread(uint8 market, uint16 baseSpreadBps) external {
+        RFQMarketAdmin.setSpread(market, baseSpreadBps);
+    }
+
+    /// @notice Appoints the risk operator. Governance may set any address; the emergency council may only
+    /// revoke (set zero).
+    function setRiskOperator(address next) external onlyEmergencyOrGovernance {
         RFQClearingNamespace.Layout storage $ = _s();
-        if (market >= $.marketCount || $.resolutionRequired) revert InvalidTrade();
-        _validateRisk(impactK, shockBps, marginScaleBps);
-        MarketParams storage params = $.marketParams[market];
-        params.impactK = impactK;
-        params.shockBps = shockBps;
-        params.marginScaleBps = marginScaleBps;
-        uint64 version = ++$.policyVersion;
-        emit MarketRiskUpdated(market, impactK, shockBps, marginScaleBps, version);
+        if (msg.sender != $.governance && next != address(0)) revert Unauthorized();
+        $.riskOperator = next;
+        emit RiskOperatorUpdated(next);
+    }
+
+    /// @notice Sets how far the risk operator may loosen a market. The contract's absolute limits still apply.
+    function setRiskOperatorBounds(RiskOperatorBounds calldata bounds) external onlyGovernance {
+        _s().riskOperatorBounds = bounds;
+        emit RiskOperatorBoundsUpdated(
+            bounds.maxTradeNotional,
+            bounds.maxMarketNotional,
+            bounds.maxGrossLimit,
+            bounds.minImpactK,
+            bounds.minShockBps,
+            bounds.minMarginScaleBps
+        );
     }
 
     /// @notice First step of a governance handover. Pass zero to cancel a pending transfer.
@@ -510,6 +514,23 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
 
     function governance() external view returns (address) {
         return _s().governance;
+    }
+
+    function riskOperator() external view returns (address) {
+        return _s().riskOperator;
+    }
+
+    function riskOperatorBounds() external view returns (RiskOperatorBounds memory) {
+        return _s().riskOperatorBounds;
+    }
+
+    function defaultSpread() external view returns (uint16) {
+        return _s().defaultSpreadBps;
+    }
+
+    /// @notice A market's own base spread; zero means it uses `defaultSpread()`.
+    function marketSpread(uint8 market) external view returns (uint16) {
+        return _s().marketSpreadBps[market];
     }
 
     function pendingGovernance() external view returns (address) {
@@ -750,52 +771,5 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         }
         RFQLedger.changeCollateral(account, int256(amount));
         emit Deposited(account, amount);
-    }
-
-    function _addMarket(MarketConfig calldata config) private returns (uint8 market) {
-        RFQClearingNamespace.Layout storage $ = _s();
-        market = $.marketCount;
-        if (market >= MAX_MARKETS || config.symbol == bytes32(0) || $.marketIdPlusOne[config.symbol] != 0) {
-            revert InvalidConfiguration();
-        }
-        _validateLimits(config.maxTradeNotional, config.maxMarketNotional);
-        _validateExposureLimits(config.grossLimit, config.sideLimit);
-        _validateRisk(config.impactK, config.shockBps, config.marginScaleBps);
-        $.marketCount = market + 1;
-        $.marketIdPlusOne[config.symbol] = market + 1;
-        $.marketParams[market] = MarketParams(config.symbol, config.impactK, config.shockBps, config.marginScaleBps);
-        $.markets[market].enabled = config.enabled;
-        $.markets[market].fundingTime = uint64(block.timestamp);
-        $.limits[market] = MarketLimits(config.maxTradeNotional, config.maxMarketNotional);
-        $.exposure[market].grossLimit = config.grossLimit;
-        $.exposure[market].sideLimit = config.sideLimit;
-        emit MarketAdded(market, config.symbol);
-        emit MarketPolicyUpdated(
-            market, config.enabled, config.maxTradeNotional, config.maxMarketNotional, $.policyVersion
-        );
-        emit ExposurePolicyUpdated(market, config.grossLimit, config.sideLimit);
-        emit MarketRiskUpdated(market, config.impactK, config.shockBps, config.marginScaleBps, $.policyVersion);
-    }
-
-    /// @dev Margin may scale from 0.25x (20x leverage in the first tier) to 5x the base tiers; the stress shock
-    /// must be a real move.
-    function _validateRisk(uint32 impactK, uint16 shockBps, uint16 marginScaleBps) private pure {
-        if (
-            impactK == 0 || impactK > 1_000_000 || shockBps < 500 || shockBps > 10_000
-                || marginScaleBps < MIN_MARGIN_SCALE_BPS || marginScaleBps > MAX_MARGIN_SCALE_BPS
-        ) revert InvalidConfiguration();
-    }
-
-    function _validateLimits(uint128 maxTradeNotional, uint128 maxMarketNotional) private pure {
-        if (
-            maxTradeNotional == 0 || maxTradeNotional > maxMarketNotional
-                || maxTradeNotional > ABSOLUTE_MAX_TRADE_NOTIONAL || maxMarketNotional > ABSOLUTE_MAX_MARKET_NOTIONAL
-        ) revert InvalidTrade();
-    }
-
-    function _validateExposureLimits(uint128 grossLimit, uint128 sideLimit) private pure {
-        if (sideLimit == 0 || sideLimit > grossLimit || grossLimit > ABSOLUTE_MAX_MARKET_NOTIONAL) {
-            revert InvalidTrade();
-        }
     }
 }

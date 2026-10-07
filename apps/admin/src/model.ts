@@ -104,7 +104,11 @@ export function feedHealth(
     return { tone: "bad", label: "Degraded", detail };
   }
   if (hedge.observedAtMs && now - hedge.observedAtMs > staleMs)
-    return { tone: "warn", label: "Stale", detail: `Last exposure read ${duration(now - hedge.observedAtMs)} ago.` };
+    return {
+      tone: "warn",
+      label: "Stale",
+      detail: `Last exposure read ${duration(now - hedge.observedAtMs)} ago.`,
+    };
   return { tone: "ok", label: "Live" };
 }
 

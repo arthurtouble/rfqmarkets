@@ -72,6 +72,7 @@
     "dev-deploy:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-deploy",
     "dev-configure:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-configure",
     "dev-upgrade:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-upgrade",
+    "dev-risk-operator:base-mainnet": "node --import tsx scripts/base-mainnet-cli.ts dev-risk-operator",
     "dev-handover:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-handover",
     "dev-verify:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-verify",
     "dev-basescan:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts dev-basescan",

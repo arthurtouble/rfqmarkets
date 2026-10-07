@@ -34,6 +34,12 @@ test("checkQuoteSpread recomputes the spread breakdown and expected price", () =
       error(checkQuoteSpread({ ...quote, spread: changed }, payload.intent.baseDelta)),
       "quote spread rejected",
     );
+  // The market's on-chain base spread is a floor on the base component.
+  assert.equal(checkQuoteSpread(quote, payload.intent.baseDelta, Number(spread.baseBps)), undefined);
+  assert.equal(
+    error(checkQuoteSpread(quote, payload.intent.baseDelta, Number(spread.baseBps) + 1)),
+    "quote spread below market base",
+  );
   // A capped total is accepted when the components exceed the cap.
   const capped = { ...spread, volatilityBps: "200", totalBps: "100" };
   assert.equal(

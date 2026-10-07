@@ -7,7 +7,10 @@ import { App, HealthPill, MarketCard, Orders } from "./App.js";
 import type { HedgeOrder } from "./model.js";
 
 const E18 = 10n ** 18n;
-const text = (element: React.ReactElement) => renderToStaticMarkup(element).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+const text = (element: React.ReactElement) =>
+  renderToStaticMarkup(element)
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ");
 
 test("first paint shows loading placeholders and a connecting status, never Unavailable", () => {
   const html = renderToStaticMarkup(<App />);
@@ -18,8 +21,14 @@ test("first paint shows loading placeholders and a connecting status, never Unav
 });
 
 test("health pill tones", () => {
-  assert.match(renderToStaticMarkup(<HealthPill health={{ tone: "ok", label: "Live" }} />), /rfq-badge--long[^>]*>.*Live/);
-  assert.match(renderToStaticMarkup(<HealthPill health={{ tone: "bad", label: "Degraded", detail: "x" }} />), /rfq-badge--short/);
+  assert.match(
+    renderToStaticMarkup(<HealthPill health={{ tone: "ok", label: "Live" }} />),
+    /rfq-badge--long[^>]*>.*Live/,
+  );
+  assert.match(
+    renderToStaticMarkup(<HealthPill health={{ tone: "bad", label: "Degraded", detail: "x" }} />),
+    /rfq-badge--short/,
+  );
 });
 
 test("a market outside its band shows why trading is restricted", () => {
@@ -27,7 +36,13 @@ test("a market outside its band shows why trading is restricted", () => {
     <MarketCard
       market={{
         symbol: "BTC",
-        risk: { longBase: String(E18), shortBase: "0", netBase: String(E18), longAccounts: 1, shortAccounts: 0 },
+        risk: {
+          longBase: String(E18),
+          shortBase: "0",
+          netBase: String(E18),
+          longAccounts: 1,
+          shortAccounts: 0,
+        },
         hedge: {
           customerBase: String(E18),
           venueBase: "0",
@@ -44,7 +59,14 @@ test("a market outside its band shows why trading is restricted", () => {
       }}
     />,
   );
-  for (const expected of ["Reduce-only", "Hedge required", "1 account ", "+1 BTC", "$60,000 of $25,000 band", "book too thin"])
+  for (const expected of [
+    "Reduce-only",
+    "Hedge required",
+    "1 account ",
+    "+1 BTC",
+    "$60,000 of $25,000 band",
+    "book too thin",
+  ])
     assert.ok(html.includes(expected), `${expected} in ${html}`);
 });
 
@@ -86,7 +108,9 @@ test("orders: loading, failed, empty and a journal with every status", () => {
     reason,
     created_ms: 1,
   });
-  const html = text(<Orders orders={[order("filled", E18 / 4n), order("rejected", -E18, "margin"), order("open", E18)]} />);
+  const html = text(
+    <Orders orders={[order("filled", E18 / 4n), order("rejected", -E18, "margin"), order("open", E18)]} />,
+  );
   for (const expected of ["Filled", "Rejected", "Open", "Long", "Short", "0.25", "$120,000.00", "margin"])
     assert.ok(html.includes(expected), expected);
 });

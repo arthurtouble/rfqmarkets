@@ -64,6 +64,21 @@ await (await clearing.fundMaker(10_000_000_000_000n)).wait();
 await (await clearing.fundInsurance(2_000_000_000_000n)).wait();
 await (await deployer.sendTransaction({ to: sponsorWallet.address, value: parseEther("5") })).wait();
 await (await deployer.sendTransaction({ to: devWallet.address, value: parseEther("2") })).wait();
+// The local risk operator: lists and tunes markets from the operations console, with no timelock. Its envelope is
+// the contract's own limits, so locally it can do anything governance can to a market; live deployments set tighter bounds.
+const riskOperator = Wallet.createRandom();
+await (await deployer.sendTransaction({ to: riskOperator.address, value: parseEther("1") })).wait();
+await (await clearing.setRiskOperator(riskOperator.address)).wait();
+await (
+  await clearing.setRiskOperatorBounds({
+    maxTradeNotional: 1_000_000_000_000n,
+    maxMarketNotional: 5_000_000_000_000n,
+    maxGrossLimit: 5_000_000_000_000n,
+    minImpactK: 1,
+    minShockBps: 500,
+    minMarginScaleBps: 2_500,
+  })
+).wait();
 // The dev wallet keeps 50,000 USDC and no standing allowance, so the app's approve-then-deposit flow runs locally.
 await (await token.mint(devWallet.address, 5_050_000_000_000n)).wait();
 await (
@@ -87,6 +102,7 @@ const deployment = {
   approvers: approvers.map((item) => ({ address: item.address, privateKey: item.privateKey })),
   sponsorPrivateKey: sponsorWallet.privateKey,
   devWallet: { account: devWallet.address, privateKey: devWallet.privateKey },
+  riskOperator: { account: riskOperator.address, privateKey: riskOperator.privateKey },
   deployedAt: new Date().toISOString(),
 };
 mkdirSync(resolve(".local-state"), { recursive: true });
@@ -102,6 +118,7 @@ console.log(
       tokenAddress: deployment.tokenAddress,
       oracleAddress: deployment.oracleAddress,
       devWallet: deployment.devWallet.account,
+      riskOperator: deployment.riskOperator.account,
       devCollateral: "5000000 USDC",
       devWalletUsdc: "50000 USDC",
       makerBacking: "10000000 USDC",

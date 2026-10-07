@@ -2,8 +2,16 @@
 
 const toBig = (value: string | bigint) => (typeof value === "bigint" ? value : BigInt(value));
 const scaled = (value: string | bigint, decimals: number) => Number(toBig(value)) / 10 ** decimals;
-const dollars = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-const cents = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
+const dollars = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+const cents = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+});
 
 /** Whole dollars, for balances and notionals; cents below $100 so small dev amounts do not read as $0. */
 export function usd(micro?: string | bigint | null) {
@@ -33,7 +41,8 @@ export function signedBase(value?: string | bigint | null, digits = 4) {
 export const integer = (value?: number | null) =>
   value === undefined || value === null || value < 0 ? "—" : new Intl.NumberFormat("en-US").format(value);
 
-export const percent = (value?: number) => (value === undefined ? "—" : `${value.toFixed(value < 10 ? 1 : 0)}%`);
+export const percent = (value?: number) =>
+  value === undefined ? "—" : `${value.toFixed(value < 10 ? 1 : 0)}%`;
 
 export const clockTime = (ms?: number) =>
   ms ? new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";

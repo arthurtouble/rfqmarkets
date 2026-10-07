@@ -18,6 +18,7 @@ const deployment = JSON.parse(readFileSync(resolve(".local-state", "deployment.j
   tokenAddress: string;
   sponsorPrivateKey: string;
   devWallet?: { account: string; privateKey: string };
+  riskOperator?: { account: string; privateKey: string };
   deploymentBlock?: number;
   approvers: Array<{ address: string; privateKey: string }>;
 };
@@ -42,7 +43,10 @@ const stack = await startServiceStack({
   // This token is limited to loopback development. Deployed environments must
   // supply a random secret and place the operations UI behind private access.
   hedge: { token: "local-development-hedge-token" },
-  api: { publicRpcUrl: deployment.rpcUrl, chain: { devFund: true, devWallet: deployment.devWallet } },
+  api: {
+    publicRpcUrl: deployment.rpcUrl,
+    chain: { devFund: true, devWallet: deployment.devWallet, riskOperator: deployment.riskOperator },
+  },
 });
 
 if (simulated) {
