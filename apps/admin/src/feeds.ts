@@ -30,11 +30,14 @@ export function useHedgeFeed(): HedgeFeed {
     const controller = new AbortController(),
       { signal } = controller;
     void (async () => {
-      for (let attempt = 0; !signal.aborted; ) {
+      for (let attempt = 0; !signal.aborted;) {
         let error: string;
         try {
           const response = await fetch(`${HEDGER}/v1/status/stream`, {
-            headers: { accept: "text/event-stream", ...(HEDGE_TOKEN ? { authorization: `Bearer ${HEDGE_TOKEN}` } : {}) },
+            headers: {
+              accept: "text/event-stream",
+              ...(HEDGE_TOKEN ? { authorization: `Bearer ${HEDGE_TOKEN}` } : {}),
+            },
             credentials: HEDGE_TOKEN ? "omit" : "same-origin",
             signal,
           });
@@ -48,7 +51,8 @@ export function useHedgeFeed(): HedgeFeed {
           error = "Hedger stream closed. Reconnecting.";
         } catch (reason) {
           if (signal.aborted) return;
-          error = reason instanceof TypeError ? "Cannot reach the hedger. Retrying." : (reason as Error).message;
+          error =
+            reason instanceof TypeError ? "Cannot reach the hedger. Retrying." : (reason as Error).message;
         }
         setFeed((current) => ({ ...current, connected: false, error }));
         await sleep(backoff(attempt++), signal);
@@ -81,7 +85,8 @@ export function useRiskFeed(): RiskFeed {
         setFeed({ risk });
       } catch (reason) {
         if (controller.signal.aborted) return;
-        const error = reason instanceof TypeError ? "Cannot reach the indexer. Retrying." : (reason as Error).message;
+        const error =
+          reason instanceof TypeError ? "Cannot reach the indexer. Retrying." : (reason as Error).message;
         setFeed((current) => ({ ...current, error }));
         retry = setTimeout(() => void load(), 5_000);
       } finally {

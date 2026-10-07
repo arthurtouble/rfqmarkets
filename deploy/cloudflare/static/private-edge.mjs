@@ -3,9 +3,11 @@ import { accessDenied, verifyAccess } from "./access.mjs";
 // Edge for the private dev surfaces: the hedge operations dashboard (apps/admin) and the internal docs.
 // Every request, assets included (run_worker_first), must carry a valid Cloudflare Access token for this
 // application. The dashboard's reads go to the dev runtime through the RUNTIME service binding: the indexer's
-// finalized risk view and update stream, and the hedger's status under /ops/hedger, which the runtime answers
-// with its own operations token so the browser never holds one. Only GET is allowed.
-const RUNTIME_READS = [/^\/v1\/risk$/, /^\/v1\/updates\/stream$/, /^\/ops\/hedger\/v1\/status(?:\/stream)?$/];
+// finalized risk view and update stream, the API's venue config (chain and clearing address, for the market
+// controls), and the hedger's status under /ops/hedger, which the runtime answers with its own operations token
+// so the browser never holds one. Only GET is allowed: market changes are transactions the operator's own
+// wallet signs and sends, never requests through this edge.
+const RUNTIME_READS = [/^\/v1\/risk$/, /^\/v1\/updates\/stream$/, /^\/v1\/config$/, /^\/ops\/hedger\/v1\/status(?:\/stream)?$/];
 
 const json = (value, status) =>
   new Response(JSON.stringify(value), {

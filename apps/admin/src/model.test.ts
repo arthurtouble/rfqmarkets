@@ -37,7 +37,10 @@ const status = (overrides: Partial<HedgeStatus> = {}): HedgeStatus => ({
 test("feedHealth: connecting, live, stale, degraded, reconnecting and offline", () => {
   const now = 1_002_000;
   assert.deepEqual(feedHealth(undefined, { connected: false }, now), { tone: "idle", label: "Connecting" });
-  assert.equal(feedHealth(undefined, { connected: false, error: "Hedger answered 503" }, now).label, "Offline");
+  assert.equal(
+    feedHealth(undefined, { connected: false, error: "Hedger answered 503" }, now).label,
+    "Offline",
+  );
   assert.deepEqual(feedHealth(status(), { connected: true }, now), { tone: "ok", label: "Live" });
   const stale = feedHealth(status({ observedAtMs: now - 12_000 }), { connected: true }, now);
   assert.equal(stale.label, "Stale");
@@ -48,12 +51,19 @@ test("feedHealth: connecting, live, stale, degraded, reconnecting and offline", 
     now,
   );
   assert.deepEqual(degraded, { tone: "bad", label: "Degraded", detail: "Indexer unavailable: Error: 503" });
-  assert.match(feedHealth(status({ healthy: false }), { connected: true }, now).detail!, /No exposure read for 2s/);
+  assert.match(
+    feedHealth(status({ healthy: false }), { connected: true }, now).detail!,
+    /No exposure read for 2s/,
+  );
   assert.match(
     feedHealth(status({ healthy: false, observedAtMs: 0 }), { connected: true }, now).detail!,
     /first exposure read/,
   );
-  const dropped = feedHealth(status(), { connected: false, error: "Hedger stream closed. Reconnecting." }, now);
+  const dropped = feedHealth(
+    status(),
+    { connected: false, error: "Hedger stream closed. Reconnecting." },
+    now,
+  );
   assert.equal(dropped.label, "Reconnecting");
 });
 
@@ -76,7 +86,13 @@ test("cleanError drops error class prefixes", () => {
 });
 
 test("duration reads naturally", () => {
-  assert.deepEqual([0, 59_400, 61_000, 3_600_000 + 120_000, 49 * 3_600_000].map(duration), ["0s", "59s", "1m", "1h 2m", "2d"]);
+  assert.deepEqual([0, 59_400, 61_000, 3_600_000 + 120_000, 49 * 3_600_000].map(duration), [
+    "0s",
+    "59s",
+    "1m",
+    "1h 2m",
+    "2d",
+  ]);
 });
 
 test("marketViews merges both feeds, keeps the chain's market order and adds markets only one feed knows", () => {
@@ -86,12 +102,24 @@ test("marketViews merges both feeds, keeps the chain's market order and adds mar
     totalCollateral: "1",
     markets: {
       ETH: { longBase: "0", shortBase: "0", netBase: "0", longAccounts: 0, shortAccounts: 0 },
-      BTC: { longBase: String(3n * E18), shortBase: String(E18), netBase: String(2n * E18), longAccounts: 2, shortAccounts: 1 },
+      BTC: {
+        longBase: String(3n * E18),
+        shortBase: String(E18),
+        netBase: String(2n * E18),
+        longAccounts: 2,
+        shortAccounts: 1,
+      },
       SOL: { longBase: String(E18), shortBase: "0", netBase: String(E18), longAccounts: 1, shortAccounts: 0 },
     },
   };
-  const views = marketViews(risk, status({ markets: { BTC: market({ gapNotional: "30000000000" }), ETH: market() } }));
-  assert.deepEqual(views.map((view) => view.symbol), ["BTC", "ETH", "SOL"]);
+  const views = marketViews(
+    risk,
+    status({ markets: { BTC: market({ gapNotional: "30000000000" }), ETH: market() } }),
+  );
+  assert.deepEqual(
+    views.map((view) => view.symbol),
+    ["BTC", "ETH", "SOL"],
+  );
   assert.equal(views[0].longShare, 75);
   assert.equal(views[0].bandUse, 120);
   assert.equal(views[1].longShare, undefined, "no exposure has no split");
