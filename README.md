@@ -2,6 +2,8 @@
 
 A leveraged perpetual RFQ venue on Base. Customers hold USDC collateral in an on-chain clearing contract; one operator prices trades, three private approvers co-sign them (two of three), and the operator hedges its inventory on Hyperliquid. The contract is the ledger: every balance and position can be rebuilt from chain events.
 
+The [takeover pack](docs/takeover/README.md) is the best single read: it maps the product, every deployment, the decisions behind them and the plan to production.
+
 ## Where it runs today
 
 | Surface | Location |
@@ -29,11 +31,8 @@ The Base mainnet deployment is a **development** deployment: owner-controlled, n
 
 ```sh
 npm ci
-npm run compile:contracts
-npm run dev:chain        # terminal 1: local OP-compatible Hardhat chain
-npm run deploy:local     # terminal 2: deploy contracts and mocks
-npm run dev:services     # terminal 2: API, approvers, gateway, indexer, hedger
-npm run dev:web          # terminal 3: trading UI
+npm run dev:stack -- --web   # chain, v1 contracts, every service and the trading UI, offline
+npm run dev:scenario         # optional: scripted fills, an approver outage and a leader failover
 ```
 
 The full walkthrough is in [local development](docs/operations/local-development.md). Before opening a pull request, run the narrowest relevant check, then `npm test`:
@@ -42,6 +41,7 @@ The full walkthrough is in [local development](docs/operations/local-development
 | --- | --- |
 | TypeScript anywhere | `npm run typecheck` |
 | Services and scripts | `npm run test:services` |
+| Trading app | `npm run test:web` |
 | Contracts | `npm run test:contracts` and `npm run validate:upgrades` |
 | Simulator | `npm run test:python` |
 | Cloudflare edge | `npm run test:cloudflare-edge` |
