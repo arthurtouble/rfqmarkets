@@ -1,0 +1,24 @@
+/* Old token names, mapped onto the new tokens for apps that have not been rebuilt yet.
+   Delete each alias once nothing uses it. */
+:root {
+  --ink-0: var(--bg);
+  --ink-1: var(--surface);
+  --ink-2: var(--surface-raised);
+  --ink-3: var(--surface-sunken);
+  --text-soft: var(--text-secondary);
+  --text-dim: var(--text-tertiary);
+  --brand-strong: var(--brand-text);
+  --buy: var(--long);
+  --buy-surface: var(--long-soft);
+  --sell: var(--short);
+  --sell-surface: var(--short-soft);
+  --warn: var(--warning);
+  --font-ui: var(--font-sans);
+  --shadow: var(--shadow-popover);
+  font-family: var(--font-sans);
+  font-synthesis: none;
+}
+::selection { color: var(--on-brand); background: var(--brand); }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+button { transition: border-color .12s ease, background .12s ease, color .12s ease, transform .12s ease; }
+button:active { transform: translateY(1px); }
