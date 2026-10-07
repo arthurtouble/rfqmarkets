@@ -8,9 +8,7 @@
 # CLOUDFLARE_WORKERS_SUBDOMAIN (default rfq-markets) are optional. Behind a TLS-intercepting proxy, set
 # RFQ_DOCKER_BUILD_CA to a CA bundle; it is mounted only while npm installs and stays out of the image.
 # RFQ_DOCKER_NODE_IMAGE swaps the Node base image for a mirror (for example
-# public.ecr.aws/docker/library/node:24-bookworm-slim) when Docker Hub rate-limits. RFQ_ACCESS_EMAILS (default:
-# KV access-emails) lists who Cloudflare Access lets into the operations dashboard and internal docs when their
-# Access applications are first created. Expects `npm ci` to have run.
+# public.ecr.aws/docker/library/node:24-bookworm-slim) when Docker Hub rate-limits. Expects `npm ci` to have run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${CLOUDFLARE_API_TOKEN:?}" "${CLOUDFLARE_ACCOUNT_ID:?}"
@@ -48,7 +46,6 @@ wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
 wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
 
 # Private surfaces behind Cloudflare Access (private-edge.mjs locks them when Access is not set up).
-export RFQ_ACCESS_EMAILS="${RFQ_ACCESS_EMAILS:-$(wrangler kv key get access-emails --namespace-id "$kv" --remote 2>/dev/null || true)}"
 deploy_private() { # worker config hostname-prefix label
   local flags
   flags=$(node scripts/cloudflare-access.mjs "$2.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev" "$3")

@@ -38,9 +38,9 @@ Each node is its own Worker (`deploy/cloudflare/runtime/oracle-worker.mjs`, rend
 
 ## Private pages (Cloudflare Access)
 
-The hedge operations dashboard and the internal docs sit behind a Cloudflare Access application each, which lets in only the listed emails (one-time code by email). Their worker (`deploy/cloudflare/static/private-edge.mjs`) also checks the Access token on every request, assets included, against the application's audience tag, so a missing or misconfigured Access application leaves the page locked rather than public.
+The hedge operations dashboard and the internal docs sit behind a Cloudflare Access application each, which signs people in with their Cloudflare account and lets in only members of the RFQ Markets Cloudflare account. Their worker (`deploy/cloudflare/static/private-edge.mjs`) also checks the Access token on every request, assets included, against the application's audience tag, so a missing or misconfigured Access application leaves the page locked rather than public.
 
-- `scripts/cloudflare-access.mjs` runs during the deploy: it creates the Access application on first use, allowing the emails in `RFQ_ACCESS_EMAILS` (or KV `access-emails`, comma-separated), and passes the team domain and audience tag to the worker. An existing application keeps its policy; change who may sign in under Zero Trust → Access → Applications.
+- `scripts/cloudflare-access.mjs` runs during the deploy: it creates the Access application on first use, allowing the account's Cloudflare login method (restricted to account members), and passes the team domain and audience tag to the worker. An existing application keeps its policy; change who may sign in under Zero Trust → Access → Applications.
 - It needs Zero Trust enabled on the account (any plan) and the API token permissions *Account → Access: Apps and Policies → Edit* and *Account → Access: Organizations, Identity Providers, and Groups → Read*. Without them the deploy warns and the pages answer 503.
 - The dashboard reads the indexer's `/v1/risk` and update stream and the hedger's `/v1/status[/stream]` through the runtime's service binding (`/ops/hedger/...`). The runtime adds the hedger's operations token, which it keeps in its Durable Object; the browser never sees it. The public UI worker does not forward `/ops/` paths.
 

@@ -1,8 +1,9 @@
 // Ensures a Cloudflare Access application guards HOSTNAME and prints `--var` flags for `wrangler deploy`
 // (ACCESS_TEAM_DOMAIN and ACCESS_AUD), which deploy/cloudflare/static/private-edge.mjs checks on every request.
 // Usage: node scripts/cloudflare-access.mjs HOSTNAME NAME
-// A new application allows only the emails in RFQ_ACCESS_EMAILS (comma-separated); an existing one keeps the
-// policy it has. When Access is not enabled on the account or the API token lacks the Access permissions
+// A new application signs people in with their Cloudflare account and admits only members of this
+// Cloudflare account (the "cloudflare" login method, restricted to account members); an existing one keeps
+// the policy it has. When Access is not enabled on the account or the API token lacks the Access permissions
 // (Access: Apps and Policies Edit; Access: Organizations, Identity Providers, and Groups Read), this prints
 // nothing and warns, and the worker deploys locked: it refuses every request until a later deploy succeeds here.
 const [hostname, name] = process.argv.slice(2);
@@ -28,8 +29,9 @@ try {
   const apps = await call("/apps?per_page=100");
   let app = apps.find((item) => item.domain === hostname);
   if (!app) {
-    const emails = (process.env.RFQ_ACCESS_EMAILS ?? "").split(",").map((item) => item.trim()).filter(Boolean);
-    if (!emails.length) throw new Error(`no Access application for ${hostname} and RFQ_ACCESS_EMAILS is empty`);
+    const login = (await call("/identity_providers")).find((item) => item.type === "cloudflare");
+    if (!login?.config?.restrict_to_account_members)
+      throw new Error("no Cloudflare-account login method restricted to account members");
     app = await call("/apps", {
       method: "POST",
       body: JSON.stringify({
@@ -38,7 +40,9 @@ try {
         type: "self_hosted",
         session_duration: "24h",
         app_launcher_visible: false,
-        policies: [{ name: `${name} operators`, decision: "allow", include: emails.map((email) => ({ email: { email } })) }],
+        allowed_idps: [login.id],
+        auto_redirect_to_identity: true,
+        policies: [{ name: `${name} account members`, decision: "allow", include: [{ login_method: { id: login.id } }] }],
       }),
     });
     console.error(`created Access application ${name} for ${hostname}`);
