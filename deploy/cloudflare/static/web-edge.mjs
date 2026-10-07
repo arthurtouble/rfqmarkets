@@ -44,6 +44,11 @@ function requestId(request) {
 
 export async function handleRequest(request, env) {
   const url = new URL(request.url);
+  if (url.pathname === "/edge/geo") {
+    // The app asks once on load which mode to run in. The service routes below enforce it either way.
+    const { status, country, region } = classifyLocation(request.cf);
+    return json({ status, country, region, message: RESTRICTION_MESSAGE[status] ?? null });
+  }
   if (url.pathname === "/edge/health") {
     return json({
       ok: true,
@@ -58,6 +63,14 @@ export async function handleRequest(request, env) {
 
   const serviceName = serviceForPath(url.pathname,request.method);
   if (serviceName) {
+    const location = classifyLocation(request.cf);
+    if (!locationAllows(location, url.pathname, request.method)) {
+      return json(
+        { error: "jurisdiction_restricted", status: location.status, message: RESTRICTION_MESSAGE[location.status] },
+        451,
+        { vary: "cf-ipcountry" },
+      );
+    }
     const rejected=await admitAtEdge(request,env);if(rejected)return rejected;
     const id = requestId(request);
     const service = env[serviceName];
@@ -93,3 +106,4 @@ export default {
   },
 };
 import {admitAtEdge} from '../runtime/edge-admission.mjs';
+import { RESTRICTION_MESSAGE, classifyLocation, locationAllows } from './jurisdictions.mjs';

@@ -4,8 +4,10 @@ export class ApiError extends Error {
 }
 
 async function parse<T>(response: Response): Promise<T> {
-  const body = await response.json().catch(() => null) as { error?: string } | null;
-  if (!response.ok) throw new ApiError(body?.error ?? `Request failed (${response.status})`, response.status);
+  const body = await response.json().catch(() => null) as { error?: string; message?: string } | null;
+  // The edge's jurisdiction refusal carries a sentence meant for people; show that rather than the code.
+  const message = body?.error === "jurisdiction_restricted" && body.message ? body.message : body?.error;
+  if (!response.ok) throw new ApiError(message ?? `Request failed (${response.status})`, response.status);
   return body as T;
 }
 

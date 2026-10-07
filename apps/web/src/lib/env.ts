@@ -12,3 +12,11 @@ export const WALLETCONNECT_PROJECT_ID: string = import.meta.env.VITE_WALLETCONNE
 // Public companion sites, linked from the Account page.
 export const DOCS_URL = import.meta.env.VITE_DOCS_URL ?? "https://docs.rfq-markets.workers.dev";
 export const EXIT_URL = import.meta.env.VITE_EXIT_URL ?? "https://exit.rfq-markets.workers.dev";
+// The edge's location check (web-edge.mjs). Only the deployed edge answers it, so dev builds skip it.
+export const GEO_URL: string = import.meta.env.VITE_GEO_URL ?? (import.meta.env.PROD ? "/edge/geo" : "");
+export const LEGAL_LINKS = {
+  terms: `${DOCS_URL}/legal/terms-of-service`,
+  privacy: `${DOCS_URL}/legal/privacy-policy`,
+  risk: `${DOCS_URL}/legal/risk-disclosure`,
+  jurisdictions: `${DOCS_URL}/legal/restricted-jurisdictions`,
+};

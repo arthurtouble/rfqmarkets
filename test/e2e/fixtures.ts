@@ -1,6 +1,7 @@
 // Shared Playwright fixtures. Import `test` and `expect` from here, not from
 // @playwright/test, so every spec gets the same guards.
 import { test as base, expect, type Page } from "@playwright/test";
+import { TERMS_KEY, withAcceptance } from "../../apps/web/src/lib/legal.js";
 import * as stack from "./stack.js";
 
 type Fixtures = {
@@ -8,11 +9,27 @@ type Fixtures = {
   stack: typeof stack;
   /** True in the phone-sized project. Use it to branch on layout, not on behaviour. */
   isMobile: boolean;
+  /** The dev wallet has already accepted the terms, so the dialog stays out of the way. Off in terms.spec.ts. */
+  acceptTerms: boolean;
 };
 
-export const test = base.extend<Fixtures & { pageErrors: void }>({
+export const test = base.extend<Fixtures & { pageErrors: void; termsAccepted: void }>({
   stack: async ({}, use) => use(stack),
   isMobile: async ({}, use, testInfo) => use(testInfo.project.name === "mobile"),
+  acceptTerms: [true, { option: true }],
+  termsAccepted: [
+    async ({ page, acceptTerms }, use) => {
+      if (acceptTerms) {
+        const { account } = await stack.devWallet();
+        await page.addInitScript(
+          ([key, value]) => { if (!localStorage.getItem(key)) localStorage.setItem(key, value); },
+          [TERMS_KEY, withAcceptance(null, account, 0)],
+        );
+      }
+      await use();
+    },
+    { auto: true },
+  ],
   // Any uncaught exception in the page fails the test; console errors are attached for triage.
   pageErrors: [
     async ({ page }, use, testInfo) => {

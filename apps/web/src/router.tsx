@@ -2,6 +2,7 @@ import { Link, Outlet, createRootRoute, createRoute, createRouter, redirect, use
 import { useIndexerSync } from "./data/queries.js";
 import type { Market } from "./lib/types.js";
 import { AccountPage } from "./account/AccountPage.js";
+import { RestrictedNotice, TermsDialog, UnavailableHere, useLocationStatus } from "./legal/LegalGate.js";
 import { MarketsPage } from "./markets/MarketsPage.js";
 import { PortfolioPage } from "./portfolio/PortfolioPage.js";
 import { FundsProvider, useFunds } from "./trade/FundsDialog.js";
@@ -25,6 +26,7 @@ function ShellLayout() {
   const funds = useFunds();
   const { mode, setMode } = usePrefs();
   const trader = useTrader();
+  const location = useLocationStatus();
   const pathname = useRouterState({ select: state => state.location.pathname });
   const section = pathname.startsWith("/markets") ? "markets" : pathname.startsWith("/portfolio") ? "portfolio" : pathname.startsWith("/account") ? "account" : "trade";
   const current = (name: string) => (section === name ? "page" as const : undefined);
@@ -43,7 +45,11 @@ function ShellLayout() {
         <WalletMenu />
       </div>
     </header>
-    <main><Outlet /></main>
+    <main>
+      {location.status === "restricted" && <RestrictedNotice message={location.message} />}
+      {location.status === "sanctioned" ? <UnavailableHere message={location.message} /> : <Outlet />}
+    </main>
+    {location.status !== "sanctioned" && <TermsDialog />}
     <nav className="rfq-tabbar tabbar" aria-label="Main">
       <Link to="/trade/$market" params={{ market: lastMarket() }} aria-current={current("trade")}>{NavIcons.trade}<span>Trade</span></Link>
       <Link to="/markets" aria-current={current("markets")}>{NavIcons.markets}<span>Markets</span></Link>

@@ -26,12 +26,14 @@ matching browser with `npx playwright install --with-deps chromium`.
 
 - One file per feature, named after it: `wallet-connect.spec.ts`,
   `funds.spec.ts`, `trading.spec.ts`, `orders.spec.ts`, `portfolio.spec.ts`,
-  `markets.spec.ts`, `exit.spec.ts`, `admin.spec.ts`. `smoke.spec.ts` only
+  `markets.spec.ts`, `exit.spec.ts`, `admin.spec.ts`, `terms.spec.ts`. `smoke.spec.ts` only
   checks that every page loads and fits the screen.
 - Import `test` and `expect` from `./fixtures.js`. Every test then fails on an
   uncaught page error, and console errors are attached to the report.
-- Fixtures: `stack` (URLs, `devWallet()`, `prices()`, `setPrice(market, price)`)
-  and `isMobile`. Branch on `isMobile` only where the layout differs, for
+- Fixtures: `stack` (URLs, `devWallet()`, `prices()`, `setPrice(market, price)`),
+  `isMobile`, and `acceptTerms`, which marks the dev wallet as having accepted
+  the terms so the dialog stays out of the way. Turn it off with
+  `test.use({ acceptTerms: false })` to test the dialog itself. Branch on `isMobile` only where the layout differs, for
   example the bottom tab bar or the ticket opening as a sheet.
 - `expectNoHorizontalOverflow(page)` fails when a page scrolls sideways and
   names the widest elements. Call it on every screen and open dialog.
