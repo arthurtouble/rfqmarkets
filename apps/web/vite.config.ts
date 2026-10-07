@@ -9,5 +9,6 @@ export default defineConfig({
   optimizeDeps: { entries: ["index.html", "src/**/*.{ts,tsx}", "!src/**/*.test.ts"] },
   // React, TanStack, wagmi and viem together are ~175 kB gzip; signing and
   // CCIP code still load lazily.
-  build: { chunkSizeWarningLimit: 650 },
+  // Ship every asset as a file: the CSP's font-src 'self' blocks fonts Vite would inline as data: URLs.
+  build: { chunkSizeWarningLimit: 650, assetsInlineLimit: 0 },
 });

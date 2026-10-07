@@ -101,13 +101,9 @@ export class ChainReader {
     }
   }
 
-  /** Latest block time through `eth_getBlockByNumber`; falls back to wall time without a chain. */
+  /** Latest block time from a raw `eth_getBlockByNumber`; falls back to wall time without a chain. */
   async chainTimestamp() {
-    const { provider } = this.ctx;
-    if (!provider) return unixSeconds();
-    const block = await provider.getBlock("latest");
-    if (!block) throw new Error("latest block unavailable");
-    return block.timestamp;
+    return this.ctx.provider ? this.latestBlockTimestamp() : unixSeconds();
   }
 
   /** Latest block time through a raw RPC call, as used for oracle report timestamps. */

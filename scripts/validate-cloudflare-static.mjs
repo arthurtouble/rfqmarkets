@@ -37,4 +37,14 @@ for (const path of await filesBelow(join("dist", "web"))) {
   }
 }
 
+// Every app's CSP allows only font-src 'self', so a font Vite inlined as a data: URL never loads.
+for (const app of ["web", "docs", "admin", "internal-docs", "exit"]) {
+  for (const path of await filesBelow(join("dist", app))) {
+    if (!path.endsWith(".css")) continue;
+    if ((await readFile(path, "utf8")).includes("data:font/")) {
+      throw new Error(`${path} inlines a font as a data: URL, which the CSP blocks`);
+    }
+  }
+}
+
 console.log("Cloudflare static deployment invariants passed");

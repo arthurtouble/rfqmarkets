@@ -13,14 +13,17 @@ type Fixtures = {
 export const test = base.extend<Fixtures & { pageErrors: void }>({
   stack: async ({}, use) => use(stack),
   isMobile: async ({}, use, testInfo) => use(testInfo.project.name === "mobile"),
-  // Any uncaught exception in the page fails the test; console errors are attached for triage.
+  // Uncaught exceptions and Content Security Policy violations fail the test; other console errors
+  // are attached for triage.
   pageErrors: [
     async ({ page }, use, testInfo) => {
       const errors: string[] = [];
       const consoleErrors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
       page.on("console", (message) => {
-        if (message.type() === "error") consoleErrors.push(message.text());
+        if (message.type() !== "error") return;
+        consoleErrors.push(message.text());
+        if (/Content Security Policy/i.test(message.text())) errors.push(message.text());
       });
       await use();
       if (consoleErrors.length)
@@ -28,7 +31,7 @@ export const test = base.extend<Fixtures & { pageErrors: void }>({
           body: consoleErrors.join("\n"),
           contentType: "text/plain",
         });
-      expect(errors, "uncaught errors in the page").toEqual([]);
+      expect(errors, "uncaught errors or CSP violations in the page").toEqual([]);
     },
     { auto: true },
   ],
