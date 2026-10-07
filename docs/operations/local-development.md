@@ -2,6 +2,25 @@
 
 The local slice contains a long-running Hardhat OP-compatible chain, a deployed transparent clearing proxy and governance-owned ProxyAdmin, mock USDC and oracle, Coinbase public market data, one Fastify API leader, three isolated approver processes, a chain-derived indexer, an idempotent hedge worker and a React trade interface. Signed deposits and orders are gas-sponsored and settle on the local chain.
 
+## Quick start
+
+One command compiles the contracts, starts the chain, deploys v1 and runs every service. It needs no internet access, so it works the same in a fresh cloud session:
+
+```bash
+npm run dev:stack            # add -- --web for the trade UI, -- --coinbase for live Coinbase prices
+npm run dev:scenario         # in a second terminal: scripted end-to-end scenarios
+```
+
+By default prices come from an offline random walk around BTC 100,000 and ETH 4,000. To script a move, such as a crash before a liquidation, post to the loopback price control:
+
+```bash
+curl -s 127.0.0.1:4600/price -d '{"market":"BTC","price":85000}'
+```
+
+Ctrl-C stops everything. Each run deploys a fresh chain, so no state carries over. Chain logs go to `.local-state/chain.log`. For contract-only changes, `npm run test:foundry` takes seconds and does not need the stack.
+
+## Manual start
+
 Compile and start the chain in the first terminal:
 
 ```bash

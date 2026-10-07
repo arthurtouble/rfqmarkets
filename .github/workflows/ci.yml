@@ -19,19 +19,26 @@ jobs:
       matrix:
         include:
           - name: contracts
+            foundry: true
             run: npm run test:contracts && npm run validate:upgrades
           - name: services and simulator
             run: npm run test:services && npm run test:python && npm run test:cloudflare-edge
           - name: types, docs and builds
-            run: npm run check:docs && npm run typecheck && npm run build && npm run validate:cloudflare-static
+            run: npm run format:check && npm run check:docs && npm run typecheck && npm run build && npm run validate:cloudflare-static
           - name: dependency audit
             run: npm audit --omit=dev --audit-level=low
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        if: matrix.foundry
+        with:
+          version: v1.7.1
       - run: npm ci
       - run: ${{ matrix.run }}
   # Single required check that stays stable however the jobs above are split.
