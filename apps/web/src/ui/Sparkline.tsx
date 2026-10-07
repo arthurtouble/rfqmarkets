@@ -6,7 +6,7 @@ export function Sparkline({ values, width = 72, height = 28 }: { values: number[
     `${(index * width / (values.length - 1)).toFixed(1)},${(pad + (high - value) * (height - pad * 2) / span).toFixed(1)}`);
   const first = values[0], last = values.at(-1)!;
   const trend = last > first ? "up" : last < first ? "down" : "flat";
-  return <svg className={`sparkline ${trend}`} width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-    <polyline points={points.join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+  return <svg className={`sparkline ${trend}`} width={width} height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+    <polyline points={points.join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
   </svg>;
 }

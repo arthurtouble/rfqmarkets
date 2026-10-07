@@ -91,8 +91,8 @@ export function MarketsPage() {
 
     {failed && <Banner tone="warning">Market stats are unavailable right now. {risk.data ? "Showing the last update." : ""}</Banner>}
 
-    <section className="rfq-card rfq-card--pad stack">
-      <h2 className="headline">Open interest</h2>
+    <section className="rfq-card rfq-card--pad stack" aria-labelledby="open-interest-title">
+      <h2 className="headline" id="open-interest-title">Open interest</h2>
       {MARKETS.map(market => <Sentiment key={market} market={market} risk={risk.data?.markets[market]} />)}
       <Rows rows={[
         ["Total deposited", usdc(risk.data?.totalCollateral)],
@@ -106,8 +106,8 @@ export function MarketsPage() {
       ]} />
     </section>
 
-    <section className="rfq-card">
-      <h2 className="headline card-title">Recent trades</h2>
+    <section className="rfq-card" aria-labelledby="recent-trades-title">
+      <h2 className="headline card-title" id="recent-trades-title">Recent trades</h2>
       {trades.data?.length ? <div className="rfq-table-wrap"><table className="rfq-table">
         <thead><tr><th>Market</th><th>Side</th><th>Size</th><th>Price</th>{advanced && <><th>Fee</th><th>Wallet</th></>}<th>Time</th></tr></thead>
         <tbody>{trades.data.map(trade => {
@@ -124,8 +124,8 @@ export function MarketsPage() {
       </table></div> : <EmptyState icon={NavIcons.markets}>{trades.isPending ? "Loading trades…" : "No trades yet."}</EmptyState>}
     </section>
 
-    {advanced && <section className="rfq-card">
-      <h2 className="headline card-title">Open positions</h2>
+    {advanced && <section className="rfq-card" aria-labelledby="open-positions-title">
+      <h2 className="headline card-title" id="open-positions-title">Open positions</h2>
       {positions.data?.items.length ? <div className="rfq-table-wrap"><table className="rfq-table">
         <thead><tr><th>Wallet</th><th>Collateral</th>{MARKETS.map(market => <Fragment key={market}><th>{market} size</th><th>{market} entry</th></Fragment>)}</tr></thead>
         <tbody>{positions.data.items.map(row => <tr key={row.account}>
