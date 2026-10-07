@@ -147,7 +147,13 @@ function Mark() {
 
 export function HealthPill({ health }: { health: FeedHealth }) {
   return (
-    <span className={`rfq-badge ops-health ${toneBadge[health.tone]}`} data-tone={health.tone} title={health.detail}>
+    <span
+      className={`rfq-badge ops-health ${toneBadge[health.tone]}`}
+      role="status"
+      aria-label={`Hedger ${health.label}`}
+      data-tone={health.tone}
+      title={health.detail}
+    >
       <i className="rfq-dot" />
       {health.label}
     </span>

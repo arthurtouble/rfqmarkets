@@ -1,6 +1,6 @@
 // End-to-end tests for the browser apps, run against the local stack.
-// See test/e2e/README.md. `npm run test:e2e` starts `dev:stack --web` and the
-// docs site unless they are already running (outside CI).
+// See test/e2e/README.md. `npm run test:e2e` starts `dev:stack --web`, the
+// docs site, the hedge dashboard and the internal manual unless they are already running (outside CI).
 import { defineConfig, devices } from "@playwright/test";
 import { urls } from "./test/e2e/stack.js";
 
@@ -54,6 +54,18 @@ export default defineConfig({
       // Bound to IPv4 explicitly: Vite's default "localhost" can resolve to ::1 only on CI runners.
       command: "npm run dev:docs -- --host 127.0.0.1 --strictPort",
       url: urls.docs,
+      reuseExistingServer: !ci,
+      timeout: 60_000,
+    },
+    {
+      command: "npm run dev:admin",
+      url: urls.admin,
+      reuseExistingServer: !ci,
+      timeout: 60_000,
+    },
+    {
+      command: "npm run dev:internal-docs -- --host 127.0.0.1 --strictPort",
+      url: urls.internalDocs,
       reuseExistingServer: !ci,
       timeout: 60_000,
     },
