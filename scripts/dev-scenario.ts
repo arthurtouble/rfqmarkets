@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 
 const scenarios = [
   ["smoke:local", "deposit, withdrawal, cancellation, session key and a sponsored fill"],
+  ["smoke:funds", "approve and deposit, first-deposit floor, sponsored withdrawals and their limits"],
   ["smoke:approver-outage", "one approver down still settles; two down fails closed"],
   ["smoke:failover", "leader epoch failover fences old approvals"],
 ] as const;

@@ -240,7 +240,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       }
       progress("Confirm the deposit in your wallet");
       const receipt = await trader.send({ to: clearing, data: encodeFunctionData({ abi: clearingAbi, functionName: "deposit", args: [amount] }) });
-      return { title: `Deposited ${usdc(amount)}`, detail: `Block ${receipt.blockNumber}`, txHash: receipt.hash, value: true };
+      return { title: `Deposited ${usdc(amount)}`, detail: `Block ${receipt.blockNumber} · ${shortHash(receipt.hash)}`, txHash: receipt.hash, value: true };
     })) ?? false,
 
     withdraw: async amount => (await run("Withdrawal", `Withdraw ${usdc(amount)}`, async progress => {

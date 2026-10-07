@@ -12,10 +12,12 @@ const requiredHeaders = [
 
 async function filesBelow(root) {
   const entries = await readdir(root, { withFileTypes: true });
-  const nested = await Promise.all(entries.map((entry) => {
-    const path = join(root, entry.name);
-    return entry.isDirectory() ? filesBelow(path) : [path];
-  }));
+  const nested = await Promise.all(
+    entries.map((entry) => {
+      const path = join(root, entry.name);
+      return entry.isDirectory() ? filesBelow(path) : [path];
+    }),
+  );
   return nested.flat();
 }
 

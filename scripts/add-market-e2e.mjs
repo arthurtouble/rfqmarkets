@@ -56,7 +56,13 @@ async function oracle(market) {
   const index = marketRegistry.index(market),
     block = await ethers.provider.getBlock("latest");
   return {
-    snapshot: { market, bid: prices[market], ask: prices[market], observedAtMs: Date.now(), source: "signed" },
+    snapshot: {
+      market,
+      bid: prices[market],
+      ask: prices[market],
+      observedAtMs: Date.now(),
+      source: "signed",
+    },
     report: await signedOracleReport({
       adapter,
       chainId,
@@ -67,7 +73,8 @@ async function oracle(market) {
     validUntil: block.timestamp + 15,
   };
 }
-for (const market of ["BTC", "ETH"]) await (await clearing.refreshOracle((await oracle(market)).report)).wait();
+for (const market of ["BTC", "ETH"])
+  await (await clearing.refreshOracle((await oracle(market)).report)).wait();
 
 class Chain extends JsonRpcProvider {
   async send(method, params) {
@@ -134,7 +141,12 @@ const app = buildApi({
     status: () => [],
     submit: async (_id, request) => {
       const receipt = await (await governance.sendTransaction(request)).wait();
-      return { hash: receipt.hash, blockNumber: receipt.blockNumber, blockHash: receipt.blockHash, status: 1 };
+      return {
+        hash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        blockHash: receipt.blockHash,
+        status: 1,
+      };
     },
   },
 });

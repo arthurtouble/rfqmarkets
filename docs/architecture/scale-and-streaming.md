@@ -66,7 +66,7 @@ The deterministic gateway harness exercises 100,000 in-memory clients, complete-
 
 The gateway samples the same normalized market frames it fans out and retains at most 1,800 observations per market in memory. `/v1/markets/history` seeds a newly opened chart without exposing upstream vendors or introducing a database. This cache is disposable presentation context: clearing and quoting never read it, and a restart may return an empty history until new frames arrive.
 
-The gateway also folds every frame's `mid` into one-minute candles, kept in memory for seven days per market, and serves them at `GET /v1/candles?market=BTC|ETH&interval=1m|5m|15m|1h|4h|1d&limit=1..1000` (defaults `1m`, 300):
+The gateway also folds every frame's `mid` into one-minute candles, kept in memory for seven days per market, and serves them at `GET /v1/candles?market=<symbol>&interval=1m|5m|15m|1h|4h|1d&limit=1..1000` (defaults `1m`, 300):
 
 ```json
 {
@@ -79,5 +79,7 @@ The gateway also folds every frame's `mid` into one-minute candles, kept in memo
 `time` is the bucket open in unix milliseconds, aligned to the UTC epoch; prices are decimal strings in USDC micro-units. The window covers the `limit` buckets ending with the current, still-open bucket, which is last. Buckets without any frame are omitted. Each query is recomputed at most once per second and the response carries `cache-control: public, max-age=1`. Invalid parameters return `400 {"error": "..."}`.
 
 The local stack (`npm run dev:stack`) builds candles from simulated prices, so a chart starts empty and fills as the stack runs. When the gateway has `candleBackfill` URLs, buckets older than its in-memory book come from the first oracle node that answers its candle history (`/v1/history/candles` on a Cloudflare oracle node worker, `/v1/candles` on a plain node), cached per market and interval for a minute, and `source` becomes `oracle+gateway`. The Base mainnet dev runtime points this at its oracle node workers, whose one-minute candles persist in Durable Object SQLite, so its charts survive container restarts.
+
+`GET /v1/markets/stats` summarises the last 24 hours for every market the stream carries in one response, so the Markets page does not ask for candles per market. It reads 289 five-minute buckets per market from the same book (and backfill), and returns the first bucket's open, the high, low, last close, `change` and hourly closes (`spark`). The whole response is computed at most every five seconds and served with `cache-control: public, max-age=5`. The trading app's charts read `/v1/candles`; `/v1/markets/history` remains for the readiness scripts and API clients.
 
 The private hedge dashboard consumes the hedger status SSE stream and the indexer's existing update stream. It does not poll every browser once per second. The hedger itself still performs one bounded reconciliation tick against finalized exposure; that is operational work independent of dashboard viewers.

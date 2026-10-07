@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CandleBackfill, CandleBook, parseOracleCandles, resampleCandles } from "./candles.js";
+import { CandleBackfill, CandleBook, dayStats, parseOracleCandles, resampleCandles } from "./candles.js";
 import { buildGateway } from "./server.js";
 
 const frame = (time: number, btc: string, eth = btc) =>
@@ -198,4 +198,109 @@ test("candles and backfill follow markets the stream adds, keyed by their contra
   assert.match(requested[0], /market=2&/);
   assert.equal(await backfill.get("DOGE", "1m", 999_000_000), null, "an unknown index is never guessed");
   assert.equal(requested.length, 1);
+});
+
+test("day stats take the first open as the reference and keep hourly closes", () => {
+  assert.equal(dayStats([]), null);
+  const HOUR = 60 * MIN,
+    candle = (start: number, open: bigint, high: bigint, low: bigint, close: bigint) => ({
+      start,
+      open,
+      high,
+      low,
+      close,
+      samples: 1,
+    });
+  assert.deepEqual(
+    dayStats([
+      candle(HOUR, 100n, 120n, 90n, 110n),
+      candle(HOUR + 5 * MIN, 110n, 130n, 105n, 125n),
+      candle(2 * HOUR, 125n, 126n, 80n, 95n),
+    ]),
+    {
+      since: HOUR,
+      open: "100",
+      high: "130",
+      low: "80",
+      last: "95",
+      change: "-5",
+      spark: ["125", "95"],
+    },
+  );
+});
+
+test("the gateway serves 24h stats for every market the stream carries, including new ones", async () => {
+  const HOUR = 60 * MIN,
+    clock = { now: 30 * HOUR };
+  let push: ((chunk: string) => void) | undefined;
+  const encoder = new TextEncoder();
+  const gateway = buildGateway({
+    upstreamUrl: "http://upstream",
+    now: () => clock.now,
+    fetchImpl: async (_url, init) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            push = (chunk) => controller.enqueue(encoder.encode(chunk));
+            init!.signal!.addEventListener("abort", () => controller.error(new Error("closed")), {
+              once: true,
+            });
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+  });
+  try {
+    await gateway.ready();
+    for (let attempt = 0; attempt < 50 && !push; attempt++) await new Promise((done) => setTimeout(done, 5));
+    const send = (time: number, btc: string, sol: string) =>
+      push!(
+        `event: markets\ndata: ${JSON.stringify({
+          markets: {
+            BTC: { observedAtMs: time, mid: btc, bid: btc, ask: btc },
+            SOL: { index: 2, observedAtMs: time, mid: sol, bid: sol, ask: sol },
+          },
+        })}\n\n`,
+      );
+    send(5 * HOUR, "999", "1"); // older than the 24h window
+    send(7 * HOUR, "100", "10");
+    send(20 * HOUR, "150", "8");
+    send(30 * HOUR - MIN, "120", "9");
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if ((await gateway.inject({ method: "GET", url: "/health" })).json().candles.minutes.SOL === 4) break;
+      await new Promise((done) => setTimeout(done, 5));
+    }
+    const response = await gateway.inject({ method: "GET", url: "/v1/markets/stats" });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers["cache-control"], "public, max-age=5");
+    const body = response.json();
+    assert.equal(body.windowMs, 24 * HOUR);
+    assert.deepEqual(Object.keys(body.markets), ["BTC", "SOL"], "contract index order; ETH has no prices");
+    assert.deepEqual(body.markets.BTC, {
+      since: 7 * HOUR,
+      open: "100",
+      high: "150",
+      low: "100",
+      last: "120",
+      change: "20",
+      spark: ["100", "150", "120"],
+    });
+    assert.equal(body.markets.SOL.change, "-1");
+    // Cached: a new frame inside the cache window does not change the answer.
+    send(30 * HOUR, "130", "9");
+    assert.deepEqual((await gateway.inject({ method: "GET", url: "/v1/markets/stats" })).json(), body);
+    clock.now += 5_000;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const next = (await gateway.inject({ method: "GET", url: "/v1/markets/stats" })).json();
+      if (next.markets.BTC.last === "130") break;
+      clock.now += 5_000;
+      await new Promise((done) => setTimeout(done, 5));
+    }
+    assert.equal(
+      (await gateway.inject({ method: "GET", url: "/v1/markets/stats" })).json().markets.BTC.last,
+      "130",
+    );
+  } finally {
+    await gateway.close();
+  }
 });

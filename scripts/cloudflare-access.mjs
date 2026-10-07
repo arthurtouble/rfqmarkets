@@ -18,7 +18,9 @@ async function call(path, init = {}) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body.success === false)
-    throw new Error(`${init.method ?? "GET"} access${path}: ${body.errors?.map((e) => e.message).join("; ") || response.status}`);
+    throw new Error(
+      `${init.method ?? "GET"} access${path}: ${body.errors?.map((e) => e.message).join("; ") || response.status}`,
+    );
   return body.result;
 }
 
@@ -42,7 +44,13 @@ try {
         app_launcher_visible: false,
         allowed_idps: [login.id],
         auto_redirect_to_identity: true,
-        policies: [{ name: `${name} account members`, decision: "allow", include: [{ login_method: { id: login.id } }] }],
+        policies: [
+          {
+            name: `${name} account members`,
+            decision: "allow",
+            include: [{ login_method: { id: login.id } }],
+          },
+        ],
       }),
     });
     console.error(`created Access application ${name} for ${hostname}`);
@@ -50,5 +58,7 @@ try {
   if (!app.aud) throw new Error(`Access application for ${hostname} has no audience tag`);
   console.log(`--var ACCESS_TEAM_DOMAIN:${teamDomain} --var ACCESS_AUD:${app.aud}`);
 } catch (error) {
-  console.error(`::warning::Cloudflare Access is not set up for ${hostname} (${error.message}); deploying it locked`);
+  console.error(
+    `::warning::Cloudflare Access is not set up for ${hostname} (${error.message}); deploying it locked`,
+  );
 }

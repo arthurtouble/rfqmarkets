@@ -84,10 +84,10 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 400 15px/22px
 .rfq-row__sub { font: 400 13px/18px var(--font-sans); color: var(--text-secondary); }
 .rfq-row__end { display: grid; justify-items: end; gap: 2px; font-variant-numeric: tabular-nums; }
 .rfq-row__price { font: 500 15px/20px var(--font-sans); }
-.rfq-coin { width: 36px; height: 36px; border-radius: var(--radius-full); display: grid; place-items: center; font: 700 15px/1 var(--font-sans); color: #FFFFFF; flex: none; }
+.rfq-coin { width: 36px; height: 36px; border-radius: var(--radius-full); display: grid; place-items: center; font: 700 15px/1 var(--font-sans); background: var(--brand-soft); color: var(--brand-text); flex: none; }
 .rfq-coin--sm { width: 24px; height: 24px; font-size: 11px; }
 .rfq-coin--btc { background: #F7931A; color: #1A0E00; }
-.rfq-coin--eth { background: #627EEA; }
+.rfq-coin--eth { background: #627EEA; color: #FFFFFF; }
 .rfq-change { display: inline-flex; align-items: center; gap: 2px; font: 500 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
 .rfq-change.is-up { color: var(--long-text); }
 .rfq-change.is-down { color: var(--short-text); }

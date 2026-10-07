@@ -28,18 +28,32 @@ export function launchMarkets(limits = {}) {
   ];
 }
 
-export const TRADE_INTENT_TYPES = { TradeIntent: [
-  { name: "account", type: "address" }, { name: "market", type: "uint8" }, { name: "baseDelta", type: "int256" },
-  { name: "limitPrice", type: "uint256" }, { name: "maxFee", type: "uint256" }, { name: "nonce", type: "uint256" },
-  { name: "deadline", type: "uint64" }, { name: "reduceOnly", type: "bool" },
-] };
+export const TRADE_INTENT_TYPES = {
+  TradeIntent: [
+    { name: "account", type: "address" },
+    { name: "market", type: "uint8" },
+    { name: "baseDelta", type: "int256" },
+    { name: "limitPrice", type: "uint256" },
+    { name: "maxFee", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint64" },
+    { name: "reduceOnly", type: "bool" },
+  ],
+};
 
-export const MAKER_APPROVAL_TYPES = { MakerApproval: [
-  { name: "intentHash", type: "bytes32" }, { name: "executionPrice", type: "uint256" },
-  { name: "impactCharge", type: "int256" }, { name: "fee", type: "uint256" }, { name: "oracleReportHash", type: "bytes32" },
-  { name: "deadline", type: "uint64" }, { name: "leaderEpoch", type: "uint64" },
-  { name: "signerSetVersion", type: "uint64" }, { name: "policyVersion", type: "uint64" },
-] };
+export const MAKER_APPROVAL_TYPES = {
+  MakerApproval: [
+    { name: "intentHash", type: "bytes32" },
+    { name: "executionPrice", type: "uint256" },
+    { name: "impactCharge", type: "int256" },
+    { name: "fee", type: "uint256" },
+    { name: "oracleReportHash", type: "bytes32" },
+    { name: "deadline", type: "uint64" },
+    { name: "leaderEpoch", type: "uint64" },
+    { name: "signerSetVersion", type: "uint64" },
+    { name: "policyVersion", type: "uint64" },
+  ],
+};
 
 export function artifact(name, root = process.cwd()) {
   return JSON.parse(fs.readFileSync(path.join(root, "artifacts", `${name}.json`), "utf8"));
@@ -47,7 +61,9 @@ export function artifact(name, root = process.cwd()) {
 
 /** Library names an artifact links against. */
 export function linkedLibraries(item) {
-  return [...new Set(Object.values(item.linkReferences ?? {}).flatMap((references) => Object.keys(references)))];
+  return [
+    ...new Set(Object.values(item.linkReferences ?? {}).flatMap((references) => Object.keys(references))),
+  ];
 }
 
 /**
@@ -73,19 +89,38 @@ export async function deployLinked(signer, name, args = [], libraries = {}) {
  * initializes it. The proxy starts paused; with `unpause` (the default) governance unpauses it.
  */
 export async function deployClearing({
-  deployer, governance, usdc, oracle, emergencyCouncil, approvers, baseRiskCapitalTarget,
-  markets = launchMarkets(), unpause = true, libraries = {},
+  deployer,
+  governance,
+  usdc,
+  oracle,
+  emergencyCouncil,
+  approvers,
+  baseRiskCapitalTarget,
+  markets = launchMarkets(),
+  unpause = true,
+  libraries = {},
 }) {
   const implementation = await deployLinked(deployer, "RFQClearing", [], libraries);
   const abi = artifact("RFQClearing").abi;
   const governanceAddress = typeof governance === "string" ? governance : await governance.getAddress();
   const init = new Interface(abi).encodeFunctionData("initialize", [
-    usdc, oracle, governanceAddress, emergencyCouncil, approvers, baseRiskCapitalTarget, markets,
+    usdc,
+    oracle,
+    governanceAddress,
+    emergencyCouncil,
+    approvers,
+    baseRiskCapitalTarget,
+    markets,
   ]);
-  const proxy = await deployLinked(deployer, "TestProxy", [await implementation.getAddress(), governanceAddress, init]);
+  const proxy = await deployLinked(deployer, "TestProxy", [
+    await implementation.getAddress(),
+    governanceAddress,
+    init,
+  ]);
   const clearing = new Contract(await proxy.getAddress(), abi, deployer);
   if (unpause) {
-    if (typeof governance === "string") throw new Error("deployClearing needs a governance signer to unpause");
+    if (typeof governance === "string")
+      throw new Error("deployClearing needs a governance signer to unpause");
     await (await clearing.connect(governance).unpause()).wait();
   }
   return { clearing, proxy, implementation, libraries };
@@ -96,28 +131,64 @@ export function encodeObservation(observations) {
   const list = Array.isArray(observations) ? observations : [observations];
   return AbiCoder.defaultAbiCoder().encode(
     ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)[]"],
-    [list.map(({ market, bid, ask = bid, observedAt, validUntil }) => [market, bid, ask, observedAt, validUntil])],
+    [
+      list.map(({ market, bid, ask = bid, observedAt, validUntil }) => [
+        market,
+        bid,
+        ask,
+        observedAt,
+        validUntil,
+      ]),
+    ],
   );
 }
 
 export const PRICE_BATCH_TYPES = {
-  PriceBatch: [{ name: "observedAt", type: "uint64" }, { name: "prices", type: "Price[]" }],
-  Price: [{ name: "market", type: "uint8" }, { name: "bid", type: "uint256" }, { name: "ask", type: "uint256" }],
+  PriceBatch: [
+    { name: "observedAt", type: "uint64" },
+    { name: "prices", type: "Price[]" },
+  ],
+  Price: [
+    { name: "market", type: "uint8" },
+    { name: "bid", type: "uint256" },
+    { name: "ask", type: "uint256" },
+  ],
 };
 
 /**
  * Deploys a SignedPriceOracle owned by `owner` with `nodes` (wallets or addresses) as signers: majority
  * threshold, 1% deviation, 5 s skew and the jump guard off unless overridden.
  */
-export async function deploySignedOracle(deployer, owner, nodes, {
-  threshold = Math.floor(nodes.length / 2) + 1, maxDeviationBps = 100, maxSkew = 5, maxJumpBps = 0, jumpWindow = 0,
-  libraries = {},
-} = {}) {
-  const signers = await Promise.all(nodes.map((node) => (typeof node === "string" ? node : node.getAddress())));
-  return deployLinked(deployer, "SignedPriceOracle", [
-    typeof owner === "string" ? owner : await owner.getAddress(), signers, threshold, maxDeviationBps, maxSkew,
-    maxJumpBps, jumpWindow,
-  ], libraries);
+export async function deploySignedOracle(
+  deployer,
+  owner,
+  nodes,
+  {
+    threshold = Math.floor(nodes.length / 2) + 1,
+    maxDeviationBps = 100,
+    maxSkew = 5,
+    maxJumpBps = 0,
+    jumpWindow = 0,
+    libraries = {},
+  } = {},
+) {
+  const signers = await Promise.all(
+    nodes.map((node) => (typeof node === "string" ? node : node.getAddress())),
+  );
+  return deployLinked(
+    deployer,
+    "SignedPriceOracle",
+    [
+      typeof owner === "string" ? owner : await owner.getAddress(),
+      signers,
+      threshold,
+      maxDeviationBps,
+      maxSkew,
+      maxJumpBps,
+      jumpWindow,
+    ],
+    libraries,
+  );
 }
 
 /**
@@ -125,13 +196,24 @@ export async function deploySignedOracle(deployer, owner, nodes, {
  * `observedAt`, as the oracle nodes do when their exchange medians agree.
  */
 export async function signedOracleReport({ adapter, chainId, nodes, observedAt, prices }) {
-  const domain = { name: "RFQ Markets Oracle", version: "1", chainId, verifyingContract: await adapter.getAddress() };
-  const list = (Array.isArray(prices) ? prices : [prices]).map(({ market, bid, ask = bid }) => ({ market, bid, ask }));
-  const batches = await Promise.all(nodes.map(async (node) => [
-    observedAt,
-    list.map(({ market, bid, ask }) => [market, bid, ask]),
-    await node.signTypedData(domain, PRICE_BATCH_TYPES, { observedAt, prices: list }),
-  ]));
+  const domain = {
+    name: "RFQ Markets Oracle",
+    version: "1",
+    chainId,
+    verifyingContract: await adapter.getAddress(),
+  };
+  const list = (Array.isArray(prices) ? prices : [prices]).map(({ market, bid, ask = bid }) => ({
+    market,
+    bid,
+    ask,
+  }));
+  const batches = await Promise.all(
+    nodes.map(async (node) => [
+      observedAt,
+      list.map(({ market, bid, ask }) => [market, bid, ask]),
+      await node.signTypedData(domain, PRICE_BATCH_TYPES, { observedAt, prices: list }),
+    ]),
+  );
   return AbiCoder.defaultAbiCoder().encode(
     ["tuple(uint64 observedAt,tuple(uint8 market,uint256 bid,uint256 ask)[] prices,bytes signature)[]"],
     [batches],
