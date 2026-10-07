@@ -1,5 +1,5 @@
 import { useTrading } from "../data/actions.js";
-import { DOCS_URL, EXIT_URL } from "../lib/env.js";
+import { DOCS_URL, EXIT_URL, LEGAL_LINKS } from "../lib/env.js";
 import { addressUrl } from "../lib/explorer.js";
 import { shortAddress } from "../lib/format.js";
 import { NavIcons, EmptyState, Segmented } from "../ui/primitives.js";
@@ -60,6 +60,10 @@ export function AccountPage() {
     <section className="rfq-card links" aria-label="Help">
       <a className="setting-row link-row" href={DOCS_URL} target="_blank" rel="noreferrer"><div><div className="headline">Help and docs</div><div className="footnote rfq-muted">How trading, margin and fees work.</div></div><span aria-hidden="true">↗</span></a>
       <a className="setting-row link-row" href={EXIT_URL} target="_blank" rel="noreferrer"><div><div className="headline">Emergency exit</div><div className="footnote rfq-muted">Withdraw straight from the contract if this app is ever down.</div></div><span aria-hidden="true">↗</span></a>
+    </section>
+    <section className="rfq-card links" aria-label="Legal">
+      {([["Terms of Service", LEGAL_LINKS.terms], ["Privacy Policy", LEGAL_LINKS.privacy], ["Risk Disclosure", LEGAL_LINKS.risk], ["Restricted jurisdictions", LEGAL_LINKS.jurisdictions]] as const).map(([label, href]) =>
+        <a key={href} className="setting-row link-row" href={href} target="_blank" rel="noreferrer"><div><div className="headline">{label}</div></div><span aria-hidden="true">↗</span></a>)}
     </section>
   </div>;
 }

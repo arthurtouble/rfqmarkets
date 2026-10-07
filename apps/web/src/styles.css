@@ -301,3 +301,13 @@ dialog.sheet { text-align: start; }
 @media (min-width: 900px) {
   .toasts { left: auto; right: var(--space-6); top: auto; bottom: var(--space-6); transform: none; }
 }
+
+/* Legal: terms dialog and location notices (legal/LegalGate.tsx) ---------- */
+.legal-notice { padding: var(--space-3) var(--space-4) 0; }
+.legal-notice .rfq-banner a, .legal-unavailable a, .terms-dialog a { color: var(--brand-text); }
+.legal-unavailable { display: grid; place-items: center; min-height: 60dvh; }
+.legal-unavailable strong { color: var(--text); font: 600 17px/24px var(--font-sans); }
+.terms-checks { display: grid; gap: var(--space-2); }
+.terms-check { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface); color: var(--text); font: 400 14px/20px var(--font-sans); cursor: pointer; }
+.terms-check input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--brand); }
+.terms-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }

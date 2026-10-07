@@ -10,6 +10,7 @@ export const sections = [
   { id: "protocol", title: "How it works", pages: ["architecture", "settlement", "approvers", "hedging", "safety-and-exits", "governance", "contracts"] },
   { id: "integrate", title: "Integrate", pages: ["api", "signing", "onchain-data", "oracle-feeds"] },
   { id: "reference", title: "Reference", pages: ["glossary", "faq"] },
+  { id: "legal", title: "Legal", pages: ["terms-of-service", "privacy-policy", "risk-disclosure", "restricted-jurisdictions"] },
 ] as const;
 
 export type Page = {

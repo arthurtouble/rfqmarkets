@@ -65,6 +65,22 @@ Coinbase + Binance -> recorder DO -> Queue -> immutable R2 shards
 
 The edge cannot approve trades, sign maker commitments, hold governance authority or change risk parameters. Firm execution still requires the wallet intent, two independent approver signatures, valid settlement evidence and contract checks.
 
+## Jurisdiction blocking
+
+The public web edge (`deploy/cloudflare/static/web-edge.mjs`) refuses service routes by location before rate limiting or any service binding. It reads only `request.cf.country` and `request.cf.regionCode`, which Cloudflare sets and clients cannot forge; a `cf-ipcountry` header sent by the client changes nothing.
+
+| Location | Service reads | Opening risk (`/v1/quote`, `/v1/orders`, order `prepare` routes) | Exits (close, cancel, withdraw, session, nonce cancel, `prepare`/`approve` of close quotes) |
+| --- | --- | --- | --- |
+| Sanctioned country or occupied Ukrainian region | `451` | `451` | `451` |
+| Restricted country, Tor (`T1`), unknown (`XX`) or no geolocation | allowed | `451` | allowed |
+| Anywhere else | allowed | allowed | allowed |
+
+Refusals are `451` JSON `{error: "jurisdiction_restricted", status, message}`. `GET /edge/geo` returns `{status, country, region, message}` so the trading app can show the right screen: a full-page notice for sanctioned locations and a close-only banner for restricted ones. The app's check is presentation only; the edge enforces the policy on every call.
+
+The lists live in `deploy/cloudflare/static/jurisdictions.mjs`, and the public policy at `apps/docs/content/legal/restricted-jurisdictions.md` must match them (`jurisdictions.test.mjs` fails otherwise). The docs site and the exit page are not geo-blocked: the policy must stay readable, and the exit page only sends the wallet's own transactions to the public contracts.
+
+Operators testing from a restricted location see the close-only mode too; use a non-restricted location for trading smoke tests. `/edge/health` is never geo-blocked.
+
 ## Environments
 
 - Pull requests: local tests and production builds only. No persistent Cloudflare resources and no chain writes.
