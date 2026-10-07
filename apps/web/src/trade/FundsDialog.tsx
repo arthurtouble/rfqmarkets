@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { parseAbi, type Address } from "viem";
 import { useConfig } from "wagmi";
@@ -60,6 +60,10 @@ function FundsForm({ mode, onMode, onDone }: { mode: FundsMode; onMode: (mode: F
   const { account } = useAccount();
   const deposit = useDepositChecks(mode === "deposit");
   const [amount, setAmount] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  // The Sheet calls showModal after this form mounts, which moves focus to its first button;
+  // focus the amount on the next frame instead (React's autoFocus runs too early here).
+  useEffect(() => { const frame = requestAnimationFrame(() => input.current?.focus()); return () => cancelAnimationFrame(frame); }, [mode]);
   const micro = parseUsdcInput(amount);
   const check = checkFunds({ mode, amount: micro, walletUsdc: walletUsdc.data ?? null, account, ...deposit });
   const busy = trading.busy !== null;
@@ -82,7 +86,7 @@ function FundsForm({ mode, onMode, onDone }: { mode: FundsMode; onMode: (mode: F
     <div className="rfq-amount">
       <label className={`rfq-amount__field${error ? " is-error" : ""}`}>
         <span className="rfq-amount__prefix">$</span>
-        <input id="funds-amount" autoFocus inputMode="decimal" placeholder="0" autoComplete="off" aria-label="Amount in USDC" value={amount}
+        <input ref={input} id="funds-amount" inputMode="decimal" placeholder="0" autoComplete="off" aria-label="Amount in USDC" value={amount}
           aria-invalid={error || undefined} aria-describedby="funds-meta" disabled={busy}
           onChange={event => /^\d*\.?\d{0,6}$/.test(event.target.value) && setAmount(event.target.value)} />
         <span className="rfq-amount__unit">USDC</span>

@@ -95,3 +95,83 @@ test("closes with Escape or the close button without submitting", async ({ page,
   await withdraw.getByRole("button", { name: "Close" }).click();
   await expect(withdraw).toBeHidden();
 });
+
+test("opens from every entry point on the page", async ({ page, isMobile }) => {
+  if (isMobile) {
+    // Phones reach funds from Portfolio; the top bar is hidden.
+    await page.goto("/portfolio");
+    await expect(page.getByRole("banner")).toBeHidden();
+  } else {
+    await page.goto("/trade/BTC");
+    await page.getByRole("banner").getByRole("button", { name: "Deposit", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Add funds" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    const card = page.getByRole("region", { name: "Account" });
+    for (const [side, title] of [
+      ["Deposit", "Add funds"],
+      ["Withdraw", "Withdraw"],
+    ] as const) {
+      await card.getByRole("button", { name: side, exact: true }).click();
+      await expect(page.getByRole("dialog", { name: title })).toBeVisible();
+      await page.keyboard.press("Escape");
+    }
+    await page.goto("/portfolio");
+  }
+  for (const [side, title] of [
+    ["Deposit", "Add funds"],
+    ["Withdraw", "Withdraw"],
+  ] as const) {
+    await page.getByRole("main").getByRole("button", { name: side, exact: true }).click();
+    const sheet = page.getByRole("dialog", { name: title });
+    await expect(sheet).toBeVisible();
+    await expect(
+      sheet.getByRole("textbox", { name: "Amount in USDC" }),
+      "the amount is focused",
+    ).toBeFocused();
+    await expectNoHorizontalOverflow(page);
+    await page.keyboard.press("Escape");
+  }
+});
+
+test("rejects malformed amounts", async ({ page, isMobile }) => {
+  const sheet = await openFunds(page, isMobile, "Deposit");
+  const amount = sheet.getByRole("textbox", { name: "Amount in USDC" });
+  await amount.pressSequentially("1a2-");
+  await expect(amount, "letters and signs are not typed").toHaveValue("12");
+  await amount.fill(".");
+  await expect(submitButton(sheet)).toHaveText("Enter a valid amount");
+  await expect(submitButton(sheet)).toBeDisabled();
+});
+
+test("keeps the sheet open with an error toast when a withdrawal fails", async ({ page, isMobile }) => {
+  await page.route("**/v1/withdraw/execute", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Insufficient margin" }),
+    }),
+  );
+  const sheet = await openFunds(page, isMobile, "Withdraw");
+  await sheet.getByRole("textbox", { name: "Amount in USDC" }).fill("5");
+  await submitButton(sheet).click();
+  const toast = page.getByRole("status").getByText("Withdrawal failed");
+  await expect(toast).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("status")).toContainText("Insufficient margin");
+  await expect(sheet, "a failure leaves the sheet open to retry").toBeVisible();
+  await expect(submitButton(sheet)).toHaveText("Withdraw $5.00");
+});
+
+test("shows dashes and fails clearly without a settlement contract", async ({ page, isMobile }) => {
+  // With the API's config unreachable the app falls back to Base with no settlement contract.
+  await page.route("**/v1/config", (route) => route.abort());
+  const sheet = await openFunds(page, isMobile, "Deposit");
+  await expect(sheet.getByText(/In your wallet/)).toContainText("—");
+  for (const preset of ["25%", "Max"])
+    await expect(sheet.getByRole("button", { name: preset })).toBeDisabled();
+  await sheet.getByRole("textbox", { name: "Amount in USDC" }).fill("20");
+  await submitButton(sheet).click();
+  await expect(page.getByRole("status")).toContainText("Settlement contract is not configured", {
+    timeout: 30_000,
+  });
+  await expect(sheet).toBeVisible();
+});
