@@ -1,0 +1,500 @@
+import { getAddress, keccak256 } from "ethers";
+import type { FastifyInstance } from "fastify";
+import { isPositionReduction } from "../../../packages/shared/src/exposure-admission.js";
+import {
+  hedgeAdmission,
+  type HedgeExecutionSignal,
+  type HedgeRiskMode,
+  type HedgeRiskSnapshot,
+} from "../../../packages/shared/src/hedge-risk.js";
+import {
+  adaptiveSpread,
+  BASE,
+  constructQuote,
+  launchPricing,
+  parseUsdc,
+  quoteRequestSchema,
+  RATE,
+  type PriceSnapshot,
+  type PricingParameters,
+  type Quote,
+  type QuoteRequest,
+} from "../../../packages/shared/src/policy.js";
+import { quoteToWire } from "../../../packages/shared/src/wire.js";
+import { decodeLimits, encodeLocalReport, type ChainMarketState, type ChainReader } from "./chain.js";
+import type { ApiContext } from "./context.js";
+import type { DevChain } from "./dev-chain.js";
+import type { HttpGuards } from "./http.js";
+import { abs, MARKETS, marketIndex, unixSeconds, type Market } from "./markets.js";
+import type { OracleQuote } from "./oracle.js";
+import { publicError } from "./public-error.js";
+import type { OracleReport, ProtocolVersions } from "./quote-store.js";
+import { closeQuoteSchema } from "./schemas.js";
+import { ShadowModelTelemetry } from "./shadow-model.js";
+
+const YEAR_SECONDS = 365n * 24n * 60n * 60n;
+/** Limits used when the leader runs without a chain (tests and offline previews). */
+const DEFAULT_TRADE_LIMIT = 1_000_000n * 1_000_000n;
+const DEFAULT_MARKET_LIMIT = 5_000_000n * 1_000_000n;
+/** A cross-market price older than this is refreshed on chain before quoting against gross risk. */
+const CROSS_MARKET_PRICE_MAX_AGE_SECONDS = 8;
+/** Local oracle reports and dev-chain proofs are valid for one minute. */
+const LOCAL_REPORT_TTL_SECONDS = 60;
+/** A firm quote must leave this much proof validity for wallet signing and inclusion. */
+const ORACLE_INCLUSION_MARGIN_MS = 4_000;
+const DEFAULT_HEDGE_RISK_MAX_AGE_MS = 3_000;
+const MARKET_READ_CACHE_MS = 500;
+
+/** Hedge state that fails closed: every market is reduce-only until the hedger reports again. */
+const UNAVAILABLE_HEDGE: HedgeRiskSnapshot = {
+  observedAtMs: 0,
+  healthy: false,
+  indexedBlock: -1,
+  markets: {
+    BTC: { mode: "reduce_only", gapNotional: "0", bandUsdc: "0" },
+    ETH: { mode: "reduce_only", gapNotional: "0", bandUsdc: "0" },
+  },
+};
+
+export type MarketView = {
+  market: Market;
+  bid: string;
+  ask: string;
+  mid: string;
+  observedAtMs: number;
+  source: string;
+  volatilityBps: number;
+  volatility: PriceSnapshot["volatility"];
+  baseSpreadBps: number;
+  aggregateBase: string;
+  fundingApr: string;
+  fundingIndex: string;
+  projectedFundingIndex: string;
+  fundingTime: number;
+  lastPriceTime: number;
+  enabled: boolean;
+  maxTradeNotional: string;
+  maxMarketNotional: string;
+  riskMode: HedgeRiskMode;
+  spread: Record<string, string | number>;
+  operatingMaxTradeNotional: string;
+  canBuy: boolean;
+  canSell: boolean;
+};
+
+export type MarketsSnapshot = {
+  blockNumber: number;
+  serverTimeMs: number;
+  markets: Record<Market, MarketView>;
+  pricing: {
+    settled: Record<Market, string>;
+    pending: ReturnType<ApiContext["pending"]["envelope"]>;
+    baseSpreadBps: number;
+    feeBps: number;
+    toleranceBps: number;
+  };
+};
+
+export type QuoteOptions = {
+  /** Store the quote so it can be prepared and approved; indicative quotes are not stored. */
+  persist?: boolean;
+  /** Quote an exact base quantity (close quotes and refreshed approvals) instead of a USDC amount. */
+  exactBaseDelta?: bigint;
+  /** Account whose position reduction may exceed the per-trade limit. */
+  reductionAccount?: string;
+  /** Reservation to leave out of the pending envelope (the approval being refreshed). */
+  excludeReservation?: string;
+};
+
+export type CreatedQuote = {
+  quote: Quote;
+  versions: ProtocolVersions;
+  oracleReport?: OracleReport;
+  reservationRevision: number;
+};
+
+function quoteSpread(
+  snapshot: PriceSnapshot,
+  riskMode: HedgeRiskMode,
+  toxicityScoreBps: number,
+  execution?: HedgeExecutionSignal,
+  volatilityScale = 1,
+) {
+  return adaptiveSpread({
+    volatilityBps: (snapshot.volatilityBps ?? 0) * volatilityScale,
+    riskMode,
+    toxicityScoreBps,
+    hedgeCostBps: execution?.estimatedCostBps,
+    hedgeLatencyMs: execution?.latencyMs,
+    venueBasisBps: execution?.basisBps,
+  });
+}
+
+/** Maker inventory notional at `mark`, or at the last on-chain mid when no mark is given. */
+function marketNotional(state: ChainMarketState, mark?: bigint) {
+  return (
+    (BigInt(state.aggregateBase) * (mark ?? (BigInt(state.lastBid) + BigInt(state.lastAsk)) / 2n)) / BASE
+  );
+}
+
+const midOf = (snapshot: PriceSnapshot) => (snapshot.bid + snapshot.ask) / 2n;
+
+/** Firm and indicative pricing plus the cached public market snapshot. */
+export class QuoteEngine {
+  readonly shadowTelemetry = new ShadowModelTelemetry();
+  private marketReadCache: { at: number; promise: Promise<MarketsSnapshot> } | undefined;
+
+  constructor(
+    private readonly ctx: ApiContext,
+    private readonly chain: ChainReader,
+    private readonly dev: DevChain,
+  ) {}
+
+  invalidateMarkets() {
+    this.marketReadCache = undefined;
+  }
+
+  /** The latest hedger snapshot; a missing or stale snapshot fails closed to reduce-only. */
+  async hedgeRisk(): Promise<HedgeRiskSnapshot | undefined> {
+    const { hedgeRiskSource, hedgeRiskMaxAgeMs } = this.ctx.options;
+    if (!hedgeRiskSource) return undefined;
+    try {
+      const value = await hedgeRiskSource.latest();
+      if (
+        !value.observedAtMs ||
+        Date.now() - value.observedAtMs > (hedgeRiskMaxAgeMs ?? DEFAULT_HEDGE_RISK_MAX_AGE_MS)
+      )
+        throw new Error("stale hedge health");
+      return value;
+    } catch {
+      return UNAVAILABLE_HEDGE;
+    }
+  }
+
+  /** A settlement-grade oracle observation (authenticated proof when the source offers one). */
+  async settlementOracle(market: Market): Promise<OracleQuote> {
+    const source = this.ctx.options.oracleSource;
+    if (!source) throw new Error("oracle unavailable");
+    return source.settlement ? source.settlement(market) : source.latest(market);
+  }
+
+  /** Refresh the quoted market's price; without an oracle the configured price is re-stamped. */
+  private async refreshPrice(market: Market) {
+    const { prices, options } = this.ctx;
+    if (!options.oracleSource) {
+      prices[market].observedAtMs = Date.now();
+      return undefined;
+    }
+    const observation = await this.settlementOracle(market);
+    prices[market] = observation.snapshot;
+    return observation;
+  }
+
+  async readMarkets(): Promise<MarketsSnapshot> {
+    const now = Date.now();
+    if (this.marketReadCache && now - this.marketReadCache.at < MARKET_READ_CACHE_MS)
+      return this.marketReadCache.promise;
+    const promise = this.loadMarkets(now);
+    this.marketReadCache = { at: now, promise };
+    try {
+      return await promise;
+    } catch (error) {
+      this.marketReadCache = undefined;
+      throw error;
+    }
+  }
+
+  private async loadMarkets(now: number): Promise<MarketsSnapshot> {
+    const { ctx } = this,
+      { prices, settled, provider, clearing, options } = ctx;
+    if (options.oracleSource) {
+      const observations = await Promise.all(MARKETS.map((market) => options.oracleSource!.latest(market)));
+      for (const observation of observations) prices[observation.snapshot.market] = observation.snapshot;
+    }
+    const blockNumber = provider ? await this.chain.blockNumber() : 0;
+    const block = provider ? await provider.getBlock(blockNumber) : null;
+    const blockTag = { blockTag: blockNumber };
+    const [chainMarkets, limitWords]: [Array<ChainMarketState | null>, Array<unknown>] = clearing
+      ? await Promise.all([
+          Promise.all([clearing.markets(0, blockTag), clearing.markets(1, blockTag)]),
+          Promise.all([clearing.marketLimitWord(0, blockTag), clearing.marketLimitWord(1, blockTag)]),
+        ])
+      : [
+          [null, null],
+          [null, null],
+        ];
+    const operational = await this.hedgeRisk();
+    const markets = {} as Record<Market, MarketView>;
+    for (const [index, name] of MARKETS.entries()) {
+      const snapshot = prices[name],
+        chain = chainMarkets[index],
+        limits =
+          limitWords[index] === null
+            ? { maxTradeNotional: DEFAULT_TRADE_LIMIT, maxMarketNotional: DEFAULT_MARKET_LIMIT }
+            : decodeLimits(limitWords[index]),
+        mid = midOf(snapshot),
+        aggregateBase = chain ? BigInt(chain.aggregateBase) : 0n;
+      const inventoryMark =
+        chain && BigInt(chain.lastBid) + BigInt(chain.lastAsk) > 0n
+          ? (BigInt(chain.lastBid) + BigInt(chain.lastAsk)) / 2n
+          : mid;
+      settled[name] = (aggregateBase * inventoryMark) / BASE;
+      // Funding accrues at the skew's share of the market limit, clamped to +/-100% APR.
+      let fundingApr = (((aggregateBase * mid) / BASE) * RATE) / limits.maxMarketNotional;
+      if (fundingApr > RATE) fundingApr = RATE;
+      if (fundingApr < -RATE) fundingApr = -RATE;
+      const storedIndex = chain ? BigInt(chain.fundingIndex) : 0n,
+        fundingTime = chain ? Number(chain.fundingTime) : unixSeconds(now),
+        elapsed = BigInt(Math.max(0, (block?.timestamp ?? unixSeconds(now)) - fundingTime)),
+        projectedFundingIndex = storedIndex + (mid * fundingApr * elapsed) / (RATE * YEAR_SECONDS);
+      const venue = operational?.markets[name],
+        mode = venue?.mode ?? "normal",
+        admission = hedgeAdmission(mode, settled[name], 0n, limits.maxTradeNotional),
+        spread = quoteSpread(snapshot, mode, ctx.flowRisk.score(name, snapshot, now), venue?.execution);
+      markets[name] = {
+        market: name,
+        bid: snapshot.bid.toString(),
+        ask: snapshot.ask.toString(),
+        mid: mid.toString(),
+        observedAtMs: snapshot.observedAtMs,
+        source: snapshot.source ?? "configured",
+        volatilityBps: snapshot.volatilityBps ?? 0,
+        volatility: snapshot.volatility,
+        baseSpreadBps: Number(spread.totalBps),
+        aggregateBase: aggregateBase.toString(),
+        fundingApr: fundingApr.toString(),
+        fundingIndex: storedIndex.toString(),
+        projectedFundingIndex: projectedFundingIndex.toString(),
+        fundingTime,
+        lastPriceTime: chain ? Number(chain.lastPriceTime) : 0,
+        enabled: chain ? Boolean(chain.enabled) : true,
+        maxTradeNotional: limits.maxTradeNotional.toString(),
+        maxMarketNotional: limits.maxMarketNotional.toString(),
+        riskMode: mode,
+        spread: Object.fromEntries(
+          Object.entries(spread).map(([key, value]) => [
+            key,
+            typeof value === "bigint" ? value.toString() : value,
+          ]),
+        ),
+        operatingMaxTradeNotional: admission.maxTradeNotional.toString(),
+        canBuy: admission.canBuy,
+        canSell: admission.canSell,
+      };
+    }
+    ctx.prune(now);
+    return {
+      blockNumber,
+      serverTimeMs: now,
+      markets,
+      pricing: {
+        settled: { BTC: settled.BTC.toString(), ETH: settled.ETH.toString() },
+        pending: ctx.pending.envelope(),
+        baseSpreadBps: Number(launchPricing.baseSpreadBps),
+        feeBps: Number(launchPricing.feeBps),
+        toleranceBps: Number(launchPricing.toleranceBps),
+      },
+    };
+  }
+
+  /**
+   * Read the block-pinned quote snapshot. When the other market carries live or reserved gross risk
+   * and its on-chain price is stale, refresh it on chain first so cross-margin checks stay valid.
+   */
+  private async readFreshQuoteSnapshot(market: Market) {
+    const { ctx } = this,
+      clearing = ctx.clearing!,
+      sender = ctx.sender;
+    let snapshot = await this.chain.readQuoteSnapshot();
+    if (!snapshot.block || snapshot.paused || snapshot.resolutionRequired)
+      throw new Error("market is paused");
+    const otherMarket: Market = market === "BTC" ? "ETH" : "BTC",
+      otherIndex = marketIndex(otherMarket),
+      otherState = snapshot.markets[otherIndex],
+      blockTag = { blockTag: snapshot.blockNumber };
+    const otherBook = await clearing.exposureState(otherIndex, blockTag);
+    if (!otherBook.ready) throw new Error("exposure migration required");
+    const reserved = ctx.grossReservations.bounds()[otherIndex];
+    if (
+      sender &&
+      BigInt(otherBook.longBase) + BigInt(otherBook.shortBase) + reserved.longBase + reserved.shortBase !==
+        0n &&
+      snapshot.block.timestamp - Number(otherState.lastPriceTime) > CROSS_MARKET_PRICE_MAX_AGE_SECONDS
+    ) {
+      let report: string,
+        value = 0n;
+      if (ctx.devFund) {
+        const price = ctx.prices[otherMarket];
+        report = encodeLocalReport(
+          otherIndex,
+          price.bid,
+          price.ask,
+          snapshot.block.timestamp,
+          snapshot.block.timestamp + LOCAL_REPORT_TTL_SECONDS,
+        );
+      } else {
+        const observation = await this.settlementOracle(otherMarket);
+        ctx.prices[otherMarket] = observation.snapshot;
+        report = observation.report;
+        const adapter = await this.chain.oracleAdapter(snapshot.blockNumber);
+        value = BigInt(await adapter.updateFee(report, blockTag));
+      }
+      await sender.submit(`oracle:${otherMarket}:${keccak256(report)}`, {
+        to: ctx.domain.verifyingContract,
+        data: clearing.interface.encodeFunctionData("refreshOracle", [report]),
+        value,
+        gasLimit: 750_000n,
+      });
+      this.chain.invalidateQuoteSnapshot();
+      snapshot = await this.chain.readQuoteSnapshot();
+      if (!snapshot.block || snapshot.paused || snapshot.resolutionRequired)
+        throw new Error("market is paused");
+    }
+    return snapshot as typeof snapshot & { block: NonNullable<typeof snapshot.block> };
+  }
+
+  async createQuote(request: QuoteRequest, options: QuoteOptions = {}): Promise<CreatedQuote> {
+    const { ctx } = this,
+      { prices, settled, clearing, provider } = ctx,
+      { persist = true, exactBaseDelta, reductionAccount, excludeReservation } = options;
+    ctx.prune();
+    const reservationRevision = ctx.pending.revision;
+    if (persist && ctx.quotes.size >= ctx.maxActiveQuotes) throw new Error("firm quote capacity reached");
+    let oracleQuote: OracleQuote | undefined,
+      versions: ProtocolVersions,
+      maxTradeNotional = DEFAULT_TRADE_LIMIT;
+    if (clearing && provider) {
+      if (ctx.devFund) await this.dev.advanceTime();
+      const snapshot = await this.readFreshQuoteSnapshot(request.market);
+      oracleQuote = await this.refreshPrice(request.market);
+      const quoteMid = midOf(prices[request.market]),
+        [btc, eth] = snapshot.markets;
+      settled.BTC = marketNotional(btc, request.market === "BTC" ? quoteMid : undefined);
+      settled.ETH = marketNotional(eth, request.market === "ETH" ? quoteMid : undefined);
+      versions = {
+        leaderEpoch: BigInt(snapshot.leaderEpoch),
+        signerSetVersion: BigInt(snapshot.signerSetVersion),
+        policyVersion: BigInt(snapshot.policyVersion),
+        blockNumber: snapshot.blockNumber,
+        blockTimestamp: snapshot.block.timestamp,
+      };
+      maxTradeNotional = decodeLimits(snapshot.limitWords[marketIndex(request.market)]).maxTradeNotional;
+      if (exactBaseDelta !== undefined && reductionAccount) {
+        // Closing an existing position is always allowed up to its size, even above the trade limit.
+        const position = await clearing.positionOf(reductionAccount, marketIndex(request.market), {
+          blockTag: snapshot.blockNumber,
+        });
+        if (isPositionReduction(BigInt(position.size), exactBaseDelta)) {
+          const reductionNotional = (abs(exactBaseDelta) * quoteMid) / BASE;
+          if (reductionNotional > maxTradeNotional) maxTradeNotional = reductionNotional;
+        }
+      }
+    } else {
+      versions = await this.chain.readProtocolVersions();
+      oracleQuote = await this.refreshPrice(request.market);
+    }
+    const snapshot = prices[request.market],
+      operational = await this.hedgeRisk(),
+      mode = operational?.markets[request.market].mode ?? "normal",
+      delta =
+        exactBaseDelta === undefined
+          ? request.side === "buy"
+            ? parseUsdc(request.amount)
+            : -parseUsdc(request.amount)
+          : (exactBaseDelta * midOf(snapshot)) / BASE,
+      admission = hedgeAdmission(mode, settled[request.market], delta, maxTradeNotional);
+    if (!admission.allowed) throw new Error("hedging unavailable: only exposure-reducing trades are allowed");
+    const toxicity = ctx.flowRisk.score(request.market, snapshot),
+      execution = operational?.markets[request.market].execution,
+      spread = quoteSpread(snapshot, mode, toxicity, execution),
+      shadow = quoteSpread(snapshot, mode, toxicity, execution, 1.25);
+    this.shadowTelemetry.observe(Number(spread.totalBps), Number(shadow.totalBps));
+    const pricing: PricingParameters = {
+      ...launchPricing,
+      maxNotional: admission.maxTradeNotional,
+      baseSpreadBps: spread.totalBps,
+      spread,
+    };
+    const quote = constructQuote(
+      request,
+      { ...snapshot },
+      settled,
+      ctx.pending.exposure(excludeReservation),
+      Date.now(),
+      crypto.randomUUID(),
+      pricing,
+      exactBaseDelta,
+    );
+    let oracleReport: OracleReport | undefined;
+    if (oracleQuote) {
+      // The local chain cannot verify external proofs, so dev mode re-signs the price as a local report.
+      const localTimestamp = ctx.devFund ? versions.blockTimestamp : undefined;
+      oracleReport =
+        localTimestamp === undefined
+          ? { report: oracleQuote.report, validUntil: oracleQuote.validUntil }
+          : {
+              report: encodeLocalReport(
+                marketIndex(request.market),
+                quote.snapshot.bid,
+                quote.snapshot.ask,
+                localTimestamp,
+                localTimestamp + LOCAL_REPORT_TTL_SECONDS,
+              ),
+              validUntil: localTimestamp + LOCAL_REPORT_TTL_SECONDS,
+            };
+      quote.expiresAtMs = Math.min(
+        quote.expiresAtMs,
+        oracleReport.validUntil * 1_000 - ORACLE_INCLUSION_MARGIN_MS,
+      );
+      if (quote.expiresAtMs <= Date.now()) throw new Error("oracle report lacks inclusion time");
+      if (persist) ctx.quotes.reports.set(quote.quoteId, oracleReport);
+    }
+    if (persist) ctx.quotes.add(quote, versions);
+    return { quote, versions, oracleReport, reservationRevision };
+  }
+
+  register(app: FastifyInstance, guards: HttpGuards) {
+    const { ctx } = this;
+    app.get("/v1/markets", async (_request, reply) => {
+      try {
+        return await this.readMarkets();
+      } catch (error) {
+        return reply.code(503).send({ error: publicError(error, "market data unavailable") });
+      }
+    });
+
+    app.post("/v1/quote", async (request, reply) => {
+      if (!guards.admitQuoteWork(request, reply)) return;
+      const parsed = quoteRequestSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid quote request" });
+      try {
+        return quoteToWire((await this.createQuote(parsed.data)).quote);
+      } catch (error) {
+        return reply
+          .code(ctx.options.oracleSource || ctx.options.hedgeRiskSource ? 503 : 409)
+          .send({ error: publicError(error, "quote rejected") });
+      }
+    });
+
+    app.post("/v1/close/quote", async (request, reply) => {
+      if (!guards.admitQuoteWork(request, reply)) return;
+      const parsed = closeQuoteSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid close quote request" });
+      if (!ctx.clearing) return reply.code(503).send({ error: "chain unavailable" });
+      try {
+        const account = getAddress(parsed.data.account),
+          position = await ctx.clearing.positionOf(account, marketIndex(parsed.data.market)),
+          size = BigInt(position.size);
+        if (size === 0n) return reply.code(409).send({ error: "position is already closed" });
+        const { quote } = await this.createQuote(
+          { market: parsed.data.market, side: size > 0n ? "sell" : "buy", amount: "1" },
+          { exactBaseDelta: -size, reductionAccount: account },
+        );
+        ctx.quotes.forcedReduceOnly.add(quote.quoteId);
+        return quoteToWire(quote);
+      } catch (error) {
+        return reply.code(503).send({ error: publicError(error, "close quote rejected") });
+      }
+    });
+  }
+}
