@@ -3,7 +3,7 @@ import {readFileSync,readdirSync,existsSync,realpathSync} from 'node:fs';
 import {resolve,relative} from 'node:path';
 export interface CandidateArtifact {path:string;sha256:string}
 const roots=['.github','contracts','services','packages','scripts','apps','deploy','security','simulator'];
-const rootFiles=['package.json','package-lock.json','hardhat.config.js','tsconfig.json','Dockerfile.host','Dockerfile.cloudflare','.dockerignore','.npmrc'];
+const rootFiles=['package.json','package-lock.json','hardhat.config.js','tsconfig.json','Dockerfile.host','Dockerfile.cloudflare-dev','.dockerignore','.npmrc'];
 export function candidatePaths(root=process.cwd()){
  const paths:string[]=[];
  const walk=(directory:string)=>{if(!existsSync(resolve(root,directory)))return;for(const item of readdirSync(resolve(root,directory),{withFileTypes:true})){if(['node_modules','dist','.git','.local-state','__pycache__'].includes(item.name))continue;const path=`${directory}/${item.name}`;if(item.isSymbolicLink())throw new Error('Candidate source cannot contain symlinks');if(item.isDirectory())walk(path);else if(/\.(sol|ts|tsx|js|mjs|py|json|jsonc|html|css|txt|lock|toml|yaml|yml|sh|service)$/.test(item.name))paths.push(path);}};
