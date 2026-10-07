@@ -63,6 +63,7 @@ for (const [source, contracts] of Object.entries(output.contracts)) {
       bytecode: `0x${artifact.evm.bytecode.object}`,
       deployedBytecode: `0x${artifact.evm.deployedBytecode.object}`,
       linkReferences: artifact.evm.bytecode.linkReferences,
+      immutableReferences: artifact.evm.deployedBytecode.immutableReferences,
     }, null, 2));
   }
 }

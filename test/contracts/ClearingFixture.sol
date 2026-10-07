@@ -40,7 +40,9 @@ abstract contract ClearingFixture is Test {
         vm.warp(1_800_000_000);
         usdc = new MockUSDC();
         oracle = new MockPriceOracle();
-        for (uint256 i; i < 3; ++i) approvers[i] = vm.addr(approverKeys[i]);
+        for (uint256 i; i < 3; ++i) {
+            approvers[i] = vm.addr(approverKeys[i]);
+        }
         clearing = deployClearing([maxConfig(), maxConfig()]);
     }
 
@@ -130,6 +132,23 @@ abstract contract ClearingFixture is Test {
     function trade(Trader memory trader, uint8 market, int256 delta, bool reduceOnly) internal {
         (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
             quote(trader.account, market, delta, reduceOnly);
+        execute(trader, intent, approval, proof);
+    }
+
+    /// @notice Like `trade`, but expects the clearing contract to revert with `selector`.
+    function tradeReverts(Trader memory trader, uint8 market, int256 delta, bytes4 selector) internal {
+        (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
+            quote(trader.account, market, delta, false);
+        bytes memory userSignature = sign(trader.key, intent);
+        bytes memory first = signApproval(approverKeys[0], approval);
+        bytes memory second = signApproval(approverKeys[1], approval);
+        vm.expectRevert(selector);
+        clearing.executeTrade(intent, approval, proof, userSignature, first, second);
+    }
+
+    function execute(Trader memory trader, TradeIntent memory intent, MakerApproval memory approval, bytes memory proof)
+        internal
+    {
         clearing.executeTrade(
             intent,
             approval,
@@ -242,8 +261,8 @@ abstract contract ClearingFixture is Test {
     // ---- Accounting views ----
 
     function custodyMatchesBuckets() internal view returns (bool) {
-        int256 buckets = int256(clearing.makerBacking()) + int256(clearing.insuranceBalance())
-            + clearing.totalCustomerCollateral();
+        int256 buckets =
+            int256(clearing.makerBacking()) + int256(clearing.insuranceBalance()) + clearing.totalCustomerCollateral();
         return buckets == int256(usdc.balanceOf(address(clearing)));
     }
 }
