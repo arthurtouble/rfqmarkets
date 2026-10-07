@@ -37,3 +37,18 @@ export function encodeObservation(observation: {
   observedAt: number | bigint;
   validUntil: number | bigint;
 }): string;
+
+export const PRICE_BATCH_TYPES: Record<string, { name: string; type: string }[]>;
+export function deploySignedOracle(
+  deployer: Signer,
+  owner: Signer | string,
+  nodes: Array<Signer | string>,
+  options?: {
+    threshold?: number;
+    maxDeviationBps?: number;
+    maxSkew?: number;
+    maxJumpBps?: number;
+    jumpWindow?: number;
+    libraries?: Record<string, string>;
+  },
+): Promise<BaseContract & Record<string, any>>;

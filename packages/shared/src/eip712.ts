@@ -42,18 +42,6 @@ export const approvalTypes: Record<string, Array<{ name: string; type: string }>
   ],
 };
 
-export const depositTypes: Record<string, Array<{ name: string; type: string }>> = {
-  DepositIntent: [
-    { name: "account", type: "address" },
-    { name: "routeId", type: "bytes32" },
-    { name: "sourceChainId", type: "uint256" },
-    { name: "sourceTokenHash", type: "bytes32" },
-    { name: "sourceAmount", type: "uint256" },
-    { name: "minimumUsdc", type: "uint256" },
-    { name: "deadline", type: "uint64" },
-    { name: "nonce", type: "uint256" },
-  ],
-};
 export const withdrawalTypes: Record<string, Array<{ name: string; type: string }>> = {
   WithdrawalIntent: [
     { name: "account", type: "address" },
@@ -123,16 +111,6 @@ export interface MakerApproval {
   leaderEpoch: bigint;
   signerSetVersion: bigint;
   policyVersion: bigint;
-}
-export interface DepositIntent {
-  account: string;
-  routeId: string;
-  sourceChainId: bigint;
-  sourceTokenHash: string;
-  sourceAmount: bigint;
-  minimumUsdc: bigint;
-  deadline: bigint;
-  nonce: bigint;
 }
 export interface WithdrawalIntent {
   account: string;
@@ -205,8 +183,6 @@ export const hashApproval = (domain: SigningDomain, approval: MakerApproval) =>
   TypedDataEncoder.hash(domain, approvalTypes, approval);
 export const recoverIntentSigner = (domain: SigningDomain, intent: TradeIntent, signature: string) =>
   getAddress(verifyTypedData(domain, intentTypes, intent, signature));
-export const recoverDepositSigner = (domain: SigningDomain, intent: DepositIntent, signature: string) =>
-  getAddress(verifyTypedData(domain, depositTypes, intent, signature));
 export const recoverWithdrawalSigner = (domain: SigningDomain, intent: WithdrawalIntent, signature: string) =>
   getAddress(verifyTypedData(domain, withdrawalTypes, intent, signature));
 export const recoverCancelSigner = (domain: SigningDomain, intent: CancelIntent, signature: string) =>
@@ -276,14 +252,6 @@ export const approvalToWire = (approval: MakerApproval) => ({
   leaderEpoch: approval.leaderEpoch.toString(),
   signerSetVersion: approval.signerSetVersion.toString(),
   policyVersion: approval.policyVersion.toString(),
-});
-export const depositToWire = (intent: DepositIntent) => ({
-  ...intent,
-  sourceChainId: intent.sourceChainId.toString(),
-  sourceAmount: intent.sourceAmount.toString(),
-  minimumUsdc: intent.minimumUsdc.toString(),
-  deadline: intent.deadline.toString(),
-  nonce: intent.nonce.toString(),
 });
 export const withdrawalToWire = (intent: WithdrawalIntent) => ({
   ...intent,
