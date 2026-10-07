@@ -1,6 +1,6 @@
 # Cloudflare testnet deployment
 
-Status: the deployment design and CI are source controlled. The public testnet terminal and public documentation are deployed to the RFQ Markets Cloudflare account. The terminal now runs behind a fail-closed edge Worker: static and SPA routes are served normally, reserved service routes return structured `503` responses until private bindings exist, and `/edge/health` reports binding readiness without claiming the trading runtime is healthy. This is a testnet hosting profile, not the final production trust layout.
+Status: the deployment design and CI are source controlled. The public testnet documentation is deployed to the RFQ Markets Cloudflare account. The old testnet terminal (`rfq-markets-testnet`) was deleted on 2026-10-07; the trading UI now runs only in the Base mainnet dev environment, behind the same fail-closed edge Worker (`web-edge.mjs`): static and SPA routes are served normally, reserved service routes return structured `503` responses when a binding is missing, and `/edge/health` reports binding readiness without claiming the trading runtime is healthy. This is a testnet hosting profile, not the final production trust layout.
 
 The Base mainnet **dev** environment (UI, docs and all services on Cloudflare, auto-deployed from `main`) is described separately in [deploy/cloudflare/DEV-ENVIRONMENT.md](../../deploy/cloudflare/DEV-ENVIRONMENT.md).
 
@@ -8,11 +8,10 @@ The Base mainnet **dev** environment (UI, docs and all services on Cloudflare, a
 
 | Surface | URL | Status |
 | --- | --- | --- |
-| Trading terminal | `https://rfq-markets-testnet.rfq-markets.workers.dev` | Deployed behind the edge Worker with same-origin service routes; trading remains disabled until API, indexer and market-stream bindings are live. |
 | Public documentation | `https://rfq-markets-docs-testnet.rfq-markets.workers.dev` | Deployed and usable. |
 | Internal manuals | Local port 4176 only | Deliberately withheld until Cloudflare Access is configured and verified deny-by-default. |
 
-Both public surfaces send CSP, HSTS, frame-denial, MIME-sniffing, referrer and permissions-policy headers. Hashed assets use immutable caching; HTML revalidates. `npm run validate:cloudflare-static` rejects production bundles containing the local service ports and rejects missing security-header files.
+Public surfaces send CSP, HSTS, frame-denial, MIME-sniffing, referrer and permissions-policy headers. Hashed assets use immutable caching; HTML revalidates. `npm run validate:cloudflare-static` rejects production bundles containing the local service ports and rejects missing security-header files.
 
 The edge boundary is covered by `npm run test:cloudflare-edge`. It has explicit routing tests for the API, indexer and market gateway; preserves request bodies and correlation identifiers; contains upstream exceptions; and proves missing runtime bindings cannot fall through to an HTML `200` response.
 
