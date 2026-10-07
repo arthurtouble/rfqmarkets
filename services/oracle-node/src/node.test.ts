@@ -194,6 +194,23 @@ test("HTTP API: health, latest batch, SSE stream and candles", async () => {
     assert.equal((await fetch(`${url}/v1/candles?market=x`)).status, 400);
     assert.equal((await fetch(`${url}/v1/candles?market=0&interval=2m`)).status, 400);
     assert.equal((await fetch(`${url}/v1/candles?market=0&from=20&to=10`)).status, 400);
+
+    const page = await (await fetch(`${url}/v1/batches?after=0&limit=1`)).json();
+    assert.deepEqual(
+      page.batches.map((batch: { observedAt: number }) => batch.observedAt),
+      [1_700_000_000],
+    );
+    assert.equal(page.more, true);
+    assert.equal(page.oldest, 1_700_000_000);
+    assert.deepEqual(priceBatchFromWire(page.batches[0]), priceBatchFromWire(latest));
+    const rest = await (await fetch(`${url}/v1/batches?after=1700000000`)).json();
+    assert.deepEqual(
+      rest.batches.map((batch: { observedAt: number; signer: string }) => [batch.observedAt, batch.signer]),
+      [[1_700_000_001, new Wallet(KEYS[0]).address]],
+    );
+    assert.equal(rest.more, false);
+    assert.equal((await fetch(`${url}/v1/batches?after=-1`)).status, 400);
+    assert.equal((await fetch(`${url}/v1/batches?limit=5000`)).status, 400);
   } finally {
     await app.close();
     await node.close();

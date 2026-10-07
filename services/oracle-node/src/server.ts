@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { z } from "zod";
 import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 import { CANDLE_INTERVALS, candleToWire, resampleCandles, type CandleStore } from "./candles.js";
+import { BatchHistory } from "./history.js";
 import type { OracleNode } from "./node.js";
 
 const MAX_CANDLES = 1_500;
@@ -13,10 +14,18 @@ const candleQuery = z.object({
   from: z.coerce.number().int().nonnegative().optional(),
   to: z.coerce.number().int().nonnegative().optional(),
 });
+const MAX_BATCH_PAGE = 1_000;
+const batchesQuery = z.object({
+  /** Unix seconds; batches strictly after this observedAt. */
+  after: z.coerce.number().int().nonnegative().default(0),
+  limit: z.coerce.number().int().min(1).max(MAX_BATCH_PAGE).default(MAX_BATCH_PAGE),
+});
 
 export interface OracleServerOptions {
   node: OracleNode;
   candles: CandleStore;
+  /** Recent signed batches served at /v1/batches; created (15 minutes) when omitted. */
+  history?: BatchHistory;
   corsOrigins?: string[];
   heartbeatMs?: number;
   maxSseClients?: number;
@@ -27,7 +36,10 @@ export interface OracleServerOptions {
 export function buildOracleServer(options: OracleServerOptions) {
   const app = Fastify({ logger: false }),
     clients = new SseClients(),
-    now = options.now ?? Date.now;
+    now = options.now ?? Date.now,
+    history = options.history ?? new BatchHistory();
+  const current = options.node.latest();
+  if (current) history.push(current.wire);
   if (options.corsOrigins?.length) void app.register(cors, { origin: options.corsOrigins, methods: ["GET"] });
 
   app.get("/health", async (_request, reply) => {
@@ -48,6 +60,19 @@ export function buildOracleServer(options: OracleServerOptions) {
     clients.add(response);
     const latest = options.node.latest();
     if (latest) clients.send(response, sseFrame("batch", latest.wire, latest.batch.observedAt));
+  });
+
+  /** Signed batches after `after`, ascending; how a collector catches up on what it missed. */
+  app.get("/v1/batches", async (request, reply) => {
+    const parsed = batchesQuery.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid batches query" });
+    const { after, limit } = parsed.data,
+      page = history.after(after, limit + 1);
+    return reply.header("cache-control", "no-store").send({
+      batches: page.slice(0, limit),
+      more: page.length > limit,
+      oldest: history.oldest(),
+    });
   });
 
   app.get("/v1/candles", async (request, reply) => {
@@ -73,6 +98,7 @@ export function buildOracleServer(options: OracleServerOptions) {
   });
 
   const unsubscribe = options.node.subscribe((record) => {
+    history.push(record.wire);
     clients.broadcast(sseFrame("batch", record.wire, record.batch.observedAt));
   });
   const heartbeat = setInterval(() => clients.heartbeat(), options.heartbeatMs ?? 15_000);

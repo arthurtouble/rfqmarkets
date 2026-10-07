@@ -26,7 +26,7 @@ export type RuntimeIdentities={emergency:string;approvers:[string,string,string]
 /** Oracle signer addresses: RFQ_DEV_ORACLE_SIGNERS (comma-separated) wins over the runtime's published list. */
 export function oracleSignersFor(runtime:RuntimeIdentities,configured=process.env.RFQ_DEV_ORACLE_SIGNERS){
   const signers=configured?configured.split(",").map(item=>item.trim()).filter(Boolean):runtime.oracleSigners;
-  if(!signers?.length)throw new Error("no oracle signers: set RFQ_DEV_ORACLE_SIGNERS to the oracle nodes' addresses (comma-separated, at least 3)");
+  if(!signers?.length)throw new Error("no oracle signers: deploy the oracle node workers (deploy-cloudflare-dev.yml) so they publish their addresses, or set RFQ_DEV_ORACLE_SIGNERS (comma-separated, at least 3)");
   return signers.map(item=>getAddress(item));
 }
 
@@ -53,7 +53,9 @@ async function ownerWallet(){
   const provider=new JsonRpcProvider(rpcUrl());const chainId=(await provider.getNetwork()).chainId;if(chainId!==8453n)throw new Error(`expected Base mainnet 8453, RPC reports ${chainId}`);
   return new Wallet(ownerKey(),provider);
 }
-const runtimeIdentities=()=>{if(!existsSync(RUNTIME))throw new Error("the Cloudflare dev runtime has not published its keys yet; deploy it (deploy-cloudflare-dev.yml) and wait a minute");return JSON.parse(readFileSync(RUNTIME,"utf8")) as RuntimeIdentities;};
+/** Oracle node addresses each node worker publishes (KV `oracle-node-<n>.json`, fetched by dev-contracts.sh). */
+const publishedOracleSigners=()=>{const files=[1,2,3].map(n=>resolve(STATE,`oracle-node-${n}.json`));if(!files.every(existsSync))return undefined;return files.map(file=>getAddress((JSON.parse(readFileSync(file,"utf8")) as {address:string}).address));};
+const runtimeIdentities=()=>{if(!existsSync(RUNTIME))throw new Error("the Cloudflare dev runtime has not published its keys yet; deploy it (deploy-cloudflare-dev.yml) and wait a minute");const runtime=JSON.parse(readFileSync(RUNTIME,"utf8")) as RuntimeIdentities;return {...runtime,oracleSigners:runtime.oracleSigners??publishedOracleSigners()};};
 const loadRecord=()=>{if(!existsSync(RECORD))throw new Error("no dev deployment yet; run the deploy action first");return JSON.parse(readFileSync(RECORD,"utf8")) as DeploymentRecord;};
 
 if(import.meta.url===`file://${process.argv[1]}`){

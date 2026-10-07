@@ -1,0 +1,23 @@
+# Oracle node (services/oracle-node) for Cloudflare Containers (deploy/cloudflare/runtime/wrangler.oracle.jsonc).
+# The build stage bundles the node into one file; the image holds only Node and that bundle.
+# NODE_IMAGE lets a build use a Docker Hub mirror (scripts/cloudflare-dev-deploy.sh, RFQ_DOCKER_NODE_IMAGE).
+ARG NODE_IMAGE=node:24-bookworm-slim
+FROM ${NODE_IMAGE} AS build
+WORKDIR /src
+COPY package.json package-lock.json ./
+# The optional "ca" build secret trusts a TLS-intercepting proxy during install only.
+RUN --mount=type=secret,id=ca,target=/tmp/build-ca.crt,required=false NODE_EXTRA_CA_CERTS=/tmp/build-ca.crt npm ci --include=dev --ignore-scripts && npm rebuild esbuild
+COPY packages ./packages
+COPY services/lib ./services/lib
+COPY services/oracle-node ./services/oracle-node
+RUN npx esbuild services/oracle-node/src/main.ts --bundle --platform=node --target=node24 --format=esm \
+      --outfile=/out/oracle-node.mjs \
+      --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+
+FROM ${NODE_IMAGE}
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /out/oracle-node.mjs ./oracle-node.mjs
+USER node
+EXPOSE 4900
+CMD ["node", "oracle-node.mjs"]

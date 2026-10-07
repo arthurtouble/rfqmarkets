@@ -25,6 +25,8 @@ export const CANDLE_INTERVALS: Record<string, number> = {
   "5m": 300_000,
   "15m": 900_000,
   "1h": 3_600_000,
+  "4h": 14_400_000,
+  "1d": 86_400_000,
 };
 
 /** Ring buffer of one-minute candles per market; default retention 24 hours. */

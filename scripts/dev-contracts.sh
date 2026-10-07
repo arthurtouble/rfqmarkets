@@ -34,6 +34,7 @@ get deployment.json "$STATE/deployment.json"
 get deployment.partial.json "$STATE/deployment.partial.json"
 get build-info-deployed.json "$STATE/build-info-deployed/rfq-build.json"
 get identities.json "$STATE/runtime-identities.json"
+for n in 1 2 3; do get "oracle-node-$n.json" "$STATE/oracle-node-$n.json"; done
 node --import tsx scripts/base-mainnet-dev-ci.ts prepare
 trap save EXIT
 
