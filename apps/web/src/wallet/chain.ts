@@ -56,17 +56,15 @@ export function lazyConnector(create: CreateConnectorFn): CreateConnectorFn {
 const APP = { name: "RFQ Markets", url: "https://dev.rfq-markets.workers.dev" };
 
 /** Installed wallets (EIP-6963), Base Account passkeys on Base networks, and
- * WalletConnect for phone and QR wallets once a project id is configured. */
+ * WalletConnect for phone and QR wallets. */
 export function walletConnectors(chain: Chain) {
   const connectors: CreateConnectorFn[] = [injected()];
   if (chain.id in KNOWN) connectors.push(lazyConnector(baseAccount({ appName: APP.name, preference: { telemetry: false } })));
-  if (WALLETCONNECT_PROJECT_ID) {
-    const origin = typeof location === "undefined" ? APP.url : location.origin;
-    connectors.push(lazyConnector(walletConnect({
-      projectId: WALLETCONNECT_PROJECT_ID,
-      metadata: { name: APP.name, description: "Request-for-quote markets on Base", url: origin, icons: [] },
-    })));
-  }
+  const origin = typeof location === "undefined" ? APP.url : location.origin;
+  connectors.push(lazyConnector(walletConnect({
+    projectId: WALLETCONNECT_PROJECT_ID,
+    metadata: { name: APP.name, description: "Request-for-quote markets on Base", url: origin, icons: [] },
+  })));
   return connectors;
 }
 
