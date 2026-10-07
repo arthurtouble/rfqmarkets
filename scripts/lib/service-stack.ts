@@ -59,7 +59,7 @@ export interface ServiceStackConfig {
     rpc(index: number): { primary: string; secondary: string };
     rpcBatchMaxCount?: string;
     maxFutureSeconds: number;
-    oracleMode?: "local" | "pyth";
+    oracleMode?: "local" | "signed";
     tokenPrefix: string;
   };
   hedge: {

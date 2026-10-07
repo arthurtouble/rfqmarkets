@@ -133,7 +133,7 @@ const stack = await startServiceStack({
     rpc: (index) => ({ primary: primaryRpcs[index], secondary: secondaryRpcs[index] }),
     rpcBatchMaxCount: process.env.RFQ_APPROVER_RPC_BATCH_MAX_COUNT ?? "1",
     maxFutureSeconds: 5,
-    oracleMode: "pyth",
+    oracleMode: "signed",
     tokenPrefix: "testnet-transport",
   },
   hedge: {
