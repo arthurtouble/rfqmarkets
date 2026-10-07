@@ -2,8 +2,18 @@ import { useEffect, useRef, type ReactNode } from "react";
 import type { StreamStatus } from "../lib/event-stream.js";
 import type { Market } from "../lib/types.js";
 
-export const MARKET_NAMES: Partial<Record<Market, string>> = { BTC: "Bitcoin", ETH: "Ethereum" };
-/** Display name; markets listed after launch show their symbol. */
+/**
+ * Display names. Governance lists markets on chain by symbol only, so this
+ * covers the launch markets and the large assets likely to follow; any other
+ * market shows its symbol.
+ */
+export const MARKET_NAMES: Partial<Record<Market, string>> = {
+  BTC: "Bitcoin", ETH: "Ethereum", SOL: "Solana", XRP: "XRP", BNB: "BNB", DOGE: "Dogecoin", ADA: "Cardano",
+  TRX: "TRON", AVAX: "Avalanche", LINK: "Chainlink", DOT: "Polkadot", TON: "Toncoin", SUI: "Sui", LTC: "Litecoin",
+  BCH: "Bitcoin Cash", NEAR: "NEAR", APT: "Aptos", UNI: "Uniswap", AAVE: "Aave", HYPE: "Hyperliquid", XLM: "Stellar",
+  HBAR: "Hedera", ATOM: "Cosmos", ARB: "Arbitrum", OP: "Optimism", PEPE: "Pepe", SHIB: "Shiba Inu", TAO: "Bittensor",
+  ENA: "Ethena", WLD: "Worldcoin", FIL: "Filecoin", INJ: "Injective", SEI: "Sei", TIA: "Celestia", ETC: "Ethereum Classic",
+};
 export const marketName = (market: Market) => MARKET_NAMES[market] ?? market;
 const GLYPHS: Partial<Record<Market, string>> = { BTC: "₿", ETH: "Ξ" };
 

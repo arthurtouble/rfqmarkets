@@ -41,3 +41,19 @@ export const candleToNumbers = (candle: Candle) => ({
   time: candle.time, open: Number(candle.open) / 1e6, high: Number(candle.high) / 1e6,
   low: Number(candle.low) / 1e6, close: Number(candle.close) / 1e6,
 });
+
+/** A point on the Simple view's price line: unix ms and dollars. */
+export type ChartPoint = { time: number; value: number };
+
+/**
+ * Points for a price line: the first bucket's open (the change reference),
+ * then each close at its bucket's end, or at `nowMs` for the live bucket. One
+ * bucket is enough to draw, so a newly listed market has a chart at once.
+ */
+export function linePoints(candles: readonly Candle[], intervalMs: number, nowMs: number): ChartPoint[] {
+  if (!candles.length) return [];
+  return [
+    { time: candles[0].time, value: Number(candles[0].open) / 1e6 },
+    ...candles.map(candle => ({ time: Math.min(candle.time + intervalMs, Math.max(candle.time, nowMs)), value: Number(candle.close) / 1e6 })),
+  ];
+}

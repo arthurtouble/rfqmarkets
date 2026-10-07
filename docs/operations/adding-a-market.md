@@ -67,5 +67,6 @@ A market without a mapping is never sent to the venue. The hedger logs it once a
 
 - `GET /v1/config` `marketList` and `GET /v1/markets` list the new symbol, and the market entry includes its `index`.
 - The indexer's `/v1/exposure` and account positions show the market. An indexer upgraded from schema 1 reindexes from `startBlock` once.
-- The gateway relays history and candles for the market as soon as it appears in the API stream.
+- The gateway relays history, candles and 24h stats for the market as soon as it appears in the API stream.
+- The trading app lists the market on the Markets page and in the market switcher with no release. Its display name comes from `MARKET_NAMES` in `apps/web/src/ui/primitives.tsx` (the symbol when it is not there), and until the oracle prices it the row reads **No price** and its trade page says the market has no price.
 - The `apps/web` client still hardcodes BTC/ETH in several places, so it doesn't show the market yet.

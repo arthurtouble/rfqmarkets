@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { candleToNumbers, mergeLiveCandle } from "./candles.js";
+import { candleToNumbers, linePoints, mergeLiveCandle } from "./candles.js";
 import type { Candle } from "./types.js";
 
 const candle = (time: number, open: number, high: number, low: number, close: number): Candle =>
@@ -24,4 +24,13 @@ test("stale or invalid ticks leave the series alone", () => {
   assert.deepEqual(mergeLiveCandle(series, "5m", 310_000, 0n), series);
   assert.deepEqual(mergeLiveCandle([], "1h", 3_700_000, 7n), [{ time: 3_600_000, open: "7", high: "7", low: "7", close: "7", samples: 1 }]);
   assert.deepEqual(candleToNumbers(candle(0, 1_500_000, 2_000_000, 1_000_000, 1_250_000)), { time: 0, open: 1.5, high: 2, low: 1, close: 1.25 });
+});
+
+test("line points start at the first open and step through closes at each bucket's end", () => {
+  assert.deepEqual(linePoints([], 60_000, 0), []);
+  assert.deepEqual(linePoints([candle(0, 100e6, 0, 0, 101e6), candle(60_000, 101e6, 0, 0, 99e6)], 60_000, 90_000), [
+    { time: 0, value: 100 }, { time: 60_000, value: 101 }, { time: 90_000, value: 99 },
+  ]);
+  // A single bucket (a market listed minutes ago) still draws a line.
+  assert.equal(linePoints([candle(0, 5e6, 0, 0, 6e6)], 300_000, 10_000).length, 2);
 });
