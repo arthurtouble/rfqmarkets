@@ -24,7 +24,7 @@ import {
 import { ExpiryIndex } from "./bounded-state.js";
 import type { ChainReader } from "./chain.js";
 import type { ApiContext } from "./context.js";
-import type { ExecutionService } from "./execution.js";
+import { INSUFFICIENT_MARGIN, type ExecutionService } from "./execution.js";
 import type { HttpGuards } from "./http.js";
 import { LimitTriggerBook, StopTriggerBook } from "./limit-book.js";
 import { abs, marketIndex, marketSymbols, type Market, type Side } from "./markets.js";
@@ -38,7 +38,7 @@ import {
   tpslPrepareSchema,
   triggerOrderPrepareSchema,
 } from "./schemas.js";
-import { verifySignedAction } from "./signed-actions.js";
+import { admitSponsoredAction, verifySignedAction } from "./signed-actions.js";
 
 type OrderStatus = "prepared" | "open" | "executing" | "filled" | "cancelled" | "expired";
 export type OrderType = "limit" | TriggerKind;
@@ -64,6 +64,8 @@ type RestingOrder = {
   updatedAtMs: number;
   transactionHash?: string;
   lastError?: string;
+  /** Consecutive non-transient execution refusals since the order last filled (in memory only). */
+  refusals?: number;
 };
 
 /** Unsigned prepared orders are dropped after five minutes. */
@@ -76,11 +78,26 @@ const ORDER_RECONCILE_MS = 30_000;
 const CANCEL_TTL_SECONDS = 120;
 /** Position reads per reduce-only sweep; the rest wait for the next sweep. */
 const MAX_POSITION_SWEEP = 256;
+/** Live orders one account may hold unless `maxRestingOrdersPerAccount` says otherwise. */
+const DEFAULT_MAX_ORDERS_PER_ACCOUNT = 50;
+/** Unsigned prepared orders held at once, at most, unless `maxPreparedOrders` says otherwise. */
+const DEFAULT_MAX_PREPARED_ORDERS = 10_000;
+/**
+ * An order whose execution is refused this many times in a row for a non-transient reason (a bad
+ * signature or a failed settlement simulation) is cancelled off chain: each attempt reserves risk.
+ */
+export const MAX_CONSECUTIVE_REFUSALS = 5;
+const MARGIN_CANCEL_NOTE =
+  "cancelled: the account cannot cover this order's margin; the signed order stays valid on chain until its deadline or a nonce cancel";
+const REFUSED_CANCEL_NOTE =
+  "cancelled after repeated execution refusals; the signed order stays valid on chain until its deadline or a nonce cancel";
 const POSITION_CLOSED_NOTE =
   "position closed; the signed order stays valid on chain until its deadline or a nonce cancel";
 
 const isLive = (order: RestingOrder) =>
   order.status === "prepared" || order.status === "open" || order.status === "executing";
+/** Signed and not yet final: counts toward resting-order capacity. Prepared orders have their own cap. */
+const isResting = (order: RestingOrder) => order.status === "open" || order.status === "executing";
 const marketable = (order: RestingOrder, price: bigint) =>
   order.side === "buy" ? price <= order.intent.limitPrice : price >= order.intent.limitPrice;
 /** A reduce-only order can still reduce: the position is open and on the other side of the order. */
@@ -116,6 +133,29 @@ function triggerTermsFromJson(json: string): TriggerTerms {
   };
 }
 
+type ExecutionBody = {
+  transaction?: { hash: string };
+  error?: string;
+  details?: unknown;
+  code?: string;
+  retriable?: boolean;
+};
+
+/**
+ * How a failed resting-order execution counts toward cancelling it. `margin`: the account cannot
+ * cover the trade, cancel now. `refused`: a non-transient refusal (bad signature, failed settlement
+ * simulation) that would recur and re-reserve risk on every tick. Everything else (price moved,
+ * capacity, outages, retriable failures) is `transient` and never cancels an order. A protective
+ * reduce-only order is never cancelled at once for margin; it only counts as a refusal.
+ */
+export function executionRefusal(status: number, body: ExecutionBody, reduceOnly = false) {
+  if (body.code === INSUFFICIENT_MARGIN) return reduceOnly ? ("refused" as const) : ("margin" as const);
+  if (body.retriable) return "transient" as const;
+  if (status === 401 || (status === 409 && body.error === "settlement simulation failed"))
+    return "refused" as const;
+  return "transient" as const;
+}
+
 /** A client error the prepare routes answer with its own status. */
 class OrderRejection extends Error {
   constructor(
@@ -140,6 +180,8 @@ export class LimitOrders {
   /** (account, market) pairs whose reduce-only trigger orders need a position re-check. */
   private readonly positionSweeps = new Set<string>();
   private readonly capacity: number;
+  private readonly perAccount: number;
+  private readonly preparedCapacity: number;
   private checking = false;
   private checkQueued = false;
   private checkTimer: ReturnType<typeof setTimeout> | undefined;
@@ -152,6 +194,9 @@ export class LimitOrders {
     private readonly execution: ExecutionService,
   ) {
     this.capacity = ctx.options.maxRestingOrders ?? 100_000;
+    this.perAccount = ctx.options.maxRestingOrdersPerAccount ?? DEFAULT_MAX_ORDERS_PER_ACCOUNT;
+    this.preparedCapacity =
+      ctx.options.maxPreparedOrders ?? Math.min(this.capacity, DEFAULT_MAX_PREPARED_ORDERS);
     this.restore();
     ctx.onPrune((now) => {
       for (const id of this.preparedExpiries.takeExpired(now))
@@ -164,14 +209,61 @@ export class LimitOrders {
   }
 
   get stats() {
-    let active = 0;
-    for (const order of this.orders.values()) if (isLive(order)) active++;
+    let active = 0,
+      prepared = 0;
+    for (const order of this.orders.values())
+      if (isResting(order)) active++;
+      else if (order.status === "prepared") prepared++;
     return {
       active,
+      prepared,
       indexed: this.triggers.size,
       triggersIndexed: this.stops.size,
       capacity: this.capacity,
+      preparedCapacity: this.preparedCapacity,
     };
+  }
+
+  /** Signed live orders held by one account. */
+  private restingFor(account: string) {
+    let count = 0;
+    for (const order of this.orders.values())
+      if (isResting(order) && order.intent.account === account) count++;
+    return count;
+  }
+
+  /**
+   * Bounds for staging `count` prepared orders: global resting capacity, the prepared cap and the
+   * account's live-order cap. Prepared orders never consume resting capacity, so unsigned spam
+   * cannot crowd out signed orders.
+   */
+  private assertCanPrepare(account: string, count = 1) {
+    this.ctx.prune();
+    const { active, prepared } = this.stats;
+    if (active + count > this.capacity || prepared + count > this.preparedCapacity)
+      throw new OrderRejection(409, "order capacity reached");
+    if (this.restingFor(account) + count > this.perAccount)
+      throw new OrderRejection(409, "account open order limit reached");
+  }
+
+  /** Signed capacity at placement: global and per-account live orders. */
+  private placementRefusal(order: RestingOrder) {
+    if (this.stats.active >= this.capacity) return "order capacity reached";
+    if (this.restingFor(order.intent.account) >= this.perAccount) return "account open order limit reached";
+    return undefined;
+  }
+
+  /** Opening orders need collateral at placement; reduce-only orders protect an existing position. */
+  private async assertFunded(order: RestingOrder) {
+    const { clearing } = this.ctx;
+    if (!clearing || order.intent.reduceOnly) return;
+    let collateral: bigint;
+    try {
+      collateral = BigInt(await clearing.collateralOf(order.intent.account));
+    } catch {
+      throw new OrderRejection(503, "chain unavailable");
+    }
+    if (collateral <= 0n) throw new OrderRejection(409, "deposit collateral before placing orders");
   }
 
   private restore() {
@@ -458,7 +550,7 @@ export class LimitOrders {
         nonce: order.intent.nonce.toString(),
         userSignature,
       }),
-      body = outcome.body as { transaction?: { hash: string }; error?: string; details?: unknown };
+      body = outcome.body as ExecutionBody;
     ctx.quotes.preparedIntents.delete(quoteId);
     if (outcome.status === 200 && body.transaction) {
       order.status = "filled";
@@ -467,12 +559,18 @@ export class LimitOrders {
       this.checkQueued = true;
       this.closeSiblings(order, "the other leg of this nonce filled");
     } else {
-      order.status = "open";
-      this.arm(order);
       const detail = Array.isArray(body.details) ? body.details.join("; ") : undefined;
       order.lastError = detail
         ? `${body.error}: ${detail}`
         : (body.error ?? `execution returned ${outcome.status}`);
+      const refusal = executionRefusal(outcome.status, body, order.intent.reduceOnly);
+      order.refusals = refusal === "transient" ? 0 : (order.refusals ?? 0) + 1;
+      if (refusal === "margin")
+        return this.cancelOffChain(order, `${MARGIN_CANCEL_NOTE} (${order.lastError})`);
+      if (refusal === "refused" && order.refusals >= MAX_CONSECUTIVE_REFUSALS)
+        return this.cancelOffChain(order, `${REFUSED_CANCEL_NOTE} (${order.lastError})`);
+      order.status = "open";
+      this.arm(order);
     }
     this.persistStatus(order);
   }
@@ -609,10 +707,12 @@ export class LimitOrders {
       if (!parsed.success) return reply.code(400).send({ error: "invalid limit order" });
       const { market, side, amount, durationSeconds, nonce, reduceOnly } = parsed.data;
       try {
-        ctx.prune();
-        if (this.stats.active >= this.capacity) throw new Error("order capacity reached");
-        const account = getAddress(parsed.data.account),
-          { quote, versions } = await this.quoting.createQuote({ market, side, amount }, { persist: false }),
+        const account = getAddress(parsed.data.account);
+        this.assertCanPrepare(account);
+        const { quote, versions } = await this.quoting.createQuote(
+            { market, side, amount },
+            { persist: false },
+          ),
           limitPrice = parseUnits(parsed.data.limitPrice, 6);
         if (limitPrice <= 0n) throw new Error("invalid limit price");
         const intent: TradeIntent = {
@@ -655,7 +755,8 @@ export class LimitOrders {
           },
         };
       } catch (error) {
-        return reply.code(409).send({ error: publicError(error, "limit order rejected") });
+        const status = error instanceof OrderRejection ? error.status : 409;
+        return reply.code(status).send({ error: publicError(error, "limit order rejected") });
       }
     });
 
@@ -673,10 +774,9 @@ export class LimitOrders {
       if (input.sizing === "position" && !reduceOnly)
         return reply.code(400).send({ error: "position sizing is reduce-only" });
       try {
-        ctx.prune();
-        if (this.stats.active >= this.capacity) throw new Error("order capacity reached");
         const account = getAddress(input.account),
           triggerPrice = parseUsdc(input.triggerPrice);
+        this.assertCanPrepare(account);
         if (triggerPrice <= 0n) throw new OrderRejection(400, "invalid trigger price");
         let side: Side, baseDelta: bigint, amount: string;
         if (input.sizing === "position") {
@@ -739,10 +839,9 @@ export class LimitOrders {
       if (!parsed.success) return reply.code(400).send({ error: "invalid take-profit/stop-loss order" });
       const input = parsed.data;
       try {
-        ctx.prune();
-        if (this.stats.active + 2 > this.capacity) throw new Error("order capacity reached");
-        const account = getAddress(input.account),
-          size = await this.positionSize(account, input.market);
+        const account = getAddress(input.account);
+        this.assertCanPrepare(account, 2);
+        const size = await this.positionSize(account, input.market);
         if (size === 0n) throw new OrderRejection(409, "no open position");
         const [versions, mid] = await Promise.all([
           this.chain.readProtocolVersions(),
@@ -798,6 +897,9 @@ export class LimitOrders {
       const order = this.orders.get(parsed.data.orderId);
       if (!order || order.status !== "prepared")
         return reply.code(404).send({ error: "prepared order not found" });
+      ctx.prune();
+      const full = this.placementRefusal(order);
+      if (full) return reply.code(409).send({ error: full });
       const { userSignature } = parsed.data,
         trigger = order.trigger && {
           triggerPrice: order.trigger.triggerPrice,
@@ -812,6 +914,17 @@ export class LimitOrders {
         ))
       )
         return reply.code(401).send({ error: "invalid order signature" });
+      try {
+        await this.assertFunded(order);
+      } catch (error) {
+        const status = error instanceof OrderRejection ? error.status : 409;
+        return reply.code(status).send({ error: publicError(error, "order rejected") });
+      }
+      // The signature and funding reads awaited: re-check that the order is still placeable.
+      if (order.status !== "prepared" || this.orders.get(order.orderId) !== order)
+        return reply.code(404).send({ error: "prepared order not found" });
+      const filled = this.placementRefusal(order);
+      if (filled) return reply.code(409).send({ error: filled });
       order.userSignature = userSignature;
       order.status = "open";
       order.updatedAtMs = Date.now();
@@ -898,15 +1011,21 @@ export class LimitOrders {
           return reply.code(401).send({ error: "invalid cancellation signature" });
         const chain = ctx.chain;
         if (!chain || !ctx.sender) return reply.code(503).send({ error: "chain unavailable" });
-        const receipt = await ctx.sender.submit(`cancel-order:${order.orderId}`, {
-          to: chain.config.clearingAddress,
-          data: chain.clearing.interface.encodeFunctionData("cancelNonceWithSignature", [
-            intent.account,
-            intent.nonce,
-            intent.deadline,
-            userSignature,
-          ]),
-        });
+        const refused = await admitSponsoredAction(ctx, intent.account);
+        if (refused) return refused.send(reply);
+        const receipt = await ctx.sender.submit(
+          `cancel-order:${order.orderId}`,
+          {
+            to: chain.config.clearingAddress,
+            data: chain.clearing.interface.encodeFunctionData("cancelNonceWithSignature", [
+              intent.account,
+              intent.nonce,
+              intent.deadline,
+              userSignature,
+            ]),
+          },
+          { deadline: Number(intent.deadline) },
+        );
         const cancelled = [order, ...this.siblings(order)];
         for (const item of cancelled) {
           item.status = "cancelled";

@@ -10,6 +10,18 @@ const DEFAULT_APPROVER_TIMEOUT_MS = 5_000;
 const MAX_CACHED_QUORUMS = 100_000;
 export const APPROVAL_QUORUM = 2;
 
+/**
+ * The approver answered with an HTTP refusal. Approvers check every policy before signing and only
+ * return a signature in a 2xx body, so a refusal proves no signature from that approver reached us.
+ * Timeouts, transport errors and malformed 2xx bodies are not refusals: a signature may exist.
+ */
+export class ApproverRefusal extends Error {}
+
+/** True when every approver explicitly refused, so no approval signature for the digest exists here. */
+export function everyApproverRefused(results: PromiseSettledResult<ApproverSignature>[]) {
+  return results.every((item) => item.status === "rejected" && item.reason instanceof ApproverRefusal);
+}
+
 /** Requests approver co-signatures and returns the first distinct quorum for a digest. */
 export class ApprovalCollector {
   private readonly quorums = new Map<string, Promise<PromiseSettledResult<ApproverSignature>[]>>();
@@ -28,7 +40,8 @@ export class ApprovalCollector {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
-    if (!response.ok) throw new Error(`approver ${response.status}: ${await response.text()}`);
+    if (!response.ok)
+      throw new ApproverRefusal(`approver ${response.status}: ${await response.text().catch(() => "")}`);
     const result = (await response.json()) as ApproverSignature;
     if (
       result.digest !== digest ||

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { clientIdentity } from "../../../packages/shared/src/client-identity.js";
 import { QuoteAdmission } from "./admission.js";
 import type { ApiOptions } from "./context.js";
 import type { RuntimeMetrics } from "./metrics.js";
@@ -47,13 +48,14 @@ export function registerHttpGuards(
   );
   const publicReads = new QuoteAdmission(100, options.publicReadBurst ?? 200, 10_000, 2000, 4000);
   const publicWrites = new QuoteAdmission(20, options.publicWriteBurst ?? 200, 10_000, 200, 2000);
-  const requestStarts = new WeakMap<object, number>();
+  const requestStarts = new WeakMap<object, number>(),
+    client = clientIdentity(options);
 
   app.addHook("onRequest", async (request, reply) => {
     requestStarts.set(request, performance.now());
     if (request.url.split("?", 1)[0].startsWith("/v1/") && request.method !== "OPTIONS") {
       const admission = request.method === "GET" ? publicReads : publicWrites;
-      if (!admission.allow(request.ip))
+      if (!admission.allow(client(request)))
         return reply.code(429).header("retry-after", "1").send({ error: "request rate limit exceeded" });
     }
   });
@@ -66,7 +68,7 @@ export function registerHttpGuards(
 
   return {
     admitQuoteWork(request, reply) {
-      if (quoteAdmission.allow(request.ip)) return true;
+      if (quoteAdmission.allow(client(request))) return true;
       reply.header("retry-after", "1");
       reply.code(429).send({ error: "quote rate limit exceeded" });
       return false;

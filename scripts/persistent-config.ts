@@ -60,6 +60,11 @@ export const persistentConfigSchema = z
     hedgeBandUsdc: z.string().regex(/^[1-9]\d*$/),
     hedgeMaxOrderUsdc: z.string().regex(/^[1-9]\d*$/),
     hedgeMinOrderUsdc: z.string().regex(/^[1-9]\d*$/),
+    /**
+     * Edge header carrying the end-user IP (set by Cloudflare). Services listen on loopback behind
+     * the edge proxy, so without it every per-client budget keys on the proxy and acts as a global cap.
+     */
+    clientIpHeader: z.enum(["cf-connecting-ip"]).optional(),
   })
   .strict()
   .superRefine((value, context) => {

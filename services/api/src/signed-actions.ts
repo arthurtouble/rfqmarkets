@@ -60,6 +60,28 @@ export async function verifySignedAction(
 }
 
 /**
+ * Gate for sponsored actions that the contract accepts from any signer, funded or not (nonce
+ * cancellation, session grants): the account must hold collateral, and each account has its own
+ * small budget so one funded wallet cannot monopolize the single-lane sponsor or its daily budget.
+ * Called only after the owner signature verified, so nobody can spend another account's budget.
+ */
+export async function admitSponsoredAction(ctx: ApiContext, account: string): Promise<Reply | undefined> {
+  const { clearing } = ctx;
+  if (!clearing) return Reply.error(503, "chain unavailable");
+  let collateral: bigint;
+  try {
+    collateral = BigInt(await clearing.collateralOf(account));
+  } catch {
+    return Reply.error(503, "chain unavailable");
+  }
+  if (collateral <= 0n) return Reply.error(409, "deposit collateral before using sponsored actions");
+  // Charged only for actions that would be sponsored; refused ones are bounded by the public write budget.
+  if (!ctx.sponsoredActions.allow(account.toLowerCase()))
+    return Reply.error(429, "sponsored action rate limit exceeded");
+  return undefined;
+}
+
+/**
  * A two-step owner action: `prepare` returns EIP-712 typed data for the wallet, `execute` verifies the
  * signature and sponsors the matching clearing call.
  */
@@ -80,6 +102,8 @@ interface SignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I extends
   parse(input: z.infer<E>): I;
   toWire(intent: I): unknown;
   execute(intent: I, signature: string, sponsor: Sponsor): Promise<unknown>;
+  /** Requires collateral and a per-account budget before sponsoring (see admitSponsoredAction). */
+  gated?: boolean;
 }
 
 function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I extends SignedIntent>(
@@ -120,6 +144,10 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
       const handles = ctx.chain,
         sender = ctx.sender;
       if (!handles || !sender) return reply.code(503).send({ error: "chain unavailable" });
+      if (action.gated) {
+        const refused = await admitSponsoredAction(ctx, intent.account);
+        if (refused) return refused.send(reply);
+      }
       const result = await action.execute(intent, signature, { ...handles, sender });
       return result instanceof Reply ? result.send(reply) : result;
     } catch (error) {
@@ -162,17 +190,21 @@ export function registerSignedActions(
     }),
     toWire: withdrawalToWire,
     async execute(intent, signature, { sender, clearing, provider, config }) {
-      const receipt = await sender.submit(`withdraw:${intent.account}:${intent.nonce}`, {
-        to: config.clearingAddress,
-        data: clearing.interface.encodeFunctionData("withdrawWithSignature", [
-          intent.account,
-          intent.recipient,
-          intent.amount,
-          intent.nonce,
-          intent.deadline,
-          signature,
-        ]),
-      });
+      const receipt = await sender.submit(
+        `withdraw:${intent.account}:${intent.nonce}`,
+        {
+          to: config.clearingAddress,
+          data: clearing.interface.encodeFunctionData("withdrawWithSignature", [
+            intent.account,
+            intent.recipient,
+            intent.amount,
+            intent.nonce,
+            intent.deadline,
+            signature,
+          ]),
+        },
+        { deadline: Number(intent.deadline) },
+      );
       const paid = await settlementEvent(
         provider,
         config.clearingAddress,
@@ -215,16 +247,21 @@ export function registerSignedActions(
       deadline: BigInt(intent.deadline),
     }),
     toWire: cancelToWire,
+    gated: true,
     async execute(intent, signature, { sender, clearing, config }) {
-      const receipt = await sender.submit(`cancel:${intent.account}:${intent.nonce}`, {
-        to: config.clearingAddress,
-        data: clearing.interface.encodeFunctionData("cancelNonceWithSignature", [
-          intent.account,
-          intent.nonce,
-          intent.deadline,
-          signature,
-        ]),
-      });
+      const receipt = await sender.submit(
+        `cancel:${intent.account}:${intent.nonce}`,
+        {
+          to: config.clearingAddress,
+          data: clearing.interface.encodeFunctionData("cancelNonceWithSignature", [
+            intent.account,
+            intent.nonce,
+            intent.deadline,
+            signature,
+          ]),
+        },
+        { deadline: Number(intent.deadline) },
+      );
       return { status: "included", transaction: transactionOf(receipt) };
     },
   });
@@ -284,12 +321,16 @@ export function registerSignedActions(
       // Simulate first on live chains: a reverting close would still spend sponsor gas.
       if (!ctx.devFund)
         await provider.call({ from: ctx.sponsor!.address, to: config.clearingAddress, data, value });
-      const receipt = await sender.submit(`close:${intent.account}:${intent.market}:${intent.nonce}`, {
-        to: config.clearingAddress,
-        data,
-        value,
-        gasLimit: CLOSE_GAS_LIMIT,
-      });
+      const receipt = await sender.submit(
+        `close:${intent.account}:${intent.market}:${intent.nonce}`,
+        {
+          to: config.clearingAddress,
+          data,
+          value,
+          gasLimit: CLOSE_GAS_LIMIT,
+        },
+        { deadline: Number(intent.deadline) },
+      );
       const closed = await settlementEvent(
         provider,
         config.clearingAddress,
@@ -355,11 +396,16 @@ export function registerSignedActions(
       deadline: BigInt(grant.deadline),
     }),
     toWire: sessionGrantToWire,
+    gated: true,
     async execute(grant, signature, { sender, clearing, config }) {
-      const receipt = await sender.submit(`session:${grant.account}:${grant.session}:${grant.nonce}`, {
-        to: config.clearingAddress,
-        data: clearing.interface.encodeFunctionData("grantSessionWithSignature", [grant, signature]),
-      });
+      const receipt = await sender.submit(
+        `session:${grant.account}:${grant.session}:${grant.nonce}`,
+        {
+          to: config.clearingAddress,
+          data: clearing.interface.encodeFunctionData("grantSessionWithSignature", [grant, signature]),
+        },
+        { deadline: Number(grant.deadline) },
+      );
       return {
         status: "active",
         session: grant.session,

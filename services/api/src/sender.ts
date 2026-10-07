@@ -49,6 +49,10 @@ export interface SenderOptions {
   maxValue?: bigint;
   dailyBudgetWei?: bigint;
 }
+export interface SubmitOptions {
+  /** Unix seconds after which a not-yet-journaled operation is dropped instead of broadcast. */
+  deadline?: number;
+}
 interface StoredTransaction {
   operation_id: string;
   nonce: number;
@@ -88,8 +92,13 @@ export class DurableSender {
     `);
   }
 
-  submit(operationId: string, request: TransactionRequest) {
-    return this.serialize(() => this.submitLocked(operationId, request));
+  /**
+   * Queue a sponsored operation. `deadline` (Unix seconds) is the signed action's own expiry: a new
+   * operation still queued behind the single lane when it passes is dropped unsigned instead of
+   * spending gas on a transaction the contract would reject. Journaled operations always resume.
+   */
+  submit(operationId: string, request: TransactionRequest, submitOptions: SubmitOptions = {}) {
+    return this.serialize(() => this.submitLocked(operationId, request, submitOptions));
   }
 
   /**
@@ -119,7 +128,11 @@ export class DurableSender {
     return run;
   }
 
-  private async submitLocked(operationId: string, request: TransactionRequest): Promise<IncludedReceipt> {
+  private async submitLocked(
+    operationId: string,
+    request: TransactionRequest,
+    { deadline }: SubmitOptions,
+  ): Promise<IncludedReceipt> {
     let stored = this.database
       ?.prepare(
         "SELECT operation_id,nonce,tx_hash,raw_tx,status FROM sender_transactions WHERE operation_id=?",
@@ -138,6 +151,8 @@ export class DurableSender {
         .get() as { operation_id: string } | undefined;
       if (unresolved)
         throw new Error(`unresolved sponsor operation ${unresolved.operation_id} blocks new submission`);
+      if (deadline !== undefined && Date.now() >= deadline * 1_000)
+        throw new Error(`operation ${operationId} expired before broadcast`);
       stored = await this.signInitial(operationId, request);
       this.checkBudgetLimits(stored);
       this.writeInitial(stored);

@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { MARGIN_TIERS, QUOTE_MODEL_VERSION, marketMarginView } from "../../../packages/shared/src/pricing.js";
 import type { ChainReader } from "./chain.js";
@@ -15,6 +16,14 @@ import type { QuoteEngine } from "./quoting.js";
 const UNRESOLVED_SENDER_STATUSES = new Set(["ambiguous", "reorged"]);
 /** Longest `/v1/config` waits on the margin parameter read before answering without it. */
 const CONFIG_CHAIN_READ_MS = 1_500;
+
+/** Constant-time bearer check. Both sides are hashed first so neither the comparison time nor
+ * an early length mismatch reveals anything about the configured token. */
+export function operationsTokenMatches(header: string | undefined, token: string | undefined) {
+  if (!token || typeof header !== "string") return false;
+  const digest = (value: string) => createHash("sha256").update(value, "utf8").digest();
+  return timingSafeEqual(digest(header), digest(`Bearer ${token}`));
+}
 
 export function senderHealthy(rows: ReadonlyArray<Record<string, unknown>> | undefined) {
   return !rows?.some((row) => UNRESOLVED_SENDER_STATUSES.has(String(row.status)));
@@ -45,7 +54,7 @@ export function registerOperationsRoutes(
   }));
 
   app.get("/internal/metrics", async (request, reply) => {
-    if (!options.operationsToken || request.headers.authorization !== `Bearer ${options.operationsToken}`)
+    if (!operationsTokenMatches(request.headers.authorization, options.operationsToken))
       return reply.code(401).send({ error: "unauthorized" });
     const { grossReservations, flowRisk, prices } = ctx;
     return {

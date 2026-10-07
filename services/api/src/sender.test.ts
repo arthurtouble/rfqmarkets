@@ -115,6 +115,25 @@ test("canonical revert is durable, unblocks later nonces and remains reorg-sensi
   database.close();
 });
 
+test("a queued operation whose signed deadline passed is dropped before signing", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    wallet = randomWallet(),
+    sender = new DurableSender(provider as never, wallet, database, options),
+    now = Math.floor(Date.now() / 1_000);
+  await assert.rejects(sender.submit("stale", request, { deadline: now - 1 }), /expired before broadcast/);
+  assert.equal(provider.broadcasts.length, 0, "an expired action must not spend sponsor gas");
+  assert.equal(rows(database).length, 0, "nothing is journaled for a dropped operation");
+  await sender.submit("fresh", request, { deadline: now + 120 });
+  assert.equal(rows(database)[0].nonce, 0, "the dropped operation did not consume a sponsor nonce");
+  // A journaled operation resumes even after its deadline: its bytes may already be on the network.
+  assert.equal(
+    (await sender.submit("fresh", request, { deadline: now - 1 })).hash,
+    rows(database)[0].tx_hash,
+  );
+  database.close();
+});
+
 test("parallel operations serialize onto unique consecutive sponsor nonces", async () => {
   const provider = new DeterministicProvider(),
     database = new DatabaseSync(":memory:"),
