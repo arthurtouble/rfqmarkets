@@ -1,0 +1,7 @@
+{
+  "$comment": "Market symbol -> Hyperliquid perp coin. A market without an entry is not hedged and stays reduce-only. See docs/operations/adding-a-market.md.",
+  "coins": {
+    "BTC": "BTC",
+    "ETH": "ETH"
+  }
+}

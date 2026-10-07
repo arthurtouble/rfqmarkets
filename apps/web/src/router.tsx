@@ -1,6 +1,6 @@
 import { Link, Outlet, createRootRoute, createRoute, createRouter, redirect, useRouterState } from "@tanstack/react-router";
 import { useIndexerSync } from "./data/queries.js";
-import { MARKETS, type Market } from "./lib/types.js";
+import type { Market } from "./lib/types.js";
 import { AccountPage } from "./account/AccountPage.js";
 import { MarketsPage } from "./markets/MarketsPage.js";
 import { PortfolioPage } from "./portfolio/PortfolioPage.js";
@@ -11,7 +11,8 @@ import { usePrefs } from "./ui/prefs.js";
 import { useTrader } from "./wallet/trader.js";
 import { WalletMenu } from "./wallet/WalletMenu.js";
 
-const isMarket = (value: string): value is Market => (MARKETS as readonly string[]).includes(value);
+// Markets are listed on chain and can be added any time, so any symbol-shaped path is a market.
+const isMarket = (value: string): value is Market => /^[A-Z0-9]{2,12}$/.test(value);
 const LAST_MARKET = "rfq.market";
 const lastMarket = (): Market => { try { const value = localStorage.getItem(LAST_MARKET) ?? ""; return isMarket(value) ? value : "BTC"; } catch { return "BTC"; } };
 

@@ -32,6 +32,7 @@ export const clearingApiAbi = [
   "event TradeExecuted(bytes32 indexed intentHash,address indexed account,uint8 market,int256 baseDelta,uint256 price,uint256 fee)",
   "event PositionClosed(address indexed account,uint8 indexed market,int256 baseDelta,uint256 price)",
   "function executeTrade((address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,bool reduceOnly),(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion),bytes,bytes,bytes,bytes) payable",
+  "function executeTriggeredTrade((address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,bool reduceOnly),(uint256 triggerPrice,bool triggerAbove),(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion),bytes,bytes,bytes,bytes) payable",
   "function depositWithAuthorization(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)",
   "function withdrawWithSignature(address,address,uint256,uint256,uint64,bytes)",
   "function cancelNonceWithSignature(address,uint256,uint64,bytes)",

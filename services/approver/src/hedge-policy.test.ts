@@ -83,7 +83,7 @@ test("checkHedgeRisk enforces reduce-only, guarded limits and venue execution sp
   );
   const execution = { estimatedCostBps: 3.2, latencyMs: 1, basisBps: -2, depthUsdc: "0", observedAtMs: now };
   const withExecution = snapshot("normal");
-  withExecution.markets.BTC.execution = execution;
+  withExecution.markets.BTC!.execution = execution;
   assert.equal(
     error(checkHedgeRisk({ ...base, risk: withExecution })),
     "venue execution spread rejected",

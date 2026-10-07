@@ -1,9 +1,11 @@
 import { ExpiryIndex } from "./expiry-index.js";
-import { makerStress, type ExposureBook } from "./exposure-admission.js";
+import { marketStress, type ExposureBook } from "./exposure-admission.js";
+import { MAX_MARKETS, marketRegistry } from "./markets.js";
 import { BASE, abs, high128, low128 } from "./numeric.js";
 
 export interface GrossReservation {
-  market: 0 | 1;
+  /** Market index (`TradeIntent.market`). */
+  market: number;
   baseDelta: bigint;
   reduceOnly: boolean;
   deadline: number;
@@ -11,8 +13,9 @@ export interface GrossReservation {
 }
 /** Settled net notional, packed net limit words and maker capital used for capital/stress admission. */
 export interface GrossRiskContext {
-  net: [bigint, bigint];
-  netLimits: [bigint, bigint];
+  /** Per market index. */
+  net: readonly bigint[];
+  netLimits: readonly bigint[];
   backing: bigint;
   floor: bigint;
 }
@@ -25,7 +28,9 @@ export function assertGrossReservation(input: GrossReservation) {
     !Number.isSafeInteger(input.deadline * 1000) ||
     input.deadline < 0 ||
     !input.baseDelta ||
-    (input.market !== 0 && input.market !== 1)
+    !Number.isInteger(input.market) ||
+    input.market < 0 ||
+    input.market >= MAX_MARKETS
   )
     throw new Error("invalid gross reservation");
 }
@@ -33,10 +38,8 @@ export function assertGrossReservation(input: GrossReservation) {
 export class GrossReservationBook {
   private items = new Map<string, GrossReservation>();
   private expiry = new ExpiryIndex();
-  private totals = [
-    { longBase: 0n, shortBase: 0n },
-    { longBase: 0n, shortBase: 0n },
-  ];
+  /** Reserved gross base per market index; grows as markets are reserved. */
+  private totals: Array<{ longBase: bigint; shortBase: bigint }> = [];
   private totalMakerDebit = 0n;
   finalizedBlock = -1;
   finalizedTimestamp = 0;
@@ -106,8 +109,12 @@ export class GrossReservationBook {
     }
     return expired;
   }
-  bounds(exclude?: string) {
-    const result = this.totals.map((item) => ({ ...item }));
+  /** Reserved gross base per market index, for at least `count` markets (zero-filled). */
+  bounds(exclude?: string, count = marketRegistry.count) {
+    const result = Array.from({ length: Math.max(count, this.totals.length) }, (_, market) => ({
+      longBase: this.totals[market]?.longBase ?? 0n,
+      shortBase: this.totals[market]?.shortBase ?? 0n,
+    }));
     const old = exclude ? this.items.get(exclude) : undefined;
     if (old && !old.reduceOnly) {
       const side = old.baseDelta > 0n ? "longBase" : "shortBase";
@@ -122,13 +129,16 @@ export class GrossReservationBook {
   admit(
     id: string,
     item: GrossReservation,
-    books: [ExposureBook, ExposureBook],
-    asks: [bigint, bigint],
+    /** Every registered market's exposure book and ask, by index. */
+    books: readonly ExposureBook[],
+    asks: readonly bigint[],
     blockNumber: number,
     risk?: GrossRiskContext,
   ) {
     assertGrossReservation(item);
     if (blockNumber < this.finalizedBlock) return false;
+    if (books.length !== asks.length || item.market >= books.length) return false;
+    if (risk && (risk.net.length !== books.length || risk.netLimits.length !== books.length)) return false;
     if (!books.every((book) => book.ready)) return false;
     const old = this.items.get(id);
     if (
@@ -138,10 +148,10 @@ export class GrossReservationBook {
       return false;
     // The on-chain reduceOnly invariant guarantees zero additional gross capacity.
     if (item.reduceOnly) return true;
-    const totals = this.bounds(id),
+    const totals = this.bounds(id, books.length),
       side = item.baseDelta > 0n ? "longBase" : "shortBase";
     totals[item.market][side] += abs(item.baseDelta);
-    for (let market = 0; market < 2; market++) {
+    for (let market = 0; market < books.length; market++) {
       const book = books[market],
         long = book.longBase + totals[market].longBase,
         short = book.shortBase + totals[market].shortBase,
@@ -157,16 +167,20 @@ export class GrossReservationBook {
     if (risk) {
       const available = risk.backing - this.capitalDebit(id) - item.makerDebit;
       if (available < risk.floor) return false;
-      const low = [risk.net[0], risk.net[1]],
-        high = [risk.net[0], risk.net[1]];
-      for (let market = 0; market < 2; market++) {
+      const low = [...risk.net],
+        high = [...risk.net];
+      let stress = 0n;
+      for (let market = 0; market < books.length; market++) {
         low[market] -= (totals[market].shortBase * asks[market]) / BASE;
         high[market] += (totals[market].longBase * asks[market]) / BASE;
         const cap = high128(risk.netLimits[market]);
         if (abs(low[market]) > cap || abs(high[market]) > cap) return false;
+        // Stress is a sum of per-market terms, so the worst execution subset takes each market's worse extreme.
+        const lowStress = marketStress(low[market], market),
+          highStress = marketStress(high[market], market);
+        stress += lowStress > highStress ? lowStress : highStress;
       }
-      for (const btc of [low[0], high[0]])
-        for (const eth of [low[1], high[1]]) if (makerStress(btc, eth) > available / 4n) return false;
+      if (stress > available / 4n) return false;
     }
     return true;
   }
@@ -174,6 +188,7 @@ export class GrossReservationBook {
     this.totalMakerDebit += item.makerDebit * sign;
     if (item.reduceOnly) return;
     const side = item.baseDelta > 0n ? "longBase" : "shortBase";
+    while (this.totals.length <= item.market) this.totals.push({ longBase: 0n, shortBase: 0n });
     this.totals[item.market][side] += abs(item.baseDelta) * sign;
   }
 }

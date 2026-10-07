@@ -4,18 +4,23 @@ import {
   approvalToWire,
   hashApproval,
   hashIntent,
+  intentDigest,
   intentToWire,
   intentTypes,
-  recoverIntentSigner,
+  recoverDigestSigner,
+  triggerToWire,
   type MakerApproval,
   type TradeIntent,
+  type Trigger,
 } from "../../../packages/shared/src/eip712.js";
+import { maskAllows } from "../../../packages/shared/src/clearing-structs.js";
 import type { ExposureBook, ExposureMarket } from "../../../packages/shared/src/exposure-admission.js";
 import { pendingMakerDebit } from "../../../packages/shared/src/exposure-admission.js";
 import { finalizedClock } from "../../../packages/shared/src/finalized-clock.js";
 import { finalizeGross, persistGross } from "../../../packages/shared/src/gross-reservation-journal.js";
 import type { GrossReservation } from "../../../packages/shared/src/gross-reservations.js";
 import { BASE, ceilDiv, formatUsdc, type Quote } from "../../../packages/shared/src/policy.js";
+import { triggerReached, triggeredFillDelta } from "../../../packages/shared/src/trigger.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import { APPROVAL_QUORUM, ApprovalCollector, distinctSigners, type ApproverSignature } from "./approvals.js";
 import { encodeLocalReport, type ChainMarketState, type ChainReader } from "./chain.js";
@@ -24,7 +29,7 @@ import type { DevChain } from "./dev-chain.js";
 import { Reply } from "./http.js";
 import { recordFlowFill } from "./journal.js";
 import type { MarketStream } from "./market-stream.js";
-import { abs, unixSeconds } from "./markets.js";
+import { abs, marketIndex, marketRegistry, unixSeconds } from "./markets.js";
 import { validOwnerSignature } from "./owner-signature.js";
 import { publicError } from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
@@ -57,10 +62,11 @@ type CompletedSubmission = {
 type GrossSnapshot = {
   blockNumber: number;
   blockTimestamp: number;
-  books: [ExposureBook, ExposureBook];
-  states: [ExposureMarket, ExposureMarket];
+  /** Every registered market, by index. */
+  books: ExposureBook[];
+  states: ExposureMarket[];
   position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
-  netLimits: [bigint, bigint];
+  netLimits: bigint[];
   backing: bigint;
   floor: bigint;
   clock: Awaited<ReturnType<typeof finalizedClock>>;
@@ -72,6 +78,7 @@ type Admitted = {
   report: string;
   approvals: ApproverSignature[];
   oracleFee: bigint;
+  trigger?: Trigger;
 };
 
 type TradeTransaction = {
@@ -187,7 +194,7 @@ export class ExecutionService {
       feeNotional = protectedNotional > quote.notional ? protectedNotional : quote.notional;
     return {
       account: getAddress(account),
-      market: quote.market === "BTC" ? 0 : 1,
+      market: marketIndex(quote.market),
       baseDelta: quote.baseDelta,
       limitPrice: quote.worstPrice,
       maxFee: ceilDiv(feeNotional * quote.fee, quote.notional),
@@ -262,18 +269,18 @@ export class ExecutionService {
   }
 
   /** EOA signature, ERC-1271 wallet, or an active session key whose limits cover this intent. */
-  private async authorized(intent: TradeIntent, signature: string, blockNumber: number) {
+  private async authorized(intent: TradeIntent, signature: string, blockNumber: number, trigger?: Trigger) {
     const { domain, provider, clearing } = this.ctx;
     try {
       let signer: string | undefined;
       try {
-        signer = recoverIntentSigner(domain, intent, signature);
+        signer = recoverDigestSigner(domain, intent, signature, trigger);
       } catch {}
       if (signer === intent.account) return true;
       if (
         await validOwnerSignature(
           intent.account,
-          hashIntent(domain, intent),
+          intentDigest(domain, intent, trigger),
           signature,
           provider,
           blockNumber,
@@ -285,7 +292,7 @@ export class ExecutionService {
       return (
         getAddress(session.account) === intent.account &&
         BigInt(session.validUntil) >= intent.deadline &&
-        (Number(session.marketMask) & (1 << intent.market)) !== 0 &&
+        maskAllows(session.marketMask, intent.market) &&
         BigInt(session.maxFee) >= intent.maxFee
       );
     } catch {
@@ -307,16 +314,17 @@ export class ExecutionService {
     }
     if (!binding || binding.account !== account || binding.nonce !== request.nonce)
       return Reply.error(409, "quote preparation mismatch");
-    const intent = ctx.quotes.preparedIntents.get(quote.quoteId);
+    const intent = ctx.quotes.preparedIntents.get(quote.quoteId),
+      trigger = ctx.quotes.triggers.get(quote.quoteId);
     if (
       !intent ||
       intent.account !== account ||
       intent.nonce !== BigInt(request.nonce) ||
-      !(await this.authorized(intent, request.userSignature, versions.blockNumber))
+      !(await this.authorized(intent, request.userSignature, versions.blockNumber, trigger))
     )
       return Reply.error(401, "invalid user signature");
 
-    const admitted = await this.admitAndCollect(intent, request.userSignature, quote);
+    const admitted = await this.admitAndCollect(intent, request.userSignature, quote, trigger);
     if (admitted instanceof Reply) return admitted;
     this.recordApproval(intent, request.userSignature, admitted);
     const transaction = await this.submitTrade(intent, request.userSignature, admitted);
@@ -325,6 +333,7 @@ export class ExecutionService {
     const result = {
       domain: ctx.wireDomain,
       intent: intentToWire(intent),
+      ...(trigger ? { trigger: triggerToWire(trigger) } : {}),
       userSignature: request.userSignature,
       approval: approvalToWire(admitted.approval),
       approvals: admitted.approvals,
@@ -367,30 +376,34 @@ export class ExecutionService {
       block = await provider.getBlock(blockNumber);
     if (!block) return null;
     const blockTag = { blockTag: blockNumber };
-    const [btcBook, ethBook, btcRaw, ethRaw, positionRaw, btcLimit, ethLimit, backing, floor, clock] =
-      await Promise.all([
-        clearing.exposureState(0, blockTag),
-        clearing.exposureState(1, blockTag),
-        clearing.markets(0, blockTag),
-        clearing.markets(1, blockTag),
-        clearing.positionOf(intent.account, intent.market, blockTag),
-        clearing.marketLimitWord(0, blockTag),
-        clearing.marketLimitWord(1, blockTag),
-        clearing.makerBacking(blockTag),
-        clearing.baseRiskCapitalTarget(blockTag),
-        finalizedClock(provider, blockNumber, block.timestamp),
-      ]);
+    // Gross, net and stress admission covers every market the chain has at this block.
+    await marketRegistry.ensureCount(await clearing.marketCount(blockTag));
+    const indexes = marketRegistry.all().map((market) => market.index);
+    const [books, rawStates, limitWords, positionRaw, backing, floor, clock] = await Promise.all([
+      Promise.all(indexes.map((index) => clearing.exposureState(index, blockTag))),
+      Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
+      Promise.all(indexes.map((index) => clearing.marketLimitWord(index, blockTag))),
+      clearing.positionOf(intent.account, intent.market, blockTag),
+      clearing.makerBacking(blockTag),
+      clearing.baseRiskCapitalTarget(blockTag),
+      finalizedClock(provider, blockNumber, block.timestamp),
+    ]);
     return {
       blockNumber,
       blockTimestamp: block.timestamp,
-      books: [btcBook, ethBook],
-      states: [toExposureMarket(btcRaw), toExposureMarket(ethRaw)],
+      books: books.map((book) => ({
+        longBase: BigInt(book.longBase),
+        shortBase: BigInt(book.shortBase),
+        limits: BigInt(book.limits),
+        ready: Boolean(book.ready),
+      })),
+      states: rawStates.map(toExposureMarket),
       position: {
         size: BigInt(positionRaw.size),
         entryPrice: BigInt(positionRaw.entryPrice),
         lastFundingIndex: BigInt(positionRaw.lastFundingIndex),
       },
-      netLimits: [BigInt(btcLimit), BigInt(ethLimit)],
+      netLimits: limitWords.map((word) => BigInt(word)),
       backing: BigInt(backing),
       floor: BigInt(floor),
       clock,
@@ -405,10 +418,14 @@ export class ExecutionService {
     intent: TradeIntent,
     userSignature: string,
     original: Quote,
+    trigger?: Trigger,
   ): Promise<Reply | Admitted> {
     const { ctx } = this,
-      intentHash = hashIntent(ctx.domain, intent),
-      minimumBudget = ctx.options.minSettlementInclusionSeconds ?? DEFAULT_MIN_INCLUSION_SECONDS;
+      intentHash = intentDigest(ctx.domain, intent, trigger),
+      minimumBudget = ctx.options.minSettlementInclusionSeconds ?? DEFAULT_MIN_INCLUSION_SECONDS,
+      // A triggered quote prices the fill (a reduce-only trigger clamped to the position); the
+      // contract re-derives that clamp, so it is re-checked against the gross snapshot below.
+      fill: TradeIntent = trigger ? { ...intent, baseDelta: original.baseDelta } : intent;
     let quote = original;
     // Optimistic reads precede a synchronous durable admission section. Remote
     // quorum and simulation run after publication and outside the lock.
@@ -419,7 +436,7 @@ export class ExecutionService {
           { market: quote.market, side: quote.side, amount: formatUsdc(quote.notional) },
           {
             persist: false,
-            exactBaseDelta: intent.baseDelta,
+            exactBaseDelta: fill.baseDelta,
             reductionAccount: intent.account,
             excludeReservation: original.quoteId,
           },
@@ -429,6 +446,9 @@ export class ExecutionService {
       }
       if (exceedsProtection(intent, refreshed.quote))
         return Reply.error(409, "price moved beyond signed protection");
+      // The settlement report carries this snapshot's touch; the contract checks its mid.
+      if (trigger && !triggerReached(refreshed.quote.snapshot.bid, refreshed.quote.snapshot.ask, trigger))
+        return Reply.error(409, "trigger no longer reached");
       quote = { ...refreshed.quote, quoteId: original.quoteId };
       const { versions, oracleReport, reservationRevision } = refreshed;
       ctx.prune();
@@ -470,6 +490,7 @@ export class ExecutionService {
           userSignature,
           approval: approvalToWire(approval),
           quote: quoteToWire(quote),
+          ...(trigger ? { trigger: triggerToWire(trigger) } : {}),
           report,
           oracleAgeMs: Math.max(0, Date.now() - quote.snapshot.observedAtMs),
         };
@@ -477,6 +498,8 @@ export class ExecutionService {
       if (ctx.clearing && ctx.provider) {
         const snapshot = await this.readGrossSnapshot(intent);
         if (!snapshot) return Reply.error(503, "gross reservation snapshot unavailable");
+        if (trigger && triggeredFillDelta(intent, snapshot.position.size) !== fill.baseDelta)
+          return Reply.error(409, "position changed since the trigger was priced");
         grossSnapshot = snapshot;
       }
       const release = await this.acquireReservationLock();
@@ -484,6 +507,7 @@ export class ExecutionService {
       try {
         reserved = this.reserveLocked({
           intent,
+          fill,
           quote,
           approval,
           digest,
@@ -528,7 +552,7 @@ export class ExecutionService {
           await chain.provider.call({
             from: ctx.sponsor.address,
             to: chain.config.clearingAddress,
-            data: this.executeTradeData(intent, approval, report, userSignature, selected),
+            data: this.executeTradeData(intent, approval, report, userSignature, selected, trigger),
             value: oracleFee,
           });
         } catch (error) {
@@ -539,7 +563,7 @@ export class ExecutionService {
           });
         }
       }
-      return { quote, approval, report, approvals: selected, oracleFee };
+      return { quote, approval, report, approvals: selected, oracleFee, trigger };
     }
     // Every path through the final attempt returns; a conflict retries the same attempt.
     throw new Error("approval admission did not converge");
@@ -548,6 +572,8 @@ export class ExecutionService {
   /** Synchronous admission: no await may separate the checks from the durable reservation. */
   private reserveLocked(input: {
     intent: TradeIntent;
+    /** The trade the approval prices; equal to `intent` except for a clamped reduce-only trigger. */
+    fill: TradeIntent;
     quote: Quote;
     approval: MakerApproval;
     digest: string;
@@ -558,12 +584,12 @@ export class ExecutionService {
   }): Reply | typeof RESERVATION_CONFLICT | undefined {
     const { ctx } = this,
       { journal, grossReservations, pending } = ctx,
-      { intent, quote, approval, grossSnapshot } = input;
+      { intent, fill, quote, approval, grossSnapshot } = input;
     ctx.prune();
     if (pending.revision !== input.reservationRevision) return RESERVATION_CONFLICT;
     let grossItem: GrossReservation = {
-      market: intent.market as 0 | 1,
-      baseDelta: intent.baseDelta,
+      market: intent.market,
+      baseDelta: fill.baseDelta,
       reduceOnly: intent.reduceOnly,
       deadline: Number(approval.deadline),
       makerDebit: 2n * BigInt(quote.notional),
@@ -572,21 +598,23 @@ export class ExecutionService {
       const { blockNumber, blockTimestamp, books, states, position, netLimits, backing, floor, clock } =
         grossSnapshot;
       if (clock) this.finalizeReservations(clock.block, clock.timestamp, clock.hash);
-      const asks: [bigint, bigint] = [BigInt(states[0].lastAsk), BigInt(states[1].lastAsk)];
+      if (intent.market >= states.length) return Reply.error(409, "unknown market");
+      const asks = states.map((state) => BigInt(state.lastAsk));
       asks[intent.market] = quote.snapshot.ask;
-      const other = 1 - intent.market,
-        otherState = states[other],
-        priorGross = grossReservations.bounds(quote.quoteId)[other];
-      if (
-        priorGross.longBase + priorGross.shortBase > 0n &&
-        (Number(otherState.lastPriceTime) === 0 ||
-          blockTimestamp - Number(otherState.lastPriceTime) > CROSS_MARKET_PRICE_MAX_AGE_SECONDS)
-      )
-        return Reply.error(503, "outstanding gross risk requires fresh cross-market price");
+      const priorGross = grossReservations.bounds(quote.quoteId, states.length);
+      for (const [other, otherState] of states.entries()) {
+        if (other === intent.market) continue;
+        if (
+          priorGross[other].longBase + priorGross[other].shortBase > 0n &&
+          (Number(otherState.lastPriceTime) === 0 ||
+            blockTimestamp - Number(otherState.lastPriceTime) > CROSS_MARKET_PRICE_MAX_AGE_SECONDS)
+        )
+          return Reply.error(503, "outstanding gross risk requires fresh cross-market price");
+      }
       const net = states.map(
         (state) =>
           (BigInt(state.aggregateBase) * (BigInt(state.lastBid) + BigInt(state.lastAsk))) / 2n / BASE,
-      ) as [bigint, bigint];
+      );
       const capitalMarket = {
         ...states[intent.market],
         lastBid: quote.snapshot.bid,
@@ -598,7 +626,7 @@ export class ExecutionService {
         makerDebit: pendingMakerDebit({
           position,
           market: capitalMarket,
-          delta: intent.baseDelta,
+          delta: fill.baseDelta,
           executionPrice: approval.executionPrice,
           timestamp: BigInt(blockTimestamp),
           deadline: approval.deadline,
@@ -697,15 +725,23 @@ export class ExecutionService {
     report: string,
     userSignature: string,
     approvals: ApproverSignature[],
+    trigger?: Trigger,
   ) {
-    return this.ctx.clearing!.interface.encodeFunctionData("executeTrade", [
-      intent,
-      approval,
-      report,
-      userSignature,
-      approvals[0].signature,
-      approvals[1].signature,
-    ]);
+    const signatures = [userSignature, approvals[0].signature, approvals[1].signature];
+    return trigger
+      ? this.ctx.clearing!.interface.encodeFunctionData("executeTriggeredTrade", [
+          intent,
+          trigger,
+          approval,
+          report,
+          ...signatures,
+        ])
+      : this.ctx.clearing!.interface.encodeFunctionData("executeTrade", [
+          intent,
+          approval,
+          report,
+          ...signatures,
+        ]);
   }
 
   /** Sponsor the trade and confirm its settlement event; without a chain the approval is the result. */
@@ -716,14 +752,14 @@ export class ExecutionService {
   ): Promise<Reply | TradeTransaction | undefined> {
     const { ctx } = this,
       { chain, sender, journal } = ctx,
-      { quote, approval, report, approvals, oracleFee } = admitted;
+      { quote, approval, report, approvals, oracleFee, trigger } = admitted;
     if (!chain || !sender) return undefined;
     const { clearing, provider, config } = chain;
     try {
       await this.dev.autofund(intent.account, quote.quoteId);
       const receipt = await sender.submit(`trade:${quote.quoteId}`, {
         to: config.clearingAddress,
-        data: this.executeTradeData(intent, approval, report, userSignature, approvals),
+        data: this.executeTradeData(intent, approval, report, userSignature, approvals, trigger),
         value: oracleFee,
         gasLimit: TRADE_GAS_LIMIT,
       });
@@ -754,10 +790,12 @@ export class ExecutionService {
       }
       const collateral = await clearing.collateralOf(intent.account);
       const position = await clearing.positionOf(intent.account, intent.market);
+      ctx.notifyPositionChange(intent.account, quote.market);
       journal
         ?.prepare("UPDATE commitments SET status='included', updated_ms=? WHERE quote_id=?")
         .run(Date.now(), quote.quoteId);
-      if (ctx.pending.delete(quote.quoteId)) ctx.settled[quote.market] += quote.delta;
+      if (ctx.pending.delete(quote.quoteId))
+        ctx.settled[quote.market] = (ctx.settled[quote.market] ?? 0n) + quote.delta;
       const fill = {
         market: quote.market,
         side: quote.side,

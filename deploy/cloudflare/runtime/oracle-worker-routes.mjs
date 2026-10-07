@@ -19,3 +19,54 @@ export function oracleWorkerSettings(env) {
   if (!LOCATION_HINTS.includes(locationHint)) throw new Error("ORACLE_LOCATION_HINT is not a location hint");
   return { index, instance: `oracle-node-${index}`, locationHint };
 }
+
+/** The launch markets a node prices when neither ORACLE_MARKETS nor a market registry is configured. */
+export const DEFAULT_ORACLE_MARKETS = Object.freeze([
+  { id: 0, symbol: "BTC" },
+  { id: 1, symbol: "ETH" },
+]);
+
+/** Parses the worker's ORACLE_MARKETS var (`0:BTC,1:ETH,2:SOL`); unset means the launch markets. */
+export function oracleWorkerMarkets(env) {
+  const text = env.ORACLE_MARKETS?.trim();
+  if (!text) return DEFAULT_ORACLE_MARKETS.map((market) => ({ ...market }));
+  return text.split(",").map((entry) => {
+    const [id, symbol] = entry.split(":").map((part) => part.trim());
+    if (
+      !/^\d+$/.test(id ?? "") ||
+      Number(id) > 127 ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,30}$/.test(symbol ?? "")
+    )
+      throw new Error(`invalid ORACLE_MARKETS entry ${entry}`);
+    return { id: Number(id), symbol };
+  });
+}
+
+/**
+ * The container's market env. With an ORACLE_RPC_URL secret and a clearing proxy in the deployment, the
+ * node reads the clearing registry and prices every market it has a symbol table entry for
+ * (ORACLE_MARKETS, when set, restricts that list); otherwise it prices exactly the configured markets.
+ */
+export function oracleNodeMarketEnv(env, deployment) {
+  const markets = oracleWorkerMarkets(env),
+    vars = { ORACLE_MARKETS: markets.map((market) => `${market.id}:${market.symbol}`).join(",") },
+    rpcUrl = env.ORACLE_RPC_URL?.trim(),
+    clearing = deployment?.contracts?.clearingProxy;
+  if (rpcUrl && clearing) {
+    vars.ORACLE_RPC_URL = rpcUrl;
+    vars.ORACLE_CLEARING_ADDRESS = clearing;
+    // Only an explicit list restricts the registry.
+    if (!env.ORACLE_MARKETS?.trim()) delete vars.ORACLE_MARKETS;
+  }
+  return vars;
+}
+
+/** The markets whose candles to copy into history: what the node reports pricing, else the configured list. */
+export function oracleSyncMarkets(health, fallback) {
+  const reported = Array.isArray(health?.markets)
+    ? health.markets
+        .filter((item) => Number.isInteger(item?.market) && typeof item?.symbol === "string")
+        .map((item) => ({ id: item.market, symbol: item.symbol }))
+    : [];
+  return reported.length ? reported : fallback;
+}

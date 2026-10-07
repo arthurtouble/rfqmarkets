@@ -10,7 +10,7 @@ export type FlowFill = {
 
 /** Market-wide post-trade markout estimator. Quote requests never enter this state. */
 export class FlowRiskTracker {
-  private fills: Record<Market, Array<Omit<FlowFill, "market">>> = { BTC: [], ETH: [] };
+  private fills = new Map<Market, Array<Omit<FlowFill, "market">>>();
   constructor(
     private readonly capacity = 256,
     private readonly halfLifeMs = 30_000,
@@ -19,7 +19,8 @@ export class FlowRiskTracker {
     for (const fill of initial) this.record(fill.market, fill);
   }
   record(market: Market, fill: Omit<FlowFill, "market">) {
-    const items = this.fills[market];
+    let items = this.fills.get(market);
+    if (!items) this.fills.set(market, (items = []));
     items.push(fill);
     if (items.length > this.capacity) items.splice(0, items.length - this.capacity);
   }
@@ -28,7 +29,7 @@ export class FlowRiskTracker {
     if (mid <= 0n) return 10_000;
     let weighted = 0,
       total = 0;
-    for (const fill of this.fills[market]) {
+    for (const fill of this.fills.get(market) ?? []) {
       const age = nowMs - fill.atMs;
       if (age < 250 || age > this.halfLifeMs * 8) continue;
       const move = fill.side === "buy" ? mid - fill.price : fill.price - mid;
@@ -42,11 +43,9 @@ export class FlowRiskTracker {
     return total ? Math.round(Math.min(1, weighted / total) * 10_000) : 0;
   }
   size(market: Market) {
-    return this.fills[market].length;
+    return this.fills.get(market)?.length ?? 0;
   }
   entries() {
-    return (["BTC", "ETH"] as Market[]).flatMap((market) =>
-      this.fills[market].map((fill) => ({ market, ...fill })),
-    );
+    return [...this.fills].flatMap(([market, fills]) => fills.map((fill) => ({ market, ...fill })));
   }
 }

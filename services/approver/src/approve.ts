@@ -1,8 +1,14 @@
 import type { ApproverPayload } from "../../../packages/shared/src/approver-payload.js";
 import { finalizedClock } from "../../../packages/shared/src/finalized-clock.js";
 import type { GrossReservation } from "../../../packages/shared/src/gross-reservations.js";
-import { hashApproval, hashIntent } from "../../../packages/shared/src/eip712.js";
-import { MARKETS, marketIndex, type MarketIndex } from "../../../packages/shared/src/markets.js";
+import { hashApproval, intentDigest } from "../../../packages/shared/src/eip712.js";
+import { triggerReached, triggeredFillDelta } from "../../../packages/shared/src/trigger.js";
+import {
+  marketIndex,
+  marketName,
+  marketRegistry,
+  type MarketIndex,
+} from "../../../packages/shared/src/markets.js";
 import { BASE, abs } from "../../../packages/shared/src/numeric.js";
 import type { OracleObservation } from "../../../packages/shared/src/oracle-report.js";
 import { checkUserAuthorization, checkUserSignature, recoverSigner } from "./authorization.js";
@@ -72,7 +78,13 @@ export async function approve(
     maxFutureSeconds = options.maxFutureSeconds ?? DEFAULT_MAX_FUTURE_SECONDS;
   const envelope = decodeEnvelope(input);
   if (!envelope) return reject("invalid typed data", 400);
-  const { domain, intent, approval } = envelope;
+  // `fill` is the trade the approval prices: the signed intent, or a clamped reduce-only trigger.
+  const { domain, intent, approval, trigger, fill } = envelope;
+  // A market added on chain since the last registry refresh: refresh once before judging it.
+  if (!marketRegistry.has(input.quote.market) || !marketRegistry.hasIndex(intent.market))
+    await marketRegistry.ensureCount(intent.market + 1).catch(() => {});
+  if (!marketRegistry.has(input.quote.market) || !marketRegistry.hasIndex(intent.market))
+    return reject("unknown market");
   const nowMs = Date.now();
   const offChain: Check =
     checkDomain(domain, {
@@ -80,19 +92,21 @@ export async function approve(
       verifyingContract: options.expectedVerifyingContract,
     }) ??
     (chain ? undefined : checkWallClockExpiry(intent, approval, nowMs, maxFutureSeconds)) ??
+    // Without a chain the position, and so a reduce-only clamp, cannot be verified: fail closed.
+    (chain || fill.baseDelta === intent.baseDelta ? undefined : reject("triggered fill unverifiable")) ??
     checkVersions(approval, {
       epoch: options.expectedEpoch,
       policyVersion: options.expectedPolicyVersion,
       signerSetVersion: options.expectedSignerSetVersion,
     }) ??
     checkQuoteModel(input.quote.spread, options.expectedQuoteModelVersion) ??
-    checkQuoteSpread(input.quote, input.intent.baseDelta) ??
-    checkEnvelopeConsistency(input.quote, intent, approval);
+    checkQuoteSpread(input.quote, fill.baseDelta.toString()) ??
+    checkEnvelopeConsistency(input.quote, fill, approval);
   if (offChain) return offChain;
 
   const market = marketIndex(input.quote.market),
-    intentHash = hashIntent(domain, intent),
-    intentSigner = recoverSigner(domain, intent, input.userSignature);
+    intentHash = intentDigest(domain, intent, trigger),
+    intentSigner = recoverSigner(domain, intent, input.userSignature, trigger);
   const signatureCheck: Check =
     checkUserSignature({
       approval,
@@ -101,7 +115,14 @@ export async function approve(
       account: intent.account,
       requireAccountSigner: !chain,
     }) ??
-    checkPricePolicy({ quote: input.quote, intent, approval, nowMs, maxFutureSeconds, capNotional: !chain });
+    checkPricePolicy({
+      quote: input.quote,
+      intent: fill,
+      approval,
+      nowMs,
+      maxFutureSeconds,
+      capNotional: !chain,
+    });
   if (signatureCheck) return signatureCheck;
 
   const submitted = checkSubmittedReport({
@@ -115,6 +136,12 @@ export async function approve(
     checkWallClock: !chain,
   });
   if (submitted.rejection) return submitted.rejection;
+  // Off chain the trigger is checked on the submitted report (or the quote's touch without one);
+  // with a chain `chainChecks` checks it on the observation the adapter would actually settle.
+  if (!chain && trigger) {
+    const prices = safetyPrices(submitted.observation, input.quote);
+    if (!triggerReached(prices.bid, prices.ask, trigger)) return reject("trigger not reached");
+  }
 
   let grossContext: GrossContext | undefined;
   if (chain) {
@@ -157,11 +184,13 @@ async function chainChecks(
 ): Promise<Rejection | GrossContext> {
   const { options, journal } = context,
     { input, envelope, market, nowMs, maxFutureSeconds } = request,
-    { domain, intent, approval } = envelope;
+    { domain, approval, trigger } = envelope;
+  // Economics and exposure are judged on the fill; authorization and expiry on the signed intent.
+  const intent = envelope.fill;
   const read = await readChainState(chain, {
     chainId: domain.chainId,
     signer: context.signer,
-    intent,
+    intent: envelope.intent,
     intentHash: request.intentHash,
     intentSigner: request.intentSigner,
     userSignature: input.userSignature,
@@ -174,6 +203,10 @@ async function chainChecks(
     executionNotional = (abs(intent.baseDelta) * approval.executionPrice) / BASE;
   const policy = checkChainPolicy(snapshot, approval);
   if (policy) return policy;
+  // The contract clamps a reduce-only trigger to the position at execution; the approval must price
+  // exactly that fill at this approver's own read of the position.
+  if (trigger && triggeredFillDelta(envelope.intent, snapshot.position.size) !== intent.baseDelta)
+    return reject("triggered fill does not match position");
 
   let observation = request.observation;
   if (options.oracleMode === "signed") {
@@ -220,7 +253,7 @@ async function chainChecks(
     }
     const hedge = checkHedgeRisk({
       risk,
-      market: MARKETS[market],
+      market: marketName(market),
       nowMs,
       maxAgeMs: options.hedgeRisk.maxAgeMs,
       aggregateBase: selected.aggregateBase,
@@ -235,7 +268,9 @@ async function chainChecks(
 
   const prices = safetyPrices(observation, input.quote);
   const oracle: Check =
-    checkChainTimeOracle(observation, snapshot.blockTimestamp, maxFutureSeconds) ?? checkOracleWidth(prices);
+    checkChainTimeOracle(observation, snapshot.blockTimestamp, maxFutureSeconds) ??
+    checkOracleWidth(prices) ??
+    (trigger && !triggerReached(prices.bid, prices.ask, trigger) ? reject("trigger not reached") : undefined);
   if (oracle) return oracle;
 
   const markets = markedMarkets(
@@ -277,7 +312,7 @@ async function chainChecks(
 function signAndCommit(
   context: ApproverContext,
   input: ApproverPayload,
-  { domain, intent, approval }: Envelope,
+  { domain, fill: intent, approval }: Envelope,
   nowMs: number,
   grossContext: GrossContext | undefined,
 ): Rejection | SignedApproval {

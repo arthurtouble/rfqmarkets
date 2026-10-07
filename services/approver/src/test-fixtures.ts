@@ -6,13 +6,20 @@ import {
   DOMAIN_NAME,
   DOMAIN_VERSION,
   approvalToWire,
-  hashIntent,
+  intentDigest,
   intentToWire,
+  triggerToWire,
   type MakerApproval,
   type SigningDomain,
   type TradeIntent,
+  type Trigger,
 } from "../../../packages/shared/src/eip712.js";
-import { marketIndex, type Market } from "../../../packages/shared/src/markets.js";
+import {
+  encodeMarketSymbol,
+  marketIndex,
+  marketRegistry,
+  type Market,
+} from "../../../packages/shared/src/markets.js";
 import { encodeLocalReport, oracleAdapterAbi } from "../../../packages/shared/src/oracle-report.js";
 import { adaptiveSpread, constructQuote, launchPricing } from "../../../packages/shared/src/pricing.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
@@ -35,6 +42,11 @@ export interface PayloadOptions {
   spread?: boolean;
   /** Overrides for the local oracle report observation. */
   report?: Partial<{ bid: bigint; ask: bigint; observedAt: bigint; validUntil: bigint; market: number }>;
+  /** Sign a `TriggeredTradeIntent` with this trigger and send it in the payload. */
+  trigger?: Trigger;
+  /** The signed intent's size when it differs from the quoted fill (a clamped reduce-only trigger). */
+  signedBaseDelta?: bigint;
+  reduceOnly?: boolean;
 }
 
 export interface Fixture {
@@ -84,15 +96,16 @@ export function buildFixture(options: PayloadOptions = {}): Fixture {
   const intent: TradeIntent = {
     account: user.address,
     market: marketIndex(market),
-    baseDelta: quote.baseDelta,
+    baseDelta: options.signedBaseDelta ?? quote.baseDelta,
     limitPrice: quote.worstPrice,
-    maxFee: quote.fee,
+    maxFee: options.signedBaseDelta === undefined ? quote.fee : quote.fee * 4n,
     nonce: 7n,
     deadline: nowSeconds + 30n,
-    reduceOnly: false,
+    reduceOnly: options.reduceOnly ?? false,
   };
+  const intentHash = intentDigest(domain, intent, options.trigger);
   const approval: MakerApproval = {
-    intentHash: hashIntent(domain, intent),
+    intentHash,
     executionPrice: quote.expectedPrice,
     impactCharge: quote.impactCharge,
     fee: quote.fee,
@@ -102,10 +115,11 @@ export function buildFixture(options: PayloadOptions = {}): Fixture {
     signerSetVersion: 1n,
     policyVersion: 1n,
   };
-  const userSignature = user.signingKey.sign(hashIntent(domain, intent)).serialized;
+  const userSignature = user.signingKey.sign(intentHash).serialized;
   const payload: ApproverPayload = {
     domain: { ...domain, chainId: domain.chainId.toString() },
     intent: intentToWire(intent),
+    ...(options.trigger ? { trigger: triggerToWire(options.trigger) } : {}),
     userSignature,
     approval: approvalToWire(approval),
     quote: quoteToWire(quote),
@@ -129,9 +143,10 @@ export interface FakeChainState {
   paused: boolean;
   resolutionRequired: boolean;
   isApprover: boolean;
-  markets: [Record<string, bigint | boolean>, Record<string, bigint | boolean>];
-  books: [Record<string, bigint | boolean>, Record<string, bigint | boolean>];
-  limitWords: [bigint, bigint];
+  /** One entry per registered market (the launch fixture has BTC and ETH). */
+  markets: Array<Record<string, bigint | boolean>>;
+  books: Array<Record<string, bigint | boolean>>;
+  limitWords: bigint[];
   position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
   sessions: Record<string, ClearingSessionStruct>;
   erc1271: boolean;
@@ -220,6 +235,17 @@ export function fakeChain(state: FakeChainState): ChainClients & { calls: string
     paused: (_: At) => read("paused", () => state.paused),
     resolutionRequired: (_: At) => read("resolutionRequired", () => state.resolutionRequired),
     isApprover: (_account: string, _: At) => read("isApprover", () => state.isApprover),
+    marketCount: () => read("marketCount", () => BigInt(state.markets.length)),
+    marketParams: (index: number) =>
+      read("marketParams", () => {
+        const market = marketRegistry.at(index);
+        return {
+          symbol: encodeMarketSymbol(market.symbol),
+          impactK: market.impactK,
+          shockBps: market.shockBps,
+          marginScaleBps: BigInt(market.marginScaleBps),
+        };
+      }),
     markets: (index: number) => read("markets", () => state.markets[index] as never),
     marketLimitWord: (index: number) => read("marketLimitWord", () => state.limitWords[index]),
     exposureState: (index: number) => read("exposureState", () => state.books[index] as never),

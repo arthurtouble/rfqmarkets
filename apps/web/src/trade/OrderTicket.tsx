@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useNow } from "../data/market-feed.js";
+import { useMarketList } from "../data/markets.js";
 import { initialMarginAfter } from "../lib/account.js";
 import { abs, baseAmount, microToInput, parseUsdcInput, usdc } from "../lib/format.js";
 import { indicativeQuote } from "../lib/quote.js";
@@ -25,6 +26,7 @@ export function OrderTicket({ market, account, side, onSide }: { market: Market;
   const { snapshot, status } = useMarketFeed();
   const trader = useTrader(), trading = useTrading(), funds = useFunds(), advanced = useAdvanced();
   const now = useNow(500);
+  const marketIndex = useMarketList().get(market)?.index ?? Number.MAX_SAFE_INTEGER;
   const [orderType, setOrderType] = useState<OrderType>("market");
   const [amount, setAmount] = useState("");
   const [limitPrice, setLimitPrice] = useState("");
@@ -52,7 +54,7 @@ export function OrderTicket({ market, account, side, onSide }: { market: Market;
 
   const expected = quote ? BigInt(quote.expectedPrice) : null;
   const limitMarketable = expected !== null && limitMicro !== null && (side === "buy" ? expected <= limitMicro : expected >= limitMicro);
-  const oneClick = orderType === "market" && amountMicro !== null && sessionCovers(trading.quickSession, amountMicro);
+  const oneClick = orderType === "market" && amountMicro !== null && sessionCovers(trading.quickSession, amountMicro, marketIndex);
   const busy = trading.busy !== null;
 
   const problem = status !== "live" ? "Waiting for a fresh price"

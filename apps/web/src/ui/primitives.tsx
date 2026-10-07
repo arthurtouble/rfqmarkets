@@ -2,10 +2,13 @@ import { useEffect, useRef, type ReactNode } from "react";
 import type { StreamStatus } from "../lib/event-stream.js";
 import type { Market } from "../lib/types.js";
 
-export const MARKET_NAMES: Record<Market, string> = { BTC: "Bitcoin", ETH: "Ethereum" };
+export const MARKET_NAMES: Partial<Record<Market, string>> = { BTC: "Bitcoin", ETH: "Ethereum" };
+/** Display name; markets listed after launch show their symbol. */
+export const marketName = (market: Market) => MARKET_NAMES[market] ?? market;
+const GLYPHS: Partial<Record<Market, string>> = { BTC: "₿", ETH: "Ξ" };
 
 export const AssetIcon = ({ market, small = false }: { market: Market; small?: boolean }) =>
-  <span className={`rfq-coin rfq-coin--${market.toLowerCase()}${small ? " rfq-coin--sm" : ""}`} aria-hidden="true">{market === "BTC" ? "₿" : "Ξ"}</span>;
+  <span className={`rfq-coin rfq-coin--${market.toLowerCase()}${small ? " rfq-coin--sm" : ""}`} aria-hidden="true">{GLYPHS[market] ?? market.slice(0, 1)}</span>;
 
 export const Up = () => <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2l4 6H2z" fill="currentColor" /></svg>;
 export const Down = () => <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 10L2 4h8z" fill="currentColor" /></svg>;

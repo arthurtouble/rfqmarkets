@@ -13,11 +13,25 @@ export type HedgeRiskSnapshot = {
   observedAtMs: number;
   healthy: boolean;
   indexedBlock: number;
-  markets: Record<
-    Market,
-    { mode: HedgeRiskMode; gapNotional: string; bandUsdc: string; execution?: HedgeExecutionSignal }
-  >;
+  /** Per market symbol. A market the hedger does not report is treated as reduce-only. */
+  markets: Partial<Record<Market, HedgeMarketRisk>>;
 };
+export type HedgeMarketRisk = {
+  mode: HedgeRiskMode;
+  gapNotional: string;
+  bandUsdc: string;
+  execution?: HedgeExecutionSignal;
+  /** Why the market is reduce-only when it is not a venue condition, e.g. `"no_hedge_mapping"`. */
+  reason?: string;
+};
+/**
+ * A market's hedge mode: `normal` without a hedge source (development), reduce-only when the snapshot
+ * does not cover the market (fail closed, e.g. a market added after the hedger's last report).
+ */
+export function hedgeModeOf(snapshot: HedgeRiskSnapshot | undefined, market: Market): HedgeRiskMode {
+  if (!snapshot) return "normal";
+  return snapshot.markets[market]?.mode ?? "reduce_only";
+}
 export interface HedgeRiskSource {
   latest(): Promise<HedgeRiskSnapshot>;
 }

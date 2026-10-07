@@ -16,6 +16,18 @@ export const intentTypes: Record<string, Array<{ name: string; type: string }>> 
   ],
 };
 
+/**
+ * A trade intent that only fills once the oracle mid has reached `triggerPrice` (stop-loss,
+ * take-profit, stop entry). Its own primary type, so it can never fill through `executeTrade`.
+ */
+export const triggeredIntentTypes: Record<string, Array<{ name: string; type: string }>> = {
+  TriggeredTradeIntent: [
+    ...intentTypes.TradeIntent,
+    { name: "triggerPrice", type: "uint256" },
+    { name: "triggerAbove", type: "bool" },
+  ],
+};
+
 export const approvalTypes: Record<string, Array<{ name: string; type: string }>> = {
   MakerApproval: [
     { name: "intentHash", type: "bytes32" },
@@ -96,6 +108,11 @@ export interface TradeIntent {
   deadline: bigint;
   reduceOnly: boolean;
 }
+/** `RFQTypes.Trigger`: fill only when the report mid is >= (`triggerAbove`) or <= `triggerPrice`. */
+export interface Trigger {
+  triggerPrice: bigint;
+  triggerAbove: boolean;
+}
 export interface MakerApproval {
   intentHash: string;
   executionPrice: bigint;
@@ -138,7 +155,8 @@ export interface CloseIntent {
 export interface SessionGrant {
   account: string;
   session: string;
-  marketMask: number;
+  /** Bit n allows market n. */
+  marketMask: bigint;
   maxTradeNotional: bigint;
   maxCumulativeNotional: bigint;
   maxFee: bigint;
@@ -149,6 +167,40 @@ export interface SessionGrant {
 
 export const hashIntent = (domain: SigningDomain, intent: TradeIntent) =>
   TypedDataEncoder.hash(domain, intentTypes, intent);
+/** The typed message a wallet signs for a triggered order: the intent fields followed by the trigger. */
+export const triggeredMessage = (intent: TradeIntent, trigger: Trigger) => ({
+  account: intent.account,
+  market: intent.market,
+  baseDelta: intent.baseDelta,
+  limitPrice: intent.limitPrice,
+  maxFee: intent.maxFee,
+  nonce: intent.nonce,
+  deadline: intent.deadline,
+  reduceOnly: intent.reduceOnly,
+  triggerPrice: trigger.triggerPrice,
+  triggerAbove: trigger.triggerAbove,
+});
+export const hashTriggeredIntent = (domain: SigningDomain, intent: TradeIntent, trigger: Trigger) =>
+  TypedDataEncoder.hash(domain, triggeredIntentTypes, triggeredMessage(intent, trigger));
+/** The digest a maker approval binds: the triggered digest when the intent carries a trigger. */
+export const intentDigest = (domain: SigningDomain, intent: TradeIntent, trigger?: Trigger) =>
+  trigger ? hashTriggeredIntent(domain, intent, trigger) : hashIntent(domain, intent);
+export const recoverTriggeredIntentSigner = (
+  domain: SigningDomain,
+  intent: TradeIntent,
+  trigger: Trigger,
+  signature: string,
+) => getAddress(verifyTypedData(domain, triggeredIntentTypes, triggeredMessage(intent, trigger), signature));
+/** ECDSA signer of a plain or triggered intent. Throws when the signature does not recover. */
+export const recoverDigestSigner = (
+  domain: SigningDomain,
+  intent: TradeIntent,
+  signature: string,
+  trigger?: Trigger,
+) =>
+  trigger
+    ? recoverTriggeredIntentSigner(domain, intent, trigger, signature)
+    : recoverIntentSigner(domain, intent, signature);
 export const hashApproval = (domain: SigningDomain, approval: MakerApproval) =>
   TypedDataEncoder.hash(domain, approvalTypes, approval);
 export const recoverIntentSigner = (domain: SigningDomain, intent: TradeIntent, signature: string) =>
@@ -190,6 +242,20 @@ export const approvalFromWire = (approval: Wire<MakerApproval>): MakerApproval =
   leaderEpoch: BigInt(approval.leaderEpoch),
   signerSetVersion: BigInt(approval.signerSetVersion),
   policyVersion: BigInt(approval.policyVersion),
+});
+
+export const triggerFromWire = (trigger: Wire<Trigger>): Trigger => ({
+  triggerPrice: BigInt(trigger.triggerPrice),
+  triggerAbove: trigger.triggerAbove,
+});
+export const triggerToWire = (trigger: Trigger) => ({
+  triggerPrice: trigger.triggerPrice.toString(),
+  triggerAbove: trigger.triggerAbove,
+});
+/** Wire form of the full `TriggeredTradeIntent` message, as handed to a wallet for signing. */
+export const triggeredIntentToWire = (intent: TradeIntent, trigger: Trigger) => ({
+  ...intentToWire(intent),
+  ...triggerToWire(trigger),
 });
 
 export const intentToWire = (intent: TradeIntent) => ({
@@ -237,6 +303,11 @@ export const closeToWire = (intent: CloseIntent) => ({
 });
 export const sessionGrantToWire = (grant: SessionGrant) => ({
   ...grant,
+  // A JSON number while it is exact (up to 53 markets), so existing wallets sign it unchanged.
+  marketMask:
+    grant.marketMask <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(grant.marketMask)
+      : grant.marketMask.toString(),
   maxTradeNotional: grant.maxTradeNotional.toString(),
   maxCumulativeNotional: grant.maxCumulativeNotional.toString(),
   maxFee: grant.maxFee.toString(),

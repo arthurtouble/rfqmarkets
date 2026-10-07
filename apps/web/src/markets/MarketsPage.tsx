@@ -3,10 +3,11 @@ import { Link } from "@tanstack/react-router";
 import { useMarketFeed } from "../data/market-feed.js";
 import { useIndexerHealth, usePublicPositions, useRecentTrades, useRisk } from "../data/queries.js";
 import { abs, baseAmount, clockTime, fundingApr, shortAddress, signedBase, usdc } from "../lib/format.js";
-import { MARKETS, marketFromIndex, type Market, type RiskMarket } from "../lib/types.js";
-import { AssetIcon, Banner, Change, EmptyState, MARKET_NAMES, NavIcons, Rows } from "../ui/primitives.js";
+import { useMarketList } from "../data/markets.js";
+import type { Market, RiskMarket } from "../lib/types.js";
+import { AssetIcon, Banner, Change, EmptyState, NavIcons, Rows, marketName } from "../ui/primitives.js";
 import { useAdvanced } from "../ui/prefs.js";
-import { recentChange } from "../trade/MarketHeader.js";
+import { recentChange, useSymbols } from "../trade/MarketHeader.js";
 
 const pct = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: "exceptZero" });
 const traders = (count = 0) => `${count} ${count === 1 ? "trader" : "traders"}`;
@@ -15,10 +16,10 @@ const tone = (value: string) => BigInt(value) > 0n ? "rfq-up" : BigInt(value) < 
 function MarketRow({ market }: { market: Market }) {
   const { snapshot, history } = useMarketFeed();
   const live = snapshot?.markets[market];
-  const change = recentChange(history[market]);
+  const change = recentChange(history[market] ?? []);
   return <Link to="/trade/$market" params={{ market }} className="rfq-row">
     <AssetIcon market={market} />
-    <span><div className="rfq-row__title">{MARKET_NAMES[market]}</div><div className="rfq-row__sub">{market} · funding {fundingApr(live?.fundingApr)}</div></span>
+    <span><div className="rfq-row__title">{marketName(market)}</div><div className="rfq-row__sub">{market} · funding {fundingApr(live?.fundingApr)}</div></span>
     <span className="rfq-row__end"><span className="rfq-row__price">{usdc(live?.mid)}</span>
       {change ? <Change value={change.ratio}>{pct.format(change.ratio)}</Change> : <span className="footnote rfq-faint">{live?.enabled === false ? "Paused" : "Live"}</span>}</span>
   </Link>;
@@ -29,7 +30,7 @@ function Sentiment({ market, risk }: { market: Market; risk?: RiskMarket }) {
   const long = risk ? Number(BigInt(risk.longBase)) : 0, short = risk ? Number(BigInt(risk.shortBase)) : 0;
   const longShare = long + short ? long / (long + short) * 100 : 50;
   return <div className="sentiment">
-    <div className="sentiment__head"><AssetIcon market={market} small /><b>{MARKET_NAMES[market]}</b>
+    <div className="sentiment__head"><AssetIcon market={market} small /><b>{marketName(market)}</b>
       <span className="footnote rfq-faint">{long + short ? `${longShare.toFixed(0)}% long` : "No open positions"}</span></div>
     <div className={`sentiment__bar${long + short ? "" : " is-empty"}`} role="img" aria-label={long + short ? `${longShare.toFixed(0)}% long, ${(100 - longShare).toFixed(0)}% short` : "No open positions"}><span style={{ width: `${longShare}%` }} /></div>
     <div className="sentiment__sides footnote">
@@ -43,6 +44,7 @@ export function MarketsPage() {
   const advanced = useAdvanced();
   const risk = useRisk(), positions = usePublicPositions(), trades = useRecentTrades(), health = useIndexerHealth();
   const failed = [risk, positions, trades, health].find(query => query.isError);
+  const MARKETS = useSymbols(), { marketFromIndex } = useMarketList();
   return <div className="page markets-page">
     <h1 className="title-1 page-title">Markets</h1>
     <section className="rfq-card"><div className="rfq-list">{MARKETS.map(market => <MarketRow key={market} market={market} />)}</div></section>

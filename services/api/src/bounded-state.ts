@@ -1,4 +1,5 @@
-import type { Market } from "./markets.js";
+import { MAX_MARKETS } from "../../../packages/shared/src/markets.js";
+import { marketRegistry, type Market } from "./markets.js";
 import { ExpiryIndex } from "../../../packages/shared/src/expiry-index.js";
 export { ExpiryIndex } from "../../../packages/shared/src/expiry-index.js";
 
@@ -9,10 +10,8 @@ export class PendingExposureBook {
   revision = 0;
   private items = new Map<string, PendingItem>();
   private expiries = new ExpiryIndex();
-  private totals: Record<Market, { low: bigint; high: bigint }> = {
-    BTC: { low: 0n, high: 0n },
-    ETH: { low: 0n, high: 0n },
-  };
+  /** Pending low (sells) and high (buys) totals per market, in first-reservation order. */
+  private totals = new Map<Market, { low: bigint; high: bigint }>();
   get size() {
     return this.items.size;
   }
@@ -48,9 +47,12 @@ export class PendingExposureBook {
   exposure(excludeId?: string) {
     const excluded = excludeId ? this.items.get(excludeId) : undefined,
       result: Array<{ market: Market; delta: bigint }> = [];
-    for (const market of ["BTC", "ETH"] as const) {
-      const value = this.totals[market],
-        low = value.low - (excluded?.market === market && excluded.delta < 0n ? excluded.delta : 0n),
+    // In market index order (unregistered symbols last), so the envelope is stable.
+    const order = (market: Market) =>
+      marketRegistry.has(market) ? marketRegistry.index(market) : MAX_MARKETS;
+    const markets = [...this.totals.entries()].sort(([left], [right]) => order(left) - order(right));
+    for (const [market, value] of markets) {
+      const low = value.low - (excluded?.market === market && excluded.delta < 0n ? excluded.delta : 0n),
         high = value.high - (excluded?.market === market && excluded.delta > 0n ? excluded.delta : 0n);
       if (low) result.push({ market, delta: low });
       if (high) result.push({ market, delta: high });
@@ -61,7 +63,9 @@ export class PendingExposureBook {
     return this.exposure().map((item) => ({ ...item, delta: item.delta.toString() }));
   }
   private adjust(item: PendingItem, multiplier: bigint) {
-    if (item.delta < 0n) this.totals[item.market].low += item.delta * multiplier;
-    else this.totals[item.market].high += item.delta * multiplier;
+    let totals = this.totals.get(item.market);
+    if (!totals) this.totals.set(item.market, (totals = { low: 0n, high: 0n }));
+    if (item.delta < 0n) totals.low += item.delta * multiplier;
+    else totals.high += item.delta * multiplier;
   }
 }

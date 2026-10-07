@@ -39,7 +39,7 @@ export function TradePage({ market }: { market: Market }) {
       <section className="rfq-card rfq-card--pad chart-card">
         <div className="chart-card__head"><MarketSwitcher market={market} /></div>
         <PriceHeader market={market} />
-        <PriceChart values={history[market]} height={300} />
+        <PriceChart values={history[market] ?? []} height={300} />
         <MarketDetails market={market} />
       </section>
       {accountError}
@@ -58,7 +58,7 @@ export function TradePage({ market }: { market: Market }) {
       <WalletMenu />
     </div>
     <div className="trade-mobile__price"><PriceHeader market={market} /></div>
-    <PriceChart values={history[market]} height={200} />
+    <PriceChart values={history[market] ?? []} height={200} />
     <div className="trade-mobile__body">
       {accountError}
       {account && <Positions account={account} only={market} />}

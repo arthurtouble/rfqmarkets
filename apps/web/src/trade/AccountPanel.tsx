@@ -5,7 +5,8 @@ import { useAccountActivity, useOrders, useProtocol } from "../data/queries.js";
 import { hasPosition } from "../lib/account.js";
 import { txUrl } from "../lib/explorer.js";
 import { abs, baseAmount, clockTime, parseUsdcInput, sentence, signedUsdc, usdc } from "../lib/format.js";
-import { MARKETS, marketFromIndex, type AccountState, type Activity, type Market, type RestingOrder } from "../lib/types.js";
+import { useMarketList } from "../data/markets.js";
+import { type AccountState, type Activity, type Market, type RestingOrder } from "../lib/types.js";
 import { AssetIcon, Banner, Change, EmptyState, NavIcons, Rows, Segmented, Sheet, Tabs } from "../ui/primitives.js";
 import { useAdvanced, useDesktop } from "../ui/prefs.js";
 import { useTrader } from "../wallet/trader.js";
@@ -85,7 +86,7 @@ function PositionsTable({ account, markets, onClose }: { account: AccountState; 
 export function Positions({ account, only }: { account: AccountState | null; only?: Market }) {
   const desktop = useDesktop();
   const [closing, setClosing] = useState<Market | null>(null);
-  const open = account ? MARKETS.filter(market => hasPosition(account, market) && (!only || market === only)) : [];
+  const open = account ? Object.keys(account.positions).filter(market => hasPosition(account, market) && (!only || market === only)) : [];
   if (!account || !open.length) return null;
   return <>
     {desktop && !only ? <PositionsTable account={account} markets={open} onClose={setClosing} />
@@ -110,7 +111,7 @@ export function ClosePositionSheet({ account, market, onClose }: { account: Acco
   const close = async () => {
     if (paused) await trading.emergencyClose(market);
     else if (step === 100) await trading.closePosition(market);
-    else await trading.marketOrder({ market, side: long ? "sell" : "buy", amountMicro: notional, reduceOnly: true });
+    else await trading.closePosition(market, step * 100);
     onClose();
   };
   return <Sheet open onClose={onClose} title={`Close ${market} ${word}`} labelledBy="close-title">
@@ -138,7 +139,7 @@ export function ActivityTabs({ account }: { account: AccountState | null }) {
   const orders = useOrders(trader.address), activity = useAccountActivity(trader.address);
   const [tab, setTab] = useState<Tab>("positions");
   const openOrders = orders.data?.filter(order => order.status === "open" || order.status === "executing") ?? [];
-  const positionCount = account ? MARKETS.filter(market => hasPosition(account, market)).length : 0;
+  const positionCount = account ? Object.keys(account.positions).filter(market => hasPosition(account, market)).length : 0;
   return <section className="rfq-card activity">
     <div className="activity-tabs"><Tabs label="Account activity" value={tab} onChange={setTab} tabs={[
       { id: "positions", label: "Positions", count: positionCount },
@@ -180,6 +181,7 @@ const EVENT_NAMES: Record<string, string> = {
 
 function History({ items }: { items: Activity[] }) {
   const { chain } = useTrader();
+  const { marketFromIndex } = useMarketList();
   if (!items.length) return <EmptyState icon={NavIcons.markets}>Your trades, deposits and withdrawals show up here.</EmptyState>;
   return <div className="rfq-table-wrap"><table className="rfq-table">
     <thead><tr><th>Time</th><th>Activity</th><th>Size</th><th>Price</th><th>Fee</th></tr></thead>

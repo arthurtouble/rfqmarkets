@@ -24,7 +24,7 @@ test('mainnet manifest rejects a weak or malformed oracle configuration',()=>{
  for(const oracle of [{maxDeviationBps:0},{maxDeviationBps:1001},{maxSkew:16},{jumpWindow:86401}])assert.throws(()=>validateMainnetManifest({...valid(),oracle}));
  assert.throws(()=>validateMainnetManifest({...valid(),oracle:{maxJumpBps:500}}),/jump guard/);
  assert.throws(()=>validateMainnetManifest({...valid(),oracleSource:address('9')}),/Unrecognized/,'the Pyth fields are gone');
- for(const risk of [{marginScaleBps:9000},{shockBps:100},{impactK:0}]){const risky:any=valid();risky.policy.markets.BTC={...market,...risk};assert.throws(()=>validateMainnetManifest(risky));}
+ for(const risk of [{marginScaleBps:2000},{marginScaleBps:60000},{shockBps:100},{impactK:0}]){const risky:any=valid();risky.policy.markets.BTC={...market,...risk};assert.throws(()=>validateMainnetManifest(risky));}
 });
 test('mainnet manifest rejects caps the clearing contract would refuse',()=>{const wide=valid();wide.policy.markets.ETH={...market,maxTradeUsdc:'80000000000',grossUsdc:'800000000000'};assert.throws(()=>validateMainnetManifest(wide),/contract bounds/);const governanceReuse=valid();governanceReuse.governanceSafe=governanceReuse.emergencyCouncil;assert.throws(()=>validateMainnetManifest(governanceReuse),/distinct/);});
 test('dev manifest maps owner to governance and enforces dev ceilings',()=>{

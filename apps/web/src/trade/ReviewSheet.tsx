@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTrading } from "../data/actions.js";
 import { abs, baseAmount, usdc } from "../lib/format.js";
 import type { Market, Quote, Side } from "../lib/types.js";
-import { MARKET_NAMES, Rows, Sheet } from "../ui/primitives.js";
+import { Rows, marketName, Sheet } from "../ui/primitives.js";
 import { QUICK_LIMITS } from "../wallet/quick-session.js";
 
 /** Restates a market order in plain words before the wallet signature. */
@@ -22,7 +22,7 @@ export function ReviewSheet({ market, side, amountMicro, quote, reduceOnly, onCl
   };
   return <Sheet open onClose={onClose} title="Review order" labelledBy="review-title">
     <div className="sheet-body">
-      <p className="body review-sentence">{word} <b className="tnum">{base}</b> on {MARKET_NAMES[market]} for <b className="tnum">{usdc(amountMicro)}</b>. It fills at this price or better, or not at all.</p>
+      <p className="body review-sentence">{word} <b className="tnum">{base}</b> on {marketName(market)} for <b className="tnum">{usdc(amountMicro)}</b>. It fills at this price or better, or not at all.</p>
       <Rows rows={[
         ["Entry price", usdc(quote.expectedPrice)],
         ["Price protection", usdc(quote.worstPrice)],

@@ -169,3 +169,27 @@ test("keeper reports each distinct cycle failure once and keeps public status ge
   assert.equal(reported.length, 2, "a failure after recovery is reported again");
   await engine.close();
 });
+test("keeper refreshes only markets with open interest and liquidates in any registered market", async () => {
+  const f = fixture();
+  // A third market with no exposure and no price yet (just added by governance) must not block the keeper.
+  f.state.sampleCounts = [0, 0, 0];
+  f.state.priceTimes = [100, 0, 0];
+  f.state.openInterest = [true, false, false];
+  f.deps.accounts = async () => ({
+    items: [
+      {
+        account: address(1),
+        positions: { BTC: { size: "0" }, ETH: { size: "0" }, "market #2": { size: "-5" } },
+      },
+    ],
+    nextCursor: null,
+  });
+  const engine = new KeeperEngine(f.deps);
+  await engine.cycle();
+  assert.deepEqual(
+    f.actions.map((action) => `${action.kind}${"market" in action ? `:${action.market}` : ""}`),
+    ["incident", "liquidate:2"],
+  );
+  assert.equal(engine.status().ok, true);
+  await engine.close();
+});

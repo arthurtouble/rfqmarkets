@@ -263,6 +263,22 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         RFQSettlement.executeTrade(intent, approval, report, userSignature, makerSignatureOne, makerSignatureTwo);
     }
 
+    /// @notice Settles a triggered order (stop-loss, take-profit, stop entry) once the oracle mid in `report`
+    /// has crossed the signed trigger price. A reduce-only triggered order closes at most the open position.
+    function executeTriggeredTrade(
+        TradeIntent calldata intent,
+        Trigger calldata trigger,
+        MakerApproval calldata approval,
+        bytes calldata report,
+        bytes calldata userSignature,
+        bytes calldata makerSignatureOne,
+        bytes calldata makerSignatureTwo
+    ) external payable nonReentrant {
+        RFQSettlement.executeTriggeredTrade(
+            intent, trigger, approval, report, userSignature, makerSignatureOne, makerSignatureTwo
+        );
+    }
+
     /// @notice Records a fresh oracle report and accrues funding. Older reports never overwrite newer ones.
     function refreshOracle(bytes calldata report)
         external
@@ -761,11 +777,12 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         emit MarketRiskUpdated(market, config.impactK, config.shockBps, config.marginScaleBps, $.policyVersion);
     }
 
-    /// @dev Margin may only be scaled up from the base tiers; the stress shock must be a real move.
+    /// @dev Margin may scale from 0.25x (20x leverage in the first tier) to 5x the base tiers; the stress shock
+    /// must be a real move.
     function _validateRisk(uint32 impactK, uint16 shockBps, uint16 marginScaleBps) private pure {
         if (
-            impactK == 0 || impactK > 1_000_000 || shockBps < 500 || shockBps > 10_000 || marginScaleBps < 10_000
-                || marginScaleBps > 50_000
+            impactK == 0 || impactK > 1_000_000 || shockBps < 500 || shockBps > 10_000
+                || marginScaleBps < MIN_MARGIN_SCALE_BPS || marginScaleBps > MAX_MARGIN_SCALE_BPS
         ) revert InvalidConfiguration();
     }
 

@@ -5,9 +5,11 @@ import type { PriceSnapshot } from "../../../packages/shared/src/policy.js";
 import { readSseEvents } from "../../lib/src/sse.js";
 import { encodeLocalReport } from "../../../packages/shared/src/oracle-report.js";
 import { SignedOracleClient } from "../../../packages/shared/src/signed-oracle.js";
+import { marketIndex, marketRegistry, marketSymbols } from "../../../packages/shared/src/markets.js";
 import { MarketSignalTracker } from "./market-signals.js";
 
-export type OracleMarket = "BTC" | "ETH";
+/** A registered market symbol (see `marketRegistry`). */
+export type OracleMarket = string;
 export interface OracleQuote {
   snapshot: PriceSnapshot;
   report: string;
@@ -25,13 +27,16 @@ export interface OracleSource {
 export interface OracleSourceStatus {
   source: string;
   transport: string;
+  /** Per registered market. */
   agesMs: Record<OracleMarket, number | null>;
   /** Upstream updates dropped because they could not be parsed or failed validation. */
   rejectedUpdates: number;
 }
 
-const MARKETS = ["BTC", "ETH"] as const;
-const marketId = (market: OracleMarket) => (market === "BTC" ? 0 : 1);
+const marketId = (market: OracleMarket) => marketIndex(market);
+/** Launch prices for the simulated source; other markets start at `DEFAULT_SIMULATED_PRICE`. */
+const SIMULATED_PRICES: Record<string, number> = { BTC: 100_000, ETH: 4_000, SOL: 150 };
+const DEFAULT_SIMULATED_PRICE = 100;
 /** Lifetime of locally signed (mock-oracle) reports. */
 const LOCAL_REPORT_TTL_SECONDS = 15;
 
@@ -86,7 +91,7 @@ abstract class BaseOracleSource implements OracleSource {
     return {
       source: this.sourceName,
       transport: this.transport(),
-      agesMs: { BTC: age("BTC"), ETH: age("ETH") },
+      agesMs: Object.fromEntries(marketSymbols().map((market) => [market, age(market)])),
       rejectedUpdates: this.rejectedUpdates,
     };
   }
@@ -170,9 +175,9 @@ export class CoinbaseMarketDataSource extends BaseOracleSource {
     const receivedAt = Date.now();
     for (const item of message.events ?? [])
       for (const ticker of item.tickers ?? []) {
-        const market =
-          ticker.product_id === "BTC-USD" ? "BTC" : ticker.product_id === "ETH-USD" ? "ETH" : undefined;
-        if (!market || !ticker.best_bid || !ticker.best_ask) continue;
+        const product = typeof ticker.product_id === "string" ? ticker.product_id : "",
+          market = product.endsWith("-USD") ? product.slice(0, -4) : undefined;
+        if (!market || !marketRegistry.has(market) || !ticker.best_bid || !ticker.best_ask) continue;
         try {
           this.store(market, ticker.best_bid, ticker.best_ask, receivedAt);
         } catch {
@@ -187,8 +192,15 @@ export class CoinbaseMarketDataSource extends BaseOracleSource {
     )(this.options.endpoint ?? "wss://advanced-trade-ws.coinbase.com");
     this.socket = socket;
     socket.addEventListener("open", () => {
+      // Each registered market `X` is the Coinbase product `X-USD`. A market added later is served by the
+      // REST fallback until the next reconnect subscribes it.
+
       socket.send(
-        JSON.stringify({ type: "subscribe", product_ids: ["BTC-USD", "ETH-USD"], channel: "ticker" }),
+        JSON.stringify({
+          type: "subscribe",
+          product_ids: marketSymbols().map((market) => `${market}-USD`),
+          channel: "ticker",
+        }),
       );
       socket.send(JSON.stringify({ type: "subscribe", channel: "heartbeats" }));
     });
@@ -251,6 +263,7 @@ export interface ChainlinkSourceOptions {
   userSecret: string;
   endpoint: string;
   wsEndpoint: string;
+  /** Feed per market symbol; a registered market without a feed has no price. */
   feedIds: Record<OracleMarket, string>;
   feedDecimals: Record<OracleMarket, number>;
   timeoutMs?: number;
@@ -280,8 +293,13 @@ export class ChainlinkDataStreamsSource extends BaseOracleSource {
   protected transport() {
     return this.stream ? "websocket" : "rest";
   }
+  private feedId(market: OracleMarket) {
+    const feed = this.options.feedIds[market];
+    if (!feed) throw new Error(`no Data Streams feed for ${market}`);
+    return feed;
+  }
   private normalize(market: OracleMarket, report: Report): OracleQuote {
-    const feedId = this.options.feedIds[market],
+    const feedId = this.feedId(market),
       decoded = decodeStreamsV3Envelope(report.fullReport, feedId, this.options.feedDecimals[market]);
     if (
       report.feedID.toLowerCase() !== feedId.toLowerCase() ||
@@ -297,7 +315,9 @@ export class ChainlinkDataStreamsSource extends BaseOracleSource {
   async start() {
     if (this.stream || !this.client.createStream) return;
     this.stream = this.client.createStream(Object.values(this.options.feedIds));
-    const byFeed = new Map(MARKETS.map((market) => [this.options.feedIds[market].toLowerCase(), market]));
+    const byFeed = new Map(
+      Object.entries(this.options.feedIds).map(([market, feed]) => [feed.toLowerCase(), market]),
+    );
     this.stream.on("report", (report) => {
       const market = byFeed.get(report.feedID.toLowerCase());
       if (!market) return;
@@ -322,7 +342,7 @@ export class ChainlinkDataStreamsSource extends BaseOracleSource {
     if (cached && now - cached.snapshot.observedAtMs <= 1_500 && cached.validUntil * 1_000 > now)
       return cached;
     return this.coalesce(market, async () => {
-      const quote = this.normalize(market, await this.client.getLatestReport(this.options.feedIds[market]));
+      const quote = this.normalize(market, await this.client.getLatestReport(this.feedId(market)));
       this.cached[market] = quote;
       return quote;
     });
@@ -332,6 +352,7 @@ export class ChainlinkDataStreamsSource extends BaseOracleSource {
 export interface PythHermesSourceOptions {
   apiKey: string;
   endpoint?: string;
+  /** Feed per market symbol; a registered market without a feed has no price. */
   feedIds: Record<OracleMarket, string>;
   timeoutMs?: number;
   cacheMs?: number;
@@ -386,8 +407,8 @@ export class PythHermesSource extends BaseOracleSource {
     const updates = raw.map((value) => `0x${value.replace(/^0x/, "")}`),
       now = Math.floor(Date.now() / 1_000),
       changed: OracleMarket[] = [];
-    for (const market of MARKETS) {
-      const wanted = this.options.feedIds[market].toLowerCase().replace(/^0x/, ""),
+    for (const [market, feedId] of Object.entries(this.options.feedIds)) {
+      const wanted = feedId.toLowerCase().replace(/^0x/, ""),
         feed = body.parsed.find((item) => item.id.toLowerCase().replace(/^0x/, "") === wanted);
       if (!feed) continue;
       if (!Number.isInteger(feed.price.expo) || !Number.isInteger(feed.price.publish_time))
@@ -423,7 +444,10 @@ export class PythHermesSource extends BaseOracleSource {
         signal: AbortSignal.timeout(this.options.timeoutMs ?? 2_500),
       });
       if (!response.ok) throw new Error(`Pyth Hermes returned ${response.status}`);
-      if (this.accept((await response.json()) as HermesResponse).length !== MARKETS.length)
+      if (
+        this.accept((await response.json()) as HermesResponse).length !==
+        Object.keys(this.options.feedIds).length
+      )
         throw new Error("Pyth Hermes response was incomplete");
       this.settlementFetchedAtMs = Date.now();
     });
@@ -477,6 +501,7 @@ export class PythHermesSource extends BaseOracleSource {
     await this.streamTask?.catch(() => {});
   }
   async latest(market: OracleMarket) {
+    if (!this.options.feedIds[market]) throw new Error(`no Pyth feed for ${market}`);
     const cached = this.cached[market],
       now = Date.now();
     if (cached && now - this.fetchedAtMs <= (this.options.cacheMs ?? 500) && cached.validUntil * 1_000 > now)
@@ -487,6 +512,7 @@ export class PythHermesSource extends BaseOracleSource {
     return value;
   }
   async settlement(market: OracleMarket) {
+    if (!this.options.feedIds[market]) throw new Error(`no Pyth feed for ${market}`);
     // SSE may carry only the feed that changed. Settlement needs an atomic REST
     // batch whose binary payload covers every parsed feed in the signed report.
     if (Date.now() - this.settlementFetchedAtMs > 100) await this.refresh();
@@ -560,7 +586,7 @@ export class SignedOracleSource extends BaseOracleSource {
     const combined = this.client.latest();
     if (!combined || combined.observedAt <= this.lastObservedAt) return;
     this.lastObservedAt = combined.observedAt;
-    for (const market of MARKETS) {
+    for (const market of marketSymbols()) {
       const price = combined.prices.find((item) => item.market === marketId(market));
       if (!price) {
         delete this.cached[market];
@@ -599,11 +625,16 @@ export interface SimulatedSourceOptions {
 
 /** Offline random-walk prices for local development; same report encoding as the Coinbase source. */
 export class SimulatedMarketDataSource extends BaseOracleSource {
-  private mids: Record<OracleMarket, number>;
+  private mids: Record<OracleMarket, number> = {};
   private timer?: ReturnType<typeof setInterval>;
   constructor(private options: SimulatedSourceOptions = {}) {
     super("simulated");
-    this.mids = { BTC: options.prices?.BTC ?? 100_000, ETH: options.prices?.ETH ?? 4_000 };
+    for (const market of marketSymbols()) this.mid(market);
+  }
+  /** A market's mid, starting a market the registry added since at its configured or default price. */
+  private mid(market: OracleMarket) {
+    return (this.mids[market] ??=
+      this.options.prices?.[market] ?? SIMULATED_PRICES[market] ?? DEFAULT_SIMULATED_PRICE);
   }
   protected now() {
     return (this.options.now ?? Date.now)();
@@ -612,21 +643,22 @@ export class SimulatedMarketDataSource extends BaseOracleSource {
     return "local";
   }
   private publish(market: OracleMarket) {
-    const halfSpread = (this.mids[market] * (this.options.spreadBps ?? 1)) / 20_000;
-    const bid = parseUnits((this.mids[market] - halfSpread).toFixed(6), 6),
-      ask = parseUnits((this.mids[market] + halfSpread).toFixed(6), 6);
+    const mid = this.mid(market),
+      halfSpread = (mid * (this.options.spreadBps ?? 1)) / 20_000;
+    const bid = parseUnits((mid - halfSpread).toFixed(6), 6),
+      ask = parseUnits((mid + halfSpread).toFixed(6), 6);
     const observedAtMs = Math.max(this.now(), (this.cached[market]?.snapshot.observedAtMs ?? 0) + 1);
     this.cached[market] = localQuote(this.snapshot(market, bid, ask, observedAtMs));
     this.emit(market);
   }
-  /** Moves both markets one random-walk step. */
+  /** Moves every registered market one random-walk step. */
   step() {
     const tickMs = this.options.tickMs ?? 250,
       random = this.options.random ?? Math.random;
     const sigma = ((this.options.volatilityBpsPerMinute ?? 20) / 10_000) * Math.sqrt(tickMs / 60_000);
-    for (const market of MARKETS) {
+    for (const market of marketSymbols()) {
       const shock = (random() * 2 - 1) * Math.sqrt(3) * sigma;
-      this.mids[market] *= 1 + shock;
+      this.mids[market] = this.mid(market) * (1 + shock);
       this.publish(market);
     }
   }
@@ -640,7 +672,7 @@ export class SimulatedMarketDataSource extends BaseOracleSource {
     return { ...this.mids };
   }
   async start() {
-    for (const market of MARKETS) this.publish(market);
+    for (const market of marketSymbols()) this.publish(market);
     if (!this.timer) {
       this.timer = setInterval(() => this.step(), this.options.tickMs ?? 250);
       this.timer.unref?.();

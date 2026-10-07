@@ -17,7 +17,7 @@ import type {
   ExposureMarket,
   PositionState,
 } from "../../../packages/shared/src/exposure-admission.js";
-import { otherMarketIndex, type MarketIndex } from "../../../packages/shared/src/markets.js";
+import { marketRegistry, type MarketIndex } from "../../../packages/shared/src/markets.js";
 import {
   oracleAdapterAbi,
   toOracleObservation,
@@ -36,7 +36,12 @@ export interface ClearingReader {
   paused(at: At): Promise<boolean>;
   resolutionRequired(at: At): Promise<boolean>;
   isApprover(account: string, at: At): Promise<boolean>;
-  markets(market: number, at: At): Promise<ClearingMarketStruct>;
+  marketCount(at?: At): Promise<bigint>;
+  marketParams(
+    market: number,
+    at?: At,
+  ): Promise<{ symbol: string; impactK: bigint; shockBps: bigint; marginScaleBps: bigint }>;
+  markets(market: number, at?: At): Promise<ClearingMarketStruct>;
   marketLimitWord(market: number, at: At): Promise<bigint>;
   exposureState(market: number, at: At): Promise<ClearingBookStruct>;
   positionOf(account: string, market: number, at: At): Promise<ClearingPositionStruct>;
@@ -86,10 +91,11 @@ export interface ChainSnapshot {
   resolutionRequired: boolean;
   /** This approver is a member of the on-chain signer set. */
   isApprover: boolean;
-  markets: [ExposureMarket, ExposureMarket];
-  books: [ExposureBook, ExposureBook];
+  /** Every registered market at this block, by index. */
+  markets: ExposureMarket[];
+  books: ExposureBook[];
   /** Packed `marketLimitWord` per market index. */
-  limitWords: [bigint, bigint];
+  limitWords: bigint[];
   /** The intent account's position in the intent market. */
   position: PositionState;
   backing: bigint;
@@ -130,6 +136,16 @@ export async function readChainState(
     return { rejection: reject("rpc chain mismatch") };
   const blockNumber = Number(BigInt(await provider.send("eth_blockNumber", [])));
   const at = { blockTag: blockNumber };
+  // Risk is checked over every market the chain has at this block; a registry that lags the chain is
+  // refreshed first, and the intent's market must exist.
+  const marketCount = Number(await clearing.marketCount(at));
+  if (market >= marketCount) return { rejection: reject("unknown market") };
+  try {
+    await marketRegistry.ensureCount(marketCount);
+  } catch {
+    return { rejection: reject("market registry unavailable", 503) };
+  }
+  const indexes = Array.from({ length: marketCount }, (_, index) => index);
   const signedByAccount = intentSigner === intent.account;
   const [
     block,
@@ -140,17 +156,14 @@ export async function readChainState(
     paused,
     resolutionRequired,
     isApprover,
-    btc,
-    eth,
-    marketLimitWord,
+    rawMarkets,
+    limitWords,
     accountSignatureValid,
     session,
     position,
-    btcBook,
-    ethBook,
+    rawBooks,
     backing,
     floor,
-    otherLimitWord,
   ] = await Promise.all([
     provider.getBlock(blockNumber),
     secondaryProvider?.getBlock(blockNumber),
@@ -160,9 +173,8 @@ export async function readChainState(
     clearing.paused(at),
     clearing.resolutionRequired(at),
     clearing.isApprover(request.signer, at),
-    clearing.markets(0, at),
-    clearing.markets(1, at),
-    clearing.marketLimitWord(market, at),
+    Promise.all(indexes.map((index) => clearing.markets(index, at))),
+    Promise.all(indexes.map(async (index) => BigInt(await clearing.marketLimitWord(index, at)))),
     signedByAccount
       ? Promise.resolve(true)
       : chain.isValidSignature(intent.account, request.intentHash, request.userSignature, blockNumber),
@@ -170,19 +182,13 @@ export async function readChainState(
       ? Promise.resolve(undefined)
       : clearing.sessions(intentSigner, at),
     clearing.positionOf(intent.account, market, at),
-    clearing.exposureState(0, at),
-    clearing.exposureState(1, at),
+    Promise.all(indexes.map((index) => clearing.exposureState(index, at))),
     clearing.makerBacking(at),
     clearing.baseRiskCapitalTarget(at),
-    clearing.marketLimitWord(otherMarketIndex(market), at),
   ]);
   if (secondaryProvider && (!secondaryBlock || secondaryBlock.hash !== block?.hash))
     return { rejection: reject("rpc divergence") };
   if (!block) return { rejection: reject("independent chain policy rejected") };
-  const limitWords: [bigint, bigint] =
-    market === 0
-      ? [BigInt(marketLimitWord), BigInt(otherLimitWord)]
-      : [BigInt(otherLimitWord), BigInt(marketLimitWord)];
   return {
     snapshot: {
       blockNumber,
@@ -193,8 +199,8 @@ export async function readChainState(
       paused: Boolean(paused),
       resolutionRequired: Boolean(resolutionRequired),
       isApprover: Boolean(isApprover),
-      markets: [toExposureMarket(btc), toExposureMarket(eth)],
-      books: [toExposureBook(btcBook), toExposureBook(ethBook)],
+      markets: rawMarkets.map(toExposureMarket),
+      books: rawBooks.map(toExposureBook),
       limitWords,
       position: toPosition(position),
       backing: BigInt(backing),

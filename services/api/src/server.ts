@@ -1,5 +1,10 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import {
+  marketRefreshIntervalMs,
+  watchMarketRegistry,
+  type MarketRegistryWatch,
+} from "../../../packages/shared/src/markets.js";
 import { registerAccountRoutes } from "./account.js";
 import { ChainReader } from "./chain.js";
 import { ApiContext, DEFAULT_CORS_ORIGIN, type ApiOptions } from "./context.js";
@@ -34,7 +39,7 @@ export function buildApi(options: ApiOptions = {}) {
     orders = new LimitOrders(ctx, chain, quoting, execution),
     deposits = new DepositSimulator(ctx, dev);
 
-  registerOperationsRoutes(app, ctx, { quoting, stream, orders, metrics });
+  registerOperationsRoutes(app, ctx, { chain, quoting, stream, orders, metrics });
   registerDevRoutes(app, ctx);
   quoting.register(app, guards);
   stream.register(app);
@@ -46,9 +51,25 @@ export function buildApi(options: ApiOptions = {}) {
 
   let senderReconciliation: Promise<void> | undefined,
     senderReconcileTimer: ReturnType<typeof setInterval> | undefined,
-    unsubscribeOracle: (() => void) | undefined;
+    unsubscribeOracle: (() => void) | undefined,
+    registryWatch: MarketRegistryWatch | undefined;
 
   app.addHook("onReady", async () => {
+    if (ctx.clearing) {
+      // Markets governance adds appear within `marketRefreshMs` (or at once when a request names
+      // one). A failed load keeps the last list; risk reads pin `marketCount` to their block and
+      // fail closed while the registry lags.
+      registryWatch = await watchMarketRegistry(ctx.clearing, {
+        intervalMs: options.marketRefreshMs ?? marketRefreshIntervalMs(),
+        requireInitial: false,
+        onChange: () => {
+          quoting.invalidateMarkets();
+          chain.invalidateQuoteSnapshot();
+          stream.schedulePublish();
+        },
+        onError: (error) => console.error("api market registry refresh failed", error),
+      });
+    }
     if (ctx.recoveredCommitments.length) {
       const versions = await chain.readProtocolVersions();
       for (const { quote } of ctx.recoveredCommitments) ctx.quotes.versions.set(quote.quoteId, versions);
@@ -75,6 +96,7 @@ export function buildApi(options: ApiOptions = {}) {
   });
 
   app.addHook("onClose", async () => {
+    registryWatch?.stop();
     if (senderReconcileTimer) clearInterval(senderReconcileTimer);
     orders.close();
     stream.close();

@@ -11,7 +11,7 @@ import type {
   GrossReservationBook,
   GrossRiskContext,
 } from "../../../packages/shared/src/gross-reservations.js";
-import { MARKETS, otherMarketIndex, type MarketIndex } from "../../../packages/shared/src/markets.js";
+import { marketName, type MarketIndex } from "../../../packages/shared/src/markets.js";
 import { BASE, abs, low128 } from "../../../packages/shared/src/numeric.js";
 import { impactCost, type Exposure } from "../../../packages/shared/src/pricing.js";
 import type { ChainSnapshot } from "./chain-state.js";
@@ -68,8 +68,8 @@ export function markedMarkets(
   market: MarketIndex,
   prices: SafetyPrices,
   priceTime: bigint,
-): [ExposureMarket, ExposureMarket] {
-  const markets: [ExposureMarket, ExposureMarket] = [snapshot.markets[0], snapshot.markets[1]];
+): ExposureMarket[] {
+  const markets = [...snapshot.markets];
   markets[market] = {
     ...markets[market],
     lastBid: prices.bid,
@@ -82,7 +82,7 @@ export function markedMarkets(
 /** Independent integer model of funding, realized PnL, gross/net caps and maker stress. */
 export function checkExposure(input: {
   snapshot: ChainSnapshot;
-  markets: [ExposureMarket, ExposureMarket];
+  markets: ExposureMarket[];
   market: MarketIndex;
   intent: TradeIntent;
   approval: MakerApproval;
@@ -105,27 +105,29 @@ export function checkExposure(input: {
   if (intent.reduceOnly && !admission.reduction) return reject("reduce-only intent does not reduce position");
 }
 
-/** Outstanding gross reservations in the other market need a fresh stored price there. */
+/** Outstanding gross reservations in any other market need a fresh stored price there. */
 export function checkCrossMarketFreshness(
   grossReservations: GrossReservationBook,
   grossId: string,
   snapshot: ChainSnapshot,
   market: MarketIndex,
 ): Rejection | undefined {
-  const other = otherMarketIndex(market),
-    priorGross = grossReservations.bounds(grossId),
-    otherPriceTime = Number(snapshot.markets[other].lastPriceTime);
-  if (
-    priorGross[other].longBase + priorGross[other].shortBase > 0n &&
-    (otherPriceTime === 0 || snapshot.blockTimestamp - otherPriceTime > MAX_GROSS_PRICE_AGE_SECONDS)
-  )
-    return reject("outstanding gross risk requires fresh cross-market price");
+  const priorGross = grossReservations.bounds(grossId, snapshot.markets.length);
+  for (const [other, state] of snapshot.markets.entries()) {
+    if (other === market) continue;
+    const otherPriceTime = Number(state.lastPriceTime);
+    if (
+      priorGross[other].longBase + priorGross[other].shortBase > 0n &&
+      (otherPriceTime === 0 || snapshot.blockTimestamp - otherPriceTime > MAX_GROSS_PRICE_AGE_SECONDS)
+    )
+      return reject("outstanding gross risk requires fresh cross-market price");
+  }
 }
 
 /** Inputs for `GrossReservationBook.admit` derived from the chain snapshot. */
 export interface GrossContext {
   books: ChainSnapshot["books"];
-  asks: [bigint, bigint];
+  asks: bigint[];
   block: number;
   makerDebit: bigint;
   risk: GrossRiskContext;
@@ -133,7 +135,7 @@ export interface GrossContext {
 
 export function buildGrossContext(input: {
   snapshot: ChainSnapshot;
-  markets: [ExposureMarket, ExposureMarket];
+  markets: ExposureMarket[];
   market: MarketIndex;
   position: PositionState;
   intent: TradeIntent;
@@ -142,7 +144,7 @@ export function buildGrossContext(input: {
   const { snapshot, markets, market, intent, approval } = input;
   return {
     books: snapshot.books,
-    asks: [markets[0].lastAsk, markets[1].lastAsk],
+    asks: markets.map((item) => item.lastAsk),
     block: snapshot.blockNumber,
     makerDebit: pendingMakerDebit({
       position: input.position,
@@ -154,7 +156,7 @@ export function buildGrossContext(input: {
       netLimit: snapshot.limitWords[market],
     }),
     risk: {
-      net: [marketNotional(markets[0]), marketNotional(markets[1])],
+      net: markets.map((item) => marketNotional(item)),
       netLimits: snapshot.limitWords,
       backing: snapshot.backing,
       floor: snapshot.floor,
@@ -168,23 +170,21 @@ export function buildGrossContext(input: {
  * relative to the safety touch.
  */
 export function checkImpact(input: {
-  markets: [ExposureMarket, ExposureMarket];
+  markets: ExposureMarket[];
   market: MarketIndex;
   prices: SafetyPrices;
   intent: TradeIntent;
   approval: MakerApproval;
 }): Rejection | undefined {
   const { markets, market, prices, intent, approval } = input;
-  const exposure: Exposure = { BTC: marketNotional(markets[0]), ETH: marketNotional(markets[1]) },
+  const symbol = marketName(market),
+    exposure: Exposure = { [symbol]: marketNotional(markets[market]) },
     delta = (intent.baseDelta * prices.mark) / BASE,
     absoluteBase = abs(intent.baseDelta),
     deliveredImpact =
       intent.baseDelta > 0n
         ? (absoluteBase * approval.executionPrice) / BASE - (absoluteBase * prices.ask) / BASE
         : (absoluteBase * prices.bid) / BASE - (absoluteBase * approval.executionPrice) / BASE;
-  if (
-    approval.impactCharge < impactCost(exposure, MARKETS[market], delta) ||
-    deliveredImpact < approval.impactCharge
-  )
+  if (approval.impactCharge < impactCost(exposure, symbol, delta) || deliveredImpact < approval.impactCharge)
     return reject("independent impact check rejected");
 }

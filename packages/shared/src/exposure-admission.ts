@@ -1,4 +1,5 @@
 import { positionPnl } from "./account-risk.js";
+import { marketRegistry } from "./markets.js";
 import { BASE, RATE, YEAR_SECONDS, abs, high128, low128 } from "./numeric.js";
 
 export interface ExposureMarket {
@@ -36,12 +37,20 @@ export function isPositionReduction(previous: bigint, delta: bigint) {
   const next = previous + delta;
   return abs(next) < abs(previous) && (next === 0n || next > 0n === previous > 0n);
 }
-/** Stress shocks the launch markets are registered with on chain (`marketParams(id).shockBps`). */
-export const STRESS_SHOCK_BPS = { BTC: 4_000n, ETH: 5_000n } as const;
 const ceilBps = (value: bigint, shockBps: bigint) => (abs(value) * shockBps + 9_999n) / 10_000n;
-/** Mirrors `RFQRiskMath.portfolioStress`: the sum of |net skew| x shock over markets, each rounded up. */
-export function makerStress(btc: bigint, eth: bigint) {
-  return ceilBps(btc, STRESS_SHOCK_BPS.BTC) + ceilBps(eth, STRESS_SHOCK_BPS.ETH);
+/** Market `index`'s stress shock as registered on chain (`marketParams(id).shockBps`). */
+export const stressShockBps = (index: number) => marketRegistry.at(index).shockBps;
+/** One market's term of `RFQRiskMath.portfolioStress`: |net skew| x shock, rounded up. */
+export const marketStress = (net: bigint, index: number) =>
+  net === 0n ? 0n : ceilBps(net, stressShockBps(index));
+/**
+ * Mirrors `RFQRiskMath.portfolioStress`: the sum of |net skew| x shock over markets, each rounded up.
+ * `nets[i]` is market i's net notional.
+ */
+export function makerStress(...nets: bigint[]) {
+  let total = 0n;
+  for (const [index, net] of nets.entries()) total += marketStress(net, index);
+  return total;
 }
 /**
  * Order-independent upper envelope for maker cash that one escaped approval can
@@ -76,10 +85,11 @@ export function pendingMakerDebit(input: {
 }
 /** Independent integer model of selected-market funding, realized PnL and canonical exposure bounds. */
 export function exposureAdmission(input: {
-  markets: [ExposureMarket, ExposureMarket];
-  books: [ExposureBook, ExposureBook];
-  netLimits: [bigint, bigint];
-  market: 0 | 1;
+  /** Every registered market, by index. */
+  markets: readonly ExposureMarket[];
+  books: readonly ExposureBook[];
+  netLimits: readonly bigint[];
+  market: number;
   position: PositionState;
   delta: bigint;
   executionPrice: bigint;
@@ -92,6 +102,15 @@ export function exposureAdmission(input: {
     next = previous + delta,
     reduction = isPositionReduction(previous, delta);
   const reject = (reason: string) => ({ allowed: false, reason, reduction });
+  if (
+    markets.length === 0 ||
+    books.length !== markets.length ||
+    netLimits.length !== markets.length ||
+    !Number.isInteger(market) ||
+    market < 0 ||
+    market >= markets.length
+  )
+    return reject("invalid_policy");
   if (!books.every((book) => book.ready)) return reject("exposure_migration_required");
   const selected = markets[market],
     cap = high128(netLimits[market]);
@@ -113,7 +132,7 @@ export function exposureAdmission(input: {
   const within = (value: bigint, limit: bigint, old: bigint) => value <= limit || (reduction && value <= old),
     oldNet: bigint[] = [],
     newNet: bigint[] = [];
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < markets.length; i++) {
     const state = markets[i],
       book = books[i];
     let longs = book.longBase,
@@ -144,7 +163,6 @@ export function exposureAdmission(input: {
       return reject("gross_or_side_cap");
     if (!within(abs(newNet[i]), high128(netLimits[i]), abs(oldNet[i]))) return reject("net_cap");
   }
-  if (!within(makerStress(newNet[0], newNet[1]), backing / 4n, makerStress(oldNet[0], oldNet[1])))
-    return reject("maker_stress");
+  if (!within(makerStress(...newNet), backing / 4n, makerStress(...oldNet))) return reject("maker_stress");
   return { allowed: true, reason: "allowed", reduction };
 }

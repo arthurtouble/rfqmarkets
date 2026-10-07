@@ -1,8 +1,19 @@
 import Fastify from "fastify";
 import { MarketFanout, consumeMarketEvents } from "./fanout.js";
 import { MarketHistory, type HistoryMarket } from "./history.js";
+import {
+  CANDLE_INTERVALS,
+  CandleBackfill,
+  CandleBook,
+  candleToWire,
+  resampleCandles,
+  type Candle,
+  type CandleBackfillOptions,
+  type CandleInterval,
+} from "./candles.js";
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
 import { openSse } from "../../lib/src/sse.js";
+import { isMarketSymbol } from "../../../packages/shared/src/markets.js";
 
 export interface GatewayOptions {
   upstreamUrl: string;
@@ -16,15 +27,55 @@ export interface GatewayOptions {
   upstreamStallMs?: number;
   maxConnections?: number;
   maxConnectionsPerClient?: number;
+  /** How long one-minute candles of the relayed mid are kept in memory (default seven days). */
+  candleRetentionMs?: number;
+  /** Oracle-node candle history used for windows older than the in-memory candles. */
+  candleBackfill?: CandleBackfillOptions;
+  now?: () => number;
 }
+
+const MAX_CANDLES = 1_000;
+const DEFAULT_CANDLES = 300;
 
 export function buildGateway(options: GatewayOptions) {
   const connections = new ConnectionBudget(options.maxConnections, options.maxConnectionsPerClient);
   const app = Fastify({ logger: false }),
     fanout = new MarketFanout(options.maxBufferedBytes),
     history = new MarketHistory(options.historyCapacity, options.historySampleIntervalMs),
+    candles = new CandleBook(options.candleRetentionMs),
+    now = options.now ?? Date.now,
+    backfill = options.candleBackfill?.urls.length
+      ? new CandleBackfill({ now, ...options.candleBackfill })
+      : undefined,
+    candleCache = new Map<string, { second: number; body: unknown }>(),
     fetchImpl = options.fetchImpl ?? fetch,
     corsOrigin = options.corsOrigin ?? "http://127.0.0.1:4173";
+  /** A launch market or one the relayed stream has carried (markets are added by governance, not code). */
+  const knownMarket = (market: string) =>
+    isMarketSymbol(market) && (candles.has(market) || history.has(market));
+  /** Candles for the `limit` buckets ending with the current one; older buckets come from the backfill. */
+  async function candleWindow(market: HistoryMarket, interval: CandleInterval, limit: number) {
+    const intervalMs = CANDLE_INTERVALS[interval],
+      nowMs = now(),
+      fromMs = Math.floor(nowMs / intervalMs) * intervalMs - (limit - 1) * intervalMs,
+      local = resampleCandles(candles.range(market, fromMs, nowMs), intervalMs),
+      earliest = candles.earliest(market);
+    let merged: Candle[] = local,
+      source = "gateway";
+    // The first local bucket is only complete when the book began at its boundary.
+    const cutoff = earliest === null ? Infinity : Math.ceil(earliest / intervalMs) * intervalMs;
+    if (backfill && cutoff > fromMs) {
+      const older = await backfill.get(market, interval, fromMs, candles.marketId(market));
+      if (older?.length) {
+        merged = [
+          ...older.filter((candle) => candle.start >= fromMs && candle.start < cutoff),
+          ...local.filter((candle) => candle.start >= cutoff),
+        ];
+        source = "oracle+gateway";
+      }
+    }
+    return { source, candles: merged.slice(-limit) };
+  }
   let controller: AbortController | undefined,
     loop: Promise<void> | undefined,
     heartbeat: ReturnType<typeof setInterval> | undefined,
@@ -56,6 +107,7 @@ export function buildGateway(options: GatewayOptions) {
         await consumeMarketEvents(response, (data) => {
           lastProgress = lastFrameAtMs = Date.now();
           history.record(data);
+          candles.record(data);
           fanout.publish(data);
         });
         if (!stopped) throw new Error("upstream market stream ended");
@@ -81,14 +133,43 @@ export function buildGateway(options: GatewayOptions) {
     connections: connections.status(),
     fanout: fanout.status(),
     history: history.status(),
+    candles: candles.status(),
   }));
+  app.get<{ Querystring: { market?: string; interval?: string; limit?: string } }>(
+    "/v1/candles",
+    async (request, reply) => {
+      reply.header("access-control-allow-origin", corsOrigin).header("cache-control", "public, max-age=1");
+      const { market, interval = "1m" } = request.query;
+      if (!market || !knownMarket(market)) return reply.code(400).send({ error: "unknown market" });
+      if (!Object.hasOwn(CANDLE_INTERVALS, interval))
+        return reply.code(400).send({ error: "interval must be one of 1m, 5m, 15m, 1h, 4h, 1d" });
+      const limit = Number(request.query.limit ?? DEFAULT_CANDLES);
+      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_CANDLES)
+        return reply.code(400).send({ error: `limit must be an integer between 1 and ${MAX_CANDLES}` });
+      // Recomputed at most once per second per query; the relayed stream ticks faster than charts redraw.
+      const key = `${market}:${interval}:${limit}`,
+        second = Math.floor(now() / 1_000),
+        cached = candleCache.get(key);
+      if (cached?.second === second) return cached.body;
+      const window = await candleWindow(market, interval as CandleInterval, limit),
+        body = {
+          market,
+          interval,
+          unit: "usdc-micro",
+          source: window.source,
+          candles: window.candles.map(candleToWire),
+        };
+      if (candleCache.size >= 64) candleCache.clear();
+      candleCache.set(key, { second, body });
+      return body;
+    },
+  );
   app.get<{ Querystring: { market?: string; limit?: string } }>(
     "/v1/markets/history",
     async (request, reply) => {
       reply.header("access-control-allow-origin", corsOrigin).header("cache-control", "private, max-age=1");
       const market = request.query.market;
-      if (market !== "BTC" && market !== "ETH")
-        return reply.code(400).send({ error: "market must be BTC or ETH" });
+      if (!market || !knownMarket(market)) return reply.code(400).send({ error: "unknown market" });
       const limit = Number(request.query.limit ?? 300);
       if (!Number.isInteger(limit) || limit < 2 || limit > 1_800)
         return reply.code(400).send({ error: "limit must be an integer between 2 and 1800" });

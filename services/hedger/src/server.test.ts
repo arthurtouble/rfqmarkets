@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildHedger,
+  loadHedgeCoins,
   type HedgeMarket,
   type HedgeVenue,
   type VenueOrder,
@@ -542,4 +543,71 @@ test("a malformed exposure response is rejected before it can size a hedge", asy
     await hedge.close();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("hedges through the venue coin map and keeps an unmapped market reduce-only without orders", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-hedger-coins-")),
+    submitted: VenueOrder[] = [],
+    logged: string[] = [];
+  const venue: HedgeVenue = {
+    mode: "coin-map",
+    position: async () => 0n,
+    find: async () => null,
+    submit: async (order) => {
+      submitted.push(order);
+      return { venueOrderId: "venue-1", status: "filled", filledBase: order.baseDelta };
+    },
+  };
+  const payload = {
+      blockNumber: 90,
+      markets: {
+        BTC: { aggregateBase: "1000000000000000000", bid: "99990000000", ask: "100010000000" },
+        ETH: { aggregateBase: "0", bid: "4000000000", ask: "4000000000" },
+        // Added by governance: customers already hold 2,000 SOL but no venue coin is configured.
+        SOL: { aggregateBase: "2000000000000000000000", bid: "150000000", ask: "150000000" },
+      },
+    },
+    fetchImpl = (async () =>
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+  const hedge = buildHedger({
+    healthToken: TOKEN,
+    indexerUrl: "http://indexer",
+    databasePath: join(directory, "hedge.sqlite"),
+    fetchImpl,
+    pollMs: 60_000,
+    venue,
+    hedgeCoins: { BTC: "BTC-PERP", ETH: "ETH" },
+    log: (message) => logged.push(message),
+  });
+  try {
+    await hedge.ready();
+    await hedge.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+    assert.deepEqual(
+      submitted.map((order) => order.market),
+      ["BTC-PERP"],
+      "BTC is hedged under its venue coin and SOL is never sent to the venue",
+    );
+    const risk = (await hedge.inject({ method: "GET", url: "/internal/risk", headers: AUTH })).json();
+    assert.equal(risk.healthy, true, "an unmapped market does not make the hedger unhealthy");
+    assert.equal(risk.markets.SOL.mode, "reduce_only");
+    assert.equal(risk.markets.SOL.reason, "no_hedge_mapping");
+    assert.notEqual(risk.markets.BTC.mode, undefined);
+    const status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
+    assert.equal(status.markets.SOL.state, "unhedged");
+    assert.equal(status.markets.BTC.coin, "BTC-PERP");
+    assert.equal(logged.length, 1, "the missing mapping is logged once");
+    assert.match(logged[0], /SOL has no hedge venue mapping/);
+  } finally {
+    await hedge.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the default hedge coin map is data", () => {
+  const coins = loadHedgeCoins();
+  assert.equal(coins.BTC, "BTC");
+  assert.equal(coins.ETH, "ETH");
 });

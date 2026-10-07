@@ -10,7 +10,18 @@ import {
   toPosition,
   toSession,
 } from "../packages/shared/src/clearing-structs.js";
-import { MARKETS, marketIndex, marketName, otherMarketIndex } from "../packages/shared/src/markets.js";
+import {
+  MarketRegistry,
+  encodeMarketSymbol,
+  marketIndex,
+  marketName,
+  marketRegistry,
+  marketSymbols,
+  readMarketsFromChain,
+  watchMarketRegistry,
+  type MarketDefinition,
+} from "../packages/shared/src/markets.js";
+import { maskAllows } from "../packages/shared/src/clearing-structs.js";
 import {
   BASE,
   MASK,
@@ -39,12 +50,71 @@ test("numeric helpers", () => {
 });
 
 test("market index mapping", () => {
-  assert.deepEqual(MARKETS, ["BTC", "ETH"]);
+  assert.deepEqual(marketSymbols(), ["BTC", "ETH"]);
   assert.equal(marketIndex("BTC"), 0);
   assert.equal(marketIndex("ETH"), 1);
   assert.equal(marketName(1n), "ETH");
-  assert.equal(otherMarketIndex(0), 1);
   assert.throws(() => marketName(2), /unknown market index/);
+  assert.throws(() => marketIndex("SOL"), /unknown market SOL/);
+  assert.equal(marketRegistry.mask, 3n);
+  assert(maskAllows(3n, 1) && !maskAllows(1, 1) && maskAllows(1n << 100n, 100));
+});
+
+const sol: MarketDefinition = {
+  index: 2,
+  symbol: "SOL",
+  impactK: 20_000n,
+  shockBps: 6_000n,
+  marginScaleBps: 15_000,
+  enabled: true,
+};
+
+/** A clearing reader over `markets`, as `marketCount`/`marketParams`/`markets` return them. */
+const fakeClearing = (markets: MarketDefinition[]) => ({
+  marketCount: async () => BigInt(markets.length),
+  marketParams: async (index: number) => ({
+    symbol: encodeMarketSymbol(markets[index].symbol),
+    impactK: markets[index].impactK,
+    shockBps: markets[index].shockBps,
+    marginScaleBps: BigInt(markets[index].marginScaleBps),
+  }),
+  markets: async (index: number) => ({ enabled: markets[index].enabled }),
+});
+
+test("the registry loads from chain, grows append-only and notifies listeners", async () => {
+  const registry = new MarketRegistry(),
+    chainMarkets = [...registry.all()],
+    clearing = fakeClearing(chainMarkets),
+    changes: string[][] = [];
+  assert.deepEqual(await readMarketsFromChain(clearing), chainMarkets);
+  registry.onChange((markets) => changes.push(markets.map((market) => market.symbol)));
+  const watch = await watchMarketRegistry(clearing, { registry, intervalMs: 60_000 });
+  assert.deepEqual(changes, [], "the launch markets already match");
+  chainMarkets.push(sol);
+  await registry.ensureCount(3);
+  assert.deepEqual(registry.symbols(), ["BTC", "ETH", "SOL"]);
+  assert.equal(registry.get("SOL").shockBps, 6_000n);
+  assert.equal(registry.mask, 7n);
+  assert.deepEqual(changes, [["BTC", "ETH", "SOL"]]);
+  await assert.rejects(registry.ensureCount(4), /behind the chain/);
+  chainMarkets.pop();
+  await assert.rejects(watch.refresh(), /cannot shrink/);
+  assert.deepEqual(registry.symbols(), ["BTC", "ETH", "SOL"], "a failed refresh keeps the last list");
+  watch.stop();
+  assert.throws(() => registry.replace([{ ...sol, index: 0 }, sol]), /index 2, expected 1/);
+  assert.throws(() => registry.replace([{ ...sol, index: 0, symbol: "bad symbol" }]), /invalid market symbol/);
+});
+
+test("an unknown symbol triggers a rate-limited early refresh", async () => {
+  const registry = new MarketRegistry();
+  let calls = 0;
+  registry.setRefresher(async () => {
+    calls++;
+  });
+  registry.requestRefresh(5_000, 10_000);
+  registry.requestRefresh(5_000, 12_000);
+  registry.requestRefresh(5_000, 16_000);
+  assert.equal(calls, 2);
 });
 
 test("local oracle report codec round-trips the adapter tuple array", () => {
@@ -97,7 +167,7 @@ test("clearing struct converters normalize ethers results to bigint models", () 
       usedNotional: 0,
       maxFee: BASE,
     }).marketMask,
-    3,
+    3n,
   );
 });
 

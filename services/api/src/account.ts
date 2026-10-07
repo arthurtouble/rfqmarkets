@@ -1,31 +1,47 @@
 import { getAddress } from "ethers";
 import type { FastifyInstance } from "fastify";
 import { openingPnl, positionPnl } from "../../../packages/shared/src/account-risk.js";
-import { BASE, marginRate } from "../../../packages/shared/src/policy.js";
+import {
+  BASE,
+  DEFAULT_MARGIN_SCALE_BPS,
+  legMargin,
+  marketMarginView,
+} from "../../../packages/shared/src/policy.js";
 import type { ApiContext } from "./context.js";
-import { abs, MARKETS, type Market } from "./markets.js";
+import { abs, marketIndex, marketRegistry, type Market } from "./markets.js";
 import { publicError } from "./public-error.js";
 import type { MarketView, QuoteEngine } from "./quoting.js";
 
 export type AccountPosition = { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
-type MarketPrices = Record<Market, Pick<MarketView, "bid" | "ask" | "mid" | "projectedFundingIndex">>;
+type MarketPrices = Partial<
+  Record<
+    Market,
+    Pick<MarketView, "bid" | "ask" | "mid" | "projectedFundingIndex"> &
+      Partial<Pick<MarketView, "marginScaleBps">>
+  >
+>;
 
 /** Bisection steps for the liquidation-price estimate; 80 halvings exceed bigint price precision. */
 const LIQUIDATION_SEARCH_STEPS = 80;
 /** Short liquidation prices are searched up to this multiple of the current mid. */
 const SHORT_SEARCH_CEILING = 20n;
 
-const marginOf = (notional: bigint, initial: boolean) => (notional * marginRate(notional, initial)) / 10_000n;
-
 /**
  * Account equity, margin and per-position liquidation estimates at the snapshot prices. Longs are
  * marked at the bid and shorts at the ask, matching the clearing contract's conservative marks.
+ * `positions` covers every registered market; an open position in a market without a price fails.
  */
 export function accountView(
   collateral: bigint,
   positions: Record<Market, AccountPosition>,
   markets: MarketPrices,
 ) {
+  const names = Object.keys(positions).filter((name) => {
+    if (markets[name]) return true;
+    if (positions[name].size !== 0n) throw new Error(`no price for ${name}`);
+    return false;
+  });
+  const priced = (name: Market) => markets[name]!;
   let unrealizedPnl = 0n,
     accruedFunding = 0n,
     grossNotional = 0n,
@@ -33,9 +49,15 @@ export function accountView(
     maintenanceMargin = 0n;
   const views: Record<string, Record<string, string | null>> = {},
     pnls: bigint[] = [];
-  for (const name of MARKETS) {
+  // Each leg's tiers are scaled by its market's multiplier, as `RFQRiskMath.accountMargin` does.
+  const scaleOf = (name: Market) =>
+      markets[name]?.marginScaleBps ??
+      (marketRegistry.has(name) ? marketRegistry.get(name).marginScaleBps : DEFAULT_MARGIN_SCALE_BPS),
+    marginOf = (name: Market, notional: bigint, initial: boolean) =>
+      legMargin(notional, initial, scaleOf(name));
+  for (const name of names) {
     const { size, entryPrice, lastFundingIndex } = positions[name],
-      market = markets[name],
+      market = priced(name),
       mark = size >= 0n ? BigInt(market.bid) : BigInt(market.ask),
       notional = (abs(size) * BigInt(market.ask)) / BASE,
       pnl = positionPnl(size, entryPrice, mark),
@@ -44,8 +66,8 @@ export function accountView(
     unrealizedPnl += pnl;
     accruedFunding += fundingPnl;
     grossNotional += notional;
-    initialMargin += marginOf(notional, true);
-    maintenanceMargin += marginOf(notional, false);
+    initialMargin += marginOf(name, notional, true);
+    maintenanceMargin += marginOf(name, notional, false);
     views[name] = {
       size: size.toString(),
       entryPrice: entryPrice.toString(),
@@ -54,6 +76,8 @@ export function accountView(
       unrealizedPnl: pnl.toString(),
       accruedFunding: fundingPnl.toString(),
       lastFundingIndex: lastFundingIndex.toString(),
+      initialMargin: marginOf(name, notional, true).toString(),
+      maintenanceMargin: marginOf(name, notional, false).toString(),
     };
   }
   const equity = collateral + unrealizedPnl + accruedFunding,
@@ -63,23 +87,23 @@ export function accountView(
   const healthAt = (selected: Market, candidateMid: bigint) => {
     let value = collateral + accruedFunding,
       required = 0n;
-    for (const name of MARKETS) {
+    for (const name of names) {
       const { size, entryPrice } = positions[name];
       if (size === 0n) continue;
-      const current = markets[name],
+      const current = priced(name),
         scale = (price: string) =>
           name === selected ? (candidateMid * BigInt(price)) / BigInt(current.mid) : BigInt(price),
         bid = scale(current.bid),
         ask = scale(current.ask);
       value += positionPnl(size, entryPrice, size > 0n ? bid : ask);
-      required += marginOf((abs(size) * ask) / BASE, false);
+      required += marginOf(name, (abs(size) * ask) / BASE, false);
     }
     return value - required;
   };
-  for (const name of MARKETS) {
+  for (const name of names) {
     const { size } = positions[name];
     if (size === 0n) continue;
-    const currentMid = BigInt(markets[name].mid);
+    const currentMid = BigInt(priced(name).mid);
     let liquidation: bigint | null = null;
     if (healthAt(name, currentMid) <= 0n) liquidation = currentMid;
     else {
@@ -113,6 +137,8 @@ export function accountView(
     marginRatioBps: equity > 0n ? ((maintenanceMargin * 10_000n) / equity).toString() : null,
     effectiveLeverageBps: equity > 0n ? ((grossNotional * 10_000n) / equity).toString() : null,
     liquidatable: equity < maintenanceMargin,
+    /** Per-market margin multiplier and the leverage it allows, for leverage presets. */
+    marginParameters: Object.fromEntries(names.map((name) => [name, marketMarginView(scaleOf(name))])),
     positions: views,
   };
 }
@@ -131,11 +157,11 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
     try {
       const snapshot = await quoting.readMarkets(),
         blockTag = { blockTag: snapshot.blockNumber };
-      const [collateral, btc, eth, maintenanceEquity, openingEquity, initialMargin, maintenanceMargin] =
+      const symbols = marketRegistry.symbols();
+      const [collateral, rawPositions, maintenanceEquity, openingEquity, initialMargin, maintenanceMargin] =
         await Promise.all([
           clearing.collateralOf(account, blockTag),
-          clearing.positionOf(account, 0, blockTag),
-          clearing.positionOf(account, 1, blockTag),
+          Promise.all(symbols.map((symbol) => clearing.positionOf(account, marketIndex(symbol), blockTag))),
           clearing.maintenanceEquity(account, blockTag),
           clearing.openingEquity(account, blockTag),
           clearing.initialMargin(account, blockTag),
@@ -148,7 +174,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
       });
       const { positions, ...summary } = accountView(
         BigInt(collateral),
-        { BTC: position(btc), ETH: position(eth) },
+        Object.fromEntries(symbols.map((symbol, index) => [symbol, position(rawPositions[index])])),
         snapshot.markets,
       );
       return {
