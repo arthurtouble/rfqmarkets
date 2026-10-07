@@ -47,7 +47,7 @@ Each signs a *MakerApproval*, which fixes the exact execution price, the invento
 
 ## 6. Submission
 
-The API checks that the oracle report still has enough life left, simulates the transaction, and submits `executeTrade` from its gas wallet with the intent, the approval, the oracle report and the three signatures.
+The API checks that the oracle report still has enough life left, simulates the transaction, and submits `executeTrade` from its gas wallet with the intent, the approval, the oracle report and the three signatures. A [stop order](../trading/stop-orders.md) goes through `executeTriggeredTrade` instead, which takes the trigger as well and first checks that the oracle mid in the report has reached it.
 
 ## 7. The contract
 

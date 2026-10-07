@@ -10,26 +10,28 @@ Your collateral and positions are in the clearing contract, not on the venue's s
 
 The exit page at [exit.rfq-markets.workers.dev](https://exit.rfq-markets.workers.dev) is a deliberately minimal page that talks only to your wallet and the contract. It does not use the venue's API, and it reads the chain through your wallet's own network connection.
 
-To use it, open it with a browser wallet on Base and click **Connect and read account**. It shows your raw account state: collateral (in millionths of a USDC), each position's size, entry price and funding index, and whether the venue is paused or in resolution. From there you can:
+To use it, open it with a browser extension wallet on Base and click **Connect and read account**. It shows your raw account state: collateral (in millionths of a USDC), each position's size, entry price and funding index, and whether the venue is paused or in resolution. From there you can:
 
 | Action | What it does | When it works |
 | --- | --- | --- |
 | **Withdraw** | Withdraws USDC to your wallet. | Any time outside resolution, if your account still meets initial margin afterwards. With open positions it needs a fresh oracle price on chain. |
-| **Cancel nonce** | Burns a nonce, so a signed trade or limit order using it can never execute. | Any time. |
-| **Revoke session** | Revokes a quick-trading session key. | Any time. |
+| **Cancel nonce** | Burns a nonce, so a signed trade, limit order or stop order using it can never execute. | Any time. |
+| **Revoke session** | Revokes a one-click trading session key. | Any time. |
 | **Close paused position** | Closes a whole position at the oracle price. | Only while trading is paused. You must paste a fresh signed oracle report. |
 | **Claim resolution payment** | Pays out your share after a resolution. | Only after resolution is finalized. |
 
+The exit page only knows the BTC and ETH markets today. It works with browser extensions only, not WalletConnect or Base Account; with those, use the contract functions in [On-chain data](../integrate/onchain-data.md) from any tool that can send a transaction.
+
 Everything on the exit page is an ordinary transaction from your wallet, so you need a little ETH on Base. If your wallet is on another network, switch it to Base first; the page does not switch for you.
 
-The oracle report for a paused close has to be assembled from the oracle nodes' published batches. [Oracle feeds](../integrate/oracle-feeds.md#building-a-report) explains how. If the venue's API is still running, the app's **Close at oracle** button does this for you and pays the gas.
+The oracle report for a paused close has to be assembled from the oracle nodes' published batches. [Oracle feeds](../integrate/oracle-feeds.md#building-a-report) explains how. If the venue's API is still running, the app's **Close at oracle price** button does this for you and pays the gas.
 
 ## If trading is paused
 
 Governance or the emergency council can pause trading, for example if an oracle node misbehaves or a bug is suspected. Pausing also invalidates every approval in flight. While paused:
 
 - **New trades are blocked.**
-- **You can close at the oracle price.** The positions table shows **Close at oracle**, which closes your whole position at the oracle bid (for a long) or ask (for a short), with no fee, no approvers and no margin check. The venue sponsors it; the exit page can do it without the venue.
+- **You can close at the oracle price.** Each position shows **Close BTC at oracle price** (or the equivalent), which closes your whole position at the oracle bid (for a long) or ask (for a short), with no fee, no approvers and no margin check. The venue sponsors it; the exit page can do it without the venue.
 - **Withdrawals keep working**, under the usual margin rule.
 - **Deposits, cancellations and session changes keep working.**
 - **Liquidations keep working**, so an underwater account cannot sit open indefinitely.

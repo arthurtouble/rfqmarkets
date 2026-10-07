@@ -95,7 +95,7 @@ export function Markdown({ source, resolve, go }: { source: string; resolve: Res
       while (index < lines.length && lines[index].startsWith(">")) body.push(lines[index++].replace(/^>\s?/, ""));
       const text = body.join("\n");
       const tone = text.match(/^\*\*(Warning|Note|Tip)\b/)?.[1].toLowerCase() ?? "note";
-      blocks.push(<aside className={`callout ${tone}`} key={blocks.length}><Markdown source={text} resolve={resolve} go={go} /></aside>);
+      blocks.push(<aside className={`note-box ${tone}`} key={blocks.length}><Markdown source={text} resolve={resolve} go={go} /></aside>);
       continue;
     }
     if (/^---+$/.test(line)) { blocks.push(<hr key={blocks.length} />); index++; continue; }
