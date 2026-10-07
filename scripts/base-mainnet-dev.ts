@@ -15,7 +15,7 @@ import {
   word,
   type DeploymentRecord,
 } from "./base-mainnet.js";
-import { validateDevManifest } from "./mainnet-manifest.js";
+import { DEV_CEILINGS, validateDevManifest } from "./mainnet-manifest.js";
 
 // Development profile for Base mainnet: the owner EOA is both clearing governance and ProxyAdmin
 // owner, so caps and upgrades apply immediately. Caps are bounded by DEV_CEILINGS. When the product
@@ -130,6 +130,31 @@ export async function configureDev(
   }
   if (options.unpause) transactions.push(await confirmed(clearing.unpause(), confirmations));
   return transactions;
+}
+
+/**
+ * Appoints the risk operator (v1.2) with the dev ceilings as its envelope, so the operations console can list
+ * and tune markets from the operator's wallet without the owner key. Floors are the contract's own.
+ */
+export async function appointRiskOperatorDev(
+  owner: Signer,
+  record: DeploymentRecord,
+  operator: string,
+  confirmations = 2,
+) {
+  const clearing = new Contract(record.contracts.clearingProxy, artifact("RFQClearing").abi, owner);
+  const bounds = {
+    maxTradeNotional: DEV_CEILINGS.maxTradeUsdc,
+    maxMarketNotional: DEV_CEILINGS.netUsdc,
+    maxGrossLimit: DEV_CEILINGS.grossUsdc,
+    minImpactK: 1,
+    minShockBps: 500,
+    minMarginScaleBps: 2_500,
+  };
+  return [
+    await confirmed(clearing.setRiskOperatorBounds(bounds), confirmations),
+    await confirmed(clearing.setRiskOperator(getAddress(operator)), confirmations),
+  ];
 }
 
 /** Unpauses a freshly deployed dev clearing (v1 starts paused). */

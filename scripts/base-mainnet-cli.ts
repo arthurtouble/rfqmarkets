@@ -3,6 +3,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFile
 import { dirname, resolve } from "node:path";
 import { ContractFactory, JsonRpcProvider, Wallet, formatEther, getAddress } from "ethers";
 import {
+  appointRiskOperatorDev,
   configureDev,
   devPreflight,
   generateDevIdentities,
@@ -41,6 +42,7 @@ import { checkReleaseEvidence } from "./release-evidence.js";
 //   dev-deploy        DEV_MANIFEST [--unpause]
 //   dev-configure     DEV_MANIFEST [--unpause]
 //   dev-upgrade       DEV_MANIFEST
+//   dev-risk-operator DEV_MANIFEST OPERATOR_ADDRESS   (after a v1.2 upgrade)
 //   dev-handover      DEV_MANIFEST TIMELOCK GOVERNANCE_SAFE EMERGENCY_SAFE
 //   dev-verify        DEV_MANIFEST
 //   dev-basescan      DEV_MANIFEST
@@ -432,6 +434,27 @@ switch (command) {
     );
     break;
   }
+  case "dev-risk-operator": {
+    const operator = flags[0];
+    if (!operator) throw new Error("usage: dev-risk-operator DEV_MANIFEST OPERATOR_ADDRESS");
+    const manifest = loadDevManifest(),
+      provider = rpc(),
+      owner = devOwner(provider),
+      record = loadRecord(DEV_RECORD);
+    await requireMainnet(provider);
+    confirm("dev-risk-operator", owner.address, operator.slice(2, 10).toLowerCase());
+    console.log(
+      JSON.stringify(
+        {
+          transactions: await appointRiskOperatorDev(owner, record, operator),
+          verify: await verifyDev(provider, record, manifest),
+        },
+        null,
+        2,
+      ),
+    );
+    break;
+  }
   case "dev-verify": {
     const manifest = loadDevManifest(),
       record = loadRecord(DEV_RECORD),
@@ -493,6 +516,6 @@ switch (command) {
     break;
   default:
     throw new Error(
-      "usage: base-mainnet-cli candidate|preflight|deploy-timelock|deploy|verify|batches|basescan|dev-identities|dev-preflight|dev-deploy|dev-configure|dev-upgrade|dev-handover|dev-verify|dev-basescan ...",
+      "usage: base-mainnet-cli candidate|preflight|deploy-timelock|deploy|verify|batches|basescan|dev-identities|dev-preflight|dev-deploy|dev-configure|dev-upgrade|dev-risk-operator|dev-handover|dev-verify|dev-basescan ...",
     );
 }

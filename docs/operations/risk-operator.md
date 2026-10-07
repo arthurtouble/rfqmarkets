@@ -68,8 +68,10 @@ and `npm run dev:admin` offers **Use local operator** (development builds only).
 
 1. Upgrade the clearing (the new `RFQMarketAdmin` library and implementation). On the dev deployment that is
    `npm run dev-upgrade:base-mainnet`; in production it goes through the timelock.
-2. Governance calls `setRiskOperatorBounds(...)` with the agreed envelope, then `setRiskOperator(address)`. In
-   production both go through the timelock once; after that the operator acts at once.
+2. Governance calls `setRiskOperatorBounds(...)` with the agreed envelope, then `setRiskOperator(address)`. On
+   the dev deployment `npm run dev-risk-operator:base-mainnet -- DEV_MANIFEST OPERATOR_ADDRESS` does both with
+   the dev ceilings as the envelope. In production both go through the timelock once; after that the operator
+   acts at once.
 3. Optionally set spreads with `setSpread(market, bps)` and `setSpread(255, bps)` for the default.
 
 Use a hardware wallet or a Safe owner key for the operator. To rotate it, governance appoints the new address;
