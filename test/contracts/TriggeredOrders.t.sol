@@ -191,6 +191,73 @@ contract TriggeredOrdersTest is ClearingFixture {
         clearing.executeTriggeredTrade(intent, moved, approval, proof, userSignature, first, second);
     }
 
+    function test_shortStopLossBuysBackAboveTheTriggerAndCannotFireAfterTheShortCloses() public {
+        trade(alice, 0, -1e17, false);
+        Trigger memory stop = Trigger({triggerPrice: 102_000e6, triggerAbove: true});
+
+        moveBtc(101_000e6);
+        (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
+            triggeredQuote(1e17, 1e17, true, stop, 910);
+        fireReverts(intent, stop, approval, proof, TriggerNotReached.selector);
+
+        moveBtc(102_500e6);
+        (intent, approval, proof) = triggeredQuote(1e17, 1e17, true, stop, 910);
+        fire(intent, stop, approval, proof);
+        assertEq(clearing.positionOf(alice.account, 0).size, 0);
+
+        // A second stop for the closed short clamps to zero and is refused rather than opening a long.
+        (intent, approval, proof) = triggeredQuote(1e17, 1e17, true, stop, 911);
+        fireReverts(intent, stop, approval, proof, InvalidTrade.selector);
+        assertEq(clearing.positionOf(alice.account, 0).size, 0);
+    }
+
+    function test_reduceOnlyTriggerCannotCloseAPositionThatFlippedToItsSide() public {
+        trade(alice, 0, 1e17, false);
+        trade(alice, 0, -2e17, false);
+        // A sell stop signed for the old long would grow the new short; it is refused.
+        Trigger memory stop = Trigger({triggerPrice: 99_000e6, triggerAbove: false});
+        moveBtc(98_000e6);
+        (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
+            triggeredQuote(-1e17, -1e17, true, stop, 912);
+        fireReverts(intent, stop, approval, proof, InvalidTrade.selector);
+        assertEq(clearing.positionOf(alice.account, 0).size, -1e17);
+    }
+
+    function test_aStopThatGapsPastItsLimitWaitsInsteadOfFillingWorse() public {
+        trade(alice, 0, 1e17, false);
+        Trigger memory stop = Trigger({triggerPrice: 95_000e6, triggerAbove: false});
+        moveBtc(90_000e6);
+        (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
+            triggeredQuote(-1e17, -1e17, true, stop, 913);
+        // The 1% slippage band floors the sell at 94,050; a fill at about 90,000 is worse than the signed limit.
+        intent.limitPrice = 94_050e6;
+        approval.intentHash = triggeredDigest(intent, stop);
+        fireReverts(intent, stop, approval, proof, InvalidTrade.selector);
+        assertEq(clearing.positionOf(alice.account, 0).size, 1e17);
+    }
+
+    function test_expiredOrCancelledTriggersNeverFill() public {
+        trade(alice, 0, 1e17, false);
+        Trigger memory stop = Trigger({triggerPrice: 99_000e6, triggerAbove: false});
+        moveBtc(98_000e6);
+
+        (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
+            triggeredQuote(-1e17, -1e17, true, stop, 914);
+        intent.deadline = uint64(block.timestamp - 1);
+        approval.intentHash = triggeredDigest(intent, stop);
+        fireReverts(intent, stop, approval, proof, Stale.selector);
+
+        // Cancelling the shared nonce of a TP/SL pair kills both legs on chain.
+        vm.prank(alice.account);
+        clearing.cancelNonce(915);
+        (intent, approval, proof) = triggeredQuote(-1e17, -1e17, true, stop, 915);
+        fireReverts(intent, stop, approval, proof, Replay.selector);
+        Trigger memory takeProfit = Trigger({triggerPrice: 90_000e6, triggerAbove: true});
+        (intent, approval, proof) = triggeredQuote(-1e17, -1e17, true, takeProfit, 915);
+        fireReverts(intent, takeProfit, approval, proof, Replay.selector);
+        assertEq(clearing.positionOf(alice.account, 0).size, 1e17);
+    }
+
     // ---- Leverage ----
 
     function test_governanceCanScaleMarginDownTo20x() public {

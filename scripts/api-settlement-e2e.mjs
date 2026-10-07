@@ -346,6 +346,45 @@ try {
     -remaining,
     "the reduce-only trigger is clamped to the open position",
   );
+  const filledCancel = await app.inject({
+    method: "POST",
+    url: `/v1/orders/${stopLeg.orderId}/cancel/prepare`,
+    payload: {},
+  });
+  assert.equal(filledCancel.statusCode, 409, "a filled order cannot be cancelled");
+  // Cancelling either leg of a TP/SL pair spends the shared nonce on chain and closes both legs.
+  const btcMid = prices[0] / 1_000_000n;
+  const btcPair = await post("/v1/orders/tpsl/prepare", {
+    account: user.address,
+    market: "BTC",
+    takeProfitPrice: String(btcMid * 2n),
+    stopLossPrice: String(btcMid / 2n),
+    durationSeconds: 3600,
+    nonce: "303",
+  });
+  for (const order of btcPair.orders)
+    await post("/v1/orders", {
+      orderId: order.orderId,
+      userSignature: await user.signTypedData(order.domain, order.types, order.intent),
+    });
+  const cancelPrepared = await post(`/v1/orders/${btcPair.orders[0].orderId}/cancel/prepare`, {});
+  assert.deepEqual([...cancelPrepared.orderIds].sort(), btcPair.orders.map((order) => order.orderId).sort());
+  const cancelled = await post(`/v1/orders/${btcPair.orders[0].orderId}/cancel`, {
+    intent: cancelPrepared.intent,
+    userSignature: await user.signTypedData(
+      cancelPrepared.domain,
+      cancelPrepared.types,
+      cancelPrepared.intent,
+    ),
+  });
+  assert.equal(cancelled.cancelledOrderIds.length, 2);
+  assert.equal(await clearing.nonceUsed(user.address, 303n), true);
+  assert(
+    (await (await app.inject(`/v1/orders/${user.address}`)).json()).items
+      .filter((item) => item.pairId === btcPair.pairId)
+      .every((item) => item.status === "cancelled"),
+  );
+  assert((await clearing.positionOf(user.address, 0)).size > 0n, "cancelling TP/SL leaves the position open");
   prices[1] = 4_000_000_000n;
   await (await clearing.pause()).wait();
   prices[0] = 10_000_000_000_000n;

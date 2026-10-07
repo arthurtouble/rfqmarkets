@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  closeFractionBps, isTriggerOrder, pairedOrder, protectiveOrders, sessionCoversDeadline, tpslPrepareBody, tpslProblem,
+  closeFractionBps, coversLessThan, isTriggerOrder, offsetPrice, pairedOrder, pnlAtPrice, positionProtection, protectiveOrders, stopPastLiquidation, sessionCoversDeadline, tpslPrepareBody, tpslProblem,
   triggerPrepareBody, triggerProblem, TRIGGER_ORDER_DURATION_SECONDS,
 } from "./orders.js";
 import type { RestingOrder } from "./types.js";
@@ -69,4 +69,31 @@ test("close fractions, session deadlines and order filters", () => {
   assert.equal(pairedOrder(tp, [tp, sl, limit]), sl);
   assert.equal(pairedOrder(limit, [tp, sl, limit]), null);
   assert.deepEqual(protectiveOrders([tp, sl, limit, order("d", { type: "stop-loss", market: "ETH" })], "BTC"), [tp, sl]);
+});
+
+test("position protection picks the open TP and SL legs and flags partial cover", () => {
+  const leg = (type: RestingOrder["type"], baseDelta: string, status: RestingOrder["status"] = "open", market = "BTC") => ({
+    orderId: `${type}-${baseDelta}-${status}`, market, side: "sell", amount: "1", baseDelta, limitPrice: "1", maxFee: "1", nonce: "1",
+    expiresAtMs: 1, status, type, triggerPrice: "1", pairId: "p",
+  }) as RestingOrder;
+  const orders = [leg("take-profit", "-1"), leg("stop-loss", "-1"), leg("stop-loss", "-1", "filled"), leg("take-profit", "-1", "open", "ETH"), leg("limit", "-1")];
+  const { takeProfit, stopLoss } = positionProtection(orders, "BTC");
+  assert.equal(takeProfit?.orderId, "take-profit--1-open");
+  assert.equal(stopLoss?.orderId, "stop-loss--1-open");
+  assert.equal(positionProtection(orders, "SOL").takeProfit, null);
+  assert.equal(coversLessThan(takeProfit!, 2n), true);
+  assert.equal(coversLessThan(takeProfit!, -1n), false);
+});
+
+test("TP/SL PnL, preset prices and the liquidation check", () => {
+  // 0.5 BTC long from 100,000: +2,500 at 105,000; a short loses the same.
+  assert.equal(pnlAtPrice(BASE / 2n, 100_000n * USDC, 105_000n * USDC), 2_500n * USDC);
+  assert.equal(pnlAtPrice(-BASE / 2n, 100_000n * USDC, 105_000n * USDC), -2_500n * USDC);
+  assert.equal(offsetPrice(100_123n * USDC, 2, true), 102_130n * USDC);
+  assert.equal(offsetPrice(100_123n * USDC, 5, false), 95_117n * USDC);
+  assert.equal(offsetPrice(4_001_234_567n, 1, true), 4_041_200_000n);
+  assert.equal(stopPastLiquidation(BASE, 80_000n * USDC, 85_000n * USDC), true);
+  assert.equal(stopPastLiquidation(BASE, 90_000n * USDC, 85_000n * USDC), false);
+  assert.equal(stopPastLiquidation(-BASE, 120_000n * USDC, 115_000n * USDC), true);
+  assert.equal(stopPastLiquidation(BASE, 80_000n * USDC, null), false);
 });

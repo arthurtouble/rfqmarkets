@@ -174,7 +174,7 @@ test.describe("positions and portfolio", () => {
       for (const label of ["Size", "Entry", "Mark", "Margin", "Liq. price", "Funding"])
         await expect(card.getByText(label, { exact: true })).toBeVisible();
     } else {
-      for (const header of ["Market", "Size", "Entry", "Mark", "Liq. price", "Margin", "PnL"])
+      for (const header of ["Market", "Size", "Entry / mark", "Liq. price", "Margin", "PnL", "TP/SL"])
         await expect(page.getByRole("columnheader", { name: header, exact: true })).toBeVisible();
     }
     await expectNoHorizontalOverflow(page);
