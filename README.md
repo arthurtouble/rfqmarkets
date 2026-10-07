@@ -8,8 +8,8 @@ The [takeover pack](docs/takeover/README.md) is the best single read: it maps th
 
 | Surface | Location |
 | --- | --- |
-| Trading UI (dev) | https://rfq-markets-dev.rfq-markets.workers.dev |
-| Public docs | https://rfq-markets-docs-testnet.rfq-markets.workers.dev |
+| Trading UI (dev) | https://dev.rfq-markets.workers.dev |
+| Public docs | https://docs.rfq-markets.workers.dev |
 | Clearing proxy, Base mainnet (dev) | `0x6e67c66f955D88EBD6D69eD3343359651C6f45a1` |
 
 The Base mainnet deployment is a **development** deployment: owner-controlled, no timelock, capped at 25 USDC per trade and 100 USDC per market. Services run in a Cloudflare container with the hedger simulated. Production governance (Safes, timelock, independent review) comes later and is tracked in the [release checklist](docs/release/release-checklist.md). The earlier Base Sepolia deployments are retired; their record is in [docs/history](docs/history/base-sepolia-deployment.md).

@@ -8,7 +8,7 @@ The Base mainnet **dev** environment (UI, docs and all services on Cloudflare, a
 
 | Surface | URL | Status |
 | --- | --- | --- |
-| Public documentation | `https://rfq-markets-docs-testnet.rfq-markets.workers.dev` | Deployed and usable. |
+| Public documentation | `https://docs.rfq-markets.workers.dev` | Deployed and usable. |
 | Internal manuals | Local port 4176 only | Withheld from this testnet deployment. The Base mainnet dev deployment serves them, with the hedge dashboard, behind Cloudflare Access ([dev environment](../../deploy/cloudflare/DEV-ENVIRONMENT.md#private-pages-cloudflare-access)). |
 
 Public surfaces send CSP, HSTS, frame-denial, MIME-sniffing, referrer and permissions-policy headers. Hashed assets use immutable caching; HTML revalidates. `npm run validate:cloudflare-static` rejects production bundles containing the local service ports and rejects missing security-header files.

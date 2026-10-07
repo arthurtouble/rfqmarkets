@@ -3,7 +3,7 @@
 // ACCESS_TEAM_DOMAIN and ACCESS_AUD are passed by scripts/cloudflare-dev-deploy.sh.
 {
   "$schema": "../../../node_modules/wrangler/config-schema.json",
-  "name": "rfq-markets-admin-dev",
+  "name": "admin",
   "main": "private-edge.mjs",
   "compatibility_date": "2026-09-11",
   "assets": {
