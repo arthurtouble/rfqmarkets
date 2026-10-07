@@ -13,6 +13,7 @@ const JOURNAL = /^[a-z0-9-]+\.sqlite$/;
 let child: ChildProcess | null = null,
   phase: "waiting" | "running" | "exited" = "waiting",
   clearing: string | null = null,
+  oracle: unknown = null,
   exitCode: number | null = null;
 
 /** Consistent copies of every journal, base64-encoded, taken while the services keep writing. */
@@ -70,7 +71,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/control/status")
-        return reply(response, 200, { phase, clearing, exitCode });
+        return reply(response, 200, { phase, clearing, oracle, exitCode });
       if (request.method === "GET" && request.url === "/control/snapshot")
         return reply(
           response,
@@ -82,12 +83,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       if (request.method === "POST" && request.url === "/control/start") {
         if (phase !== "waiting") return reply(response, 409, { error: `runtime is ${phase}` });
         const input = (await body(request)) as {
-          deployment: { contracts: { clearingProxy: string } };
+          deployment: { contracts: { clearingProxy: string }; oracle?: unknown };
           secrets: unknown;
           journals?: Record<string, string> | null;
         };
         if (input.journals) restoreJournals(STATE, input.journals);
         clearing = input.deployment.contracts.clearingProxy;
+        oracle = input.deployment.oracle ?? null;
         phase = "running";
         child = spawn(process.execPath, ["--import", "tsx", "scripts/base-mainnet-dev-stack.ts"], {
           stdio: "inherit",
