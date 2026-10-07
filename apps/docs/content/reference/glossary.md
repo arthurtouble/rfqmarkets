@@ -1,8 +1,10 @@
 # Glossary
 
+**Account value.** Your equity, as the app labels it.
+
 **Approver.** One of three keys that independently check and co-sign every trade. Two signatures are required. See [Approvers](../protocol/approvers.md).
 
-**Available margin.** Opening equity minus initial margin. How much more risk you can open, and how much you can withdraw.
+**Available to trade.** Opening equity minus initial margin. How much more margin you can commit, and how much you can withdraw. Sometimes called available margin.
 
 **Base.** The Ethereum layer-2 network the venue settles on. Chain id 8453.
 
@@ -32,7 +34,7 @@
 
 **Indicative quote.** The estimated price the ticket shows as you type. Nothing is reserved.
 
-**Initial margin.** The margin needed to open risk or withdraw: 20% of notional for positions up to 25,000 USDC.
+**Initial margin.** The margin needed to open risk or withdraw. For BTC and ETH today, 5% of notional for positions up to 25,000 USDC, which allows 20x. Each market's rates are its base schedule times a multiplier set by governance.
 
 **Insurance fund.** Capital, built from fees and penalties, that covers bankrupt accounts before the maker's capital does.
 
@@ -42,9 +44,11 @@
 
 **Keeper.** Anyone who calls permissionless maintenance functions, such as liquidation, for a reward.
 
+**Leverage.** The total notional of your positions divided by your account value. Up to 20x on BTC and ETH today.
+
 **Liquidation.** Closing an account's positions when its equity falls below maintenance margin.
 
-**Maintenance margin.** The minimum margin you must keep: 12% of notional for positions up to 25,000 USDC.
+**Maintenance margin.** The minimum margin you must keep: 3% of notional for BTC and ETH positions up to 25,000 USDC.
 
 **Maker.** The venue's market maker, counterparty to every trade.
 
@@ -54,13 +58,13 @@
 
 **Notional.** The size of a position in USDC: size times price.
 
+**One-click trading.** A session key that signs market orders and closes for you within contract-enforced limits. Formerly called quick trading. See [One-click trading](../trading/one-click-trading.md).
+
 **Oracle.** Three nodes that sign aggregated exchange prices, and the contract that accepts a report from at least two of them. See [Price oracle](../markets/price-oracle.md).
 
 **Pause.** A state in which new trades are blocked but closing at the oracle price, withdrawals and liquidations continue.
 
-**Price protection.** The worst price you sign, 8 bps beyond the firm quote.
-
-**Quick trading.** A session key that signs market orders for you within contract-enforced limits. See [Quick trading](../trading/quick-trading.md).
+**Price protection.** The worst price you sign. The app uses 8 bps beyond the firm quote; the API accepts 1 to 500 bps.
 
 **Reduce only.** A flag that lets a trade only shrink a position, never grow or flip it.
 
@@ -68,11 +72,17 @@
 
 **RFQ.** Request for quote: asking a market maker for a firm price for a specific size.
 
-**Session key.** See *Quick trading*.
+**Session key.** See *One-click trading*.
+
+**Simple and Advanced.** The app's two views. Advanced adds limit orders, reduce only and price details.
 
 **Skew.** Traders' net position in a market, long minus short.
 
+**Slippage.** How far the fill price may move past the quote before a trade is refused. Set by the price protection.
+
 **Spread.** The maker's margin over the oracle price, in basis points. Adaptive; 2 bps at its base.
+
+**Stop loss, take profit, stop entry.** Orders that wait for the oracle mid to cross a trigger price and then trade within a signed band. See [Stop loss and take profit](../trading/stop-orders.md).
 
 **Stress loss.** The maker's estimated loss if every market moved sharply against it at once. Kept below a quarter of its capital.
 

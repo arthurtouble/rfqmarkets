@@ -2,7 +2,7 @@
 
 RFQ Markets is a perpetual futures venue on Base. You trade BTC and ETH against a single market maker, you post USDC as collateral, and every trade settles in a smart contract that holds the money and enforces the rules.
 
-There is no order book. When you click Buy or Sell, the venue asks its market maker for a firm price for exactly the size you entered, checks that price against an independent oracle, gets it co-signed by two of three independent approvers, and submits it on chain. You sign once, and the venue pays the gas.
+There is no order book. When you go long or short, the venue asks its market maker for a firm price for exactly the size you entered, checks that price against an independent oracle, gets it co-signed by two of three independent approvers, and submits it on chain. You sign once, and the venue pays the gas.
 
 The point of this design is a clean trading experience without giving up custody. The prices come from a request-for-quote (RFQ) model, the way large trades are done in traditional markets, but your collateral never leaves the contract, and the contract refuses any fill that is worse than the price you signed.
 
@@ -10,10 +10,11 @@ The point of this design is a clean trading experience without giving up custody
 
 ## What you can do
 
-- **Trade BTC and ETH perpetuals** with up to 5x leverage, in either direction, around the clock. Both markets are open 24/7; there is no session close and no weekend gap.
-- **Use one pool of USDC for both markets.** Margin is shared across your positions, so you do not have to fund each one separately.
+- **Trade BTC and ETH perpetuals** with up to 20x leverage, long or short, around the clock. Markets are open 24/7; there is no session close and no weekend gap. New markets are listed by governance without a new release of the app.
+- **Use one pool of USDC for every market.** Margin is shared across your positions, so you do not have to fund each one separately.
 - **Place market orders or resting limit orders.** A market order fills at once, all or nothing, within a price protection you sign. A limit order waits until the maker's executable price reaches your limit.
-- **Trade without wallet pop-ups** by turning on quick trading, a short-lived session key that can trade within limits the contract enforces and can never withdraw.
+- **Connect the way you like**: a browser wallet, a phone wallet through WalletConnect, or a passkey with Base Account, which needs nothing installed.
+- **Trade without wallet pop-ups** by turning on one-click trading, a short-lived session key that can trade within limits the contract enforces and can never withdraw.
 - **Withdraw any time** your margin allows, with one signature and no gas.
 - **Leave without the venue.** If the venue's servers disappear, your wallet can still withdraw, cancel and claim directly from the contract through the exit page.
 
@@ -50,12 +51,13 @@ RFQ Markets is a development deployment that happens to run on Base mainnet rath
 | Governance | One operator key, changes take effect immediately | Multisig behind a 72-hour timelock |
 | Hedging | Simulated; no external orders are placed | Live hedging, Hyperliquid first |
 | Liquidation keepers | Permissionless, but no operator keeper is running yet | Independent keepers |
-| Markets | BTC and ETH | More 24/7 crypto markets, added by governance |
+| Markets | BTC and ETH, up to 20x | More 24/7 crypto markets, added by governance |
+| Stop loss and take profit | Supported by the contract, not yet in the app | In the app |
 
 Everything in these docs describes the product as it works today, and calls out where production will differ.
 
 ## Where to go next
 
-- New here? Start with the [Quick start](quick-start.md).
+- New here? Start with the [Quick start](quick-start.md), then [Using the app](using-the-app.md).
 - Confused by the different prices on screen? Read [Prices explained](prices-explained.md).
 - Building something? Go to the [API overview](../integrate/api.md).

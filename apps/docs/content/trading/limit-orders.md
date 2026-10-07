@@ -4,13 +4,15 @@ A limit order waits until the maker's executable price for your size reaches you
 
 ## Placing one
 
-1. On the ticket, switch the order type to **Limit**. The **Limit price** field is pre-filled with the current mid; click **Mid** to reset it.
-2. Choose the side and enter the size in USDC.
-3. Set your limit price. For a buy, it is the most you will pay. For a sell, it is the least you will accept.
-4. Check **Trigger**. It shows "Marketable now" if your limit is already at or through the executable price, or how many basis points the price still has to move.
-5. Click **Place Buy BTC limit** (or the equivalent) and sign the *TradeIntent* in your wallet.
+Limit orders are part of the Advanced view. If the ticket shows no order types, switch **View** to **Advanced** in the top bar, or under **Account** on a phone.
 
-Limit orders always use your wallet, even when quick trading is on. The order is **good for 24 hours** and expires after that.
+1. On the ticket, switch the order type to **Limit**. The **Limit price** field is pre-filled with the current mid.
+2. Choose **Long** or **Short** and enter the amount in USDC.
+3. Set your limit price. For a long, it is the most you will pay. For a short, it is the least you will accept.
+4. Read the hint under the price. "Fills now at the current price" means your limit is already at or through the executable price, so the order will fill as soon as it is placed. "Fills when the price reaches your limit" means it will wait.
+5. Click **Place limit · Long BTC · $20.00** (or the equivalent) and sign the *TradeIntent* in your wallet.
+
+Limit orders always use your wallet, even when one-click trading is on. The app places them **good for 24 hours**, after which they expire.
 
 ## How it triggers
 
@@ -29,21 +31,21 @@ When it fills, you get the maker's executable price at that moment, which may be
 
 ## Order status
 
-The **Orders** tab lists your orders with their size, limit, maximum fee, expiry and status:
+The **Orders** tab, under the chart on the trade page and on the Portfolio page, lists your orders with their direction, amount, limit, expiry and status:
 
 | Status | Meaning |
 | --- | --- |
-| **open** | Waiting for the price. |
-| **executing** | The price reached your limit and a fill is in progress. |
-| **filled** | The trade settled. The **tx** link opens the transaction. |
-| **cancelled** | You cancelled it, or its nonce was used some other way. |
-| **expired** | 24 hours passed without a fill. |
+| **Open** | Waiting for the price. |
+| **Executing** | The price reached your limit and a fill is in progress. |
+| **Filled** | The trade settled. **View** opens the transaction. |
+| **Cancelled** | You cancelled it, or its nonce was used some other way. |
+| **Expired** | The order reached its expiry without a fill. |
 
-If a fill attempt fails, for example because you did not have enough margin, the order goes back to **open** and the reason appears when you hover over the status.
+If a fill attempt fails, for example because you did not have enough margin, the order goes back to **Open** and the reason appears when you hover over the status.
 
 ## Cancelling
 
-Click **Cancel** on the order and sign the cancellation. The venue submits it on chain and pays the gas. Cancellation burns the order's nonce in the contract, so the signed order can never execute afterwards, even if a copy of it existed somewhere else. That is why cancelling needs a signature and a transaction instead of being a simple request to the server.
+Click **Cancel** on the order and sign the cancellation in your wallet. The venue submits it on chain and pays the gas. Cancellation burns the order's nonce in the contract, so the signed order can never execute afterwards, even if a copy of it existed somewhere else. That is why cancelling needs a signature and a transaction instead of being a simple request to the server.
 
 You can also cancel a nonce yourself, directly on the contract, from the [exit page](../protocol/safety-and-exits.md).
 
@@ -52,4 +54,4 @@ You can also cancel a nonce yourself, directly on the contract, from the [exit p
 Your signed orders are held by the venue's servers, not on chain, until they fill. This means:
 
 - Orders only fill while the venue is running. If the servers are down when the price touches your limit, the order does not fill then.
-- The signature you gave is a valid trade for 24 hours. The venue cannot change it, and it can only execute within your limit, but if you no longer want it, cancel it on chain rather than just forgetting it.
+- The signature you gave is a valid trade until it expires. The venue cannot change it, and it can only execute within your limit, but if you no longer want it, cancel it on chain rather than just forgetting it.

@@ -27,7 +27,7 @@ A signature for one chain or one deployment is useless on any other.
 
 Every message carries a `nonce`. Nonces are unordered: any unused number works, and the app picks a random 256-bit one. All of an account's messages share one nonce space, so a nonce used by a withdrawal cannot be used by a trade.
 
-A trade's nonce is only consumed when the trade settles. To make sure a signed trade or limit order can never execute, cancel its nonce with `cancelNonce` or a signed *CancelIntent*.
+A trade's nonce is only consumed when the trade settles. To make sure a signed trade, limit order or stop order can never execute, cancel its nonce with `cancelNonce` or a signed *CancelIntent*.
 
 ## TradeIntent
 
@@ -38,13 +38,32 @@ TradeIntent(address account,uint8 market,int256 baseDelta,uint256 limitPrice,uin
 | Field | Meaning |
 | --- | --- |
 | `account` | The account that trades. |
-| `market` | 0 for BTC, 1 for ETH. |
+| `market` | The market's index in the registry: 0 for BTC, 1 for ETH. `GET /v1/config` lists every index. |
 | `baseDelta` | The exact change in position, in 18-decimal base units. Positive buys, negative sells. Never zero. |
 | `limitPrice` | In USDC with 6 decimals per whole BTC or ETH. A buy executes only at or below it, a sell only at or above it. |
 | `maxFee` | The most the trade may charge, in USDC with 6 decimals. |
 | `nonce` | Unused nonce. |
 | `deadline` | Unix time in seconds after which the intent is invalid. |
 | `reduceOnly` | If true, the trade must shrink the existing position without flipping it. |
+
+## TriggeredTradeIntent
+
+```
+TriggeredTradeIntent(address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,bool reduceOnly,uint256 triggerPrice,bool triggerAbove)
+```
+
+A [stop order](../trading/stop-orders.md). The first eight fields mean the same as in *TradeIntent*. The two extra fields set the trigger:
+
+| Field | Meaning |
+| --- | --- |
+| `triggerPrice` | In USDC with 6 decimals per whole unit. |
+| `triggerAbove` | If true, the trade may execute only when the oracle mid is at or above `triggerPrice`. If false, only when it is at or below. |
+
+The mid is `(bid + ask) / 2` of the oracle report submitted with the trade, rounded down. Submitted with `executeTriggeredTrade`, which reverts with `TriggerNotReached` if the condition does not hold. Because this is a separate type, a triggered order can never be executed through `executeTrade`, and no relayer or approver can change its trigger.
+
+One rule differs from an ordinary trade. If `reduceOnly` is true and `baseDelta` is larger than the opposite position at execution time, the contract fills only the remaining position, closing it exactly. A stop loss signed for a whole position therefore still works after a partial close, and can never flip the position.
+
+The API sets `limitPrice` to the trigger moved `slippageBps` against you (rounded up for a buy, down for a sell). Two orders signed with the same nonce, such as a take profit and stop loss pair, cancel each other: whichever executes first spends the nonce.
 
 ## WithdrawalIntent
 
@@ -79,7 +98,7 @@ SessionGrant(address account,address session,uint256 marketMask,uint128 maxTrade
 | Field | Meaning |
 | --- | --- |
 | `session` | The session key's address. Must not be the account itself. |
-| `marketMask` | Bit *n* allows market *n*: 1 is BTC only, 2 is ETH only, 3 is both. |
+| `marketMask` | Bit *n* allows the market with index *n*: 1 is BTC only, 2 is ETH only, 3 is both. In the API it is a JSON number, or a decimal string once the mask needs more than 53 bits. |
 | `maxTradeNotional` | Largest single trade, USDC with 6 decimals, valued at the execution price. |
 | `maxCumulativeNotional` | Total notional the session may trade over its life, including reductions. |
 | `maxFee` | Largest fee on any one trade. |
@@ -110,4 +129,4 @@ For completeness, this is what the approvers sign. You never sign it.
 MakerApproval(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion)
 ```
 
-`intentHash` is the full EIP-712 digest of your *TradeIntent*. `oracleReportHash` is the keccak-256 hash of the exact oracle report bytes submitted with the trade. The contract requires two signatures from two different current approvers.
+`intentHash` is the full EIP-712 digest of your *TradeIntent* or *TriggeredTradeIntent*. `oracleReportHash` is the keccak-256 hash of the exact oracle report bytes submitted with the trade. The contract requires two signatures from two different current approvers.

@@ -14,7 +14,7 @@ Not through any normal function. Your collateral can only leave the contract thr
 
 ## Can I be filled at a worse price than I saw?
 
-Not worse than the maximum or minimum accepted price you signed, which is 8 bps beyond the firm quote. The contract enforces that. You can be filled at a slightly different price from the on-screen estimate, but only within that bound, and often at the estimate itself.
+Not worse than the price protection you signed, which the app sets 8 bps beyond the firm quote. The contract enforces that. You can be filled at a slightly different price from the on-screen estimate, but only within that bound, and often at the estimate itself.
 
 ## Why was my trade refused?
 
@@ -26,15 +26,27 @@ Because the venue is in development and its maker has about 100 USDC of capital.
 
 ## What leverage can I use?
 
-Up to 5x for positions up to 25,000 USDC, less for larger ones. There is no leverage selector; your leverage is your position size relative to your equity. See [Margin](../risk/margin.md).
+Up to 20x on BTC and ETH for positions up to 25,000 USDC, less for larger ones. Governance sets the margin rates per market, so a newly listed market may allow less. There is no leverage setting on a position; your leverage is your position size relative to your account value, and the ticket shows it before you trade. See [Margin](../risk/margin.md).
 
 ## Do I pay gas?
 
-Only to deposit, and to revoke quick trading. Trades, closes, withdrawals, order cancellations and quick-trading activation are paid by the venue.
+Only to deposit, and to turn off one-click trading. Trades, closes, withdrawals, order cancellations and turning one-click trading on are paid by the venue.
 
 ## What wallets work?
 
-Browser wallets that announce themselves to the page, such as Rabby, MetaMask and Coinbase Wallet's extension. Smart-contract wallets that support ERC-1271 can sign. WalletConnect and mobile wallets are not supported yet.
+Browser extensions such as Rabby, MetaMask and Coinbase Wallet; phone wallets through WalletConnect; and Base Account, which creates a wallet with a passkey and needs nothing installed. Smart-contract wallets work once their first transaction, usually your first deposit, has created them on Base. See [Using the app](../start/using-the-app.md#connecting-a-wallet).
+
+## Can I set a stop loss or take profit?
+
+Not in the app yet. The contract supports stop loss, take profit and stop entry orders, and they are coming to the app. [Stop loss and take profit](../trading/stop-orders.md) describes how they will work. Until then, keep leverage low and close positions yourself.
+
+## Can I close part of a position?
+
+Yes. **Close** offers 25%, 50%, 75% or 100% of the position. **Close all** closes every position at once.
+
+## Does it work on a phone?
+
+Yes. The app has a phone layout with a tab bar at the bottom, and you can connect a phone wallet through WalletConnect or use Base Account with a passkey.
 
 ## Is it open on weekends?
 

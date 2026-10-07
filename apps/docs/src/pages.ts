@@ -3,8 +3,8 @@
 const sources = import.meta.glob<string>("../content/**/*.md", { query: "?raw", import: "default", eager: true });
 
 export const sections = [
-  { id: "start", title: "Get started", pages: ["introduction", "quick-start", "prices-explained"] },
-  { id: "trading", title: "Trading", pages: ["placing-a-trade", "limit-orders", "positions", "quick-trading", "deposits-and-withdrawals"] },
+  { id: "start", title: "Get started", pages: ["introduction", "quick-start", "using-the-app", "prices-explained"] },
+  { id: "trading", title: "Trading", pages: ["placing-a-trade", "limit-orders", "stop-orders", "positions", "one-click-trading", "deposits-and-withdrawals"] },
   { id: "risk", title: "Margin and risk", pages: ["margin", "funding", "liquidation", "pricing-and-fees"] },
   { id: "markets", title: "Markets", pages: ["markets-and-limits", "price-oracle"] },
   { id: "protocol", title: "How it works", pages: ["architecture", "settlement", "approvers", "hedging", "safety-and-exits", "governance", "contracts"] },

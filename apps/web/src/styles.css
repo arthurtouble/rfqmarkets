@@ -127,14 +127,54 @@ dialog.sheet > .rfq-sheet { width: 100%; max-height: 92dvh; overflow-y: auto; ov
 /* Account and positions ------------------------------------------------- */
 .account-card .balance { margin-top: var(--space-1); }
 .activity { overflow: hidden; }
-.activity-tabs { padding: var(--space-2) var(--space-4) 0; border-bottom: 1px solid var(--line); }
+.activity-tabs { padding: var(--space-2) var(--space-4) 0; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.activity-tabs .rfq-tabs { border-bottom: 0; }
+.activity-tabs .rfq-tabs button { flex: none; white-space: nowrap; }
 .activity-body { min-height: 160px; }
-.activity-body > .stack { padding: var(--space-4); }
 .rfq-pos__actions.single { grid-template-columns: 1fr; }
+.rfq-pos__grid { row-gap: var(--space-3); }
 .rfq-table td .caption { margin-top: 2px; }
+.cell-market .rfq-badge { margin-left: var(--space-1); }
+
+/* Positions (positions/Positions.tsx) ----------------------------------- */
+.positions { display: grid; }
+.positions__bar { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4) 0; }
+.positions__cards { display: grid; gap: var(--space-3); }
+/* Inside the activity card the positions are rows, not cards within a card. */
+.activity .positions__cards { gap: 0; }
+.activity .rfq-pos { border-radius: 0; background: none; }
+.activity .rfq-pos + .rfq-pos { border-top: 1px solid var(--line); }
+.positions-table th:last-child .rfq-btn { margin: -6px 0; }
+
+/* History (portfolio/History.tsx) --------------------------------------- */
+.history-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.history-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); }
+.history-row + .history-row { border-top: 1px solid var(--line); }
+.history-row > div { min-width: 0; }
+.history-row__title { font: 500 15px/20px var(--font-sans); }
+.history-row__end { display: grid; justify-items: end; gap: 2px; text-align: right; font: 500 15px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+.history-row a, .history-table a { color: inherit; text-decoration-color: var(--line-strong, var(--line)); text-underline-offset: 3px; }
+.history-table th:nth-child(2), .history-table td:nth-child(2) { text-align: left; }
+.history-more { display: flex; justify-content: center; padding: var(--space-3); border-top: 1px solid var(--line); }
+
+/* Portfolio ------------------------------------------------------------- */
 .portfolio-summary { display: grid; gap: var(--space-4); }
+.performance__head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3); }
+.performance__range { min-width: 220px; }
+.pnl-chart { position: relative; margin: 0; color: var(--text-tertiary); }
+.pnl-chart.up { color: var(--long); }
+.pnl-chart.down { color: var(--short); }
+.pnl-chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.pnl-chart__zero { stroke: var(--line); stroke-width: 1; stroke-dasharray: 4 4; }
+.stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin: 0; padding-top: var(--space-4); border-top: 1px solid var(--line); }
+.stat-grid dt { color: var(--text-tertiary); font: 400 12px/16px var(--font-sans); }
+.stat-grid dd { margin: 2px 0 0; font: 500 15px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+@media (max-width: 899px) {
+  .performance__range { flex: 1 1 100%; }
+}
 @media (min-width: 900px) {
   .portfolio-summary { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5); }
+  .stat-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
 
 /* Settings rows (account page) ------------------------------------------ */

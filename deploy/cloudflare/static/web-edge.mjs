@@ -15,7 +15,8 @@ const WRITES = [
   /^\/v1\/(withdraw|session)\/(prepare|execute)$/,
   /^\/v1\/nonce\/cancel\/(prepare|execute)$/,
   /^\/v1\/close\/(prepare|execute|quote)$/,
-  /^\/v1\/orders\/prepare$/,
+  /^\/v1\/close\/all\/quote$/,
+  /^\/v1\/orders\/(?:(?:trigger|tpsl)\/)?prepare$/,
   /^\/v1\/orders\/[A-Za-z0-9_-]{1,128}\/cancel(?:\/prepare)?$/,
 ];
 export function serviceForPath(pathname, method) {

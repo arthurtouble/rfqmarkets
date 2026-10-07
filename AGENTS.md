@@ -20,7 +20,11 @@
 - Run `npm run typecheck` after TypeScript changes.
 - Run `npm run test:foundry` after contract changes, then
   `npm run test:contracts` for the compile gate and local-chain e2e suites.
-- Run `npm run test:services` for service and script unit tests.
+- Run `npm run test:services` for service and script unit tests and
+  `npm run test:web` for trading app logic. `npm run test:coverage` runs them
+  with a per-area coverage summary.
+- Run `npm run test:e2e` after UI changes. It drives every app on desktop and
+  phone viewports against the local stack; see `test/e2e/README.md`.
 - Run `npm run test:python` for simulator changes.
 - Run `npm run test:cloudflare-edge` for Cloudflare edge/runtime changes.
 - Run `npm run check:docs` after moving or renaming Markdown files.
@@ -30,7 +34,7 @@
 ## Safety boundaries
 
 - Do not deploy, upgrade contracts, fund accounts, publish images, or run live
-  Base Sepolia/Hyperliquid smoke tests unless the task explicitly requests it.
+  Base mainnet/Hyperliquid smoke tests unless the task explicitly requests it.
 - Do not weaken signature, quorum, replay, oracle-freshness, exposure, or
   fail-closed checks to make a test pass.
 - Preserve unrelated working-tree changes. The repository may contain active

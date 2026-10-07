@@ -1,9 +1,11 @@
+import { isAddress } from "ethers";
 import { z } from "zod";
 import { isKnownMarket, marketRegistry } from "./markets.js";
 
 const integer = z.string().regex(/^\d+$/);
 const usdcAmount = z.string().regex(/^\d+(\.\d{1,6})?$/);
 const signature = z.string().regex(/^0x[0-9a-fA-F]+$/);
+const address = z.string().refine((value) => isAddress(value), "invalid address");
 /** A market symbol the on-chain registry knows (refreshed from chain; see `marketRegistry`). */
 const market = z.string().refine(isKnownMarket, "unknown market");
 /** An on-chain market index below the registered market count. */
@@ -33,8 +35,8 @@ export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
 
 /** Share of the position to close, in bps of its size (10_000 closes it all). */
 const closeFraction = z.number().int().min(1).max(10_000).default(10_000);
-export const closeQuoteSchema = z.object({ account: z.string(), market, fraction: closeFraction });
-export const closeAllQuoteSchema = z.object({ account: z.string(), fraction: closeFraction });
+export const closeQuoteSchema = z.object({ account: address, market, fraction: closeFraction });
+export const closeAllQuoteSchema = z.object({ account: address, fraction: closeFraction });
 
 export const depositQuoteSchema = z.object({
   account: z.string(),
