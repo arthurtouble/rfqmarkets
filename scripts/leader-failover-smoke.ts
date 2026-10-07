@@ -18,9 +18,7 @@ const prepare=async()=>{
   return {quoteId:quoted.payload.quoteId,nonce,prepared:prepared.payload,signature};
 };
 
-const deposit=await post("/v1/deposit/quote",{account:user.address,fromChainId:1,fromToken:"USDC",amount:"3000"});assert(deposit.response.ok,JSON.stringify(deposit.payload));
-const depositSignature=await user.signTypedData(deposit.payload.domain,deposit.payload.types,deposit.payload.intent);
-const funded=await post("/v1/deposit/execute",{routeId:deposit.payload.routeId,userSignature:depositSignature});assert(funded.response.ok,JSON.stringify(funded.payload));
+const funded=await post("/v1/dev/fund",{account:user.address,amount:"3000"});assert(funded.response.ok,JSON.stringify(funded.payload));
 const old=await prepare(),expected=BigInt(await clearing.leaderEpoch());
 await (await clearing.advanceLeaderEpoch(expected)).wait();
 assert.equal(BigInt(await clearing.leaderEpoch()),expected+1n);

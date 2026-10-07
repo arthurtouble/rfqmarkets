@@ -18,7 +18,9 @@ One-click trading is a contract session key (`grantSessionWithSignature`), gener
 
 A bridge or route API response never creates protocol collateral. Collateral exists only after Base USDC has arrived and the clearing contract has emitted its deposit event. The account view reads clearing state directly until a reorg-aware indexer is available.
 
-The signed `DepositIntent` binds the beneficiary, route identifier, source chain, source token hash, source amount, minimum Base USDC, deadline and nonce. This stops the API, route provider or sponsor from changing the destination account or economic bounds after wallet approval. The local simulator verifies that signature and uses the same sponsored destination-deposit boundary.
+Today the app deposits Base USDC only: the wallet approves the clearing contract for the exact amount, then calls `deposit(amount)` (`apps/web/src/data/actions.tsx`). `apps/web/src/lib/funds.ts` mirrors the contract's limits (10 USDC first-deposit floor, free margin for withdrawals) so the sheet explains a problem before the wallet or contract rejects it. Withdrawals are owner-signed `WithdrawalIntent`s the API sponsors (`/v1/withdraw/prepare` and `/execute`).
+
+The local stack funds wallets with `POST /v1/dev/fund` (mock USDC, deposited or left in the wallet with gas). It is registered only when development funding is on, which the API accepts solely for chain 31337 on a loopback RPC. An earlier simulated cross-chain route API (`/v1/deposit/quote`, `DepositIntent`) was removed: it never moved real funds, and cross-chain deposits are being designed separately around LI.FI.
 
 ## Production route adapter
 
@@ -32,7 +34,7 @@ Primary references:
 - LI.FI integration overview and route-selection guidance: <https://docs.li.fi/sdk/overview> and <https://docs.li.fi/agents/quick-start/decision-tables>
 - Socket developer documentation: <https://docs.socket.tech/>
 
-## Lifecycle and recovery
+## Lifecycle and recovery (planned)
 
 1. The client requests a route for a receiving account and explicit source terms.
 2. The API returns expected and minimum Base USDC plus a short-lived typed intent.
@@ -41,5 +43,3 @@ Primary references:
 5. The destination transaction is journaled before waiting for confirmation. API restart reloads quoted, authorized and completed routes.
 6. The UI reports progress from source inclusion through destination inclusion. Clearing collateral is updated only from the destination-chain contract state/event.
 7. Reorg reconciliation can move a submitted route back to pending. A completed clearing deposit is idempotent because the USDC authorization nonce and the route record cannot be reused.
-
-The executable local adapter is intentionally a simulator: it applies deterministic conversion and routing costs, mints mock USDC and invokes the real clearing deposit. It does not simulate bridge security, source-chain allowance behavior, cross-chain finality or refunds.

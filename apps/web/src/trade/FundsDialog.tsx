@@ -1,12 +1,18 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { parseAbi, type Address } from "viem";
+import { useConfig } from "wagmi";
+import { getPublicClient } from "wagmi/actions";
 import { useAccount } from "../account/useAccount.js";
 import { useTrading } from "../data/actions.js";
-import { useWalletUsdc } from "../data/queries.js";
+import { keys, useWalletUsdc } from "../data/queries.js";
 import { microToInput, parseUsdcInput, usdc } from "../lib/format.js";
-import { Segmented, Sheet } from "../ui/primitives.js";
+import { PRESET_PERCENTS, checkFunds, presetAmount, type FundsMode } from "../lib/funds.js";
+import { Banner, Segmented, Sheet } from "../ui/primitives.js";
 import { useTrader } from "../wallet/trader.js";
 
-export type FundsMode = "deposit" | "withdraw";
+export type { FundsMode };
+const registryAbi = parseAbi(["function accountRegistered(address account) view returns (bool)"]);
 const FundsContext = createContext<{ open(mode: FundsMode): void } | null>(null);
 
 /** One Deposit / Withdraw sheet for the whole app; anything can open it. */
@@ -26,51 +32,78 @@ export function useFunds() {
   return value;
 }
 
-const PRESETS = [25, 50, 75, 100] as const;
+/** Whether the clearing contract knows this account (its first deposit has a 10 USDC floor) and the wallet's gas balance. */
+function useDepositChecks(enabled: boolean) {
+  const config = useConfig(), { address, chain, settlement, source } = useTrader();
+  const clearing = settlement?.clearingAddress;
+  const reader = () => {
+    const client = getPublicClient(config, { chainId: chain.id });
+    if (!client) throw new Error("No RPC for the settlement chain");
+    return client;
+  };
+  const registered = useQuery({
+    queryKey: [...keys.account(address ?? ""), "registered", clearing],
+    queryFn: () => reader().readContract({ address: clearing!, abi: registryAbi, functionName: "accountRegistered", args: [address as Address] }),
+    enabled: enabled && !!address && !!clearing,
+  });
+  const gas = useQuery({
+    queryKey: [...keys.account(address ?? ""), "gas", chain.id],
+    queryFn: () => reader().getBalance({ address: address as Address }),
+    // The local dev key is funded with ETH; only real wallets need the hint.
+    enabled: enabled && !!address && source === "wallet",
+  });
+  return { registered: registered.data ?? null, gasBalance: gas.data ?? null };
+}
 
 function FundsForm({ mode, onMode, onDone }: { mode: FundsMode; onMode: (mode: FundsMode) => void; onDone: () => void }) {
   const trading = useTrading(), walletUsdc = useWalletUsdc(), trader = useTrader();
   const { account } = useAccount();
+  const deposit = useDepositChecks(mode === "deposit");
   const [amount, setAmount] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  // The Sheet calls showModal after this form mounts, which moves focus to its first button;
+  // focus the amount on the next frame instead (React's autoFocus runs too early here).
+  useEffect(() => { const frame = requestAnimationFrame(() => input.current?.focus()); return () => cancelAnimationFrame(frame); }, [mode]);
   const micro = parseUsdcInput(amount);
-  const available = mode === "deposit" ? walletUsdc.data ?? null : account ? BigInt(account.availableMargin) : null;
-  const ceiling = available !== null && available > 0n ? available : 0n;
-  const tooMuch = micro !== null && available !== null && micro > available;
+  const check = checkFunds({ mode, amount: micro, walletUsdc: walletUsdc.data ?? null, account, ...deposit });
   const busy = trading.busy !== null;
   const switchMode = (next: FundsMode) => { setAmount(""); onMode(next); };
   const submit = async () => {
-    if (!micro) return;
+    if (!micro || check.problem) return;
     const done = mode === "deposit" ? await trading.deposit(micro) : await trading.withdraw(micro);
     if (done) onDone();
   };
+  const verb = mode === "deposit" ? "Deposit" : "Withdraw";
   const label = !trader.address ? "Connect a wallet first"
+    : busy ? "Confirm in your wallet"
     : !amount ? "Enter an amount"
     : micro === null ? "Enter a valid amount"
-    : tooMuch ? (mode === "deposit" ? "More than your wallet holds" : "More than you can withdraw")
-    : busy ? "Confirm in your wallet"
-    : `${mode === "deposit" ? "Deposit" : "Withdraw"} ${usdc(micro)}`;
+    : check.problem ?? `${verb} ${usdc(micro)}`;
+  const error = check.problem !== null;
 
   return <div className="sheet-body">
     <Segmented label="Funds action" value={mode} onChange={switchMode} options={[{ id: "deposit", label: "Deposit" }, { id: "withdraw", label: "Withdraw" }]} />
     <div className="rfq-amount">
-      <label className={`rfq-amount__field${tooMuch ? " is-error" : ""}`}>
+      <label className={`rfq-amount__field${error ? " is-error" : ""}`}>
         <span className="rfq-amount__prefix">$</span>
-        <input id="funds-amount" autoFocus inputMode="decimal" placeholder="0" autoComplete="off" aria-label="Amount in USDC" value={amount}
-          onChange={event => /^\d*\.?\d*$/.test(event.target.value) && setAmount(event.target.value)} />
+        <input ref={input} id="funds-amount" inputMode="decimal" placeholder="0" autoComplete="off" aria-label="Amount in USDC" value={amount}
+          aria-invalid={error || undefined} aria-describedby="funds-meta" disabled={busy}
+          onChange={event => /^\d*\.?\d{0,6}$/.test(event.target.value) && setAmount(event.target.value)} />
         <span className="rfq-amount__unit">USDC</span>
       </label>
       <div className="rfq-chips">
-        {PRESETS.map(step => <button key={step} type="button" className="rfq-chip" aria-pressed={false} disabled={!ceiling}
-          onClick={() => setAmount(microToInput(ceiling * BigInt(step) / 100n))}>{step === 100 ? "Max" : `${step}%`}</button>)}
+        {PRESET_PERCENTS.map(percent => <button key={percent} type="button" className="rfq-chip" disabled={!check.max || busy}
+          onClick={() => setAmount(microToInput(presetAmount(check.max, percent)))}>{percent === 100 ? "Max" : `${percent}%`}</button>)}
       </div>
-      <div className={`rfq-amount__meta${tooMuch ? " is-error" : ""}`}>
-        <span>{mode === "deposit" ? "In your wallet" : "Available to withdraw"} {available === null ? "—" : usdc(available)}</span>
+      <div id="funds-meta" className={`rfq-amount__meta${error ? " is-error" : ""}`} aria-live="polite">
+        <span>{mode === "deposit" ? "In your wallet" : "Available to withdraw"} {check.available === null ? "—" : usdc(check.available)}</span>
       </div>
     </div>
+    {check.warning && <Banner tone="warning">{check.warning}. Add a little before you deposit.</Banner>}
     <p className="footnote rfq-muted sheet-note">{mode === "deposit"
-      ? "Moves USDC on Base from your wallet into your trading balance. Your wallet asks you to approve USDC first, then to confirm the deposit."
+      ? "Moves USDC on Base from your wallet into your trading balance. The first time, your wallet asks you to approve USDC, then to confirm the deposit."
       : "Sends free funds back to your wallet. You sign once and we pay the gas. Funds backing open positions stay put."}</p>
-    <button type="button" className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block" disabled={!trader.address || !micro || tooMuch || busy} onClick={submit}>
+    <button type="button" className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block" disabled={!trader.address || !micro || error || busy} onClick={submit}>
       {busy && <span className="rfq-spinner" />}{label}
     </button>
   </div>;

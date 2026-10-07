@@ -1,5 +1,5 @@
 // Trade, funding and account history from the indexer: a table on desktop and
-// a compact list on phones. Trades and funding page with "Show more".
+// a compact list on phones. Each list pages with "Show more".
 import type { ReactNode } from "react";
 import { useMarketList } from "../data/markets.js";
 import { useAccountActivity, useFundingHistory, usePortfolioTrades } from "../data/queries.js";
@@ -98,14 +98,14 @@ const EVENT_NAMES: Record<string, string> = {
   SessionRevoked: "One-click trading off", Liquidated: "Liquidation", NonceCancelled: "Order cancelled", PositionClosed: "Closed at oracle price",
 };
 /** Trades and funding have their own tabs. */
-const SEPARATE = new Set(["TradeExecuted", "FundingSettled"]);
+const SEPARATE = ["TradeExecuted", "FundingSettled"];
 
 /** Deposits, withdrawals, one-click trading and other account events. */
 export function AccountHistory({ address }: { address: string }) {
   const desktop = useDesktop();
   const { marketFromIndex } = useMarketList();
-  const activity = useAccountActivity(address);
-  const items = (activity.data ?? []).filter(item => !SEPARATE.has(item.kind));
+  const activity = useAccountActivity(address, SEPARATE);
+  const items = activity.data?.pages.flatMap(page => page.items) ?? [];
   if (activity.isPending) return <EmptyState icon={NavIcons.markets}>Loading activity…</EmptyState>;
   if (activity.isError) return <EmptyState icon={NavIcons.markets}>Account activity is unavailable right now.</EmptyState>;
   if (!items.length) return <EmptyState icon={NavIcons.markets}>Deposits, withdrawals and other account activity show up here.</EmptyState>;
@@ -114,14 +114,17 @@ export function AccountHistory({ address }: { address: string }) {
     return `${EVENT_NAMES[item.kind] ?? sentence(item.kind)}${market ? ` · ${market}` : ""}`;
   };
   const amount = (item: Activity) => (item.payload.amount ? usdc(item.payload.amount) : "—");
-  return desktop ? <div className="rfq-table-wrap"><table className="rfq-table history-table">
-    <thead><tr><th>Time</th><th>Activity</th><th>Amount</th></tr></thead>
-    <tbody>{items.map(item => <tr key={`${item.tx_hash}:${item.log_index}`}>
-      <td><TimeLink ms={item.timestamp * 1_000} hash={item.tx_hash} /></td>
-      <td>{name(item)}</td>
-      <td>{amount(item)}</td>
-    </tr>)}</tbody>
-  </table></div>
-    : <ul className="history-list">{items.map(item => <Row key={`${item.tx_hash}:${item.log_index}`}
-        title={name(item)} time={<TimeLink ms={item.timestamp * 1_000} hash={item.tx_hash} />} end={amount(item)} />)}</ul>;
+  return <>
+    {desktop ? <div className="rfq-table-wrap"><table className="rfq-table history-table">
+      <thead><tr><th>Time</th><th>Activity</th><th>Amount</th></tr></thead>
+      <tbody>{items.map(item => <tr key={`${item.tx_hash}:${item.log_index}`}>
+        <td><TimeLink ms={item.timestamp * 1_000} hash={item.tx_hash} /></td>
+        <td>{name(item)}</td>
+        <td>{amount(item)}</td>
+      </tr>)}</tbody>
+    </table></div>
+      : <ul className="history-list">{items.map(item => <Row key={`${item.tx_hash}:${item.log_index}`}
+          title={name(item)} time={<TimeLink ms={item.timestamp * 1_000} hash={item.tx_hash} />} end={amount(item)} />)}</ul>}
+    <More query={activity} />
+  </>;
 }

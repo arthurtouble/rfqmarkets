@@ -7,7 +7,6 @@ export function publicError(error: unknown, fallback: string): string {
     "order capacity reached",
     "oracle report lacks inclusion time",
     "hedging unavailable: only exposure-reducing trades are allowed",
-    "minimum deposit is 10 USDC",
   ]);
   if (error instanceof Error && safeMessages.has(error.message)) return error.message;
   const names: Record<string, string> = {

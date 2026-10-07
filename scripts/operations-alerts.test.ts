@@ -1,4 +1,47 @@
-import assert from 'node:assert/strict';import test from 'node:test';import {readFileSync} from 'node:fs';import {evaluateOperationalAlerts} from './operations-alerts.js';
-const config=JSON.parse(readFileSync('deploy/operations/alerts.json','utf8')),now=100_000_000,snapshot=()=>({observedAtMs:now,api:{ok:true,unresolvedSender:0,approvalP95Ms:100},approvers:{healthy:3,disagreements:0},oracle:{maxAgeMs:1000},indexer:{ok:true,lagBlocks:1},keeper:{ok:true,lastCompletedAtMs:now-1000},hedger:{ok:true,maxGapUsdc:100,bandUsdc:1000},capital:{makerBackingUsdc:'1000000',requiredFloorUsdc:'500000'},sponsors:{minimumGasRunwayHours:100},backup:{lastSuccessfulAtMs:now-1000}});
-test('healthy operational snapshot produces no alerts',()=>assert.deepEqual(evaluateOperationalAlerts(snapshot(),config).alerts,[]));
-test('every financial liveness boundary pages deterministically',()=>{const value=snapshot();value.api.unresolvedSender=1;value.approvers.healthy=1;value.oracle.maxAgeMs=9000;value.indexer.lagBlocks=13;value.keeper.lastCompletedAtMs=now-31000;value.hedger.maxGapUsdc=2100;value.capital.requiredFloorUsdc='900000';value.sponsors.minimumGasRunwayHours=23;value.backup.lastSuccessfulAtMs=now-86400001;const result=evaluateOperationalAlerts(value,config),codes=new Set(result.alerts.map(item=>item.code));for(const code of ['sender_unresolved','approver_quorum_loss','oracle_stale','indexer_lag','keeper_stale','hedge_gap','maker_headroom','gas_runway','backup_stale'])assert(codes.has(code),code);assert.equal(result.ok,false);});
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFileSync } from "node:fs";
+import { evaluateOperationalAlerts } from "./operations-alerts.js";
+const config = JSON.parse(readFileSync("deploy/operations/alerts.json", "utf8")),
+  now = 100_000_000,
+  snapshot = () => ({
+    observedAtMs: now,
+    api: { ok: true, unresolvedSender: 0, approvalP95Ms: 100 },
+    approvers: { healthy: 3, disagreements: 0 },
+    oracle: { maxAgeMs: 1000 },
+    indexer: { ok: true, lagBlocks: 1 },
+    keeper: { ok: true, lastCompletedAtMs: now - 1000 },
+    hedger: { ok: true, maxGapUsdc: 100, bandUsdc: 1000 },
+    capital: { makerBackingUsdc: "1000000", requiredFloorUsdc: "500000" },
+    sponsors: { minimumGasRunwayHours: 100 },
+    backup: { lastSuccessfulAtMs: now - 1000 },
+  });
+test("healthy operational snapshot produces no alerts", () =>
+  assert.deepEqual(evaluateOperationalAlerts(snapshot(), config).alerts, []));
+test("every financial liveness boundary pages deterministically", () => {
+  const value = snapshot();
+  value.api.unresolvedSender = 1;
+  value.approvers.healthy = 1;
+  value.oracle.maxAgeMs = 9000;
+  value.indexer.lagBlocks = 13;
+  value.keeper.lastCompletedAtMs = now - 31000;
+  value.hedger.maxGapUsdc = 2100;
+  value.capital.requiredFloorUsdc = "900000";
+  value.sponsors.minimumGasRunwayHours = 23;
+  value.backup.lastSuccessfulAtMs = now - 86400001;
+  const result = evaluateOperationalAlerts(value, config),
+    codes = new Set(result.alerts.map((item) => item.code));
+  for (const code of [
+    "sender_unresolved",
+    "approver_quorum_loss",
+    "oracle_stale",
+    "indexer_lag",
+    "keeper_stale",
+    "hedge_gap",
+    "maker_headroom",
+    "gas_runway",
+    "backup_stale",
+  ])
+    assert(codes.has(code), code);
+  assert.equal(result.ok, false);
+});

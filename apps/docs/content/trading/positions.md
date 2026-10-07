@@ -69,6 +69,6 @@ All of this is read from the public chain, so it is the same record anyone can v
 
 ## The Markets page
 
-**Markets** shows the venue as a whole. For each market it lists the price, its recent change and the funding rate. Below that are the open interest in each market split between longs and shorts, the total deposited, the number of traders and open positions, and the most recent trades. Advanced view adds every open position by wallet address, the fee and wallet on each trade, and how far the indexer has read the chain. It reads only finalized chain data.
+**Markets** shows the venue as a whole. Search by name or symbol, then pick a market to trade it. For each market it lists the maximum leverage, a 24-hour price line, the price, its change over the last 24 hours and the funding rate; Advanced view adds the 24-hour high and low. A market whose price is late shows **Price delayed**, one governance has paused shows **Paused**, and one the oracle does not price yet shows **No price**. Below that are the open interest in each market split between longs and shorts, the total deposited, the number of traders and open positions, and the most recent trades. Advanced view adds every open position by wallet address, the fee and wallet on each trade, and how far the indexer has read the chain. It reads only finalized chain data.
 
 Positions on RFQ Markets are public in the same way every Base transaction is public. Your account is identified by its wallet address and nothing else.
