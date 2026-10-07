@@ -22,7 +22,8 @@ library RFQRiskMath {
 
     uint256 internal constant LIQUIDATION_PENALTY_BPS = 50;
     uint256 internal constant KEEPER_REWARD_BPS = 10;
-    uint256 internal constant LIQUIDATION_TARGET_EQUITY_BPS = 2_200;
+    /// @dev Partial liquidation aims for the leg's maintenance rate plus this buffer (22% in the first tier).
+    uint256 internal constant LIQUIDATION_TARGET_BUFFER_BPS = 1_000;
     uint256 internal constant FULL_LIQUIDATION_NOTIONAL = 10_000e6;
 
     // =======================================================================
@@ -154,9 +155,7 @@ library RFQRiskMath {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         for (uint8 i; i < MARKET_COUNT; ++i) {
             uint256 notional = abs($.accounts[owner].positions[i].size) * $.markets[i].lastAsk / BASE_UNIT;
-            uint256 rate = marginRate(notional, initial);
-            if (rate == type(uint256).max) revert Margin();
-            total += notional * rate / 10_000;
+            total += notional * marginRate(notional, initial) / 10_000;
         }
     }
 
@@ -166,12 +165,25 @@ library RFQRiskMath {
         return (marketSkew($.markets[0]), marketSkew($.markets[1]));
     }
 
+    /// @notice What the maker would owe if every customer closed at mid now, net across markets and floored
+    /// at zero. Customer losses are not counted as maker capital. Reverts if an open market's price is stale.
+    function customerUnrealizedGain() public view returns (uint256) {
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        int256 gain;
+        for (uint8 i; i < MARKET_COUNT; ++i) {
+            gain += marketSkew($.markets[i]) - $.costBasis[i];
+        }
+        return gain > 0 ? uint256(gain) : 0;
+    }
+
     /// @notice True when customers hold open exposure and maker backing is below the opening floor or
     /// cannot cover four times the stress loss.
     function makerIncident() public view returns (bool) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         uint256 gross;
-        for (uint8 i; i < MARKET_COUNT; ++i) gross += $.exposure[i].longBase + $.exposure[i].shortBase;
+        for (uint8 i; i < MARKET_COUNT; ++i) {
+            gross += $.exposure[i].longBase + $.exposure[i].shortBase;
+        }
         if (gross == 0) return false;
         (int256 btc, int256 eth) = portfolioExposure();
         return $.makerBacking < $.baseRiskCapitalTarget || stressLoss(btc, eth) > $.makerBacking / 4;
@@ -200,8 +212,7 @@ library RFQRiskMath {
             int256 size = position.size;
             if (size == 0) continue;
             uint256 price = exitPrice($.markets[i], size);
-            updateExposure(i, size, 0);
-            $.markets[i].aggregateBase -= size;
+            moveLeg(i, size, position.entryPrice, 0, 0);
             delete $.accounts[owner].positions[i];
             emit IRFQClearingEvents.PositionClosed(owner, i, -size, price);
         }
@@ -233,7 +244,9 @@ library RFQRiskMath {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Account storage account = $.accounts[owner];
         if (account.collateral >= 0) return (0, 0, 0, 0);
-        for (uint8 i; i < MARKET_COUNT; ++i) if (account.positions[i].size != 0) revert Insolvent();
+        for (uint8 i; i < MARKET_COUNT; ++i) {
+            if (account.positions[i].size != 0) revert Insolvent();
+        }
         debt = uint256(-account.collateral);
         insuranceUsed = Math.min(debt, $.insuranceBalance);
         makerUsed = Math.min(debt - insuranceUsed, $.makerBacking);
@@ -242,7 +255,9 @@ library RFQRiskMath {
 
     function setApprovers(address[3] calldata next) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        for (uint256 i; i < 3; ++i) $.isApprover[$.approvers[i]] = false;
+        for (uint256 i; i < 3; ++i) {
+            $.isApprover[$.approvers[i]] = false;
+        }
         for (uint256 i; i < 3; ++i) {
             if (next[i] == address(0) || $.isApprover[next[i]]) revert InvalidSignature();
             $.approvers[i] = next[i];
@@ -304,38 +319,40 @@ library RFQRiskMath {
         return uint256(worst);
     }
 
-    /// @notice Tiered margin rate in basis points; `type(uint256).max` above the largest tier.
+    /// @notice Tiered margin rate in basis points. The top tier also applies above 5M notional, so a leg
+    /// that outgrows the tiers through price moves stays valuable and liquidatable.
     function marginRate(uint256 notional, bool initial) public pure returns (uint256) {
         if (notional <= 25_000e6) return initial ? 2_000 : 1_200;
         if (notional <= 100_000e6) return initial ? 2_500 : 1_500;
         if (notional <= 250_000e6) return initial ? 3_300 : 2_000;
         if (notional <= 1_000_000e6) return initial ? 5_000 : 3_000;
         if (notional <= 2_500_000e6) return initial ? 6_700 : 4_000;
-        if (notional <= 5_000_000e6) return initial ? 10_000 : 6_000;
-        return type(uint256).max;
+        return initial ? 10_000 : 6_000;
     }
 
-    /// @notice Base to close in one liquidation call: toward 22% equity, at most 25% of the leg per call,
-    /// and the whole leg when it is small or equity is gone.
+    /// @notice Base to close in one liquidation call: enough to bring equity back to the leg's maintenance
+    /// rate plus a 10-point buffer after the penalty, at most 25% of the leg per call, and the whole leg when
+    /// it is small or equity is gone.
     function liquidationClose(int256 size, uint256 mark, int256 equity) public pure returns (uint256 closed) {
         uint256 quantity = abs(size);
         uint256 notional = quantity * mark / BASE_UNIT;
         if (notional <= FULL_LIQUIDATION_NOTIONAL || equity <= 0) return quantity;
-        uint256 target = LIQUIDATION_TARGET_EQUITY_BPS * notional;
+        uint256 targetBps = marginRate(notional, false) + LIQUIDATION_TARGET_BUFFER_BPS;
+        uint256 target = targetBps * notional;
         uint256 shortfall = target > uint256(equity) * 10_000 ? target - uint256(equity) * 10_000 : 0;
-        uint256 neededNotional = (shortfall + 2_149) / 2_150;
+        // Closing X at the exit price keeps equity except for the penalty: E - X * penalty >= target * (N - X).
+        uint256 neededNotional = Math.ceilDiv(shortfall, targetBps - LIQUIDATION_PENALTY_BPS);
         uint256 closeNotional = Math.min(neededNotional, notional / 4);
         closed = Math.min((closeNotional * BASE_UNIT + mark - 1) / mark, quantity);
     }
 
     /// @notice 50 bps penalty on closed notional (capped by available collateral); the keeper gets up to
     /// 10 bps, never more than a fifth of the penalty.
-    function liquidationCharge(uint256 closed, uint256 mark, uint256 available)
+    function liquidationCharge(uint256 notional, uint256 available)
         public
         pure
         returns (uint256 penalty, uint256 reward)
     {
-        uint256 notional = closed * mark / BASE_UNIT;
         penalty = Math.min(notional * LIQUIDATION_PENALTY_BPS / 10_000, available);
         reward = Math.min(notional * KEEPER_REWARD_BPS / 10_000, penalty / 5);
     }
@@ -399,10 +416,19 @@ library RFQRiskMath {
     // Internal helpers (inlined into callers)
     // =======================================================================
 
-    /// @notice Moves one account's leg from `previous` to `next` in the gross book.
-    function updateExposure(uint8 market, int256 previous, int256 next) internal {
-        ExposureBook storage book = RFQClearingStorage.layout().exposure[market];
-        (book.longBase, book.shortBase) = moveBook(book.longBase, book.shortBase, previous, next);
+    /// @notice Moves one account's leg in every market-wide aggregate: net base, gross book and cost basis.
+    function moveLeg(uint8 market, int256 previousSize, uint256 previousEntry, int256 nextSize, uint256 nextEntry)
+        internal
+    {
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        ExposureBook storage book = $.exposure[market];
+        (book.longBase, book.shortBase) = moveBook(book.longBase, book.shortBase, previousSize, nextSize);
+        $.markets[market].aggregateBase += nextSize - previousSize;
+        $.costBasis[market] += legCost(nextSize, nextEntry) - legCost(previousSize, previousEntry);
+    }
+
+    function legCost(int256 size, uint256 entryPrice) private pure returns (int256) {
+        return size * int256(entryPrice) / int256(BASE_UNIT);
     }
 
     function moveBook(uint256 longs, uint256 shorts, int256 previous, int256 next)
