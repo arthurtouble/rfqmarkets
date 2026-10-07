@@ -20,87 +20,199 @@ import { validateDevManifest } from "./mainnet-manifest.js";
 //   fund-sponsor ETH               owner tops the gas sponsor up to ETH
 //   unpause                        owner unpauses the clearing
 //   oracle-signers                 owner points the SignedPriceOracle at the oracle nodes' published keys
-const BASE_USDC="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 /** `oracleSigners`, when the runtime publishes its oracle nodes' addresses, names the SignedPriceOracle signer set. */
-export type RuntimeIdentities={emergency:string;approvers:[string,string,string];sponsor:string;oracleSigners?:string[]};
+export type RuntimeIdentities = {
+  emergency: string;
+  approvers: [string, string, string];
+  sponsor: string;
+  oracleSigners?: string[];
+};
 
 /** Oracle signer addresses: RFQ_DEV_ORACLE_SIGNERS (comma-separated) wins over the runtime's published list. */
-export function oracleSignersFor(runtime:RuntimeIdentities,configured=process.env.RFQ_DEV_ORACLE_SIGNERS){
-  const signers=configured?configured.split(",").map(item=>item.trim()).filter(Boolean):runtime.oracleSigners;
-  if(!signers?.length)throw new Error("no oracle signers: deploy the oracle node workers (deploy-cloudflare-dev.yml) so they publish their addresses, or set RFQ_DEV_ORACLE_SIGNERS (comma-separated, at least 3)");
-  return signers.map(item=>getAddress(item));
+export function oracleSignersFor(
+  runtime: RuntimeIdentities,
+  configured = process.env.RFQ_DEV_ORACLE_SIGNERS,
+) {
+  const signers = configured
+    ? configured
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : runtime.oracleSigners;
+  if (!signers?.length)
+    throw new Error(
+      "no oracle signers: deploy the oracle node workers (deploy-cloudflare-dev.yml) so they publish their addresses, or set RFQ_DEV_ORACLE_SIGNERS (comma-separated, at least 3)",
+    );
+  return signers.map((item) => getAddress(item));
 }
 
 /** The dev manifest for the owner plus the runtime's published keys and the oracle signers, validated; `policy` overrides the defaults within the dev ceilings. */
-export function devManifestFor(owner:string,runtime:RuntimeIdentities,oracleSigners:string[],policy?:unknown){
-  const base=generateDevIdentities(oracleSigners.map(item=>getAddress(item))).manifest;
-  const manifest={...base,owner:getAddress(owner),emergencyCouncil:getAddress(runtime.emergency),approvers:runtime.approvers.map(item=>getAddress(item)),...(policy?{policy:policy as typeof base.policy}:{})};
+export function devManifestFor(
+  owner: string,
+  runtime: RuntimeIdentities,
+  oracleSigners: string[],
+  policy?: unknown,
+) {
+  const base = generateDevIdentities(oracleSigners.map((item) => getAddress(item))).manifest;
+  const manifest = {
+    ...base,
+    owner: getAddress(owner),
+    emergencyCouncil: getAddress(runtime.emergency),
+    approvers: runtime.approvers.map((item) => getAddress(item)),
+    ...(policy ? { policy: policy as typeof base.policy } : {}),
+  };
   validateDevManifest(manifest);
   return manifest;
 }
 
 /** Confirmation string base-mainnet-cli expects for a dev action. */
-export function devConfirmation(action:string,owner:string,record?:DeploymentRecord){
-  const suffix=action==="dev-configure"?record!.contracts.clearingProxy.slice(2,10).toLowerCase():identifyCandidate().candidateHash.slice(0,12);
+export function devConfirmation(action: string, owner: string, record?: DeploymentRecord) {
+  const suffix =
+    action === "dev-configure"
+      ? record!.contracts.clearingProxy.slice(2, 10).toLowerCase()
+      : identifyCandidate().candidateHash.slice(0, 12);
   return `${action}-8453-${owner.toLowerCase()}-${suffix}`;
 }
 
-const STATE=resolve(process.env.RFQ_MAINNET_DEV_STATE_DIR??".local-state/base-mainnet-dev"),RECORD=resolve(STATE,"deployment.json"),MANIFEST=resolve(STATE,"dev-manifest.json"),RUNTIME=resolve(STATE,"runtime-identities.json");
-const env=(name:string)=>{const value=process.env[name];if(!value)throw new Error(`${name} is required`);return value;};
-const writePrivate=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(value,null,2)+"\n",{mode:0o600});chmodSync(path,0o600);};
+const STATE = resolve(process.env.RFQ_MAINNET_DEV_STATE_DIR ?? ".local-state/base-mainnet-dev"),
+  RECORD = resolve(STATE, "deployment.json"),
+  MANIFEST = resolve(STATE, "dev-manifest.json"),
+  RUNTIME = resolve(STATE, "runtime-identities.json");
+const env = (name: string) => {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+};
+const writePrivate = (path: string, value: unknown) => {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
+  chmodSync(path, 0o600);
+};
 /** RFQ_BASE_MAINNET_RPC_URL, else Alchemy when ALCHEMY_API_KEY is set, else the public Base RPC. */
-export const rpcUrl=(env:NodeJS.ProcessEnv=process.env)=>env.RFQ_BASE_MAINNET_RPC_URL||(env.ALCHEMY_API_KEY?`https://base-mainnet.g.alchemy.com/v2/${env.ALCHEMY_API_KEY}`:"https://mainnet.base.org");
-const ownerKey=()=>env("RFQ_DEV_OWNER_KEY");
-async function ownerWallet(){
-  const provider=new JsonRpcProvider(rpcUrl());const chainId=(await provider.getNetwork()).chainId;if(chainId!==8453n)throw new Error(`expected Base mainnet 8453, RPC reports ${chainId}`);
-  return new Wallet(ownerKey(),provider);
+export const rpcUrl = (env: NodeJS.ProcessEnv = process.env) =>
+  env.RFQ_BASE_MAINNET_RPC_URL ||
+  (env.ALCHEMY_API_KEY
+    ? `https://base-mainnet.g.alchemy.com/v2/${env.ALCHEMY_API_KEY}`
+    : "https://mainnet.base.org");
+const ownerKey = () => env("RFQ_DEV_OWNER_KEY");
+async function ownerWallet() {
+  const provider = new JsonRpcProvider(rpcUrl());
+  const chainId = (await provider.getNetwork()).chainId;
+  if (chainId !== 8453n) throw new Error(`expected Base mainnet 8453, RPC reports ${chainId}`);
+  return new Wallet(ownerKey(), provider);
 }
 /** Oracle node addresses each node worker publishes (KV `oracle-node-<n>.json`, fetched by dev-contracts.sh). */
-const publishedOracleSigners=()=>{const files=[1,2,3].map(n=>resolve(STATE,`oracle-node-${n}.json`));if(!files.every(existsSync))return undefined;return files.map(file=>getAddress((JSON.parse(readFileSync(file,"utf8")) as {address:string}).address));};
-const runtimeIdentities=()=>{if(!existsSync(RUNTIME))throw new Error("the Cloudflare dev runtime has not published its keys yet; deploy it (deploy-cloudflare-dev.yml) and wait a minute");const runtime=JSON.parse(readFileSync(RUNTIME,"utf8")) as RuntimeIdentities;return {...runtime,oracleSigners:runtime.oracleSigners??publishedOracleSigners()};};
-const loadRecord=()=>{if(!existsSync(RECORD))throw new Error("no dev deployment yet; run the deploy action first");return JSON.parse(readFileSync(RECORD,"utf8")) as DeploymentRecord;};
+const publishedOracleSigners = () => {
+  const files = [1, 2, 3].map((n) => resolve(STATE, `oracle-node-${n}.json`));
+  if (!files.every(existsSync)) return undefined;
+  return files.map((file) =>
+    getAddress((JSON.parse(readFileSync(file, "utf8")) as { address: string }).address),
+  );
+};
+const runtimeIdentities = () => {
+  if (!existsSync(RUNTIME))
+    throw new Error(
+      "the Cloudflare dev runtime has not published its keys yet; deploy it (deploy-cloudflare-dev.yml) and wait a minute",
+    );
+  const runtime = JSON.parse(readFileSync(RUNTIME, "utf8")) as RuntimeIdentities;
+  return { ...runtime, oracleSigners: runtime.oracleSigners ?? publishedOracleSigners() };
+};
+const loadRecord = () => {
+  if (!existsSync(RECORD)) throw new Error("no dev deployment yet; run the deploy action first");
+  return JSON.parse(readFileSync(RECORD, "utf8")) as DeploymentRecord;
+};
 
-if(import.meta.url===`file://${process.argv[1]}`){
-  const [command,...args]=process.argv.slice(2);
-  switch(command){
-    case "identities":console.log(JSON.stringify({owner:new Wallet(ownerKey()).address,...runtimeIdentities()},null,2));break;
-    case "prepare":{
-      const policy=process.env.RFQ_DEV_POLICY_JSON?JSON.parse(process.env.RFQ_DEV_POLICY_JSON):undefined;
-      const runtime=runtimeIdentities();
-      writePrivate(MANIFEST,devManifestFor(new Wallet(ownerKey()).address,runtime,oracleSignersFor(runtime),policy));
-      console.log("prepared dev manifest");break;
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const [command, ...args] = process.argv.slice(2);
+  switch (command) {
+    case "identities":
+      console.log(JSON.stringify({ owner: new Wallet(ownerKey()).address, ...runtimeIdentities() }, null, 2));
+      break;
+    case "prepare": {
+      const policy = process.env.RFQ_DEV_POLICY_JSON
+        ? JSON.parse(process.env.RFQ_DEV_POLICY_JSON)
+        : undefined;
+      const runtime = runtimeIdentities();
+      writePrivate(
+        MANIFEST,
+        devManifestFor(new Wallet(ownerKey()).address, runtime, oracleSignersFor(runtime), policy),
+      );
+      console.log("prepared dev manifest");
+      break;
     }
-    case "cli":{
-      const [action,...flags]=args;if(!action?.startsWith("dev-"))throw new Error("cli ACTION must be a dev-* action");
-      const confirmation=devConfirmation(action,new Wallet(ownerKey()).address,action==="dev-configure"?loadRecord():undefined);
-      execFileSync(process.execPath,["--import","tsx","scripts/base-mainnet-cli.ts",action,MANIFEST,...flags],{stdio:"inherit",env:{...process.env,RFQ_BASE_MAINNET_RPC_URL:rpcUrl(),RFQ_MAINNET_DEPLOY_CONFIRM:confirmation,RFQ_MAINNET_DEPLOYER_KEY:ownerKey()}});break;
+    case "cli": {
+      const [action, ...flags] = args;
+      if (!action?.startsWith("dev-")) throw new Error("cli ACTION must be a dev-* action");
+      const confirmation = devConfirmation(
+        action,
+        new Wallet(ownerKey()).address,
+        action === "dev-configure" ? loadRecord() : undefined,
+      );
+      execFileSync(
+        process.execPath,
+        ["--import", "tsx", "scripts/base-mainnet-cli.ts", action, MANIFEST, ...flags],
+        {
+          stdio: "inherit",
+          env: {
+            ...process.env,
+            RFQ_BASE_MAINNET_RPC_URL: rpcUrl(),
+            RFQ_MAINNET_DEPLOY_CONFIRM: confirmation,
+            RFQ_MAINNET_DEPLOYER_KEY: ownerKey(),
+          },
+        },
+      );
+      break;
     }
-    case "fund-maker":{
-      const owner=await ownerWallet(),record=loadRecord(),amount=parseUnits(args[0]??"100",6);
-      const usdc=new Contract(BASE_USDC,artifact("MockUSDC").abi,owner),clearing=new Contract(record.contracts.clearingProxy,artifact("RFQClearing").abi,owner);
-      if(await usdc.balanceOf(owner.address)<amount)throw new Error(`owner ${owner.address} holds less than ${args[0]??"100"} USDC`);
-      await (await usdc.approve(record.contracts.clearingProxy,amount)).wait(2);await (await clearing.fundMaker(amount)).wait(2);
-      console.log(`maker capital now ${await clearing.makerBacking()} (6-decimal USDC)`);break;
+    case "fund-maker": {
+      const owner = await ownerWallet(),
+        record = loadRecord(),
+        amount = parseUnits(args[0] ?? "100", 6);
+      const usdc = new Contract(BASE_USDC, artifact("MockUSDC").abi, owner),
+        clearing = new Contract(record.contracts.clearingProxy, artifact("RFQClearing").abi, owner);
+      if ((await usdc.balanceOf(owner.address)) < amount)
+        throw new Error(`owner ${owner.address} holds less than ${args[0] ?? "100"} USDC`);
+      await (await usdc.approve(record.contracts.clearingProxy, amount)).wait(2);
+      await (await clearing.fundMaker(amount)).wait(2);
+      console.log(`maker capital now ${await clearing.makerBacking()} (6-decimal USDC)`);
+      break;
     }
-    case "fund-sponsor":{
-      const owner=await ownerWallet(),sponsor=runtimeIdentities().sponsor,target=parseEther(args[0]??"0.003"),balance=await owner.provider!.getBalance(sponsor);
-      if(balance<target)await (await owner.sendTransaction({to:sponsor,value:target-balance})).wait(2);
-      console.log(`sponsor ${sponsor} holds ${formatEther(await owner.provider!.getBalance(sponsor))} ETH`);break;
+    case "fund-sponsor": {
+      const owner = await ownerWallet(),
+        sponsor = runtimeIdentities().sponsor,
+        target = parseEther(args[0] ?? "0.003"),
+        balance = await owner.provider!.getBalance(sponsor);
+      if (balance < target)
+        await (await owner.sendTransaction({ to: sponsor, value: target - balance })).wait(2);
+      console.log(`sponsor ${sponsor} holds ${formatEther(await owner.provider!.getBalance(sponsor))} ETH`);
+      break;
     }
-    case "unpause":{
-      const owner=await ownerWallet(),clearing=new Contract(loadRecord().contracts.clearingProxy,artifact("RFQClearing").abi,owner);
-      if(await clearing.paused())await (await clearing.unpause()).wait(2);console.log("clearing unpaused");break;
+    case "unpause": {
+      const owner = await ownerWallet(),
+        clearing = new Contract(loadRecord().contracts.clearingProxy, artifact("RFQClearing").abi, owner);
+      if (await clearing.paused()) await (await clearing.unpause()).wait(2);
+      console.log("clearing unpaused");
+      break;
     }
-    case "oracle-signers":{
+    case "oracle-signers": {
       // After the oracle node workers are replaced (new Durable Objects, new keys), move the adapter to
       // the keys they now publish, keeping its threshold, and record the new set for the nodes to read.
-      const owner=await ownerWallet(),record=loadRecord(),signers=oracleSignersFor(runtimeIdentities());
-      const oracle=new Contract(record.contracts.oracleAdapter,artifact("SignedPriceOracle").abi,owner),threshold=Number(await oracle.threshold());
-      const current=(await oracle.signers() as string[]).map(item=>getAddress(item));
-      if(current.length!==signers.length||current.some((item,index)=>item!==signers[index]))await (await oracle.setSigners(signers,threshold)).wait(2);
-      record.oracle={...record.oracle,signers,threshold};writePrivate(RECORD,record);
-      console.log(JSON.stringify({oracle:record.contracts.oracleAdapter,signers,threshold}));break;
+      const owner = await ownerWallet(),
+        record = loadRecord(),
+        signers = oracleSignersFor(runtimeIdentities());
+      const oracle = new Contract(record.contracts.oracleAdapter, artifact("SignedPriceOracle").abi, owner),
+        threshold = Number(await oracle.threshold());
+      const current = ((await oracle.signers()) as string[]).map((item) => getAddress(item));
+      if (current.length !== signers.length || current.some((item, index) => item !== signers[index]))
+        await (await oracle.setSigners(signers, threshold)).wait(2);
+      record.oracle = { ...record.oracle, signers, threshold };
+      writePrivate(RECORD, record);
+      console.log(JSON.stringify({ oracle: record.contracts.oracleAdapter, signers, threshold }));
+      break;
     }
-    default:throw new Error("usage: base-mainnet-dev-ci identities|prepare|cli ACTION|fund-maker USDC|fund-sponsor ETH|unpause|oracle-signers");
+    default:
+      throw new Error(
+        "usage: base-mainnet-dev-ci identities|prepare|cli ACTION|fund-maker USDC|fund-sponsor ETH|unpause|oracle-signers",
+      );
   }
 }

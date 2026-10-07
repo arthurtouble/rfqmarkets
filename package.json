@@ -76,8 +76,8 @@
     "basescan:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts basescan",
     "check:operations-alerts": "node --import tsx scripts/operations-alerts.ts",
     "validate:production-topology": "node --import tsx scripts/production-topology.ts",
-    "format": "prettier --write \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/{local-stack,base-mainnet-dev-stack,approver-process,persistent-service,persistent-config,cloudflare-dev-container,dev-stack,dev-scenario}.ts\" \"scripts/lib/service-stack.ts\" \"scripts/coverage-summary.mjs\" playwright.config.ts \"test/e2e/**/*.ts\"",
-    "format:check": "prettier --check \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/{local-stack,base-mainnet-dev-stack,approver-process,persistent-service,persistent-config,cloudflare-dev-container,dev-stack,dev-scenario}.ts\" \"scripts/lib/service-stack.ts\" \"scripts/coverage-summary.mjs\" playwright.config.ts \"test/e2e/**/*.ts\""
+    "format": "prettier --write \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/**/*.{ts,mts,mjs}\" hardhat.config.js playwright.config.ts \"test/e2e/**/*.ts\"",
+    "format:check": "prettier --check \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/**/*.{ts,mts,mjs}\" hardhat.config.js playwright.config.ts \"test/e2e/**/*.ts\""
   },
   "devDependencies": {
     "@base-org/account": "2.5.13",
