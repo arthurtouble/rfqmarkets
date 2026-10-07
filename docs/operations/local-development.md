@@ -9,6 +9,7 @@ One command compiles the contracts, starts the chain, deploys v1 and runs every 
 ```bash
 npm run dev:stack            # add -- --web for the trade UI, -- --coinbase for live Coinbase prices
 npm run dev:scenario         # in a second terminal: scripted end-to-end scenarios
+npm run test:e2e             # browser tests on desktop and phone viewports (README in test/e2e)
 ```
 
 By default prices come from an offline random walk around BTC 100,000 and ETH 4,000. To script a move, such as a crash before a liquidation, post to the loopback price control:

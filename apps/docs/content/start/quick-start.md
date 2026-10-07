@@ -4,58 +4,58 @@ This page takes you from an empty wallet to an open position and back out again.
 
 You need:
 
-- A browser wallet such as Rabby, MetaMask or Coinbase Wallet. The app finds wallets that announce themselves in the browser. WalletConnect and mobile wallets are not supported yet.
+- **A wallet.** A browser extension such as Rabby, MetaMask or Coinbase Wallet, a phone wallet through WalletConnect, or nothing at all: Base Account creates a wallet for you with a passkey.
 - **USDC on Base.** It has to be native USDC issued by Circle on Base, not bridged USDbC. The first deposit must be at least 10 USDC.
-- **A little ETH on Base** for the deposit transaction. Everything after the deposit is gas-free.
+- **A little ETH on Base** for the deposit transactions. Everything after the deposit is gas-free.
 
 > **Warning.** This is a development deployment with real money and unaudited contracts. Keep amounts small. Trades are capped at 25 USDC each for now.
 
 ## 1. Connect
 
-Open the app at [dev.rfq-markets.workers.dev](https://dev.rfq-markets.workers.dev) and click **Connect wallet** in the top right. Pick your wallet from the list.
+Open the app at [dev.rfq-markets.workers.dev](https://dev.rfq-markets.workers.dev) and click **Connect** in the top right. Pick your browser wallet, **Base Account** to sign in with a passkey, or **WalletConnect** to scan a QR code with your phone. [Using the app](using-the-app.md#connecting-a-wallet) explains each option.
 
 If your wallet is on another network, the button changes to **Switch to Base**. Click it and approve the switch in your wallet. The app also asks for the switch automatically whenever it needs a signature.
 
 ## 2. Deposit
 
-On the trade page, find the **Account** card and click **Deposit**. Enter an amount, or click **Max** to use your whole wallet balance, then click **Approve and deposit**.
+Click **Deposit**, or **Add funds to trade** on the ticket. Enter an amount, or click **Max** to use your whole wallet balance, then click **Deposit**.
 
 Your wallet asks for two things in turn:
 
 1. **Approve USDC.** This lets the clearing contract take exactly the amount you entered, no more. If you have already approved enough, this step is skipped.
 2. **Confirm the deposit.** This moves the USDC into the contract and credits it to your account.
 
-Both are ordinary transactions, so you pay a small amount of ETH for gas. When the deposit confirms, the Account card shows your **Collateral** and **Available margin**.
+Both are ordinary transactions, so you pay a small amount of ETH for gas. When the deposit confirms, the **Account value** card shows your balance and how much is **Available to trade**.
 
 ## 3. Place a trade
 
-The order ticket sits on the right of the trade page.
+The order ticket sits on the right of the trade page. On a phone, tap **Long** or **Short** at the bottom of the screen to open it.
 
-1. Choose the market at the top of the page: **BTC-PERP** or **ETH-PERP**.
-2. Choose **Buy / Long** if you expect the price to rise, or **Sell / Short** if you expect it to fall.
-3. Leave the order type on **Market**.
-4. Enter a **Size** in USDC. This is the notional value of the position, not your collateral. A 20 USDC buy of BTC opens a long worth 20 USDC of BTC, and needs 4 USDC of margin at the 20% initial margin rate.
-5. Check the estimate under the size: the **Estimated price**, the **Maximum accepted price** (or minimum, for a sell), the size in BTC or ETH, and the **Fee (max)**.
-6. Click **Buy BTC** (or **Sell ETH**, and so on).
+1. Choose the market from the name above the chart: **BTC** or **ETH**.
+2. Choose **Long** if you expect the price to rise, or **Short** if you expect it to fall.
+3. Enter the amount in USDC. This is the size of the position, not your collateral. A 20 USDC long on BTC opens a position worth 20 USDC of BTC, and needs 1 USDC of margin at the 5% initial margin rate.
+4. Check the **Entry price**, the **Fee** and your **Leverage after** under the amount.
+5. Click **Long BTC · $20.00** (or the equivalent).
 
-Your wallet shows a typed-data signature request titled *TradeIntent*. It lists the account, market, size, the limit price, the maximum fee, a nonce and a deadline about 30 seconds away. Signing is free. Once you sign, the app collects the approvers' signatures and submits the trade, and a notice in the corner shows the fill price and block.
+A **Review order** sheet restates the trade with its price protection, which is the worst price you accept. Leave the one-click trading box ticked if you want later trades to skip this step, then click **Confirm and sign**.
+
+Your wallet shows a typed-data signature request titled *TradeIntent*. It lists the account, market, size, the limit price, the maximum fee, a nonce and a deadline about 30 seconds away. Signing is free. Once you sign, the app collects the approvers' signatures and submits the trade, and a notice shows the fill price and a link to the transaction.
 
 ## 4. Watch the position
 
-The **Positions** tab under the chart shows your open position: its size, entry price, the current mark, the unrealized profit or loss, funding accrued so far and an estimated liquidation price.
-
-The **Account** card shows your account as a whole: equity, available margin, margin usage, effective leverage and the buffer you have before liquidation. [Positions](../trading/positions.md) explains each figure.
+The **Positions** tab under the chart shows your open position: its value, entry price, the current mark, the estimated liquidation price, the margin it uses and the profit or loss. The **Portfolio** page shows your whole account: account value, margin in use, leverage, a chart of your profit or loss, and every position and trade. [Positions and your account](../trading/positions.md) explains each figure.
 
 ## 5. Close
 
-Click **Close** on the position's row. The app asks the maker for an exact quote to close the whole position, and your wallet asks you to sign it. The close is a reduce-only trade, so it can never accidentally open a position the other way.
+Click **Close** on the position. Pick how much to close, from 25% to 100%, check the estimated price and profit, and confirm. The close is a reduce-only trade, so it can never accidentally open a position the other way. With more than one position open, **Close all** closes them all in one go.
 
 ## 6. Withdraw
 
-Click **Withdraw** on the Account card, enter an amount up to your available margin, and click **Sign and withdraw**. You sign one message and the venue pays the gas. The USDC arrives in your connected wallet as soon as the transaction is included, usually within a few seconds.
+Click **Withdraw** on the Account value card, enter an amount up to what is available, and click **Withdraw**. You sign one message and the venue pays the gas. The USDC arrives in your connected wallet as soon as the transaction is included, usually within a few seconds.
 
 ## What next
 
 - Read [Placing a trade](../trading/placing-a-trade.md) to understand price protection and why a trade can be refused.
-- Turn on [Quick trading](../trading/quick-trading.md) if you trade often and want to skip the wallet prompt.
-- Read [Margin](../risk/margin.md) and [Liquidation](../risk/liquidation.md) before you use leverage.
+- Turn on [One-click trading](../trading/one-click-trading.md) if you trade often and want to skip the wallet prompt.
+- Switch to the Advanced view for [limit orders](../trading/limit-orders.md) and reduce-only trades.
+- Read [Margin](../risk/margin.md) and [Liquidation](../risk/liquidation.md) before you use leverage. Up to 20x is allowed; at 20x a 2% move liquidates you.

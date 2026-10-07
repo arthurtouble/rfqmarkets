@@ -26,7 +26,7 @@ The current rate appears as **Funding APR** in the market header and on the Mark
 
 Funding accrues continuously, second by second, into a per-market index that moves every time a new oracle price is recorded on chain. The amount you owe or receive is your position size times how far the index has moved since your position was last settled. Because the index accrues against the mid price, the payment scales with the market's price, not your entry price.
 
-Your accrued funding is settled into your collateral whenever your account is touched: when you trade, withdraw, close or are liquidated. Until then it shows in the **Funding** column of the positions table and on the Account card, and it is already counted in your margin checks because every check settles it first.
+Your accrued funding is settled into your collateral whenever your account is touched: when you trade, withdraw, close or are liquidated. Until then it shows as **Funding paid or received** on the Portfolio page and, in Advanced view, in the **Funding** column of the positions table, and it is already counted in your margin checks because every check settles it first.
 
 ## Things to know
 

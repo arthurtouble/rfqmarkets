@@ -4,7 +4,7 @@ If your losses take your account below its maintenance margin, anyone can liquid
 
 ## When an account is liquidatable
 
-An account is liquidatable when its maintenance equity (collateral plus all profit and loss at the conservative mark, after funding) is below its total maintenance margin. The Account card shows a **Liquidatable** label when that is the case, and **Margin usage** reaches 100%.
+An account is liquidatable when its maintenance equity (collateral plus all profit and loss at the conservative mark, after funding) is below its total maintenance margin. The Portfolio page then shows a banner, **Your account can be liquidated**, and on a phone each position card warns you once the price is within 10% of its liquidation price.
 
 The check uses the conservative mark: the oracle bid for a long and the ask for a short. The **Est. liq.** figure in the positions table is the mid price at which this happens, so the real trigger can come a few basis points sooner.
 
@@ -22,7 +22,7 @@ Liquidation is permissionless: any address can call the contract's `liquidate` f
 How much is closed depends on the position's size:
 
 - A position of **10,000 USDC or less** is closed in full. At the development caps that is every position.
-- A larger position is closed in chunks of at most 25% per call, just enough to bring the account back to its maintenance rate plus 10 percentage points (22% in the first band). If it is still liquidatable afterwards, it can be liquidated again.
+- A larger position is closed in chunks of at most 25% per call, just enough to bring the account back to its maintenance rate plus 10 percentage points (13% in the first band for BTC and ETH, whose maintenance rate is 3%). If it is still liquidatable afterwards, it can be liquidated again.
 
 Liquidation can only make your positions smaller. It never flips one.
 
@@ -38,8 +38,8 @@ If all of that were exhausted, the venue would stop and wind down through [resol
 
 ## Avoiding it
 
-- Keep your leverage below the maximum. At 5x a 9% move against you is enough; at 2.5x it takes about 30%.
-- Watch **Liquidation buffer** and **Margin usage** on the Account card.
+- Keep your leverage well below the maximum. At 20x a move of about 2% against you is enough; at 5x it takes about 17%.
+- Watch the **Liq. price** of each position and the **Margin in use** figure on the Portfolio page.
 - Deposit more collateral or reduce the position before you reach maintenance. Reductions are allowed even below initial margin.
 - Remember that a position in one market uses up margin for the other.
 
