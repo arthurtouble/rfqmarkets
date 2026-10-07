@@ -26,6 +26,10 @@ uint256 constant ABSOLUTE_MAX_TRADE_NOTIONAL = 1_000_000e6;
 uint256 constant ABSOLUTE_MAX_MARKET_NOTIONAL = 5_000_000e6;
 
 /// @dev Anti-spam floor for an account's first deposit; registered accounts are walked during resolution.
+/// @dev Lowest per-market margin multiplier. 2_500 scales the first tier to 5% initial / 3% maintenance (20x).
+uint16 constant MIN_MARGIN_SCALE_BPS = 2_500;
+uint16 constant MAX_MARGIN_SCALE_BPS = 50_000;
+
 uint256 constant MIN_FIRST_DEPOSIT = 10e6;
 uint256 constant MAX_SESSION_DURATION = 30 days;
 
@@ -49,6 +53,11 @@ bytes32 constant EIP712_VERSION_HASH = keccak256("1");
 
 bytes32 constant TRADE_INTENT_TYPEHASH = keccak256(
     "TradeIntent(address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,bool reduceOnly)"
+);
+/// @dev A trade intent that may only fill once the oracle mid has reached `triggerPrice` (stop-loss,
+/// take-profit and stop entries). It has its own type so a triggered order can never fill as a plain one.
+bytes32 constant TRIGGERED_TRADE_INTENT_TYPEHASH = keccak256(
+    "TriggeredTradeIntent(address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,bool reduceOnly,uint256 triggerPrice,bool triggerAbove)"
 );
 bytes32 constant MAKER_APPROVAL_TYPEHASH = keccak256(
     "MakerApproval(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion)"
@@ -137,6 +146,13 @@ struct TradeIntent {
     bool reduceOnly;
 }
 
+/// @notice Trigger condition for a `TriggeredTradeIntent`: the fill's oracle mid must be at or above
+/// (`triggerAbove`) or at or below the trigger price.
+struct Trigger {
+    uint256 triggerPrice;
+    bool triggerAbove;
+}
+
 struct MakerApproval {
     bytes32 intentHash;
     uint256 executionPrice;
@@ -206,3 +222,4 @@ error Insolvent();
 error InvalidConfiguration();
 error IncidentGracePeriod();
 error NoSurplus();
+error TriggerNotReached();

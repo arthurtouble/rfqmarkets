@@ -8,7 +8,7 @@ const address=z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform(getAddress),hash
 const int=(min:number,max:number)=>z.number().int().min(min).max(max);
 // Launch risk parameters (see ECONOMIC-SPECIFICATION.md); bounds match RFQClearing._validateRisk.
 export const LAUNCH_RISK={BTC:{impactK:10_000,shockBps:4_000,marginScaleBps:10_000},ETH:{impactK:12_000,shockBps:5_000,marginScaleBps:10_000}} as const;
-const risk=(defaults:{impactK:number;shockBps:number;marginScaleBps:number})=>({impactK:int(1,1_000_000).default(defaults.impactK),shockBps:int(500,10_000).default(defaults.shockBps),marginScaleBps:int(10_000,50_000).default(defaults.marginScaleBps)});
+const risk=(defaults:{impactK:number;shockBps:number;marginScaleBps:number})=>({impactK:int(1,1_000_000).default(defaults.impactK),shockBps:int(500,10_000).default(defaults.shockBps),marginScaleBps:int(2_500,50_000).default(defaults.marginScaleBps)});
 // SignedPriceOracle consensus parameters; bounds match the oracle's constructor checks.
 const oracleParams=z.object({maxDeviationBps:int(1,1_000).default(50),maxSkew:int(0,15).default(5),maxJumpBps:int(0,10_000).default(0),jumpWindow:int(0,86_400).default(0)}).strict().default({});
 const oracleSigners=z.array(address).min(3).max(16);

@@ -71,7 +71,7 @@ contract MarketRegistryTest is ClearingFixture {
         clearing.addMarket(unnamed);
 
         MarketConfig memory lightMargin = solConfig();
-        lightMargin.marginScaleBps = 9_999;
+        lightMargin.marginScaleBps = MIN_MARGIN_SCALE_BPS - 1;
         vm.expectRevert(InvalidConfiguration.selector);
         clearing.addMarket(lightMargin);
 
