@@ -86,7 +86,10 @@ const accepted = results.filter((item) => item.result.response.ok),
   rejected = results.filter((item) => !item.result.response.ok);
 for (const item of rejected) {
   assert([409, 503].includes(item.result.response.status), JSON.stringify(item.result.payload));
-  assert.match(String(item.result.payload.error), /price moved|chain submission|inclusion|quorum|settlement|admission inventory changed/);
+  assert.match(
+    String(item.result.payload.error),
+    /price moved|chain submission|inclusion|quorum|settlement|admission inventory changed/,
+  );
 }
 assert(
   accepted.length >= Math.floor(count * 0.75),
@@ -135,7 +138,10 @@ const closed = await Promise.all(
           userSignature: signature,
         });
       if (result.response.ok) return { ...item, closeNonce, result };
-      assert.match(String(result.payload.error), /price moved|chain submission|inclusion|settlement|admission inventory changed/);
+      assert.match(
+        String(result.payload.error),
+        /price moved|chain submission|inclusion|settlement|admission inventory changed/,
+      );
     }
     throw new Error(`close retries exhausted for ${item.wallet.address}`);
   }),
