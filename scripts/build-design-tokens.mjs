@@ -7,15 +7,15 @@ import { fileURLToPath } from "node:url";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "../packages/design-system");
 const tokens = JSON.parse(readFileSync(join(dir, "tokens.json"), "utf8"));
-const [first, ...others] = tokens.color.themes.map(theme => theme.id);
+const [first, ...others] = tokens.color.themes.map((theme) => theme.id);
 
 const value = (raw, theme) => {
-  const picked = typeof raw === "string" ? raw : raw[theme] ?? raw[first];
+  const picked = typeof raw === "string" ? raw : (raw[theme] ?? raw[first]);
   return picked.startsWith("{") ? `var(--${picked.slice(1, -1)})` : picked;
 };
 const themed = [...tokens.color.tokens, ...(tokens.shadow?.tokens ?? [])];
 const block = (selector, theme, indent = "") =>
-  `${indent}${selector} {\n${themed.map(token => `${indent}  --${token.name}: ${value(token.value, theme)};`).join("\n")}\n${indent}  color-scheme: ${theme === "light" ? "light" : "dark"};\n${indent}}`;
+  `${indent}${selector} {\n${themed.map((token) => `${indent}  --${token.name}: ${value(token.value, theme)};`).join("\n")}\n${indent}  color-scheme: ${theme === "light" ? "light" : "dark"};\n${indent}}`;
 
 const out = [
   `/* ${tokens.name} — generated from tokens.json by scripts/build-design-tokens.mjs. Do not edit. */`,
@@ -26,11 +26,13 @@ for (const theme of others) {
   out.push(`@media (prefers-color-scheme: ${theme}) {\n${block(`:root:not([data-theme])`, theme, "  ")}\n}`);
   out.push(block(`[data-theme="${theme}"]`, theme));
 }
-const plain = ["spacing", "radius", "size"].flatMap(family => tokens[family]?.tokens ?? []);
-out.push(`:root {\n${[
-  ...plain.map(token => `  --${token.name}: ${token.value};`),
-  ...Object.entries(tokens.type.families).map(([key, stack]) => `  --font-${key}: ${stack};`),
-].join("\n")}\n}`);
+const plain = ["spacing", "radius", "size"].flatMap((family) => tokens[family]?.tokens ?? []);
+out.push(
+  `:root {\n${[
+    ...plain.map((token) => `  --${token.name}: ${token.value};`),
+    ...Object.entries(tokens.type.families).map(([key, stack]) => `  --font-${key}: ${stack};`),
+  ].join("\n")}\n}`,
+);
 for (const group of tokens.type.groups) {
   for (const style of group.styles) {
     const rules = [

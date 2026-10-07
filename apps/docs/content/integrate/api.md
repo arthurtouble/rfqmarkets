@@ -31,7 +31,7 @@ Per IP address, the edge allows 600 reads and 120 writes a minute, and returns `
 | `GET /v1/risk` | Venue totals: accounts, total collateral, and each market's long and short open interest. |
 | `GET /v1/positions` | Every account with open positions, paginated, from finalized chain data. |
 | `GET /v1/activity` | Every contract event, paginated with a cursor. Filter with `kind`, `market` and `finalized=true`. |
-| `GET /v1/account/{address}/activity` | The same, for one account. |
+| `GET /v1/account/{address}/activity` | The same, for one account. Leave kinds out with `exclude`, for example `exclude=TradeExecuted,FundingSettled`. |
 | `GET /v1/portfolio/{address}` | Lifetime totals replayed from the chain: realized PnL, fees, funding, liquidation penalties and `netPnl`; deposits, withdrawals and collateral; volume and trade count; and each position's size and entry. |
 | `GET /v1/portfolio/{address}/history?interval=1d` | The same totals as a time series, one point per event, hour (`1h`) or day (`1d`), up to 2,000 points. |
 | `GET /v1/portfolio/{address}/trades` | Every fill, newest first, with price, fee, the position before and after, and the realized PnL of each. Paginated with `cursor`; filter with `market`. |

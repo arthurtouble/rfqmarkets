@@ -1110,57 +1110,44 @@ test("leader readiness rejects an active commitment whose approval artifact is m
   assert.throws(() => buildApi({ approvers, fetchImpl: routedFetch, journalPath }), /approval artifact/);
 });
 
-test("deposit routes bind source terms and require the receiving wallet", async () => {
-  const routeResponse = await api.inject({
-    method: "POST",
-    url: "/v1/deposit/quote",
-    payload: { account: user.address, fromChainId: 1, fromToken: "ETH", amount: "1" },
-  });
-  assert.equal(routeResponse.statusCode, 200, routeResponse.body);
-  const route = routeResponse.json();
-  const attacker = Wallet.createRandom();
-  const bad = await attacker.signTypedData(route.domain, route.types, route.intent);
-  assert.equal(
-    (
-      await api.inject({
-        method: "POST",
-        url: "/v1/deposit/execute",
-        payload: { routeId: route.routeId, userSignature: bad },
-      })
-    ).statusCode,
-    401,
-  );
-  const signature = await user.signTypedData(route.domain, route.types, route.intent);
-  const unavailable = await api.inject({
-    method: "POST",
-    url: "/v1/deposit/execute",
-    payload: { routeId: route.routeId, userSignature: signature },
-  });
-  assert.equal(unavailable.statusCode, 503);
+test("the local faucet and dev wallet are not routed without development funding", async () => {
+  for (const [method, url] of [
+    ["POST", "/v1/dev/fund"],
+    ["GET", "/v1/dev/wallet"],
+    ["POST", "/v1/deposit/quote"],
+  ] as const) {
+    const response = await api.inject({
+      method,
+      url,
+      ...(method === "POST" ? { payload: { account: user.address, amount: "100" } } : {}),
+    });
+    assert.equal(response.statusCode, 404, url);
+  }
 });
 
-test("an unexpired deposit authorization survives an API leader restart", async () => {
-  const journalPath = join(directory, "deposit-restart.sqlite");
-  const firstApi = buildApi({ journalPath });
-  await firstApi.ready();
-  const response = await firstApi.inject({
+test("withdrawal prepare accepts positive USDC amounts and binds the recipient", async () => {
+  const nonce = BigInt(`0x${crypto.randomUUID().replaceAll("-", "")}`).toString();
+  for (const amount of ["0", "0.000000", "-1", "1.1234567", "abc", ""]) {
+    const response = await api.inject({
+      method: "POST",
+      url: "/v1/withdraw/prepare",
+      payload: { account: user.address, amount, nonce },
+    });
+    assert.equal(response.statusCode, 400, amount);
+  }
+  const recipient = Wallet.createRandom().address;
+  const response = await api.inject({
     method: "POST",
-    url: "/v1/deposit/quote",
-    payload: { account: user.address, fromChainId: 42161, fromToken: "USDC", amount: "250" },
+    url: "/v1/withdraw/prepare",
+    payload: { account: user.address.toLowerCase(), recipient, amount: "0.000001", nonce },
   });
   assert.equal(response.statusCode, 200, response.body);
-  const route = response.json();
-  await firstApi.close();
-  const restarted = buildApi({ journalPath });
-  await restarted.ready();
-  const signature = await user.signTypedData(route.domain, route.types, route.intent);
-  const result = await restarted.inject({
-    method: "POST",
-    url: "/v1/deposit/execute",
-    payload: { routeId: route.routeId, userSignature: signature },
-  });
-  assert.equal(result.statusCode, 503, result.body);
-  await restarted.close();
+  const prepared = response.json();
+  assert.equal(prepared.intent.account, user.address);
+  assert.equal(prepared.intent.recipient, recipient);
+  assert.equal(prepared.intent.amount, "1");
+  assert.deepEqual(Object.keys(prepared.types), ["WithdrawalIntent"]);
+  assert(BigInt(prepared.intent.deadline) > BigInt(Math.floor(Date.now() / 1_000)));
 });
 
 test("owner exit and cancellation actions are exactly signed before sponsorship", async () => {

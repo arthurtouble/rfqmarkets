@@ -5,8 +5,7 @@ const api=process.env.RFQ_API_URL??"http://127.0.0.1:4100",user=Wallet.createRan
 const post=async(path:string,body:unknown)=>{const response=await fetch(`${api}${path}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}),payload=await response.json();assert(response.ok,`${path}: ${JSON.stringify(payload)}`);return payload;};
 const nonce=()=>BigInt(`0x${crypto.randomUUID().replaceAll("-","")}`).toString();
 
-const route=await post("/v1/deposit/quote",{account:user.address,fromChainId:1,fromToken:"USDC",amount:"5000"}),depositSignature=await user.signTypedData(route.domain,route.types,route.intent);
-await post("/v1/deposit/execute",{routeId:route.routeId,userSignature:depositSignature});
+await post("/v1/dev/fund",{account:user.address,amount:"5000"});
 const prepared=await post("/v1/orders/prepare",{account:user.address,market:"BTC",side:"buy",amount:"1000",limitPrice:"101000",durationSeconds:3600,nonce:nonce(),reduceOnly:false});
 assert.equal(prepared.intent.leaderEpoch,undefined);assert.equal(prepared.intent.policyVersion,undefined);
 const orderSignature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent);await post("/v1/orders",{orderId:prepared.orderId,userSignature:orderSignature});

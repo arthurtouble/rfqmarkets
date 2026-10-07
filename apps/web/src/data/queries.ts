@@ -7,7 +7,7 @@ import { erc20Abi, type Address } from "viem";
 import { API, INDEXER } from "../lib/env.js";
 import { useEventStream } from "../lib/event-stream.js";
 import { getJson } from "../lib/http.js";
-import type { AccountState, Activity, FillPage, FundingPage, IndexerHealth, Market, Portfolio, PortfolioHistory, PortfolioInterval, Protocol, PublicPosition, RestingOrder, Risk } from "../lib/types.js";
+import type { AccountState, Activity, ActivityPage, FillPage, FundingPage, IndexerHealth, Market, Portfolio, PortfolioHistory, PortfolioInterval, Protocol, PublicPosition, RestingOrder, Risk } from "../lib/types.js";
 import { useTrader } from "../wallet/trader.js";
 
 export const keys = {
@@ -34,10 +34,14 @@ export function useOrders(address: string | null) {
   });
 }
 
-export function useAccountActivity(address: string | null) {
-  return useQuery({
-    queryKey: [...keys.account(address ?? ""), "activity"],
-    queryFn: ({ signal }) => getJson<{ items: Activity[] }>(`${INDEXER}/v1/account/${address}/activity?limit=50`, signal).then(value => value.items),
+/** GET /v1/account/:address/activity: newest first, paged like trades, leaving out the event kinds in `exclude`. */
+export function useAccountActivity(address: string | null, exclude: readonly string[] = []) {
+  return useInfiniteQuery({
+    queryKey: [...keys.account(address ?? ""), "activity", exclude.join(",")],
+    queryFn: ({ signal, pageParam }) => getJson<ActivityPage>(
+      `${INDEXER}/v1/account/${address}/activity${query(pageParam ? `cursor=${pageParam}` : "", "limit=25", exclude.length ? `exclude=${exclude.join(",")}` : "")}`, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: page => page.nextCursor,
     enabled: !!address,
   });
 }
