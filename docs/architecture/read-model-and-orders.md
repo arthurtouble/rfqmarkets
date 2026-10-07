@@ -6,7 +6,7 @@ Status: account and market read model plus all-or-none conditional orders implem
 
 The interface keeps three price concepts separate:
 
-1. **Oracle bid/ask and mid** come from the authenticated Chainlink Data Streams report cache. They are the independent reference and the directional marks used for risk.
+1. **Oracle bid/ask and mid** come from the signed oracle nodes' combined report ([Price oracle](oracle.md)). They are the independent reference and the directional marks used for risk.
 2. **Indicative execution** is a size-specific RFQ computed by the API from the directional oracle price, base spread, fee, settled portfolio inventory and every still-executable reservation. It updates without reserving capacity.
 3. **Firm execution** is created after the click, bounded by the user's signed worst price, approved by two independent approvers and checked again by the contract against the exact oracle report and current settled state.
 

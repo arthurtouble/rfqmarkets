@@ -42,7 +42,7 @@ The normal stress set includes joint BTC/ETH moves `(±20%, ±25%)` and broken-c
 
 ## Reference and oracle policy
 
-Convert asset/USD reports to asset/USDC using an approved USDC/USD observation rather than assuming a permanent peg. Chainlink Data Streams v3 is the primary candidate: its reports contain feed identity, observation time, expiry, price, bid and ask fields. [Chainlink v3 report schema](https://docs.chain.link/data-streams/reference/report-schema-v3).
+Convert asset/USD reports to asset/USDC using an approved USDC/USD observation rather than assuming a permanent peg. The oracle nodes do this conversion and sign USDC prices with an observation time; see [Price oracle](oracle.md).
 
 At approval time for BTC/ETH normal mode:
 
