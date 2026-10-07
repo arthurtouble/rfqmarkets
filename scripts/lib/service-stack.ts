@@ -51,6 +51,10 @@ export interface ServiceStackConfig {
   startBlock: number;
   /** RPC used by the API sender and the indexer. */
   rpcUrl: string;
+  /** Indexer RPC when it must differ from rpcUrl (for example one with a wider eth_getLogs range). */
+  indexerRpcUrl?: string;
+  /** Most blocks per indexer eth_getLogs call. */
+  maxLogRange?: number;
   sponsorKey: string;
   oracleSource: OracleSource;
   approvers: {
@@ -140,11 +144,12 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
 
   try {
     const indexer = buildIndexer({
-      rpcUrl: config.rpcUrl,
+      rpcUrl: config.indexerRpcUrl ?? config.rpcUrl,
       clearingAddress: config.clearingAddress,
       databasePath: state("indexer.sqlite"),
       startBlock: config.startBlock,
       confirmations: 2,
+      maxLogRange: config.maxLogRange,
     });
     await indexer.listen({ host: bindHost, port: ports.indexer });
     servers.push(indexer);

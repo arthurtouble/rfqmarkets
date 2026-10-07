@@ -4,7 +4,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Interface, JsonRpcProvider, type Block, type Log, type TransactionRequest } from "ethers";
+import {
+  Interface,
+  JsonRpcProvider,
+  type Block,
+  type Filter,
+  type FilterByBlockHash,
+  type Log,
+  type TransactionRequest,
+} from "ethers";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
 import { buildIndexer } from "./server.js";
 
@@ -210,6 +218,51 @@ test("update stream connections are capped per client", async () => {
     assert.equal((await app.inject({ method: "GET", url: "/health" })).json().streams.active, 1);
   } finally {
     controller.abort();
+    await app.close();
+    provider.destroy();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("each eth_getLogs call spans at most maxLogRange blocks", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-index-")),
+    ranges: Array<[number, number]> = [];
+  class LongChain extends JsonRpcProvider {
+    override async getBlockNumber() {
+      return 1_200;
+    }
+    override async getBlock(number: unknown) {
+      const height = Number(number);
+      return {
+        number: height,
+        hash: "0x" + height.toString(16).padStart(64, "0"),
+        parentHash: hash,
+        timestamp: height,
+      } as Block;
+    }
+    override async getLogs(filter: Filter | FilterByBlockHash) {
+      const { fromBlock, toBlock } = filter as Filter;
+      ranges.push([Number(fromBlock), Number(toBlock)]);
+      return [] as Log[];
+    }
+  }
+  const provider = new LongChain(),
+    app = buildIndexer({
+      rpcUrl: "http://unused",
+      provider,
+      clearingAddress: clearing,
+      databasePath: join(directory, "index.sqlite"),
+      startBlock: 1,
+      confirmations: 0,
+      maxLogRange: 500,
+      pollMs: 60_000,
+    });
+  try {
+    await app.ready();
+    assert.ok(ranges.length > 0);
+    assert.deepEqual(ranges[0], [1, 500]);
+    for (const [from, to] of ranges) assert.ok(to - from + 1 <= 500, `${from}-${to}`);
+  } finally {
     await app.close();
     provider.destroy();
     rmSync(directory, { recursive: true, force: true });

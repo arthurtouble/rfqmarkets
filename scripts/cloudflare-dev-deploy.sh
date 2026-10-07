@@ -4,7 +4,8 @@
 # (deploy/cloudflare/DEV-ENVIRONMENT.md). Used by deploy-cloudflare-dev.yml and for redeploys from any
 # machine with Docker.
 # Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; RFQ_BASE_MAINNET_RPC_URL,
-# RFQ_BASE_MAINNET_SECONDARY_RPC_URL and CLOUDFLARE_WORKERS_SUBDOMAIN (default rfq-markets) are optional. Behind a TLS-intercepting proxy, set
+# RFQ_BASE_MAINNET_SECONDARY_RPC_URL, RFQ_BASE_MAINNET_INDEXER_RPC_URL, RFQ_BASE_MAINNET_MAX_LOG_RANGE and
+# CLOUDFLARE_WORKERS_SUBDOMAIN (default rfq-markets) are optional. Behind a TLS-intercepting proxy, set
 # RFQ_DOCKER_BUILD_CA to a CA bundle; it is mounted only while npm installs and stays out of the image.
 # RFQ_DOCKER_NODE_IMAGE swaps the Node base image for a mirror (for example
 # public.ecr.aws/docker/library/node:24-bookworm-slim) when Docker Hub rate-limits. Expects `npm ci` to have run.
@@ -35,7 +36,9 @@ sed -e "s/REPLACED_AT_DEPLOY/$kv/" \
     deploy/cloudflare/runtime/wrangler.dev.jsonc > "$generated"
 wrangler deploy --config "$generated"
 
-node -e 'const rpc=process.env.RFQ_BASE_MAINNET_RPC_URL||"https://mainnet.base.org",sub=process.env.CLOUDFLARE_WORKERS_SUBDOMAIN;process.stdout.write(JSON.stringify({rpcUrl:rpc,secondaryRpcUrl:process.env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||rpc,oracleNodes:[1,2,3].map(n=>`https://rfq-markets-oracle-${n}.${sub}.workers.dev`)}))' \
+# Free public RPCs: drpc answers calls quickly but caps eth_getLogs at ~10 blocks, so the indexer reads
+# logs from mainnet.base.org in 500-block steps (its cap). Override with the RFQ_BASE_MAINNET_* variables.
+node -e 'const env=process.env,rpc=env.RFQ_BASE_MAINNET_RPC_URL||"https://base.drpc.org",sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN;process.stdout.write(JSON.stringify({rpcUrl:rpc,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||"https://mainnet.base.org",indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||"https://mainnet.base.org",maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||500),oracleNodes:[1,2,3].map(n=>`https://rfq-markets-oracle-${n}.${sub}.workers.dev`)}))' \
   | wrangler secret put RFQ_DEV_RUNTIME_SECRETS --name rfq-markets-runtime-dev
 wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
 wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
