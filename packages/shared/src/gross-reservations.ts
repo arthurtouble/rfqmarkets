@@ -109,6 +109,18 @@ export class GrossReservationBook {
     }
     return expired;
   }
+  /**
+   * Drop a reservation before its deadline. Only for a reservation no approver ever signed: once a
+   * signature may exist, capacity must stay reserved until finalized expiry.
+   */
+  release(id: string) {
+    const item = this.items.get(id);
+    if (!item) return false;
+    this.adjust(item, -1n);
+    this.items.delete(id);
+    this.expiry.cancel(id);
+    return true;
+  }
   /** Reserved gross base per market index, for at least `count` markets (zero-filled). */
   bounds(exclude?: string, count = marketRegistry.count) {
     const result = Array.from({ length: Math.max(count, this.totals.length) }, (_, market) => ({

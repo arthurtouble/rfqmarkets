@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { senderHealthy } from "./operations.js";
+import { operationsTokenMatches, senderHealthy } from "./operations.js";
 import { buildApi } from "./server.js";
 import type { SenderStatus } from "./sender.js";
 
@@ -32,6 +32,31 @@ test("/health treats an in-flight trade as healthy and an ambiguous one as unhea
     assert.equal((await app.inject({ url: "/health" })).json().ok, true);
     rows = [{ status: "ambiguous", count: 1 }];
     assert.equal((await app.inject({ url: "/health" })).json().ok, false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("operations bearer token is compared exactly and fails closed when unset", async () => {
+  assert.equal(operationsTokenMatches("Bearer secret", "secret"), true);
+  assert.equal(operationsTokenMatches("Bearer secreT", "secret"), false);
+  assert.equal(operationsTokenMatches("Bearer secret-longer", "secret"), false);
+  assert.equal(operationsTokenMatches("Bearer ", ""), false);
+  assert.equal(operationsTokenMatches(undefined, "secret"), false);
+  assert.equal(operationsTokenMatches("Bearer secret", undefined), false);
+  const app = buildApi({ operationsToken: "secret" });
+  try {
+    await app.ready();
+    assert.equal((await app.inject({ url: "/internal/metrics" })).statusCode, 401);
+    assert.equal(
+      (await app.inject({ url: "/internal/metrics", headers: { authorization: "Bearer wrong" } })).statusCode,
+      401,
+    );
+    assert.equal(
+      (await app.inject({ url: "/internal/metrics", headers: { authorization: "Bearer secret" } }))
+        .statusCode,
+      200,
+    );
   } finally {
     await app.close();
   }

@@ -1,4 +1,4 @@
-import { getAddress, keccak256, toUtf8Bytes } from "ethers";
+import { getAddress, id, keccak256, toUtf8Bytes } from "ethers";
 import type { FastifyInstance } from "fastify";
 import {
   approvalToWire,
@@ -17,12 +17,23 @@ import { maskAllows } from "../../../packages/shared/src/clearing-structs.js";
 import type { ExposureBook, ExposureMarket } from "../../../packages/shared/src/exposure-admission.js";
 import { pendingMakerDebit } from "../../../packages/shared/src/exposure-admission.js";
 import { finalizedClock } from "../../../packages/shared/src/finalized-clock.js";
-import { finalizeGross, persistGross } from "../../../packages/shared/src/gross-reservation-journal.js";
+import {
+  finalizeGross,
+  persistGross,
+  releaseGross,
+} from "../../../packages/shared/src/gross-reservation-journal.js";
 import type { GrossReservation } from "../../../packages/shared/src/gross-reservations.js";
 import { BASE, ceilDiv, formatUsdc, type Quote } from "../../../packages/shared/src/policy.js";
+import { legMargin } from "../../../packages/shared/src/pricing.js";
 import { triggerReached, triggeredFillDelta } from "../../../packages/shared/src/trigger.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
-import { APPROVAL_QUORUM, ApprovalCollector, distinctSigners, type ApproverSignature } from "./approvals.js";
+import {
+  APPROVAL_QUORUM,
+  ApprovalCollector,
+  distinctSigners,
+  everyApproverRefused,
+  type ApproverSignature,
+} from "./approvals.js";
 import { encodeLocalReport, type ChainMarketState, type ChainReader } from "./chain.js";
 import type { ApiContext } from "./context.js";
 import type { DevChain } from "./dev-chain.js";
@@ -56,6 +67,51 @@ const OPTIMISTIC_RESERVATION_ATTEMPTS = 2;
 const COMPLETED_RETENTION_MS = 300_000;
 const TRADE_GAS_LIMIT = 2_000_000n;
 
+/** Reply `code` when the account cannot cover the trade's initial margin (pre-check or simulation). */
+export const INSUFFICIENT_MARGIN = "insufficient_margin";
+/** Selector of the clearing contract's `Margin()` error. */
+const MARGIN_SELECTOR = id("Margin()").slice(0, 10);
+
+/** Account capital read at the gross snapshot block for the initial-margin pre-check. */
+export type AccountCapital = { collateral: bigint; openingEquity: bigint; initialMargin: bigint };
+
+/**
+ * Cheap lower bound of the contract's initial-margin check, run before any risk is reserved so an
+ * account that cannot pay cannot occupy gross capacity or pending impact. Reductions (reduce-only, or
+ * a same-side shrink) are always admitted. Otherwise the opening part of the fill, valued at the
+ * quote's ask like `RFQRiskMath.accountMargin`, must fit in the headroom between opening equity and
+ * current initial margin. Tiered margin is superadditive, so this never exceeds what the contract
+ * requires; fees and impact are ignored, also in the account's favour.
+ */
+export function coversOpeningMargin(input: {
+  capital: AccountCapital;
+  positionSize: bigint;
+  delta: bigint;
+  reduceOnly: boolean;
+  /** Ask the fill is valued at. */
+  ask: bigint;
+  /** Ask the contract last stored for the market (values the existing leg). */
+  storedAsk: bigint;
+  marginScaleBps: bigint | number;
+}) {
+  const { capital, positionSize, delta, reduceOnly, ask, storedAsk, marginScaleBps } = input;
+  const next = positionSize + delta,
+    sameSide = positionSize === 0n || next === 0n || positionSize > 0n === next > 0n;
+  if (reduceOnly || delta === 0n || (sameSide && abs(next) <= abs(positionSize))) return true;
+  if (capital.collateral < 0n) return false;
+  const flips = !sameSide,
+    opening = flips ? abs(next) : abs(delta),
+    required = legMargin((opening * ask) / BASE, true, marginScaleBps),
+    // A flip closes the existing leg first, which releases its margin.
+    released = flips ? legMargin((abs(positionSize) * storedAsk) / BASE, true, marginScaleBps) : 0n;
+  return capital.openingEquity - capital.initialMargin + released >= required;
+}
+
+function marginFailure(error: unknown) {
+  const text = errorText(error);
+  return text.toLowerCase().includes(MARGIN_SELECTOR) || text.includes("Margin()");
+}
+
 type CompletedSubmission = {
   account: string;
   nonce: string;
@@ -71,6 +127,8 @@ type GrossSnapshot = {
   books: ExposureBook[];
   states: ExposureMarket[];
   position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
+  capital: AccountCapital;
+  marginScaleBps: number;
   netLimits: bigint[];
   backing: bigint;
   floor: bigint;
@@ -388,15 +446,22 @@ export class ExecutionService {
     // Gross, net and stress admission covers every market the chain has at this block.
     await marketRegistry.ensureCount(await clearing.marketCount(blockTag));
     const indexes = marketRegistry.all().map((market) => market.index);
-    const [books, rawStates, limitWords, positionRaw, backing, floor, clock] = await Promise.all([
-      Promise.all(indexes.map((index) => clearing.exposureState(index, blockTag))),
-      Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
-      Promise.all(indexes.map((index) => clearing.marketLimitWord(index, blockTag))),
-      clearing.positionOf(intent.account, intent.market, blockTag),
-      clearing.makerBacking(blockTag),
-      clearing.baseRiskCapitalTarget(blockTag),
-      finalizedClock(provider, blockNumber, block.timestamp),
-    ]);
+    const [books, rawStates, limitWords, positionRaw, backing, floor, clock, capital, params] =
+      await Promise.all([
+        Promise.all(indexes.map((index) => clearing.exposureState(index, blockTag))),
+        Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
+        Promise.all(indexes.map((index) => clearing.marketLimitWord(index, blockTag))),
+        clearing.positionOf(intent.account, intent.market, blockTag),
+        clearing.makerBacking(blockTag),
+        clearing.baseRiskCapitalTarget(blockTag),
+        finalizedClock(provider, blockNumber, block.timestamp),
+        Promise.all([
+          clearing.collateralOf(intent.account, blockTag),
+          clearing.openingEquity(intent.account, blockTag),
+          clearing.initialMargin(intent.account, blockTag),
+        ]),
+        clearing.marketParams(intent.market, blockTag),
+      ]);
     return {
       blockNumber,
       blockTimestamp: block.timestamp,
@@ -412,6 +477,12 @@ export class ExecutionService {
         entryPrice: BigInt(positionRaw.entryPrice),
         lastFundingIndex: BigInt(positionRaw.lastFundingIndex),
       },
+      capital: {
+        collateral: BigInt(capital[0]),
+        openingEquity: BigInt(capital[1]),
+        initialMargin: BigInt(capital[2]),
+      },
+      marginScaleBps: Number(params.marginScaleBps),
       netLimits: limitWords.map((word) => BigInt(word)),
       backing: BigInt(backing),
       floor: BigInt(floor),
@@ -434,8 +505,18 @@ export class ExecutionService {
       minimumBudget = ctx.options.minSettlementInclusionSeconds ?? DEFAULT_MIN_INCLUSION_SECONDS,
       // A triggered quote prices the fill (a reduce-only trigger clamped to the position); the
       // contract re-derives that clamp, so it is re-checked against the gross snapshot below.
-      fill: TradeIntent = trigger ? { ...intent, baseDelta: original.baseDelta } : intent;
-    let quote = original;
+      fill: TradeIntent = trigger ? { ...intent, baseDelta: original.baseDelta } : intent,
+      // Only a reservation this call created, and no approver ever signed, may be released early.
+      reservedBefore = ctx.grossReservations.get(original.quoteId) !== undefined;
+    let quote = original,
+      signaturesMayExist = reservedBefore;
+    // Local profile: fund the wallet before the margin pre-check (was done at submission).
+    if (ctx.devFund)
+      try {
+        await this.dev.autofund(intent.account, original.quoteId);
+      } catch (error) {
+        return Reply.error(409, publicError(error, "chain submission failed"));
+      }
     // Optimistic reads precede a synchronous durable admission section. Remote
     // quorum and simulation run after publication and outside the lock.
     for (let attempt = 0, conflicts = 0; attempt < 2; attempt++) {
@@ -514,6 +595,19 @@ export class ExecutionService {
           if (!snapshot) return Reply.error(503, "gross reservation snapshot unavailable");
           if (trigger && triggeredFillDelta(intent, snapshot.position.size) !== fill.baseDelta)
             return Reply.error(409, "position changed since the trigger was priced");
+          // Refuse before reserving: an account that cannot pay must not hold capacity until expiry.
+          if (
+            !coversOpeningMargin({
+              capital: snapshot.capital,
+              positionSize: snapshot.position.size,
+              delta: fill.baseDelta,
+              reduceOnly: intent.reduceOnly,
+              ask: quote.snapshot.ask,
+              storedAsk: BigInt(snapshot.states[intent.market]?.lastAsk ?? 0n),
+              marginScaleBps: snapshot.marginScaleBps,
+            })
+          )
+            return Reply.error(409, "insufficient margin for this trade", { code: INSUFFICIENT_MARGIN });
           grossSnapshot = snapshot;
         }
         const release = queued ?? (await this.acquireReservationLock());
@@ -546,7 +640,11 @@ export class ExecutionService {
 
         const responses = await this.approvals.collect(digest, approverPayload),
           distinct = distinctSigners(responses);
+        if (!everyApproverRefused(responses)) signaturesMayExist = true;
         if (distinct.size < APPROVAL_QUORUM) {
+          // Every approver refused before signing, on every attempt: no signature exists anywhere,
+          // so the reservation made for this call can be returned instead of held to expiry.
+          if (!signaturesMayExist) this.releaseUnsigned(quote.quoteId);
           const policy = approverPolicyRejection(responses, this.approvals.size, APPROVAL_QUORUM);
           if (policy) return Reply.error(409, policy);
           return Reply.error(503, "approver quorum unavailable", {
@@ -579,6 +677,7 @@ export class ExecutionService {
             if (attempt === 0 && staleOracleFailure(error)) continue;
             return Reply.error(409, "settlement simulation failed", {
               retriable: staleOracleFailure(error),
+              ...(marginFailure(error) ? { code: INSUFFICIENT_MARGIN } : {}),
               details: process.env.NODE_ENV === "test" ? errorText(error) : undefined,
             });
           }
@@ -709,6 +808,29 @@ export class ExecutionService {
     });
     this.quoting.invalidateMarkets();
     return undefined;
+  }
+
+  /**
+   * Return a reservation no approver signed: drop its gross and pending risk and archive its
+   * commitment so recovery does not restore it. Synchronous, so it cannot interleave with admission.
+   */
+  private releaseUnsigned(quoteId: string) {
+    const { journal, grossReservations, pending } = this.ctx;
+    if (journal) {
+      journal.exec("BEGIN IMMEDIATE");
+      try {
+        releaseGross(journal, quoteId);
+        archiveApiCommitments(journal, [quoteId], Date.now(), false);
+        journal.exec("COMMIT");
+      } catch (error) {
+        journal.exec("ROLLBACK");
+        // Keep the conservative reservation when the durable release fails.
+        return;
+      }
+    }
+    grossReservations.release(quoteId);
+    pending.delete(quoteId);
+    this.quoting.invalidateMarkets();
   }
 
   /** Record the quorum-approved commitment and make sure its exposure is priced. */

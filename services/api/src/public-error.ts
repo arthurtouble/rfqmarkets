@@ -5,6 +5,8 @@ export function publicError(error: unknown, fallback: string): string {
     "exposure migration required",
     "firm quote capacity reached",
     "order capacity reached",
+    "account open order limit reached",
+    "deposit collateral before placing orders",
     "oracle report lacks inclusion time",
     "hedging unavailable: only exposure-reducing trades are allowed",
   ]);

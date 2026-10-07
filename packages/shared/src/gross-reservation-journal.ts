@@ -27,6 +27,10 @@ export function persistGross(database: DatabaseSync, id: string, item: GrossRese
     );
   if (result.changes !== 1) throw new Error("gross journal input mismatch");
 }
+/** Durable half of `GrossReservationBook.release`; the caller owns the transaction. */
+export function releaseGross(database: DatabaseSync, id: string) {
+  database.prepare("DELETE FROM gross_reservations WHERE id=?").run(id);
+}
 export function persistLegacyGross(
   database: DatabaseSync,
   id: string,

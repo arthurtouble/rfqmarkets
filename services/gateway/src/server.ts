@@ -13,6 +13,7 @@ import {
   type CandleBackfillOptions,
   type CandleInterval,
 } from "./candles.js";
+import { clientIdentity, type ClientIpHeader } from "../../../packages/shared/src/client-identity.js";
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
 import { openSse } from "../../lib/src/sse.js";
 import { isMarketSymbol } from "../../../packages/shared/src/markets.js";
@@ -28,7 +29,11 @@ export interface GatewayOptions {
   historySampleIntervalMs?: number;
   upstreamStallMs?: number;
   maxConnections?: number;
+  /** SSE connections per client (default 32; the budget's own default of 8 is too tight behind NAT). */
   maxConnectionsPerClient?: number;
+  /** Edge header keyed for the per-client SSE budget when the peer is loopback or `trustedProxy`. */
+  clientIpHeader?: ClientIpHeader;
+  trustedProxy?: string | string[];
   /** How long one-minute candles of the relayed mid are kept in memory (default seven days). */
   candleRetentionMs?: number;
   /** Oracle-node candle history used for windows older than the in-memory candles. */
@@ -37,13 +42,18 @@ export interface GatewayOptions {
 }
 
 const MAX_CANDLES = 1_000;
+const DEFAULT_CONNECTIONS_PER_CLIENT = 32;
 const DEFAULT_CANDLES = 300;
 /** Five-minute buckets covering the last 24 hours, current bucket included. */
 const DAY_BUCKETS = 289;
 const STATS_CACHE_MS = 5_000;
 
 export function buildGateway(options: GatewayOptions) {
-  const connections = new ConnectionBudget(options.maxConnections, options.maxConnectionsPerClient);
+  const connections = new ConnectionBudget(
+      options.maxConnections,
+      options.maxConnectionsPerClient ?? DEFAULT_CONNECTIONS_PER_CLIENT,
+    ),
+    client = clientIdentity(options);
   const app = Fastify({ logger: false }),
     fanout = new MarketFanout(options.maxBufferedBytes),
     history = new MarketHistory(options.historyCapacity, options.historySampleIntervalMs),
@@ -211,7 +221,7 @@ export function buildGateway(options: GatewayOptions) {
     },
   );
   app.get("/v1/markets/stream", async (request, reply) => {
-    const release = connections.acquire(request.ip);
+    const release = connections.acquire(client(request));
     if (!release)
       return reply.code(429).header("retry-after", "5").send({ error: "stream connection limit reached" });
     const response = openSse(reply, corsOrigin);

@@ -5,6 +5,7 @@ import { GrossReservationBook, type GrossReservation } from "../packages/shared/
 import {
   initializeGrossJournal,
   persistGross,
+  releaseGross,
   restoreGross,
   finalizeGross,
   bindGrossContext,
@@ -43,6 +44,30 @@ test("opposing approvals reserve gross independently; retries bind inputs and ne
   );
   book.reserve("close", item(-BASE / 10n, true));
   assert.equal(book.bounds()[0].shortBase, BASE / 10n);
+});
+test("an unsigned reservation can be released durably and is not restored", () => {
+  const database = new DatabaseSync(":memory:");
+  initializeGrossJournal(database);
+  const book = new GrossReservationBook(),
+    state = books(),
+    asks: [bigint, bigint] = [100_000_000_000n, 4_000_000_000n];
+  book.reserve("unsigned", item(BASE / 10n, false, 100, 5n));
+  persistGross(database, "unsigned", item(BASE / 10n, false, 100, 5n));
+  book.reserve("kept", item(-BASE / 20n, false, 100, 3n));
+  persistGross(database, "kept", item(-BASE / 20n, false, 100, 3n));
+  assert.equal(book.admit("next", item(BASE / 10n), [...state], asks, 1), false);
+  assert.equal(book.release("unsigned"), true);
+  releaseGross(database, "unsigned");
+  assert.equal(book.release("unsigned"), false, "release is idempotent");
+  assert.equal(book.bounds()[0].longBase, 0n);
+  assert.equal(book.capitalDebit(), 3n);
+  assert.equal(book.admit("next", item(BASE / 10n), [...state], asks, 1), true);
+  assert.deepEqual(book.finalize(1, 1_000), ["kept"], "a released id leaves no stale expiry entry");
+  const restored = new GrossReservationBook();
+  restoreGross(database, restored);
+  assert.equal(restored.get("unsigned"), undefined);
+  assert.equal(restored.size, 1);
+  database.close();
 });
 test("escaped approvals reserve every net/stress execution subset and maker floor", () => {
   const baseBooks = [

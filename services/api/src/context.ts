@@ -2,10 +2,12 @@ import type { DatabaseSync } from "node:sqlite";
 import { Contract, JsonRpcProvider, Wallet, getAddress } from "ethers";
 import { clearingApiAbi } from "../../../packages/shared/src/abi.js";
 import { DOMAIN_NAME, DOMAIN_VERSION, type SigningDomain } from "../../../packages/shared/src/eip712.js";
+import type { ClientIpHeader } from "../../../packages/shared/src/client-identity.js";
 import { bindGrossContext } from "../../../packages/shared/src/gross-reservation-journal.js";
 import { GrossReservationBook } from "../../../packages/shared/src/gross-reservations.js";
 import type { HedgeRiskSource } from "../../../packages/shared/src/hedge-risk.js";
 import type { Exposure, PriceSnapshot } from "../../../packages/shared/src/policy.js";
+import { QuoteAdmission } from "./admission.js";
 import { PendingExposureBook } from "./bounded-state.js";
 import { FlowRiskTracker } from "./flow-risk.js";
 import { openApiJournal, restoreFlowFills, restorePendingCommitments } from "./journal.js";
@@ -58,6 +60,15 @@ export interface ApiOptions {
   globalFirmQuoteBurst?: number;
   operationsToken?: string;
   trustedProxy?: string | string[];
+  /** Edge header keyed for per-client budgets when the peer is loopback or `trustedProxy`. */
+  clientIpHeader?: ClientIpHeader;
+  /** Live (signed, unexecuted) orders one account may hold at once (default 50). */
+  maxRestingOrdersPerAccount?: number;
+  /** Unsigned prepared orders held at once (default min(maxRestingOrders, 10 000)). */
+  maxPreparedOrders?: number;
+  /** Per-account sponsored nonce-cancel and session-grant budget (default 1 per 10 s, burst 5). */
+  sponsoredActionRatePerSecond?: number;
+  sponsoredActionBurst?: number;
 }
 
 export type ApiSender = Pick<DurableSender, "submit" | "reconcile" | "status">;
@@ -106,6 +117,8 @@ export class ApiContext {
   readonly grossReservations = new GrossReservationBook();
   readonly flowRisk: FlowRiskTracker;
   readonly quotes = new QuoteStore();
+  /** Per-account budget for sponsored actions that succeed on chain for any signer (nonce cancel, session grant). */
+  readonly sponsoredActions: QuoteAdmission;
   /** Signed commitments restored from the journal; their protocol versions are read on ready. */
   readonly recoveredCommitments: RecoveredCommitment[] = [];
   private readonly pruners: Array<(now: number) => void> = [];
@@ -124,6 +137,13 @@ export class ApiContext {
     this.maxActiveQuotes = options.maxActiveQuotes ?? 50_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.prices = options.prices ?? configuredPrices();
+    this.sponsoredActions = new QuoteAdmission(
+      options.sponsoredActionRatePerSecond ?? 0.1,
+      options.sponsoredActionBurst ?? 5,
+      10_000,
+      1_000,
+      1_000,
+    );
 
     if (options.journalPath)
       this.journal = openApiJournal(

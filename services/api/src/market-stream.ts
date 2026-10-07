@@ -1,5 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { FastifyInstance } from "fastify";
+import { clientIdentity } from "../../../packages/shared/src/client-identity.js";
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
 import { DEFAULT_CORS_ORIGIN, type ApiOptions } from "./context.js";
 import { publicError } from "./public-error.js";
@@ -16,6 +17,7 @@ const HEARTBEAT_MS = 15_000;
 export class MarketStream {
   private readonly clients = new Set<StreamClient>();
   private readonly connections: ConnectionBudget;
+  private readonly client: ReturnType<typeof clientIdentity>;
   private sequence = 0;
   private publishing = false;
   private publishQueued = false;
@@ -27,6 +29,7 @@ export class MarketStream {
     private readonly options: ApiOptions,
     private readonly quoting: QuoteEngine,
   ) {
+    this.client = clientIdentity(options);
     this.connections = new ConnectionBudget(
       options.maxStreamConnections ?? 1000,
       options.maxStreamConnectionsPerClient ?? 8,
@@ -100,7 +103,7 @@ export class MarketStream {
 
   register(app: FastifyInstance) {
     app.get("/v1/markets/stream", async (request, reply) => {
-      const release = this.connections.acquire(request.ip);
+      const release = this.connections.acquire(this.client(request));
       if (!release)
         return reply.code(429).header("retry-after", "5").send({ error: "stream connection limit reached" });
       reply.raw.once("close", release);

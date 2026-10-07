@@ -160,7 +160,11 @@ switch (role) {
     });
     break;
   case "gateway":
-    app = buildGateway({ upstreamUrl: config.apiUrl, corsOrigin: config.corsOrigin });
+    app = buildGateway({
+      upstreamUrl: config.apiUrl,
+      corsOrigin: config.corsOrigin,
+      clientIpHeader: config.clientIpHeader,
+    });
     break;
   case "approver":
     if (!(await clearing.isApprover(new Wallet(secrets.privateKey).address)))
@@ -198,6 +202,7 @@ switch (role) {
       hedgeRiskSource: new HttpHedgeRiskSource(config.hedgeRiskUrl, secrets.operationsToken),
       operationsToken: secrets.operationsToken,
       publicRpcUrl: config.publicRpcUrl,
+      clientIpHeader: config.clientIpHeader,
       chain: {
         rpcUrl: config.rpcUrl,
         sponsorPrivateKey: secrets.sponsorKey,

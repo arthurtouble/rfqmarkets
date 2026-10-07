@@ -23,8 +23,9 @@ export class QuoteAdmission {
     bucket.tokens -= 1;
     return true;
   }
+  /** Checks the client's own bucket first so one throttled client cannot drain the shared
+   * global bucket; the global token is charged only when the client itself is admitted. */
   allow(client: string, now = Date.now()) {
-    if (!this.take(this.global, this.globalRatePerSecond, this.globalBurst, now)) return false;
     let bucket = this.clients.get(client);
     if (!bucket) {
       if (this.clients.size >= this.maxClients) {
@@ -38,7 +39,11 @@ export class QuoteAdmission {
       this.clients.delete(client);
       this.clients.set(client, bucket);
     }
-    return this.take(bucket, this.ratePerSecond, this.burst, now);
+    if (!this.take(bucket, this.ratePerSecond, this.burst, now)) return false;
+    if (this.take(this.global, this.globalRatePerSecond, this.globalBurst, now)) return true;
+    // Refund the client token: the request was refused for global load, not the client's rate.
+    bucket.tokens = Math.min(this.burst, bucket.tokens + 1);
+    return false;
   }
   get clientCount() {
     return this.clients.size;
