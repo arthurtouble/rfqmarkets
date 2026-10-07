@@ -1,0 +1,50 @@
+{
+ "source": "WebSocket recorded 2026-10-07 from wss://stream.bybit.com/v5/public/spot; REST body written from the documented /v5/market/tickers format (REST was geo-blocked from the recording host)",
+ "messages": [
+  "{\"success\":true,\"ret_msg\":\"subscribe\",\"conn_id\":\"d9avs2av502o5uhnbjq0-gbh49\",\"op\":\"subscribe\"}",
+  "{\"topic\":\"orderbook.1.BTCUSDT\",\"ts\":1791359802119,\"type\":\"snapshot\",\"data\":{\"s\":\"BTCUSDT\",\"b\":[[\"84109.2\",\"0.185435\"]],\"a\":[[\"84109.3\",\"1.761747\"]],\"u\":115682787,\"seq\":115055304589},\"cts\":1791359802116}",
+  "{\"success\":true,\"ret_msg\":\"subscribe\",\"conn_id\":\"d9avs2av502o5uhnbjq0-gbh49\",\"op\":\"subscribe\"}",
+  "{\"topic\":\"orderbook.1.ETHUSDT\",\"ts\":1791359802144,\"type\":\"snapshot\",\"data\":{\"s\":\"ETHUSDT\",\"b\":[[\"2615.75\",\"11.8825\"]],\"a\":[[\"2615.76\",\"24.82764\"]],\"u\":70338772,\"seq\":183429268174},\"cts\":1791359802142}",
+  "{\"success\":true,\"ret_msg\":\"subscribe\",\"conn_id\":\"d9avs2av502o5uhnbjq0-gbh49\",\"op\":\"subscribe\"}",
+  "{\"topic\":\"orderbook.1.PEPEUSDT\",\"ts\":1791359801749,\"type\":\"snapshot\",\"data\":{\"s\":\"PEPEUSDT\",\"b\":[[\"0.000004144\",\"332454638\"]],\"a\":[[\"0.000004146\",\"366159566\"]],\"u\":24632595,\"seq\":183429268064},\"cts\":1791359801747}",
+  "{\"topic\":\"orderbook.1.BTCUSDT\",\"ts\":1791359802279,\"type\":\"snapshot\",\"data\":{\"s\":\"BTCUSDT\",\"b\":[[\"84109.2\",\"0.185435\"]],\"a\":[[\"84109.3\",\"1.785526\"]],\"u\":115682788,\"seq\":115055304638},\"cts\":1791359802275}",
+  "{\"topic\":\"orderbook.1.BTCUSDT\",\"ts\":1791359802289,\"type\":\"snapshot\",\"data\":{\"s\":\"BTCUSDT\",\"b\":[[\"84109.2\",\"0.185435\"]],\"a\":[[\"84109.3\",\"1.85081\"]],\"u\":115682789,\"seq\":115055304642},\"cts\":1791359802284}",
+  "{\"topic\":\"orderbook.1.BTCUSDT\",\"ts\":1791359802299,\"type\":\"snapshot\",\"data\":{\"s\":\"BTCUSDT\",\"b\":[[\"84109.2\",\"0.185435\"]],\"a\":[[\"84109.3\",\"1.761747\"]],\"u\":115682790,\"seq\":115055304645},\"cts\":1791359802289}",
+  "{\"topic\":\"orderbook.1.BTCUSDT\",\"ts\":1791359802319,\"type\":\"snapshot\",\"data\":{\"s\":\"BTCUSDT\",\"b\":[[\"84109.2\",\"0.061735\"]],\"a\":[[\"84109.3\",\"1.763581\"]],\"u\":115682791,\"seq\":115055304658},\"cts\":1791359802317}"
+ ],
+ "rest": {
+  "retCode": 0,
+  "retMsg": "OK",
+  "result": {
+   "category": "spot",
+   "list": [
+    {
+     "symbol": "BTCUSDT",
+     "bid1Price": "84109.2",
+     "bid1Size": "0.185435",
+     "ask1Price": "84109.3",
+     "ask1Size": "1.761747",
+     "lastPrice": "84109.2"
+    },
+    {
+     "symbol": "ETHUSDT",
+     "bid1Price": "2615.75",
+     "bid1Size": "11.8825",
+     "ask1Price": "2615.76",
+     "ask1Size": "24.82764",
+     "lastPrice": "2615.75"
+    },
+    {
+     "symbol": "SOLUSDT",
+     "bid1Price": "141.12",
+     "bid1Size": "10",
+     "ask1Price": "141.13",
+     "ask1Size": "12",
+     "lastPrice": "141.12"
+    }
+   ]
+  },
+  "retExtInfo": {},
+  "time": 1791359802119
+ }
+}
