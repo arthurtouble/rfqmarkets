@@ -84,7 +84,7 @@ function ListedMarket({ market }: { market: Market }) {
       <button type="button" className="rfq-btn rfq-btn--lg rfq-btn--short" onClick={() => openTicket("sell")}><Down /> Short</button>
     </div>
     <Sheet open={ticketOpen} onClose={() => setTicketOpen(false)} title={`Trade ${market}`} labelledBy="ticket-title">
-      <OrderTicket market={market} account={account} side={side} onSide={setSide} />
+      <OrderTicket market={market} account={account} side={side} onSide={setSide} onTraded={() => setTicketOpen(false)} />
     </Sheet>
   </div>;
 }

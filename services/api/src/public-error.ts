@@ -35,3 +35,44 @@ export function publicError(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * Approver policy reasons that describe the trade itself, so the trader can act on them.
+ * Infrastructure failures (RPC, oracle, recovery) stay behind "approver quorum unavailable".
+ */
+const PUBLIC_POLICY_REASONS = new Set([
+  "market disabled",
+  "market trade limit exceeded",
+  "reduce-only intent does not reduce position",
+  "hedge risk requires exposure reduction",
+  "guarded hedge limit exceeded",
+]);
+
+/**
+ * The policy reason that blocked an approval quorum, when enough approvers rejected the trade
+ * for the same public reason that quorum could not be reached without them. Undefined otherwise.
+ */
+export function approverPolicyRejection(
+  results: PromiseSettledResult<unknown>[],
+  approverCount: number,
+  quorum: number,
+): string | undefined {
+  const counts = new Map<string, number>();
+  for (const item of results) {
+    if (item.status !== "rejected") continue;
+    const match = /^approver 409: (.*)$/s.exec(
+      item.reason instanceof Error ? item.reason.message : String(item.reason),
+    );
+    if (!match) continue;
+    let reason: unknown;
+    try {
+      reason = (JSON.parse(match[1]) as { error?: unknown }).error;
+    } catch {
+      continue;
+    }
+    if (typeof reason === "string" && PUBLIC_POLICY_REASONS.has(reason))
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  for (const [reason, count] of counts) if (count > approverCount - quorum) return reason;
+  return undefined;
+}

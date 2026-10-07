@@ -47,9 +47,14 @@ export class DevChain {
     if (Date.now() - this.lastAdvanceAt < 250 && this.lastTimestamp) return this.lastTimestamp;
     if (this.advancing) return this.advancing;
     this.advancing = (async () => {
-      const timestamp = Math.max(unixSeconds(), (await this.chain.latestBlockTimestamp()) + 1);
-      await provider.send("evm_setNextBlockTimestamp", [timestamp]);
-      await provider.send("evm_mine", []);
+      const latest = await this.chain.latestBlockTimestamp(),
+        now = unixSeconds();
+      // Only catch the chain up to the wall clock; mining when it is already there would push it ahead.
+      const timestamp = latest >= now ? latest : now;
+      if (latest < now) {
+        await provider.send("evm_setNextBlockTimestamp", [timestamp]);
+        await provider.send("evm_mine", []);
+      }
       this.lastAdvanceAt = Date.now();
       this.lastTimestamp = timestamp;
       this.chain.invalidateQuoteSnapshot();

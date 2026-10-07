@@ -22,7 +22,7 @@
 
 **Equity.** Collateral plus unrealized profit and loss. *Maintenance equity* counts all of it; *opening equity* counts losses only.
 
-**Firm quote.** The price the maker commits to for your exact size when you click. Valid for about ten seconds.
+**Firm quote.** The price the maker commits to for your exact size when you click. Held for about 30 seconds.
 
 **Funding.** A continuous payment from the crowded side of a market to the other side. See [Funding](../risk/funding.md).
 

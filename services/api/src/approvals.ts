@@ -21,6 +21,11 @@ export class ApprovalCollector {
     private readonly timeoutMs = DEFAULT_APPROVER_TIMEOUT_MS,
   ) {}
 
+  /** Number of configured approvers. */
+  get size() {
+    return this.approvers.length;
+  }
+
   private async request(approver: ApproverEndpoint, digest: string, payload: unknown) {
     const response = await this.fetchImpl(`${approver.url}/approve`, {
       method: "POST",

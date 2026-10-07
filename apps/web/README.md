@@ -57,9 +57,19 @@ string and `MARKETS` is only the launch fallback.
 - `leveragePresets(max, steps?)`, `maxLeverageAt(notional, scaleBps)` (falls as size reaches higher tiers), `clampLeverage(value, max)`.
 - `estimateLiquidationPrice(account, snapshot, market, notionalDelta?)` (`lib/account.ts`) → pre-trade liquidation mid with the per-market scaled tiers. `markAccount` now fills `estimatedLiquidationPrice` and per-leg margins live.
 
-**Quotes** (`lib/slippage.ts`). `marketOrder({ …, slippageBps })` and
-`indicativeQuote(…, slippageBps)` accept 1..500 bps (default 8).
-`parseSlippagePercent("0.5")` → `50`, `clampSlippageBps(n)`, `SLIPPAGE_PRESETS_BPS`.
+**Quotes** (`lib/slippage.ts`, `lib/quote.ts`). `indicativeQuote(…, slippageBps)`
+accepts 1..500 bps (default 8) and still quotes a paused market, so a reduction
+can be priced. `parseSlippagePercent("0.5")` → `50`, `clampSlippageBps(n)`,
+`SLIPPAGE_PRESETS_BPS`.
+
+**Market trades** (`useTrading()` in `data/actions.tsx`, ticket math in `lib/ticket.ts`).
+
+- `firmQuote(order)` → the firm `POST /v1/quote` for a `MarketOrder` (`{ market, side, amountMicro, reduceOnly?, slippageBps? }`), held about 30 s.
+- `marketOrder(order, quote?)` → `true` when it filled. With a reviewed `quote` it signs exactly that quote, or refuses once `quoteUsable` says it is about to lapse; failures show a toast and return `false`.
+- `quickCovers(market, amountMicro)` says whether the one-click session signs this trade with no review; `enableQuickTrading()` → `true` once on.
+- The ticket sizes by pay × leverage: `positionNotional`, `leverageCeiling` (tiers), `maxPay` (funds, fee, per-trade cap and tier), `ticketProblem` (the first blocker, in the order the button shows it), `submitLabel`, `reducesPosition`.
+- `friendlyError(message)` (`lib/errors.ts`) turns API, approver and wallet reasons into the copy toasts and the review sheet show.
+- `trade/ticket-memory.ts` remembers pay and leverage per market and the slippage setting in `localStorage`.
 
 **Trigger orders and TP/SL** (`useTrading()` in `data/actions.tsx`, checks in `lib/orders.ts`).
 

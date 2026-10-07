@@ -26,7 +26,7 @@ When you place the order, the app asks the venue for a firm quote at that moment
 
 ## Price protection
 
-This is the worst price you accept: a maximum for a long, a minimum for a short. The app sets it 8 basis points (0.08%) worse than the firm quote, and it goes into the message you sign as your limit price. The contract refuses to execute your trade at any price worse than this. If the market moves further than that before your trade is included, the trade fails and nothing happens; you are never filled at a worse price than you signed. The review sheet always shows it; the ticket shows it in Advanced view.
+This is the worst price you accept: a maximum for a long, a minimum for a short. By default the app sets it 8 basis points (0.08%) worse than the firm quote (you can change this under **Options** in Advanced view), and it goes into the message you sign as your limit price. The contract refuses to execute your trade at any price worse than this. If the market moves further than that before your trade is included, the trade fails and nothing happens; you are never filled at a worse price than you signed. The review sheet always shows it; the ticket shows it in Advanced view.
 
 ## Mark
 

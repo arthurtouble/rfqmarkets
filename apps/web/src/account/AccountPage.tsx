@@ -49,7 +49,7 @@ export function AccountPage() {
     </section>
     <section className="rfq-card" aria-label="Preferences">
       <div className="setting-row">
-        <div><div className="headline">View</div><div className="footnote rfq-muted">Advanced adds limit orders, reduce only and price details.</div></div>
+        <div><div className="headline">View</div><div className="footnote rfq-muted">Advanced adds limit orders, reduce only, slippage and price details.</div></div>
         <Segmented variant="switch" label="View" value={mode} onChange={setMode} options={[{ id: "simple", label: "Simple" }, { id: "advanced", label: "Advanced" }]} />
       </div>
       <div className="setting-row">

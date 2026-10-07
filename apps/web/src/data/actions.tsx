@@ -8,10 +8,12 @@ import { getPublicClient } from "wagmi/actions";
 import { encodeFunctionData, erc20Abi, parseAbi, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
+import { friendlyError } from "../lib/errors.js";
 import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
 import { microToInput, shortHash, usdc } from "../lib/format.js";
 import { LIMIT_ORDER_DURATION_SECONDS, tpslPrepareBody, triggerPrepareBody, type TpslInput, type TriggerOrderInput } from "../lib/orders.js";
 import { clampSlippageBps } from "../lib/slippage.js";
+import { quoteUsable } from "../lib/ticket.js";
 import type { CancelResult, Market, Prepared, PreparedTpsl, PreparedTrigger, Quote, RestingOrder, Side, Transaction } from "../lib/types.js";
 import { QUICK_LIMITS, quickSessionRequest, sessionCovers, useQuickSession, type QuickSession } from "../wallet/quick-session.js";
 import { typedData, useTrader } from "../wallet/trader.js";
@@ -32,8 +34,14 @@ export type CloseAllResult = { closed: Market[]; failed: Array<{ market: Market;
 type Trading = {
   busy: string | null;
   quickSession: QuickSession | null;
-  marketOrder(order: MarketOrder): Promise<void>;
-  limitOrder(order: LimitOrder): Promise<void>;
+  /** Whether the quick-trading key can sign a market trade of this size without a wallet prompt. */
+  quickCovers(market: Market, amountMicro: bigint | null): boolean;
+  /** A firm quote for the order, without placing it. Throws the API's reason. */
+  firmQuote(order: MarketOrder): Promise<Quote>;
+  /** Places a market order at `quote` when given (it must still be valid), else at a fresh firm quote. Resolves true once filled or approved. */
+  marketOrder(order: MarketOrder, quote?: Quote): Promise<boolean>;
+  /** Places a 24-hour limit order. Resolves true once it is open. */
+  limitOrder(order: LimitOrder): Promise<boolean>;
   /** Places a stop-loss, take-profit or stop-entry order; resolves to its orderId. Signed with the wallet. */
   triggerOrder(order: TriggerOrderInput): Promise<string | undefined>;
   /** Places a TP and/or SL for the whole position (two legs, one nonce, one wallet prompt per leg). Resolves to the placed orderIds. */
@@ -47,7 +55,7 @@ type Trading = {
   emergencyClose(market: Market): Promise<void>;
   deposit(amountMicro: bigint): Promise<boolean>;
   withdraw(amountMicro: bigint): Promise<boolean>;
-  enableQuickTrading(): Promise<void>;
+  enableQuickTrading(): Promise<boolean>;
   revokeQuickTrading(): Promise<void>;
 };
 
@@ -59,8 +67,6 @@ const triggerLabel = (kind: keyof typeof TRIGGER_LABELS) => TRIGGER_LABELS[kind]
 const triggerLine = ({ summary }: PreparedTrigger) =>
   `${sideLabel(summary.side)} ${summary.amount} USDC ${summary.market} when price ${summary.triggerAbove ? "≥" : "≤"} ${usdc(summary.triggerPrice)}`;
 const fractionLabel = (fractionBps: number, market: Market) => (fractionBps < 10_000 ? `${fractionBps / 100}% of ${market} position` : `${market} position`);
-/** Re-quote a close-all leg when less than this remains on its quote. */
-const QUOTE_EXPIRY_MARGIN_MS = 1_500;
 /** The API refused the signed price because the market moved past it before settlement. */
 const priceMoved = (error: unknown) => error instanceof ApiError && error.status === 409 && error.message.startsWith("price moved");
 
@@ -83,7 +89,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       notify({ kind: "success", title: result.title, detail: result.detail, txHash: result.txHash }, id);
       return result.value;
     } catch (error) {
-      notify({ kind: "error", title: `${label} failed`, detail: errorMessage(error, "Unavailable") }, id);
+      notify({ kind: "error", title: `${label} failed`, detail: friendlyError(errorMessage(error, "Unavailable")) }, id);
       return undefined;
     } finally {
       setBusy(null);
@@ -96,6 +102,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   /** Whether the quick-trading key may sign a trade of `amountMicro` in `market` (limits and market mask). */
   const quickCovers = (market: Market, amountMicro: bigint | null) =>
     amountMicro !== null && sessionCovers(quick.session, amountMicro, marketList.get(market)?.index ?? Number.MAX_SAFE_INTEGER);
+  const requestQuote = (order: MarketOrder) => api<Quote>("/v1/quote", {
+    market: order.market, side: order.side, amount: microToInput(order.amountMicro),
+    ...(order.slippageBps === undefined ? {} : { slippageBps: clampSlippageBps(order.slippageBps) }),
+  });
   const quoteAmount = (quote: Quote) => (quote.amount === undefined ? null : BigInt(quote.amount));
 
   async function settleTrade(quote: Quote, reduceOnly: boolean, progress: (detail: string) => void, sessionAllowed: boolean) {
@@ -125,24 +135,24 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   const value: Trading = {
     busy,
     quickSession: quick.session,
+    quickCovers,
+    firmQuote: requestQuote,
 
-    marketOrder: order => run("Trade", order.reduceOnly ? `Reduce ${order.market}` : `${sideLabel(order.side)} ${order.market}`, async progress => {
-      progress("Getting a firm quote");
-      const quote = await api<Quote>("/v1/quote", {
-        market: order.market, side: order.side, amount: microToInput(order.amountMicro),
-        ...(order.slippageBps === undefined ? {} : { slippageBps: clampSlippageBps(order.slippageBps) }),
-      });
+    marketOrder: async (order, reviewed) => (await run("Trade", order.reduceOnly ? `Reduce ${order.market}` : `${sideLabel(order.side)} ${order.market}`, async progress => {
+      if (reviewed && !quoteUsable(reviewed.expiresAtMs, Date.now())) throw new Error("The quote expired. Review the new price");
+      if (!reviewed) progress("Getting a firm quote");
+      const quote = reviewed ?? await requestQuote(order);
       const result = await settleTrade(quote, order.reduceOnly, progress, quickCovers(order.market, order.amountMicro));
       return {
         title: order.reduceOnly
           ? `Reduced ${order.market} by ${usdc(order.amountMicro)}`
           : `${sideLabel(order.side)} ${order.market} ${usdc(order.amountMicro)} ${result.transaction ? "filled" : "approved"}`,
         detail: [`at ${usdc(quote.expectedPrice)}`, blockLine(result.transaction)].filter(Boolean).join(" · "),
-        txHash: result.transaction?.hash, value: undefined,
+        txHash: result.transaction?.hash, value: true,
       };
-    }),
+    })) ?? false,
 
-    limitOrder: order => run("Limit order", `Place ${order.side} limit`, async progress => {
+    limitOrder: async order => (await run("Limit order", `Place ${sideLabel(order.side).toLowerCase()} limit`, async progress => {
       const prepared = await api<Prepared & { orderId: string }>("/v1/orders/prepare", {
         account: account(), market: order.market, side: order.side, amount: microToInput(order.amountMicro),
         limitPrice: order.limitPrice, durationSeconds: LIMIT_ORDER_DURATION_SECONDS, nonce: randomNonce(), reduceOnly: order.reduceOnly,
@@ -150,8 +160,8 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       progress("Confirm in your wallet");
       const userSignature = await trader.signIntent(prepared, "TradeIntent");
       await api("/v1/orders", { orderId: prepared.orderId, userSignature });
-      return { title: `${sideLabel(order.side)} limit open`, detail: `${usdc(order.amountMicro)} ${order.market} at ${usdc((prepared.intent as { limitPrice: string }).limitPrice)}, good for 24 hours`, value: undefined };
-    }),
+      return { title: `${sideLabel(order.side)} limit open`, detail: `${usdc(order.amountMicro)} ${order.market} at ${usdc((prepared.intent as { limitPrice: string }).limitPrice)}, good for 24 hours`, value: true };
+    })) ?? false,
 
     // POST /v1/orders verifies the owner's signature (EOA or ERC-1271) only, so resting trigger
     // orders are always signed with the wallet, never the quick-trading key.
@@ -202,14 +212,14 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         const market = first.market!;
         try {
           // Quotes live seconds; wallet prompts for earlier positions can outlast later quotes.
-          const quote = Date.now() < first.expiresAtMs - QUOTE_EXPIRY_MARGIN_MS ? first
+          const quote = quoteUsable(first.expiresAtMs, Date.now()) ? first
             : await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps });
           const step = (detail: string) => progress(`${market} (${index + 1} of ${quotes.length}): ${detail}`);
           const { result } = await settleClose(market, fractionBps, quote, step);
           lastTx = result.transaction ?? lastTx;
           outcome.closed.push(market);
         } catch (error) {
-          outcome.failed.push({ market, error: errorMessage(error, "Unavailable") });
+          outcome.failed.push({ market, error: friendlyError(errorMessage(error, "Unavailable")) });
         }
       }
       if (!outcome.closed.length) throw new Error(outcome.failed.map(item => `${item.market}: ${item.error}`).join("; "));
@@ -252,7 +262,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       return { title: `Withdrew ${usdc(amount)}`, detail: blockLine(result.transaction), txHash: result.transaction?.hash, value: true };
     })) ?? false,
 
-    enableQuickTrading: () => run("One-click trading", "Turn on one-click trading", async progress => {
+    enableQuickTrading: async () => (await run("One-click trading", "Turn on one-click trading", async progress => {
       const privateKey = generatePrivateKey(), sessionAddress = privateKeyToAccount(privateKey).address;
       // Covers every registered market; one added later needs a new session (sessionCovers checks the mask).
       const request = quickSessionRequest(Math.max(1, marketList.markets.length));
@@ -264,8 +274,8 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       progress("Activating sponsored session");
       const result = await api<{ validUntil: string; transaction?: Transaction }>("/v1/session/execute", { grant: prepared.grant, userSignature });
       quick.save({ account: account(), sessionAddress, privateKey, validUntil: Number(result.validUntil) * 1_000, marketMask: String(request.marketMask) });
-      return { title: "One-click trading on", detail: `Trades up to ${QUICK_LIMITS.maxTradeAmount} USDC sign instantly in this tab for 8 hours`, txHash: result.transaction?.hash, value: undefined };
-    }),
+      return { title: "One-click trading on", detail: `Trades up to ${QUICK_LIMITS.maxTradeAmount} USDC sign instantly in this tab for 8 hours`, txHash: result.transaction?.hash, value: true };
+    })) ?? false,
 
     revokeQuickTrading: () => run("Revoke", "Turn off one-click trading", async progress => {
       const session = quick.session, clearing = trader.settlement?.clearingAddress;

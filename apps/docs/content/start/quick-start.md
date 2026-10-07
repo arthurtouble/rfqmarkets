@@ -33,11 +33,11 @@ The order ticket sits on the right of the trade page. On a phone, tap **Long** o
 
 1. Choose the market from the name above the chart: **BTC** or **ETH**.
 2. Choose **Long** if you expect the price to rise, or **Short** if you expect it to fall.
-3. Enter the amount in USDC. This is the size of the position, not your collateral. A 20 USDC long on BTC opens a position worth 20 USDC of BTC, and needs 1 USDC of margin at the 5% initial margin rate.
-4. Check the **Entry price**, the **Fee** and your **Leverage after** under the amount.
-5. Click **Long BTC · $20.00** (or the equivalent).
+3. Under **You pay**, enter the margin you want to put up in USDC, then pick a leverage. Paying 20 USDC at 5× opens a position worth 100 USDC of BTC; the ticket shows it as "Position $100".
+4. Check the **Entry price**, the **Liquidation price** and the **Fee** under the leverage.
+5. Click **Long BTC · $20 at 5×** (or the equivalent).
 
-A **Review order** sheet restates the trade with its price protection, which is the worst price you accept. Leave the one-click trading box ticked if you want later trades to skip this step, then click **Confirm and sign**.
+A **Review order** sheet gets a firm price, holds it for about 30 seconds and restates the trade with its price protection, which is the worst price you accept. Leave the one-click trading box ticked if you want later trades to skip this step, then click **Confirm and sign**.
 
 Your wallet shows a typed-data signature request titled *TradeIntent*. It lists the account, market, size, the limit price, the maximum fee, a nonce and a deadline about 30 seconds away. Signing is free. Once you sign, the app collects the approvers' signatures and submits the trade, and a notice shows the fill price and a link to the transaction.
 
