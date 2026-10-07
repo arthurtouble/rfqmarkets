@@ -19,7 +19,8 @@ npm run build:web            # production bundle in dist/web
 | `src/lib/` | Pure code: wire types, formatting, account marking, indicative quotes, SSE hook. |
 | `src/wallet/` | wagmi config, the trader interface (browser wallet or local dev key), connect dialog, wallet menu, quick-trading key. |
 | `src/data/` | The shared market stream, TanStack Query hooks and every user action. |
-| `src/trade/`, `src/markets/` | Pages and their components. |
+| `src/trade/`, `src/markets/`, `src/portfolio/`, `src/account/` | Pages and their components. |
+| `src/positions/` | Open positions (table on desktop, cards on phones), the close sheet and close all. |
 | `src/ui/` | Small shared primitives and toasts. |
 
 ## How data flows
@@ -74,7 +75,9 @@ string and `MARKETS` is only the launch fallback.
 `closeFractionBps(percent)` converts) and `closeAll(fractionBps?)` closes every
 position, one quote each, returning `{ closed, failed }`. Both sign with the
 quick-trading key when the close is within its limits and markets, so they run
-without prompts.
+without prompts. `positions/Positions.tsx` wires them to the Close and Close all
+sheets; `lib/positions.ts` has the display math (`positionView`, `closePreview`,
+`closeAllPreview`, `fillAction`).
 
 **Portfolio** (`data/queries.ts`, indexer). All keys sit under the account key,
 so the indexer stream refreshes them when the account has activity.
@@ -82,6 +85,7 @@ so the indexer stream refreshes them when the account has activity.
 - `usePortfolio(address)` → realized PnL, fees, funding, deposits, volume.
 - `usePortfolioHistory(address, "event" | "1h" | "1d")` → `points` for the equity and PnL chart.
 - `usePortfolioTrades(address, { market?, limit? })` and `useFundingHistory(address, …)` are infinite queries: `data.pages.flatMap(page => page.items)`, `fetchNextPage()`.
+- The Portfolio page (`portfolio/`) draws the PnL chart from `pnlSeries` in `lib/portfolio.ts` and shows the Trades, Funding and Transfers tabs from `portfolio/History.tsx`.
 
 **Candles** (`data/candles.ts`). `useLiveCandles(market, "1m" | "5m" | "15m" | "1h" | "4h" | "1d", limit?)`
 → `{ candles, … }` with the last bucket following the live stream (needs

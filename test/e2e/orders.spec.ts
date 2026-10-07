@@ -79,7 +79,7 @@ async function setup(page: Page, stack: typeof import("./stack.js"), advanced = 
 
 /** The TP/SL control of the ETH position: a button on phone cards, the TP/SL cell in the desktop table. */
 const tpslButton = (page: Page) =>
-  page.getByRole("button", { name: /^(TP\/SL|Edit ETH take-profit and stop-loss)$/ }).first();
+  page.getByRole("button", { name: `Set ${MARKET} take-profit and stop-loss` }).first();
 const dialog = (page: Page) => page.getByRole("dialog");
 const toast = (page: Page, text: RegExp) => page.getByText(text).first();
 
