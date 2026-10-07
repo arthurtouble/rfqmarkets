@@ -40,6 +40,7 @@
     "deploy:local": "node --import tsx scripts/deploy-local.ts",
     "smoke:hyperliquid-testnet": "node --import tsx scripts/hyperliquid-testnet-smoke.ts",
     "smoke:local": "node --import tsx scripts/live-smoke.ts",
+    "smoke:funds": "node --import tsx scripts/funds-smoke.ts",
     "smoke:reorg": "node --import tsx scripts/reorg-smoke.ts",
     "smoke:failover": "node --import tsx scripts/leader-failover-smoke.ts",
     "smoke:approver-outage": "node --import tsx scripts/approver-outage-smoke.ts",
