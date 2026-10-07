@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import "@nomicfoundation/hardhat-ethers";
 import { network } from "hardhat";
-import { Contract, ContractFactory, Wallet, formatEther, getAddress, parseUnits, type Signer } from "ethers";
+import { Contract, ContractFactory, Wallet, ZeroAddress, formatEther, getAddress, parseUnits, type Signer } from "ethers";
 import { devPreflight, generateDevIdentities, handoverDev, unpauseDev, upgradeDev, verifyDev } from "./base-mainnet-dev.js";
 import { PROXY_ADMIN_ABI, PROXY_GAS_UPPER_BOUND, artifact, basescanSubmissions, deployCore, launchBatches, libraryOrder, preflight, renounceTimelockAdminBatch, verifyDeployment } from "./base-mainnet.js";
 import { identifyCandidate } from "./candidate-identity.js";
@@ -21,14 +21,14 @@ const deploy=async(name:string,args:unknown[],from:Signer=ceremony)=>{const item
 const advance=async()=>{await rpc.request({method:"evm_increaseTime",params:[DELAY+1]});await rpc.request({method:"evm_mine",params:[]});};
 // Stand-ins for contracts that already exist on Base mainnet.
 await rpc.request({method:"hardhat_setCode",params:[BASE_USDC,artifact("MockUSDC").deployedBytecode]});
-const pyth=await deploy("MockPythCore",[]);
+// Oracle nodes are off-chain; only their addresses matter for the deployment.
+const oracleNodes=[Wallet.createRandom(),Wallet.createRandom(),Wallet.createRandom()],devOracleNodes=[Wallet.createRandom(),Wallet.createRandom(),Wallet.createRandom()];
 const governanceSafe=await deploy("MockSafe",[[g1.address,g2.address,g3.address],2]),emergencySafe=await deploy("MockSafe",[[e1.address,e2.address,e3.address],2]);
 const timelock=await deploy("RFQTimelock",[DELAY,await governanceSafe.getAddress()]);
 const runBatch=async(safe:Contract,batch:{transactions:{to:string;data:string}[]})=>{for(const tx of batch.transactions)await (await safe.exec(tx.to,tx.data)).wait();};
 
 const market={enabled:true,maxTradeUsdc:"10000000000",grossUsdc:"100000000000",sideUsdc:"75000000000",netUsdc:"75000000000",hedgeBandUsdc:"5000000000"};
-const manifest=validateMainnetManifest({version:1,mode:"capped-canary",chainId:"8453",candidateHash:identifyCandidate().candidateHash,usdc:BASE_USDC,oracleSource:await pyth.getAddress(),
-  feedIds:["0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43","0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace"],
+const manifest=validateMainnetManifest({version:1,mode:"capped-canary",chainId:"8453",candidateHash:identifyCandidate().candidateHash,usdc:BASE_USDC,oracleSigners:oracleNodes.map(node=>node.address),oracleThreshold:2,
   governance:await timelock.getAddress(),governanceSafe:await governanceSafe.getAddress(),emergencyCouncil:await emergencySafe.getAddress(),approvers:[a1.address,a2.address,a3.address],
   policy:{makerCapitalUsdc:"1000000000000",insuranceCapitalUsdc:"250000000000",dailyLossLimitUsdc:"25000000000",timelockSeconds:DELAY,markets:{BTC:market,ETH:market}}});
 
@@ -50,6 +50,17 @@ assert.equal(getAddress(record.contracts.clearingProxy),getAddress(report.predic
 const initial=await verifyDeployment(provider,record,manifest);
 assert.equal(initial.state.paused,true,"v1 initializes paused");
 assert.ok(initial.state.markets.every(item=>item.enabled&&item.maxTradeNotional===market.maxTradeUsdc&&item.grossLimit===market.grossUsdc&&item.sideLimit===market.sideUsdc),"initialize applies the manifest caps");
+assert.deepEqual(initial.state.markets.map(item=>[item.symbol,item.impactK,item.shockBps,item.marginScaleBps]),[["BTC",10000,4000,10000],["ETH",12000,5000,10000]],"initialize applies the launch risk parameters");
+assert.deepEqual(record.oracle,{signers:oracleNodes.map(node=>node.address),threshold:2,maxDeviationBps:50,maxSkew:5,maxJumpBps:0,jumpWindow:0},"record carries the oracle configuration");
+assert.ok(!("feedIds" in record)&&!("oracleSource" in record.contracts),"record has no Pyth fields");
+
+// The timelock owns the oracle, so the deployer cannot bind it: binding is a recorded pending owner step.
+const oracle=new Contract(record.contracts.oracleAdapter,artifact("SignedPriceOracle").abi,provider);
+assert.equal(getAddress(await oracle.owner()),getAddress(manifest.governance));
+assert.equal(initial.state.oracleBound,false);assert.equal(await oracle.clearing(),ZeroAddress);
+assert.deepEqual(record.pendingOwnerSteps?.map(step=>step.step),["oracleSetClearing"]);
+await assert.rejects(oracle.connect(deployer).getFunction("setClearing")(record.contracts.clearingProxy),"deployer cannot bind the oracle");
+await assert.rejects(verifyDeployment(provider,{...record,pendingOwnerSteps:[]},manifest),/oracle binding/,"an unbound oracle without a recorded pending step fails verification");
 
 const clearing=new Contract(record.contracts.clearingProxy,artifact("RFQClearing").abi,provider);
 await assert.rejects(clearing.connect(deployer).getFunction("unpause")(),"deployer has no authority over the clearing proxy");
@@ -58,7 +69,10 @@ await runBatch(governanceSafe,batches.governanceSchedule);
 await assert.rejects(runBatch(governanceSafe,batches.governanceGoLive),"go-live cannot run before the timelock delay");
 await advance();
 await runBatch(governanceSafe,batches.governanceGoLive);
-const live=await verifyDeployment(provider,record,manifest);assert.equal(live.state.paused,false);
+const live=await verifyDeployment(provider,record,manifest);assert.equal(live.state.paused,false);assert.equal(live.state.oracleBound,true,"go-live binds the oracle");
+assert.equal(getAddress(await oracle.clearing()),getAddress(record.contracts.clearingProxy));
+await assert.rejects(verifyDeployment(provider,record,{...manifest,oracleThreshold:3}),/threshold/,"verification catches a threshold mismatch");
+await assert.rejects(verifyDeployment(provider,record,{...manifest,policy:{...manifest.policy,markets:{...manifest.policy.markets,ETH:{...manifest.policy.markets.ETH,shockBps:4000}}}}),/ETH risk parameters/,"verification catches a risk parameter mismatch");
 
 // Custody smoke on the launched proxy.
 const usdc=new Contract(BASE_USDC,artifact("MockUSDC").abi,ceremony),amount=parseUnits("100",6);
@@ -70,13 +84,15 @@ assert.equal(submissions.length,8);assert.ok(submissions.every(item=>item.compil
 assert.ok((submissions.find(item=>item.step==="clearingProxy")!.constructorArguments).length>0);
 
 // Development profile: owner EOA governs directly, upgrades need no delay, and it hands over in place.
-const dev=generateDevIdentities(await pyth.getAddress()),devManifest=validateDevManifest(dev.manifest);
+const dev=generateDevIdentities(devOracleNodes.map(node=>node.address)),devManifest=validateDevManifest(dev.manifest);
 const devOwner=new Wallet(dev.identities.owner.privateKey,provider);await (await ceremony.sendTransaction({to:devOwner.address,value:parseUnits("1","ether")})).wait();
 assert.throws(()=>validateDevManifest({...dev.manifest,policy:{...dev.manifest.policy,markets:{...dev.manifest.policy.markets,ETH:{...dev.manifest.policy.markets.ETH,grossUsdc:"20000000000"}}}}),/dev ceiling/);
 await assert.rejects(devPreflight(provider,devManifest,deployer.address),/owner key/);
 const devReport=await devPreflight(provider,devManifest,devOwner.address);
 let devRecord=await deployCore(devOwner,devManifest,{candidateHash:manifest.candidateHash,launchProfile:"dev",confirmations:1});
-assert.equal((await verifyDev(provider,devRecord,devManifest)).state.paused,true);
+const devInitial=await verifyDev(provider,devRecord,devManifest);assert.equal(devInitial.state.paused,true);
+assert.equal(devInitial.state.oracleBound,true,"the dev owner binds the oracle during deployment");assert.ok(devRecord.transactions.oracleSetClearing&&!devRecord.pendingOwnerSteps);
+const devOracle=new Contract(devRecord.contracts.oracleAdapter,artifact("SignedPriceOracle").abi,provider);
 await unpauseDev(devOwner,devRecord,1);
 const devLive=await verifyDev(provider,devRecord,devManifest);assert.equal(devLive.state.paused,false);assert.ok(devLive.state.markets.every(item=>item.enabled&&item.grossLimit==="200000000"));
 await (await usdc.mint(ceremony.address,amount)).wait();await (await usdc.approve(devRecord.contracts.clearingProxy,amount)).wait();
@@ -106,6 +122,8 @@ await runBatch(handoverSafe,handover.acceptExecute);
 assert.equal(getAddress(await devClearing.governance()),getAddress(handoverTarget.timelock));
 assert.equal(getAddress(await new Contract(devRecord.contracts.proxyAdmin,PROXY_ADMIN_ABI,provider).owner()),getAddress(handoverTarget.timelock));
 assert.equal(getAddress(await devClearing.emergencyCouncil()),getAddress(handoverTarget.emergencySafe));
+assert.equal(getAddress(await devOracle.owner()),getAddress(handoverTarget.timelock),"the timelock owns the oracle after handover");
+await assert.rejects(devOracle.connect(devOwner).getFunction("setSigners")([devOwner.address],1),"the old owner cannot change the oracle signers after handover");
 await assert.rejects(devClearing.connect(devOwner).getFunction("pause")(),"the old owner loses control after handover");
 await assert.rejects(new Contract(devRecord.contracts.proxyAdmin,PROXY_ADMIN_ABI,devOwner).upgradeAndCall(devRecord.contracts.clearingProxy,previousImplementation,"0x"),"the old owner cannot upgrade after handover");
 assert.equal(await devClearing.collateralOf(ceremony.address),collateralBefore,"collateral survives the handover");

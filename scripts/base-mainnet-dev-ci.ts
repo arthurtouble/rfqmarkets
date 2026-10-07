@@ -19,13 +19,20 @@ import { validateDevManifest } from "./mainnet-manifest.js";
 //   fund-maker USDC                owner approves and deposits maker capital
 //   fund-sponsor ETH               owner tops the gas sponsor up to ETH
 //   unpause                        owner unpauses the clearing
-export const PYTH_CORE_BASE_MAINNET="0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a";
 const BASE_USDC="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-export type RuntimeIdentities={emergency:string;approvers:[string,string,string];sponsor:string};
+/** `oracleSigners`, when the runtime publishes its oracle nodes' addresses, names the SignedPriceOracle signer set. */
+export type RuntimeIdentities={emergency:string;approvers:[string,string,string];sponsor:string;oracleSigners?:string[]};
 
-/** The dev manifest for the owner plus the runtime's published keys, validated; `policy` overrides the defaults within the dev ceilings. */
-export function devManifestFor(owner:string,runtime:RuntimeIdentities,oracleSource:string,policy?:unknown){
-  const base=generateDevIdentities(getAddress(oracleSource)).manifest;
+/** Oracle signer addresses: RFQ_DEV_ORACLE_SIGNERS (comma-separated) wins over the runtime's published list. */
+export function oracleSignersFor(runtime:RuntimeIdentities,configured=process.env.RFQ_DEV_ORACLE_SIGNERS){
+  const signers=configured?configured.split(",").map(item=>item.trim()).filter(Boolean):runtime.oracleSigners;
+  if(!signers?.length)throw new Error("no oracle signers: set RFQ_DEV_ORACLE_SIGNERS to the oracle nodes' addresses (comma-separated, at least 3)");
+  return signers.map(item=>getAddress(item));
+}
+
+/** The dev manifest for the owner plus the runtime's published keys and the oracle signers, validated; `policy` overrides the defaults within the dev ceilings. */
+export function devManifestFor(owner:string,runtime:RuntimeIdentities,oracleSigners:string[],policy?:unknown){
+  const base=generateDevIdentities(oracleSigners.map(item=>getAddress(item))).manifest;
   const manifest={...base,owner:getAddress(owner),emergencyCouncil:getAddress(runtime.emergency),approvers:runtime.approvers.map(item=>getAddress(item)),...(policy?{policy:policy as typeof base.policy}:{})};
   validateDevManifest(manifest);
   return manifest;
@@ -55,7 +62,8 @@ if(import.meta.url===`file://${process.argv[1]}`){
     case "identities":console.log(JSON.stringify({owner:new Wallet(ownerKey()).address,...runtimeIdentities()},null,2));break;
     case "prepare":{
       const policy=process.env.RFQ_DEV_POLICY_JSON?JSON.parse(process.env.RFQ_DEV_POLICY_JSON):undefined;
-      writePrivate(MANIFEST,devManifestFor(new Wallet(ownerKey()).address,runtimeIdentities(),process.env.RFQ_PYTH_CORE_ADDRESS||PYTH_CORE_BASE_MAINNET,policy));
+      const runtime=runtimeIdentities();
+      writePrivate(MANIFEST,devManifestFor(new Wallet(ownerKey()).address,runtime,oracleSignersFor(runtime),policy));
       console.log("prepared dev manifest");break;
     }
     case "cli":{

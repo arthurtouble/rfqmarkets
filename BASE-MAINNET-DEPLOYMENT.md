@@ -13,7 +13,7 @@ There are two profiles:
 
 1. **About 0.02 ETH on Base** sent to the owner address that `dev-identities` prints. That covers the deploy (~13M gas, ~0.00015 ETH at normal fees, ~0.007 ETH at a 0.5 gwei spike) and many upgrades (~11M gas, ~0.0001 ETH each).
 2. **Some USDC on Base** for testing: the maker capital floor (100 USDC in the generated manifest) plus whatever test trades need.
-3. **The Pyth Core address on Base mainnet**, confirmed on deploy day (see item 6 of the production list). The existing Hermes API key works for mainnet too.
+3. **The oracle node signer addresses** (3 to 16, one per independent oracle node). The manifest threshold defaults to a majority; nodes keep their keys.
 4. **A Base RPC URL.** A paid one (Alchemy, QuickNode) is better, but public `https://mainnet.base.org` works for a low-volume dev deployment.
 
 `dev-identities` generates the owner, emergency and three approver keys into `.local-state/base-mainnet-dev/identities.json` (mode 0600, never committed) and writes a ready `dev-manifest.json` that uses their addresses. To use a wallet you already hold as owner instead, set `owner` in the manifest and pass its key as `RFQ_MAINNET_DEPLOYER_KEY`.
@@ -27,7 +27,7 @@ To run the dev profile from GitHub Actions with the UI and services hosted on Cl
 ### Commands
 
 ```bash
-npm run dev-identities:base-mainnet -- PYTH_CORE_ADDRESS   # once; prints the owner address to fund
+npm run dev-identities:base-mainnet -- SIGNER1,SIGNER2,SIGNER3   # once; prints the owner address to fund
 npm run dev-preflight:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.json
 npm run dev-deploy:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.json --unpause
 npm run dev-verify:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.json
@@ -37,7 +37,7 @@ npm run dev-basescan:base-mainnet -- MANIFEST
 npm run dev-handover:base-mainnet -- MANIFEST TIMELOCK GOVERNANCE_SAFE EMERGENCY_SAFE  # when going to production
 ```
 
-`dev-deploy` deploys the same contracts as production (five libraries, implementation, oracle adapter, proxy). v1 initializes paused with the manifest caps already set, so `--unpause` is the only extra step. `dev-configure` re-applies edited caps (pause, set exposure and market caps, optionally unpause). `dev-upgrade` checks the new build's storage layout against the build-info snapshot taken at deploy (or at the last upgrade), deploys fresh libraries and a fresh implementation, and points the proxy at them with one `upgradeAndCall` transaction. Balances and positions stay in place, which the rehearsal checks. Each broadcasting command still requires the `RFQ_MAINNET_DEPLOY_CONFIRM` string it prints, so a stray shell can't send mainnet transactions by accident.
+`dev-deploy` deploys the same contracts as production (five libraries, implementation, `SignedPriceOracle`, proxy), then the owner binds the oracle with `setClearing(proxy)`. v1 initializes paused with the manifest caps and risk parameters already set, so `--unpause` is the only extra step. `dev-handover` also hands the oracle's ownership to the timelock (two-step, accepted in the same timelock batch as `acceptGovernance`). `dev-configure` re-applies edited caps (pause, set exposure and market caps, optionally unpause). `dev-upgrade` checks the new build's storage layout against the build-info snapshot taken at deploy (or at the last upgrade), deploys fresh libraries and a fresh implementation, and points the proxy at them with one `upgradeAndCall` transaction. Balances and positions stay in place, which the rehearsal checks. Each broadcasting command still requires the `RFQ_MAINNET_DEPLOY_CONFIRM` string it prints, so a stray shell can't send mainnet transactions by accident.
 
 v1 storage lives in the ERC-7201 namespace `rfq.clearing.v1`. A change the validator rejects needs a fresh dev proxy (move `deployment.json` aside and run `dev-deploy` again) rather than an upgrade.
 
@@ -60,10 +60,10 @@ Before relying on a handed-over proxy for real capital, lower or re-set caps thr
 | 0c | `RFQTimelock` | `deploy:base-mainnet-timelock` | OpenZeppelin `TimelockController`, 72 h delay. Governance Safe is proposer/executor and must renounce the bootstrap admin role |
 | 1–5 | `RFQRiskMath`, `RFQLiquidation`, `RFQResolution`, `RFQSignatureVerifier`, `RFQSettlement` | `deploy:base-mainnet` | Linked libraries, deployed in dependency order; part of implementation authority |
 | 6 | `RFQClearing` implementation | same | Constructor disables initializers |
-| 7 | `PythCoreAdapter` | same | Bound to the proxy address predicted from the deployer nonce |
+| 7 | `SignedPriceOracle` | same | Owned by the timelock, with the manifest signers, majority threshold and consensus parameters. `setClearing(proxy)` is a recorded pending owner step that runs in the timelocked go-live batch, so the oracle refuses every report until go-live |
 | 8 | `TransparentUpgradeableProxy` | same | Calls `initialize` paused with the manifest caps; creates a `ProxyAdmin` owned by the timelock |
 
-Already on Base and only referenced: native USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (pinned in `mainnet-manifest.ts`) and Pyth Core. `RFQAuthorization` and the Chainlink adapter are not part of this deployment.
+Already on Base and only referenced: native USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (pinned in `mainnet-manifest.ts`). `RFQAuthorization` is not part of this deployment.
 
 ## What the owner must supply
 
@@ -72,7 +72,7 @@ Already on Base and only referenced: native USDC `0x833589fCD6eDb6E08f4c7C32D4f7
 3. **Three approver signing addresses**, each generated independently (ideally one per host/provider). Only the addresses go in the manifest; keys never touch this repository.
 4. **A fresh deployer EOA** funded with about **0.01 ETH** on Base. It ends with no role anywhere (verified), so it can be a single-use hot key. Supplied only through `RFQ_MAINNET_DEPLOYER_KEY` in an ignored env file.
 5. **Two independent Base mainnet RPC URLs** (for example Alchemy and QuickNode). The second is used to cross-verify the deployment.
-6. **Pyth Core address on Base mainnet**, confirmed against Pyth's docs on deploy day. Pyth upgraded Core and now requires a Hermes API key for price updates. The Base Sepolia deployment uses `0x5f52e4DBEA21f5b23523B6e20d50c29ae0a4EB83`; the historically documented Base mainnet address is `0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a`, but confirm it rather than copying it from here. Preflight checks that the address answers `getUpdateFee`.
+6. **Oracle node signer addresses** (`oracleSigners`, 3 to 16, distinct from every other role) and `oracleThreshold` (a strict majority). Optional `oracle` consensus parameters default to `maxDeviationBps` 50, `maxSkew` 5 s and the jump guard off (`maxJumpBps` 0, `jumpWindow` 0).
 7. **Canary policy numbers**: maker capital floor, insurance, daily loss limit and per-market caps (see `deploy/base-mainnet/MANIFEST.example.json`). The maker capital floor is written into `initialize`, and trades fail until that much maker USDC is deposited.
 8. **A Basescan API key** (Etherscan v2 key) to publish verified source.
 
@@ -82,18 +82,18 @@ Measured in the rehearsal (`npm run rehearse:base-mainnet`):
 
 | Transaction | Gas |
 | --- | --- |
-| RFQRiskMath | 2,078,497 |
-| RFQLiquidation | 1,328,730 |
-| RFQResolution | 1,499,710 |
-| RFQSignatureVerifier | 636,556 |
-| RFQSettlement | 1,398,322 |
-| RFQClearing implementation | 4,121,162 |
-| PythCoreAdapter | 686,296 |
-| Proxy + initialize + ProxyAdmin | 1,044,493 |
+| RFQRiskMath | 2,056,041 |
+| RFQLiquidation | 1,398,142 |
+| RFQResolution | 1,591,829 |
+| RFQSignatureVerifier | 634,828 |
+| RFQSettlement | 1,555,089 |
+| RFQClearing implementation | 4,838,294 |
+| SignedPriceOracle | 2,286,697 |
+| Proxy + initialize + ProxyAdmin | 1,222,498 |
 | RFQTimelock | 1,381,354 |
-| **Total** | **14,175,120** |
+| **Total** | **16,964,772** |
 
-L2 execution at 0.01 gwei is about 0.00014 ETH; at a 0.5 gwei spike it is about 0.0071 ETH. Base also charges an L1 data fee for the init code, normally cents. Preflight prints the live estimate (including the L1 fee upper bound from the `GasPriceOracle` predeploy) and refuses to proceed unless the deployer holds twice the estimate. Two Safe creations and the launch batches are paid by the Safe owners and cost a few cents each.
+L2 execution at 0.01 gwei is about 0.00017 ETH; at a 0.5 gwei spike it is about 0.0085 ETH. Base also charges an L1 data fee for the init code, normally cents. Preflight prints the live estimate (including the L1 fee upper bound from the `GasPriceOracle` predeploy) and refuses to proceed unless the deployer holds twice the estimate. Two Safe creations and the launch batches are paid by the Safe owners and cost a few cents each.
 
 ## Procedure
 
@@ -104,9 +104,9 @@ Every broadcasting command refuses to run until `RFQ_MAINNET_DEPLOY_CONFIRM` equ
 1. Create both Safes in the Safe app.
 2. `npm run deploy:base-mainnet-timelock -- GOVERNANCE_SAFE`, then execute `safe-batches/0-renounce-timelock-admin.json` from the governance Safe (Transaction Builder, "Load batch").
 3. Freeze the commit. Write the manifest outside the repository or under `.local-state/`, with `candidateHash` from `npm run candidate:base-mainnet`. Any change to tracked source changes the hash and invalidates the manifest.
-4. `npm run preflight:base-mainnet -- MANIFEST.json`. It is read-only: it checks the chain ID, USDC decimals, Pyth, both Safe thresholds and owner overlap, timelock delay and self-administration, that the deployer holds no role, and gas/balance.
-5. `npm run deploy:base-mainnet -- MANIFEST.json --dormant` (or `--release-evidence EVIDENCE.json` once `release:check` passes). It deploys steps 1–8, waits two confirmations per transaction, and writes `deployment.json` plus two Safe batches. An interrupted run resumes from `deployment.partial.json`; the adapter is re-checked against the next proxy address. The proxy starts paused with the manifest caps, so no emergency step is needed.
-6. `npm run verify:base-mainnet -- MANIFEST.json` runs 35 checks against both RPCs: implementation and library runtime bytecode equal the local build, proxy slots, ProxyAdmin owned by the timelock, every role, approvers, capital floor, adapter feeds and binding, caps match the manifest, timelock self-administration, and no deployer authority.
+4. `npm run preflight:base-mainnet -- MANIFEST.json`. It is read-only: it checks the chain ID, USDC decimals, both Safe thresholds and owner overlap, timelock delay and self-administration, that the deployer holds no role, and gas/balance.
+5. `npm run deploy:base-mainnet -- MANIFEST.json --dormant` (or `--release-evidence EVIDENCE.json` once `release:check` passes). It deploys steps 1–8, waits two confirmations per transaction, and writes `deployment.json` plus two Safe batches. An interrupted run resumes from `deployment.partial.json`; a resumed oracle must be owned by governance and unbound. The proxy starts paused with the manifest caps, so no emergency step is needed.
+6. `npm run verify:base-mainnet -- MANIFEST.json` runs the checks against both RPCs: implementation and library runtime bytecode equal the local build, proxy slots, ProxyAdmin owned by the timelock, every role, approvers, capital floor, oracle bytecode, owner, signers, threshold, consensus parameters and binding (or its recorded pending step), two markets with caps and risk parameters matching the manifest, timelock self-administration, and no deployer authority.
 7. `npm run basescan:base-mainnet -- MANIFEST.json` publishes standard-JSON source for all eight contracts.
 8. Execute `safe-batches/1-schedule-go-live.json` from the governance Safe. It schedules a timelocked `unpause`.
 9. Execute `2-execute-go-live.json` after 72 hours and only once the approvers, keeper, hedger, indexer and monitoring are running against mainnet and the release checklist allows it. Until then the deployment stays paused, while deposits, withdrawals and paused closes keep working.

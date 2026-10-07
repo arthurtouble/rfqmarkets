@@ -32,7 +32,7 @@ The live environment is on the RFQ Markets account: UI `https://rfq-markets-dev.
 2. **Owner key.** Fund the address in KV `owner-address` with about 0.02 ETH and the USDC you want to test with, on Base.
 3. **GitHub** (repository Settings → Environments):
    - `cloudflare-dev`: secrets `CLOUDFLARE_API_TOKEN`, `PYTH_API_KEY`; optional `RFQ_BASE_MAINNET_RPC_URL` (defaults to `https://mainnet.base.org`) and `RFQ_BASE_MAINNET_SECONDARY_RPC_URL`. Variable `CLOUDFLARE_ACCOUNT_ID`.
-   - `mainnet-dev`: add yourself as a required reviewer and limit deployment branches to `main`. Secret `CLOUDFLARE_API_TOKEN`; optional `RFQ_DEV_OWNER_KEY` (overrides the KV owner key), `RFQ_BASE_MAINNET_RPC_URL` and `RFQ_BASESCAN_API_KEY`. Variable `CLOUDFLARE_ACCOUNT_ID`; optional `RFQ_PYTH_CORE_ADDRESS` (defaults to `0x8250f4aF4B972684F7b336503E2D6dFeDeB1487a`, which preflight checks) and `RFQ_DEV_POLICY_JSON` to change caps within the dev ceilings.
+   - `mainnet-dev`: add yourself as a required reviewer and limit deployment branches to `main`. Secret `CLOUDFLARE_API_TOKEN`; optional `RFQ_DEV_OWNER_KEY` (overrides the KV owner key), `RFQ_BASE_MAINNET_RPC_URL` and `RFQ_BASESCAN_API_KEY`. Variable `CLOUDFLARE_ACCOUNT_ID`; `RFQ_DEV_ORACLE_SIGNERS` (comma-separated oracle node addresses, 3 to 16; required by `prepare` unless the runtime publishes `oracleSigners`) and optional `RFQ_DEV_POLICY_JSON` to change caps within the dev ceilings.
    - Repository variable `CLOUDFLARE_DEV_DEPLOY_ENABLED=true`.
 
 ## Running it
