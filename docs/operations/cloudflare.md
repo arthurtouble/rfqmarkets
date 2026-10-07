@@ -9,7 +9,7 @@ The Base mainnet **dev** environment (UI, docs and all services on Cloudflare, a
 | Surface | URL | Status |
 | --- | --- | --- |
 | Public documentation | `https://rfq-markets-docs-testnet.rfq-markets.workers.dev` | Deployed and usable. |
-| Internal manuals | Local port 4176 only | Deliberately withheld until Cloudflare Access is configured and verified deny-by-default. |
+| Internal manuals | Local port 4176 only | Withheld from this testnet deployment. The Base mainnet dev deployment serves them, with the hedge dashboard, behind Cloudflare Access ([dev environment](../../deploy/cloudflare/DEV-ENVIRONMENT.md#private-pages-cloudflare-access)). |
 
 Public surfaces send CSP, HSTS, frame-denial, MIME-sniffing, referrer and permissions-policy headers. Hashed assets use immutable caching; HTML revalidates. `npm run validate:cloudflare-static` rejects production bundles containing the local service ports and rejects missing security-header files.
 
@@ -82,7 +82,7 @@ Required GitHub testnet environment configuration:
 - `CLOUDFLARE_API_TOKEN`: narrowly scoped to edit Workers Scripts for the selected account. Do not use a global API key.
 - `CLOUDFLARE_ACCOUNT_ID`: non-secret variable containing the selected account identifier.
 
-The internal manuals and hedge dashboard are excluded from automatic deployment until a Cloudflare Access application and deny-by-default policy are verified. API keys, wallet keys, approver keys, sponsor keys and hedge keys never enter GitHub build logs or static Vite variables.
+The internal manuals and hedge dashboard are excluded from this workflow's deployment until a Cloudflare Access application and deny-by-default policy are verified. API keys, wallet keys, approver keys, sponsor keys and hedge keys never enter GitHub build logs or static Vite variables.
 
 ## Long-running market-flow study
 
