@@ -18,7 +18,10 @@ export function launchMarkets(limits?: Partial<MarketConfig>): MarketConfig[];
 export const TRADE_INTENT_TYPES: Record<string, { name: string; type: string }[]>;
 export const MAKER_APPROVAL_TYPES: Record<string, { name: string; type: string }[]>;
 
-export function artifact(name: string, root?: string): { abi: unknown[]; bytecode: string; linkReferences?: Record<string, Record<string, unknown>> };
+export function artifact(
+  name: string,
+  root?: string,
+): { abi: unknown[]; bytecode: string; linkReferences?: Record<string, Record<string, unknown>> };
 export function linkedLibraries(item: { linkReferences?: Record<string, Record<string, unknown>> }): string[];
 export function deployLinked(
   signer: Signer,
