@@ -1,6 +1,6 @@
 # Margin
 
-RFQ Markets uses cross margin. All of your USDC collateral backs all of your positions, and the requirements of each position add up into one account-wide requirement. There is no leverage selector: your leverage is simply the size of your positions relative to your equity, and the limit is set by the margin rates below.
+RFQ Markets uses cross margin. All of your USDC collateral backs all of your positions, and the requirements of each position add up into one account-wide requirement. There is no leverage setting on a position. Your leverage is simply the size of your positions relative to your equity, and the most you can use is set by the margin rates below. On BTC and ETH today that is 20x.
 
 ## Two requirements
 
@@ -13,25 +13,30 @@ The gap between them is your room to absorb losses after opening a position at f
 
 ## Rates
 
-The rate depends on the size of the position in that market. The whole position takes the rate of the band its notional falls in:
+The rate depends on the size of the position in that market. The whole position takes the rate of the band its notional falls in. These are the rates BTC and ETH use today:
 
 | Position notional | Initial margin | Maintenance margin | Maximum opening leverage |
 | ---: | ---: | ---: | ---: |
-| up to 25,000 USDC | 20% | 12% | 5x |
-| up to 100,000 USDC | 25% | 15% | 4x |
-| up to 250,000 USDC | 33% | 20% | 3x |
-| up to 1,000,000 USDC | 50% | 30% | 2x |
-| up to 2,500,000 USDC | 67% | 40% | 1.5x |
-| above 2,500,000 USDC | 100% | 60% | 1x |
+| up to 25,000 USDC | 5% | 3% | 20x |
+| up to 100,000 USDC | 6.25% | 3.75% | 16x |
+| up to 250,000 USDC | 8.25% | 5% | about 12x |
+| up to 1,000,000 USDC | 12.5% | 7.5% | 8x |
+| up to 2,500,000 USDC | 16.75% | 10% | about 6x |
+| above 2,500,000 USDC | 25% | 15% | 4x |
 
-While trades are capped at 25 USDC and markets at 100 USDC, every position is in the first band: 20% initial, 12% maintenance, at most 5x.
+While trades are capped at 25 USDC and markets at 100 USDC, every position is in the first band: 5% initial, 3% maintenance, at most 20x.
 
-A few details:
+### Where these numbers come from
+
+The contract holds one base schedule of bands, starting at 20% initial and 12% maintenance, and each market has a **margin multiplier** that scales the whole schedule. Governance sets the multiplier per market, anywhere from 0.25x to 5x of the base rates. BTC and ETH are both set to 0.25x, which gives the table above. A market listed later could be set more conservatively; `GET /v1/config` and `GET /v1/markets` report each market's multiplier, its first-band rates and its maximum leverage, so check there rather than assuming every market matches BTC.
+
+A change to a market's multiplier applies to open positions immediately. Raising it can push an account that was safe toward liquidation without any price move, which is one reason governance changes go behind a timelock in production.
+
+A few more details:
 
 - **Notional is valued at the oracle ask**, for longs and shorts alike.
-- **Bands apply to the whole position.** A position that grows from 25,000 to 25,001 USDC moves entirely to the 25% rate; the rates are not marginal like tax brackets.
+- **Bands apply to the whole position.** A position that grows from 25,000 to 25,001 USDC moves entirely to the second band's rates; the rates are not marginal like tax brackets.
 - **Requirements add across markets.** A long BTC and a short ETH are margined separately and summed. There is no offset for correlated positions.
-- **Governance can scale a market's rates up** (never down below these values) with a per-market multiplier. Both markets use the base rates today. A higher multiplier applies to open positions immediately.
 
 ## Equity, counted two ways
 
@@ -56,16 +61,16 @@ The last row matters. If losses take you below initial margin but you are still 
 
 ## A worked example
 
-You deposit 5 USDC and buy 25 USDC of BTC at 100,000. That uses all of your initial margin: 20% of 25 is 5. Your maintenance margin is 12% of 25, or 3 USDC, so you have about 2 USDC of buffer.
+You deposit 1.25 USDC and open a 25 USDC long on BTC at 100,000. That is 20x, and it uses all of your initial margin: 5% of 25 is 1.25. Your maintenance margin is 3% of 25, or 0.75 USDC, so you have 50 cents of buffer.
 
-- **BTC rises 4%.** Your position shows a profit of about 1 USDC. Maintenance equity is about 6 USDC; you are safer from liquidation. Opening equity is still 5 USDC, because gains do not count, so you cannot open more or withdraw any of that profit until you close.
-- **BTC falls 4%.** You lose about 1 USDC. Both equities fall to about 4 USDC, below the 5 USDC initial requirement, so you cannot add or withdraw, but you can close or reduce.
-- **BTC falls about 9%.** Equity and maintenance margin meet at about 2.7 USDC (the requirement shrinks a little as the position's notional falls). Any further fall makes the account liquidatable.
+- **BTC rises 1%.** Your position shows a profit of 25 cents. Maintenance equity is 1.50 USDC, so you are further from liquidation. Opening equity is still 1.25 USDC, because gains do not count, so you cannot open more or withdraw that profit until you close.
+- **BTC falls 1%.** You lose 25 cents. Both equities fall to 1.00 USDC, below the 1.25 USDC initial requirement, so you cannot add or withdraw, but you can close or reduce.
+- **BTC falls about 2%.** Equity and maintenance margin meet at about 0.73 USDC (the requirement shrinks a little as the position's notional falls). Any further fall makes the account liquidatable.
 
-The same trade with 10 USDC of collateral could survive a fall of roughly 30% before liquidation. Leverage below the maximum buys a lot of room.
+At 20x, a 2% move is an ordinary hour for BTC. The same 25 USDC position backed by 5 USDC of collateral, which is 5x, survives a fall of about 17% before liquidation. Being allowed 20x does not make 20x a good idea.
 
 These numbers ignore the spread and fee, which make each threshold arrive slightly sooner.
 
 ## Seeing it in the app
 
-The Account card shows equity, available margin (opening equity minus initial margin), margin usage (maintenance margin divided by equity), effective leverage and the liquidation buffer. The ticket shows the initial margin your account would need after the trade, and warns you if you do not have it. See [Positions and your account](../trading/positions.md).
+The account summary shows your **Account value** (equity) and **Available to trade** (opening equity minus initial margin, which is also the most you can withdraw). The **Portfolio** page adds **Margin in use** and your effective **Leverage**. The ticket shows **Leverage after** for the trade you are typing and warns you when the size needs more margin than you have. Each position shows an estimated liquidation price. See [Positions and your account](../trading/positions.md).

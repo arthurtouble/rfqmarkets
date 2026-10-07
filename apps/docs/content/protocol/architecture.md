@@ -9,7 +9,7 @@ RFQ Markets is a small number of parts with deliberately separate powers. The co
 | **Clearing contract** | Holds all collateral, maker capital and insurance. Records positions, settles trades, funding and liquidations, and enforces every limit. | Move money without a valid signature or a rule that allows it. |
 | **Oracle contract** | Verifies signed price reports from the oracle nodes and produces one price per market. | Accept a price signed by fewer than two nodes. |
 | **Oracle nodes** (3) | Aggregate exchange prices and sign them every second. | Trade, or move a price on their own. |
-| **Trading app** | Shows prices and your account, builds the messages you sign. | Sign for you, except with a quick-trading key you authorized. |
+| **Trading app** | Shows prices and your account, builds the messages you sign. | Sign for you, except with a one-click trading key you authorized. |
 | **API** | Streams prices, quotes firm prices, reserves the maker's capacity, collects approvals and submits trades, paying the gas. | Trade without your signature and two approvals, or fill you outside your limit. |
 | **Approvers** (3) | Each independently re-checks a quote against the oracle, the chain and the risk policy, and co-signs it. | Trade on their own; a trade needs two of them plus you. |
 | **Hedger** | Offsets the maker's net exposure on an external venue. | Touch the clearing contract. |

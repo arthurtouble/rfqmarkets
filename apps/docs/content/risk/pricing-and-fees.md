@@ -62,11 +62,11 @@ There are no deposit, withdrawal or gas fees. Liquidation has its own penalty, d
 
 ## Price protection
 
-On top of the firm price, the app sets your signed limit 8 basis points worse, so that small movements between your click and settlement do not cause a failure. You never pay this 8 bps unless the market actually moves; you pay the price the maker approves, which is at or better than your limit. See [Placing a trade](../trading/placing-a-trade.md#price-protection).
+On top of the firm price, the app sets your signed limit 8 basis points worse, so that small movements between your click and settlement do not cause a failure. You never pay this 8 bps unless the market actually moves; you pay the price the maker approves, which is at or better than your limit. Through the API you can choose a different band, from 1 to 500 bps; [stop orders](../trading/stop-orders.md) default to 100 bps because they fire in moving markets. See [Placing a trade](../trading/placing-a-trade.md#price-protection).
 
 ## Example
 
-Buying 20 USDC of BTC when the oracle ask is 100,000, the spread is 2 bps and the maker's inventory is flat:
+Opening a 20 USDC long on BTC when the oracle ask is 100,000, the spread is 2 bps and the maker's inventory is flat:
 
 - spread charge: 20 × 0.0002 = 0.004 USDC, or 2 bps on the price;
 - buy price: about 100,020;
