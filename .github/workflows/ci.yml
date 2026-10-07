@@ -25,4 +25,5 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           version: v1.7.1
+      - run: npm run format:check
       - run: npm test
