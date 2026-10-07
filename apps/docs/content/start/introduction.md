@@ -52,7 +52,7 @@ RFQ Markets is a development deployment that happens to run on Base mainnet rath
 | Hedging | Simulated; no external orders are placed | Live hedging, Hyperliquid first |
 | Liquidation keepers | Permissionless, but no operator keeper is running yet | Independent keepers |
 | Markets | BTC and ETH, up to 20x | More 24/7 crypto markets, added by governance |
-| Stop loss and take profit | Supported by the contract, not yet in the app | In the app |
+| Stop loss and take profit | Supported by the contract and API, not yet in the app | In the app |
 
 Everything in these docs describes the product as it works today, and calls out where production will differ.
 

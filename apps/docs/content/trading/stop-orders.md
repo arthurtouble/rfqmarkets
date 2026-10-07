@@ -2,7 +2,7 @@
 
 A stop order waits for the price to cross a level you choose, then trades. RFQ Markets supports three kinds: a **stop loss** that closes a position when the price moves against you, a **take profit** that closes it when the price moves in your favour, and a **stop entry** that opens a position on a breakout.
 
-> **Note.** The trading app does not offer stop orders yet, and the public API does not accept them yet either. The contract and the venue's order service already support them, and this page describes how they behave so you know what to expect when they arrive. We will update it when they are available.
+> **Note.** The trading app does not offer stop orders yet. The contract and the venue's API already support them, so integrators can place them today (see [For integrators](#for-integrators)). This page describes how they behave, in the app too once they arrive there.
 
 ## The three kinds
 
