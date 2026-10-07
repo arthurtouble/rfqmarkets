@@ -10,9 +10,10 @@ import { WalletMenu } from "../wallet/WalletMenu.js";
 
 function OneClickRow() {
   const trading = useTrading(), session = trading.quickSession, busy = trading.busy !== null;
+  const limit = `$${Number(QUICK_LIMITS.maxTradeAmount).toLocaleString("en-US")}`;
   const until = session && new Date(session.validUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const detail = !session ? `Trades up to $${QUICK_LIMITS.maxTradeAmount} fill without a wallet prompt for 8 hours.`
-    : session.privateKey ? `On until ${until} for trades up to $${QUICK_LIMITS.maxTradeAmount}.`
+  const detail = !session ? `Trades up to ${limit} fill without a wallet prompt for 8 hours.`
+    : session.privateKey ? `On until ${until} for trades up to ${limit}.`
     : `Reloading the page cleared this tab's key. The permission lasts until ${until}; turn it off or on again.`;
   return <div className="setting-row">
     <div><div className="headline">One-click trading</div><div className="footnote rfq-muted">{detail}</div></div>
