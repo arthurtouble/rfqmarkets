@@ -156,6 +156,31 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         RFQSettlement.withdraw(account, recipient, amount);
     }
 
+    /// @notice Moves collateral into (positive `amount`) or out of (negative) the caller's isolated account for
+    /// `market`; see RFQSettlement.moveIsolatedMargin.
+    function moveIsolatedMargin(uint8 market, int256 amount) external nonReentrant {
+        RFQSettlement.moveIsolatedMargin(msg.sender, market, amount);
+    }
+
+    /// @notice Gas-sponsored isolated margin move authorized by the account owner.
+    function moveIsolatedMarginWithSignature(
+        address account,
+        uint8 market,
+        int256 amount,
+        uint256 nonce,
+        uint64 deadline,
+        bytes calldata signature
+    ) external nonReentrant {
+        RFQSignatureVerifier.consumeOwnerAuthorization(
+            account,
+            nonce,
+            deadline,
+            keccak256(abi.encode(ISOLATED_MARGIN_TYPEHASH, account, market, amount, nonce, deadline)),
+            signature
+        );
+        RFQSettlement.moveIsolatedMargin(account, market, amount);
+    }
+
     /// @notice Adds maker backing. Anyone may top up.
     function fundMaker(uint256 amount) external nonReentrant {
         _pull(amount);
@@ -534,6 +559,16 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
 
     function positionOf(address account, uint8 market) external view returns (Position memory) {
         return _s().accounts[account].positions[market];
+    }
+
+    /// @notice The isolated account holding `owner`'s isolated position in `market` (it may not exist yet).
+    function isolatedAccount(address owner, uint8 market) external pure returns (address) {
+        return RFQLedger.isolatedAccount(owner, market);
+    }
+
+    /// @notice Owner and market of an isolated account; a zero owner for an ordinary account.
+    function isolatedOwner(address account) external view returns (IsolatedAccount memory) {
+        return _s().isolated[account];
     }
 
     function accountRegistered(address account) external view returns (bool) {

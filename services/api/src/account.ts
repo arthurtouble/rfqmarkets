@@ -7,6 +7,7 @@ import {
   legMargin,
   marketMarginView,
 } from "../../../packages/shared/src/policy.js";
+import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import type { ApiContext } from "./context.js";
 import { abs, marketIndex, marketRegistry, type Market } from "./markets.js";
 import { publicError } from "./public-error.js";
@@ -158,15 +159,47 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
       const snapshot = await quoting.readMarkets(),
         blockTag = { blockTag: snapshot.blockNumber };
       const symbols = marketRegistry.symbols();
-      const [collateral, rawPositions, maintenanceEquity, openingEquity, initialMargin, maintenanceMargin] =
-        await Promise.all([
-          clearing.collateralOf(account, blockTag),
-          Promise.all(symbols.map((symbol) => clearing.positionOf(account, marketIndex(symbol), blockTag))),
-          clearing.maintenanceEquity(account, blockTag),
-          clearing.openingEquity(account, blockTag),
-          clearing.initialMargin(account, blockTag),
-          clearing.maintenanceMargin(account, blockTag),
-        ]);
+      const isolatedAddresses = symbols.map((symbol) => isolatedAccountAddress(account, marketIndex(symbol)));
+      const [
+        collateral,
+        rawPositions,
+        maintenanceEquity,
+        openingEquity,
+        initialMargin,
+        maintenanceMargin,
+        isolatedOwner,
+        isolatedRegistered,
+      ] = await Promise.all([
+        clearing.collateralOf(account, blockTag),
+        Promise.all(symbols.map((symbol) => clearing.positionOf(account, marketIndex(symbol), blockTag))),
+        clearing.maintenanceEquity(account, blockTag),
+        clearing.openingEquity(account, blockTag),
+        clearing.initialMargin(account, blockTag),
+        clearing.maintenanceMargin(account, blockTag),
+        clearing.isolatedOwner(account, blockTag),
+        Promise.all(isolatedAddresses.map((isolated) => clearing.accountRegistered(isolated, blockTag))),
+      ]);
+      // Isolated accounts this owner has opened; each has its own collateral and margin (see its own
+      // /v1/account view).
+      const isolated = await Promise.all(
+        symbols
+          .map((symbol, index) => ({ symbol, address: isolatedAddresses[index] }))
+          .filter((_, index) => isolatedRegistered[index])
+          .map(async ({ symbol, address }) => {
+            const [isolatedCollateral, raw] = await Promise.all([
+              clearing.collateralOf(address, blockTag),
+              clearing.positionOf(address, marketIndex(symbol), blockTag),
+            ]);
+            return {
+              market: symbol,
+              account: address,
+              collateral: isolatedCollateral.toString(),
+              size: raw.size.toString(),
+              entryPrice: raw.entryPrice.toString(),
+            };
+          }),
+      );
+      const ownerOfIsolated = BigInt(isolatedOwner.owner) === 0n ? null : getAddress(isolatedOwner.owner);
       const position = (raw: AccountPosition): AccountPosition => ({
         size: BigInt(raw.size),
         entryPrice: BigInt(raw.entryPrice),
@@ -182,6 +215,10 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
         blockNumber: snapshot.blockNumber,
         ...summary,
         positions,
+        /** Margin mode: an isolated account holds one market's position with its own collateral. */
+        marginMode: ownerOfIsolated ? "isolated" : "cross",
+        isolatedOwner: ownerOfIsolated,
+        isolated,
         onchain: {
           maintenanceEquity: maintenanceEquity.toString(),
           openingEquity: openingEquity.toString(),

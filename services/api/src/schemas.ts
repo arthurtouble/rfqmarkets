@@ -66,6 +66,22 @@ export const withdrawalExecuteSchema = signedActionSchema.extend({
   }),
 });
 
+/** `direction` "add" moves collateral from the account into its isolated account for `market`; "remove" moves it back. */
+export const isolatedMarginPrepareSchema = actionBaseSchema.extend({
+  market,
+  direction: z.enum(["add", "remove"]),
+  amount: usdcAmount,
+});
+export const isolatedMarginExecuteSchema = signedActionSchema.extend({
+  intent: z.object({
+    account: z.string(),
+    market: marketId,
+    amount: z.string().regex(/^-?\d+$/),
+    nonce: integer,
+    deadline: integer,
+  }),
+});
+
 export const cancelPrepareSchema = actionBaseSchema;
 export const cancelExecuteSchema = signedActionSchema.extend({
   intent: z.object({ account: z.string(), nonce: integer, deadline: integer }),

@@ -6,12 +6,15 @@ import {
   cancelTypes,
   closeToWire,
   closeTypes,
+  isolatedMarginToWire,
+  isolatedMarginTypes,
   sessionGrantToWire,
   sessionGrantTypes,
   withdrawalToWire,
   withdrawalTypes,
   type CancelIntent,
   type CloseIntent,
+  type IsolatedMarginIntent,
   type SessionGrant,
   type WithdrawalIntent,
 } from "../../../packages/shared/src/eip712.js";
@@ -21,7 +24,8 @@ import type { ApiContext, ApiSender, ChainHandles } from "./context.js";
 import type { DevChain } from "./dev-chain.js";
 import { Reply } from "./http.js";
 import { marketIndex, marketName } from "./markets.js";
-import { validOwnerSignature } from "./owner-signature.js";
+import { isolatedAccountAddress, type IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
+import { signingAccount, validOwnerSignature } from "./owner-signature.js";
 import { publicError } from "./public-error.js";
 import type { QuoteEngine } from "./quoting.js";
 import {
@@ -29,6 +33,8 @@ import {
   cancelPrepareSchema,
   closeExecuteSchema,
   closePrepareSchema,
+  isolatedMarginExecuteSchema,
+  isolatedMarginPrepareSchema,
   sessionExecuteSchema,
   sessionPrepareSchema,
   withdrawalExecuteSchema,
@@ -56,7 +62,12 @@ export async function verifySignedAction(
 ) {
   if (Number(intent.deadline) * 1_000 <= Date.now()) return false;
   const digest = TypedDataEncoder.hash(ctx.domain, types, intent);
-  return validOwnerSignature(intent.account, digest, signature, ctx.provider);
+  return validOwnerSignature(
+    await signingAccount(ctx.clearing as IsolatedOwnerReader | undefined, intent.account),
+    digest,
+    signature,
+    ctx.provider,
+  );
 }
 
 /**
@@ -128,7 +139,7 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
   });
 }
 
-/** Owner withdrawals, nonce cancellation, position close and session-key grants. */
+/** Owner withdrawals, isolated margin moves, nonce cancellation, position close and session-key grants. */
 export function registerSignedActions(
   app: FastifyInstance,
   ctx: ApiContext,
@@ -193,6 +204,63 @@ export function registerSignedActions(
         status: "included",
         transaction: transactionOf(receipt),
         collateral: (await clearing.collateralOf(intent.account)).toString(),
+      };
+    },
+  });
+
+  registerSignedAction(app, ctx, chain, {
+    path: "/v1/isolated/margin",
+    label: "isolated margin",
+    types: isolatedMarginTypes,
+    messageKey: "intent",
+    prepareSchema: isolatedMarginPrepareSchema,
+    executeSchema: isolatedMarginExecuteSchema,
+    build: async (input, chainTime): Promise<IsolatedMarginIntent> => {
+      const amount = parseUnits(input.amount, 6);
+      if (amount <= 0n) throw new Error("invalid isolated margin amount");
+      return {
+        account: getAddress(input.account),
+        market: marketIndex(input.market),
+        amount: input.direction === "add" ? amount : -amount,
+        nonce: BigInt(input.nonce),
+        deadline: await deadline(chainTime),
+      };
+    },
+    parse: ({ intent }): IsolatedMarginIntent => ({
+      account: getAddress(intent.account),
+      market: intent.market,
+      amount: BigInt(intent.amount),
+      nonce: BigInt(intent.nonce),
+      deadline: BigInt(intent.deadline),
+    }),
+    toWire: isolatedMarginToWire,
+    async execute(intent, signature, { sender, clearing, config }) {
+      const receipt = await sender.submit(`isolated:${intent.account}:${intent.nonce}`, {
+        to: config.clearingAddress,
+        data: clearing.interface.encodeFunctionData("moveIsolatedMarginWithSignature", [
+          intent.account,
+          intent.market,
+          intent.amount,
+          intent.nonce,
+          intent.deadline,
+          signature,
+        ]),
+      });
+      const isolated = isolatedAccountAddress(intent.account, intent.market);
+      const [collateral, isolatedCollateral] = await Promise.all([
+        clearing.collateralOf(intent.account),
+        clearing.collateralOf(isolated),
+      ]);
+      ctx.notifyPositionChange(intent.account, marketName(intent.market));
+      return {
+        status: "included",
+        transaction: transactionOf(receipt),
+        collateral: collateral.toString(),
+        isolated: {
+          account: isolated,
+          market: marketName(intent.market),
+          collateral: isolatedCollateral.toString(),
+        },
       };
     },
   });

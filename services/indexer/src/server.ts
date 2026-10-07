@@ -54,6 +54,7 @@ const SCHEMA_VERSION = "2";
 const ACTIVITY_KINDS = [
   "Deposited",
   "Withdrawn",
+  "MarginTransferred",
   "NonceCancelled",
   "SessionGranted",
   "SessionRevoked",
@@ -706,7 +707,7 @@ export function buildIndexer(options: IndexerOptions) {
       replay = portfolio(params.address, scope.through, query.finalized),
       totals = replay.totals,
       netPnl = totals.realizedPnl - totals.fees + totals.funding - totals.liquidationPenalties,
-      netDeposits = totals.deposits - totals.withdrawals,
+      netDeposits = totals.deposits - totals.withdrawals + totals.transfers,
       stored = db
         .prepare(
           `SELECT collateral FROM ${query.finalized ? "finalized_accounts" : "accounts"} WHERE account=?`,
@@ -726,6 +727,7 @@ export function buildIndexer(options: IndexerOptions) {
       netPnl: netPnl.toString(),
       deposits: totals.deposits.toString(),
       withdrawals: totals.withdrawals.toString(),
+      marginTransfers: totals.transfers.toString(),
       netDeposits: netDeposits.toString(),
       collateral: (netDeposits + netPnl + totals.deficitCovered).toString(),
       indexedCollateral: stored?.collateral ?? null,

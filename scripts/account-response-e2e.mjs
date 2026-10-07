@@ -6,6 +6,7 @@ import {network} from 'hardhat';
 import {JsonRpcProvider} from 'ethers';
 import {buildApi} from '../services/api/src/server.ts';
 import {approvalTypes} from '../packages/shared/src/eip712.ts';
+import {isolatedAccountAddress} from '../packages/shared/src/isolated.ts';
 import {deployLinked,deploySignedOracle,launchMarkets,signedOracleReport} from './lib/contract-fixture.mjs';
 const {ethers}=await network.create({network:'hardhatOp',chainType:'op'}),[governance,emergency,a,b,c,maker,user]=await ethers.getSigners(),libraries={};
 const artifact=name=>JSON.parse(fs.readFileSync(`artifacts/${name}.json`,'utf8')),deploy=(name,args=[])=>deployLinked(governance,name,args,libraries);
@@ -42,5 +43,15 @@ try{
  const response=await app.inject(`/v1/account/${user.address}`);assert.equal(response.statusCode,200,response.body);const account=response.json();assert(BigInt(account.positions.BTC.unrealizedPnl)>0n);assert(BigInt(account.positions.ETH.unrealizedPnl)<0n);
  assert.equal(BigInt(account.openingEquity),BigInt(account.collateral)+BigInt(account.accruedFunding)+BigInt(account.positions.ETH.unrealizedPnl));
  assert.equal(account.openingEquity,account.onchain.openingEquity);assert.equal(account.equity,account.onchain.maintenanceEquity);assert.equal(account.initialMargin,account.onchain.initialMargin);assert.equal(account.maintenanceMargin,account.onchain.maintenanceMargin);assert.equal(account.marginParameters.BTC.maxLeverage,20);assert.equal(account.marginParameters.ETH.maxLeverage,5);
- console.log('Runtime identity and account response E2E passed: dual RPC/code/feed/authority rejection, mixed winner/loser opening margin and separate-leg rounding match canonical clearing at a pinned block');
+ // Isolated margin: the owner moves margin into its BTC isolated account, signs a trade for that account, and the
+ // owner's account view lists it while the isolated account reports its own margin.
+ const move=await post('/v1/isolated/margin/prepare',{account:user.address,market:'BTC',direction:'add',amount:'500',nonce:'900'}),moved=await post('/v1/isolated/margin/execute',{intent:move.intent,userSignature:await user.signTypedData(move.domain,move.types,move.intent)});
+ const isolated=isolatedAccountAddress(user.address,0);assert.equal(moved.isolated.account,isolated);assert.equal(moved.isolated.collateral,'500000000');
+ {const quote=await post('/v1/quote',{market:'BTC',side:'buy',amount:'100'}),prepared=await post('/v1/prepare',{quoteId:quote.quoteId,account:isolated,nonce:'901'}),signature=await user.signTypedData(prepared.domain,prepared.types,prepared.intent);await post('/v1/approve',{quoteId:quote.quoteId,account:isolated,nonce:'901',userSignature:signature});}
+ assert((await clearing.positionOf(isolated,0)).size>0n);
+ const owner=(await app.inject(`/v1/account/${user.address}`)).json();assert.equal(owner.marginMode,'cross');assert.equal(owner.isolated.length,1);assert.equal(owner.isolated[0].account,isolated);assert(BigInt(owner.isolated[0].size)>0n);
+ const isolatedView=(await app.inject(`/v1/account/${isolated}`)).json();assert.equal(isolatedView.marginMode,'isolated');assert.equal(isolatedView.isolatedOwner,user.address);assert.equal(isolatedView.initialMargin,isolatedView.onchain.initialMargin);
+ // Another wallet cannot sign for the isolated account.
+ {const quote=await post('/v1/quote',{market:'BTC',side:'buy',amount:'100'}),prepared=await post('/v1/prepare',{quoteId:quote.quoteId,account:isolated,nonce:'902'}),forged=await maker.signTypedData(prepared.domain,prepared.types,prepared.intent),response=await app.inject({method:'POST',url:'/v1/approve',payload:{quoteId:quote.quoteId,account:isolated,nonce:'902',userSignature:forged}});assert.notEqual(response.statusCode,200,response.body);}
+ console.log('Runtime identity and account response E2E passed: dual RPC/code/feed/authority rejection, mixed winner/loser opening margin and separate-leg rounding match canonical clearing at a pinned block; isolated margin move, owner-signed isolated trade and isolated account views');
 }finally{await app.close();for(const approver of approverApps)await approver.close();}

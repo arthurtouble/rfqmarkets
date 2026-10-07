@@ -182,3 +182,15 @@ test("history buckets keep the last cumulative point per interval", () => {
   assert.equal(bucketPoints(replay.points, "event").length, 3);
   assert.equal(bucketPoints(replay.points, "1d").length, 1);
 });
+
+test("margin moved to an isolated account counts toward net deposits on both sides", () => {
+  const owner = replayPortfolio([
+      event(1, "Deposited", { amount: "100" }),
+      event(2, "MarginTransferred", { market: "0", amount: "-40" }),
+    ]),
+    isolated = replayPortfolio([event(2, "MarginTransferred", { market: "0", amount: "40" })]);
+  assert.equal(owner.totals.transfers, -40n);
+  assert.equal(owner.points.at(-1)?.netDeposits, "60");
+  assert.equal(owner.points.at(-1)?.collateral, "60");
+  assert.equal(isolated.points.at(-1)?.collateral, "40");
+});

@@ -50,6 +50,8 @@ abstract contract RFQClearingNamespace {
         uint64 makerIncidentSince;
         uint64 makerIncidentGracePeriod;
         ResolutionState resolution;
+        // Isolated margin (v1.2): isolated account => its owner and market; zero owner for ordinary accounts
+        mapping(address => IsolatedAccount) isolated;
     }
 }
 

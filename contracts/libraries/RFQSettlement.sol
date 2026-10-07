@@ -74,9 +74,11 @@ library RFQSettlement {
         returns (IPriceOracle.Observation memory observation)
     {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        if ($.paused || $.resolutionRequired || intent.market >= $.marketCount || intent.baseDelta == 0) {
-            revert InvalidTrade();
-        }
+        IsolatedAccount storage isolated = $.isolated[intent.account];
+        if (
+            $.paused || $.resolutionRequired || intent.market >= $.marketCount || intent.baseDelta == 0
+                || isolated.owner != address(0) && isolated.market != intent.market
+        ) revert InvalidTrade();
         observation = RFQLedger.touchOracle(report, intent.market);
         RFQLedger.settleAllFunding(intent.account);
     }
@@ -115,10 +117,13 @@ library RFQSettlement {
     }
 
     /// @notice Withdraws collateral. Open legs need fresh prices, and initial margin must hold afterwards.
-    /// Allowed while paused so traders can always leave.
+    /// Allowed while paused so traders can always leave. Isolated accounts move collateral back to their
+    /// owner with `moveIsolatedMargin` instead.
     function withdraw(address account, address recipient, uint256 amount) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        if ($.resolutionRequired || recipient == address(0) || amount == 0) revert InvalidTrade();
+        if ($.resolutionRequired || recipient == address(0) || amount == 0 || $.isolated[account].owner != address(0)) {
+            revert InvalidTrade();
+        }
         RFQLedger.requireFreshPositions(account);
         RFQLedger.settleAllFunding(account);
         if ($.resolutionRequired) return;
@@ -126,6 +131,35 @@ library RFQSettlement {
         RFQLedger.requireInitialMargin(account);
         SafeERC20.safeTransfer($.usdc, recipient, amount);
         emit IRFQClearingEvents.Withdrawn(account, amount);
+    }
+
+    /// @notice Moves collateral between `owner` and its isolated account for `market`: a positive `amount` adds
+    /// margin to the isolated account, a negative one removes it. The side that pays needs fresh prices and
+    /// initial margin afterwards, as for a withdrawal. The first move creates and registers the isolated
+    /// account and must meet the first-deposit floor. Allowed while paused, like withdrawals.
+    function moveIsolatedMargin(address owner, uint8 market, int256 amount) public {
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        if (
+            $.resolutionRequired || market >= $.marketCount || amount == 0 || !$.accountRegistered[owner]
+                || $.isolated[owner].owner != address(0)
+        ) revert InvalidTrade();
+        address isolated = RFQLedger.isolatedAccount(owner, market);
+        if (!$.accountRegistered[isolated]) {
+            if (amount < int256(MIN_FIRST_DEPOSIT)) revert InvalidTrade();
+            $.accountRegistered[isolated] = true;
+            $.accountList.push(isolated);
+            $.isolated[isolated] = IsolatedAccount(owner, market);
+        }
+        (address from, address to) = amount > 0 ? (owner, isolated) : (isolated, owner);
+        int256 moved = amount > 0 ? amount : -amount;
+        RFQLedger.requireFreshPositions(from);
+        RFQLedger.settleAllFunding(from);
+        if ($.resolutionRequired) return;
+        RFQLedger.changeCollateral(from, -moved);
+        RFQLedger.changeCollateral(to, moved);
+        RFQLedger.requireInitialMargin(from);
+        emit IRFQClearingEvents.MarginTransferred(from, to, market, -moved);
+        emit IRFQClearingEvents.MarginTransferred(to, from, market, moved);
     }
 
     /// @dev 20% of each fee goes to insurance while it is below a quarter of the capital floor, else 10%.

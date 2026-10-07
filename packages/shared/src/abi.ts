@@ -23,6 +23,8 @@ export const clearingStateAbi = [
   "function marketCount() view returns(uint8)",
   "function marketParams(uint8) view returns((bytes32 symbol,uint32 impactK,uint16 shockBps,uint16 marginScaleBps))",
   "function openMarketsOf(address) view returns(uint256)",
+  "function accountRegistered(address) view returns(bool)",
+  "function isolatedOwner(address) view returns((address owner,uint8 market))",
 ] as const;
 
 export const clearingApiAbi = [
@@ -35,6 +37,8 @@ export const clearingApiAbi = [
   "function executeTriggeredTrade((address account,uint8 market,int256 baseDelta,uint256 limitPrice,uint256 maxFee,uint256 nonce,uint64 deadline,bool reduceOnly),(uint256 triggerPrice,bool triggerAbove),(bytes32 intentHash,uint256 executionPrice,int256 impactCharge,uint256 fee,bytes32 oracleReportHash,uint64 deadline,uint64 leaderEpoch,uint64 signerSetVersion,uint64 policyVersion),bytes,bytes,bytes,bytes) payable",
   "function depositWithAuthorization(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)",
   "function withdrawWithSignature(address,address,uint256,uint256,uint64,bytes)",
+  "function moveIsolatedMarginWithSignature(address,uint8,int256,uint256,uint64,bytes)",
+  "event MarginTransferred(address indexed account,address indexed counterparty,uint8 indexed market,int256 amount)",
   "function cancelNonceWithSignature(address,uint256,uint64,bytes)",
   "function closePositionWithSignature(address,uint8,uint256,uint64,bytes,bytes) payable",
   "function grantSessionWithSignature((address account,address session,uint256 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline),bytes)",
@@ -49,6 +53,7 @@ export const clearingIndexerAbi = [
   ...clearingStateAbi,
   "event Deposited(address indexed account,uint256 amount)",
   "event Withdrawn(address indexed account,uint256 amount)",
+  "event MarginTransferred(address indexed account,address indexed counterparty,uint8 indexed market,int256 amount)",
   "event TradeExecuted(bytes32 indexed intentHash,address indexed account,uint8 market,int256 baseDelta,uint256 price,uint256 fee)",
   "event FundingSettled(address indexed account,uint8 indexed market,int256 payment)",
   "event NonceCancelled(address indexed account,uint256 indexed nonce)",
