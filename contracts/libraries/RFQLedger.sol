@@ -93,6 +93,20 @@ library RFQLedger {
         ) revert Margin();
     }
 
+    // ---- Isolated accounts ----
+
+    /// @notice The isolated account that holds `owner`'s isolated position in `market`.
+    function isolatedAccount(address owner, uint8 market) internal pure returns (address) {
+        return address(uint160(uint256(keccak256(abi.encode(ISOLATED_ACCOUNT_TAG, owner, market)))));
+    }
+
+    /// @notice The address whose signature authorizes actions for `account`: its owner for an isolated account,
+    /// otherwise the account itself.
+    function signerOf(address account) internal view returns (address) {
+        address owner = RFQClearingStorage.layout().isolated[account].owner;
+        return owner == address(0) ? account : owner;
+    }
+
     // ---- Lifecycle ----
 
     /// @notice Enters terminal global resolution: funding freezes, trading pauses, approvals are fenced.

@@ -240,6 +240,7 @@ async function chainChecks(
     }) ??
     checkChainTimeExpiry(intent, approval, snapshot.blockTimestamp, maxFutureSeconds) ??
     checkUserAuthorization({
+      signingAccount: snapshot.signingAccount,
       accountSignatureValid: snapshot.accountSignatureValid,
       session: snapshot.session,
       intent,

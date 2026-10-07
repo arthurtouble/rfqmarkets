@@ -36,6 +36,8 @@ uint16 constant MIN_BASE_SPREAD_BPS = 2;
 uint16 constant MAX_BASE_SPREAD_BPS = 50;
 
 uint256 constant MIN_FIRST_DEPOSIT = 10e6;
+/// @dev Domain tag for isolated account addresses: address(keccak256(abi.encode(tag, owner, market))).
+bytes32 constant ISOLATED_ACCOUNT_TAG = keccak256("rfq.isolated");
 uint256 constant MAX_SESSION_DURATION = 30 days;
 
 /// @dev Resolution prices are the median of three post-trigger oracle samples spanning at least 30 seconds.
@@ -71,6 +73,9 @@ bytes32 constant WITHDRAWAL_TYPEHASH =
     keccak256("WithdrawalIntent(address account,address recipient,uint256 amount,uint256 nonce,uint64 deadline)");
 bytes32 constant CANCEL_TYPEHASH = keccak256("CancelIntent(address account,uint256 nonce,uint64 deadline)");
 bytes32 constant CLOSE_TYPEHASH = keccak256("CloseIntent(address account,uint8 market,uint256 nonce,uint64 deadline)");
+/// @dev Moves collateral into (positive `amount`) or out of (negative) the account's isolated account for `market`.
+bytes32 constant ISOLATED_MARGIN_TYPEHASH =
+    keccak256("IsolatedMarginIntent(address account,uint8 market,int256 amount,uint256 nonce,uint64 deadline)");
 bytes32 constant SESSION_GRANT_TYPEHASH = keccak256(
     "SessionGrant(address account,address session,uint256 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline)"
 );
@@ -89,6 +94,14 @@ struct Account {
     int256 collateral;
     mapping(uint8 market => Position) positions;
     uint256 openMarkets; // bit i set while the account holds a position in market i
+}
+
+/// @notice Owner and market of an isolated account. An isolated account holds one market's position with its
+/// own collateral, so its losses and liquidation never reach the owner's cross account. Its address is derived
+/// from the owner and market (no key exists for it) and the owner signs for it.
+struct IsolatedAccount {
+    address owner;
+    uint8 market;
 }
 
 struct Market {

@@ -1,4 +1,5 @@
 import { Interface, getAddress, recoverAddress, type Provider } from "ethers";
+import { signerAccount, type IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
 
 const walletInterface = new Interface(["function isValidSignature(bytes32,bytes) view returns(bytes4)"]);
 /** EOA signature by `account`, or an ERC-1271 wallet at `account` accepting it (at `blockTag` if given). */
@@ -26,5 +27,22 @@ export async function validOwnerSignature(
     );
   } catch {
     return false;
+  }
+}
+
+/**
+ * The address that signs for `account`: the owner of an isolated account, else the account. A failed read
+ * falls back to the account itself, which can only reject an owner's signature, never accept another one.
+ */
+export async function signingAccount(
+  clearing: IsolatedOwnerReader | undefined,
+  account: string,
+  blockTag?: number,
+) {
+  if (!clearing) return getAddress(account);
+  try {
+    return await signerAccount(clearing, account, blockTag);
+  } catch {
+    return getAddress(account);
   }
 }

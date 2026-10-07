@@ -122,3 +122,18 @@ test("verifySignedReport dry-runs the adapter and returns the market's observati
     ["oracle", "eth_call", "eth_call"],
   );
 });
+
+test("readChainState treats the owner as the signer of an isolated account", async () => {
+  const fixture = buildFixture(),
+    isolated = Wallet.createRandom().address,
+    state = chainState(Date.now());
+  state.isolatedOwners[isolated] = fixture.user.address;
+  const input = { ...request(fixture), intent: { ...fixture.intent, account: isolated } };
+  const snapshot = await snapshotOf(state, input);
+  assert.equal(snapshot.signingAccount, fixture.user.address);
+  assert.equal(snapshot.accountSignatureValid, true);
+  // Without the isolated link, the owner's signature does not sign for that account.
+  const ordinary = await snapshotOf(chainState(Date.now()), input);
+  assert.equal(ordinary.signingAccount, isolated);
+  assert.equal(ordinary.accountSignatureValid, false);
+});

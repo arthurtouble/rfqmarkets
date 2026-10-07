@@ -108,7 +108,9 @@ library RFQResolution {
             address owner = $.accountList[i];
             int256 equity = resolutionEquity(owner);
             uint256 owed = equity > 0 ? uint256(equity) : 0;
-            r.claim[owner] = owed;
+            // An isolated account's claim is paid to its owner.
+            address claimant = $.isolated[owner].owner;
+            r.claim[claimant == address(0) ? owner : claimant] += owed;
             claims += owed;
             Account storage account = $.accounts[owner];
             account.collateral = 0;

@@ -1,4 +1,4 @@
-import { Contract, Interface, JsonRpcProvider, toBeHex, toQuantity, type BlockTag } from "ethers";
+import { Contract, Interface, JsonRpcProvider, getAddress, toBeHex, toQuantity, type BlockTag } from "ethers";
 import { clearingApproverAbi } from "../../../packages/shared/src/abi.js";
 import {
   toExposureBook,
@@ -46,6 +46,8 @@ export interface ClearingReader {
   exposureState(market: number, at: At): Promise<ClearingBookStruct>;
   positionOf(account: string, market: number, at: At): Promise<ClearingPositionStruct>;
   sessions(signer: string, at: At): Promise<ClearingSessionStruct>;
+  /** Owner and market of an isolated account; a zero owner for an ordinary account. */
+  isolatedOwner(account: string, at: At): Promise<{ owner: string; market: bigint | number }>;
   makerBacking(at: At): Promise<bigint>;
   baseRiskCapitalTarget(at: At): Promise<bigint>;
   oracle(at: At): Promise<string>;
@@ -100,7 +102,9 @@ export interface ChainSnapshot {
   position: PositionState;
   backing: bigint;
   floor: bigint;
-  /** EOA signature by the account, or a valid ERC-1271 signature from it. */
+  /** The address that signs for the intent account: its owner when the account is isolated. */
+  signingAccount: string;
+  /** EOA signature by the signing account, or a valid ERC-1271 signature from it. */
   accountSignatureValid: boolean;
   /** Session of a non-account ECDSA signer. */
   session?: SessionState;
@@ -146,7 +150,10 @@ export async function readChainState(
     return { rejection: reject("market registry unavailable", 503) };
   }
   const indexes = Array.from({ length: marketCount }, (_, index) => index);
-  const signedByAccount = intentSigner === intent.account;
+  // An isolated account's intents are signed by its owner, directly or through the owner's session key.
+  const isolated = await clearing.isolatedOwner(intent.account, at),
+    signingAccount = BigInt(isolated.owner) === 0n ? intent.account : getAddress(isolated.owner);
+  const signedByAccount = intentSigner === signingAccount;
   const [
     block,
     secondaryBlock,
@@ -177,7 +184,7 @@ export async function readChainState(
     Promise.all(indexes.map(async (index) => BigInt(await clearing.marketLimitWord(index, at)))),
     signedByAccount
       ? Promise.resolve(true)
-      : chain.isValidSignature(intent.account, request.intentHash, request.userSignature, blockNumber),
+      : chain.isValidSignature(signingAccount, request.intentHash, request.userSignature, blockNumber),
     signedByAccount || intentSigner === undefined
       ? Promise.resolve(undefined)
       : clearing.sessions(intentSigner, at),
@@ -205,6 +212,7 @@ export async function readChainState(
       position: toPosition(position),
       backing: BigInt(backing),
       floor: BigInt(floor),
+      signingAccount,
       accountSignatureValid: Boolean(accountSignatureValid),
       session: session && toSession(session),
     },

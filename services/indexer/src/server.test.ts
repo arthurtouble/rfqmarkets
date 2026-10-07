@@ -7,6 +7,8 @@ import { DatabaseSync } from "node:sqlite";
 import {
   Interface,
   JsonRpcProvider,
+  Network,
+  Wallet,
   type Block,
   type Filter,
   type FilterByBlockHash,
@@ -15,7 +17,9 @@ import {
 } from "ethers";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
 import { LAUNCH_MARKETS, encodeMarketSymbol } from "../../../packages/shared/src/markets.js";
+import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import { buildIndexer } from "./server.js";
+import { referralTypes } from "./referrals.js";
 
 const account = "0x0000000000000000000000000000000000000002",
   clearing = "0x0000000000000000000000000000000000000001",
@@ -436,6 +440,135 @@ test("portfolio endpoints replay realized PnL, fees, funding and deposits from i
     const empty = await get(`/v1/portfolio/${clearing}`);
     assert.equal(empty.tradeCount, 0);
     assert.equal(empty.indexedCollateral, null);
+  } finally {
+    await app.close();
+    provider.destroy();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("leaderboard ranks owners with their isolated accounts, and points sum trade volume", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-index-")),
+    E = 10n ** 18n,
+    usdc = (value: bigint) => value * 1_000_000n,
+    referee = Wallet.createRandom(),
+    other = referee.address,
+    isolated = isolatedAccountAddress(account, 0),
+    blockHash = (number: number) => "0x" + number.toString(16).padStart(64, "0"),
+    log = (number: number, index: number, name: string, args: unknown[]) => ({
+      ...iface.encodeEventLog(iface.getEvent(name)!, args),
+      blockNumber: number,
+      blockHash: blockHash(number),
+      transactionHash: "0x" + (number * 100 + index).toString(16).padStart(64, "0"),
+      index,
+    }),
+    intent = "0x" + "33".repeat(32);
+  class LeaderboardChain extends JsonRpcProvider {
+    override async getNetwork() {
+      return new Network("test", 31_337n);
+    }
+    override async getCode() {
+      return "0x";
+    }
+    override async getBlockNumber() {
+      return 40;
+    }
+    override async getBlock(number: unknown) {
+      const height = Number(number);
+      return {
+        number: height,
+        hash: blockHash(height),
+        parentHash: hash,
+        timestamp: height * 3_600,
+      } as Block;
+    }
+    override async getLogs() {
+      return [
+        log(10, 0, "MarginTransferred", [account, isolated, 0, -usdc(500n)]),
+        log(10, 1, "MarginTransferred", [isolated, account, 0, usdc(500n)]),
+        // Two days before the newest block: inside 7d, outside 1d.
+        log(10, 2, "TradeExecuted", [intent, isolated, 0, E, usdc(300n), 0n]),
+        log(39, 0, "TradeExecuted", [intent, account, 0, E, usdc(100n), 0n]),
+        log(40, 0, "TradeExecuted", [intent, other, 0, 2n * E, usdc(1_500n), 0n]),
+      ] as unknown as Log[];
+    }
+    override async call(request: TransactionRequest) {
+      const decoded = iface.parseTransaction({ data: String(request.data) })!;
+      return iface.encodeFunctionResult(decoded.name, chainResult(decoded.name, decoded.args));
+    }
+  }
+  const provider = new LeaderboardChain(),
+    app = buildIndexer({
+      rpcUrl: "http://unused",
+      provider,
+      clearingAddress: clearing,
+      databasePath: join(directory, "index.sqlite"),
+      startBlock: 10,
+      confirmations: 0,
+      pollMs: 60_000,
+    });
+  const get = async (url: string) => {
+    const response = await app.inject({ method: "GET", url });
+    assert.equal(response.statusCode, 200, `${url}: ${response.body}`);
+    return response.json();
+  };
+  try {
+    await app.ready();
+    const week = await get("/v1/leaderboard?window=7d");
+    assert.deepEqual(
+      week.traders.map((row: { account: string; volume: string }) => [row.account, row.volume]),
+      [
+        [other, usdc(3_000n).toString()],
+        [account, usdc(400n).toString()],
+      ],
+    );
+    // The isolated account's trade two days ago falls outside the last day.
+    const day = await get("/v1/leaderboard?window=1d");
+    assert.deepEqual(
+      day.traders.map((row: { account: string; volume: string }) => [row.account, row.volume]),
+      [
+        [other, usdc(3_000n).toString()],
+        [account, usdc(100n).toString()],
+      ],
+    );
+    const points = await get(`/v1/points/${account}`);
+    assert.deepEqual(points.accounts, [account, isolated]);
+    assert.equal(points.total, "4");
+    assert.equal(points.referralPoints, "0");
+
+    // The referee binds the account as its referrer; the referrer then earns 10% of the referee's points.
+    const issuedAt = Math.floor(Date.now() / 1_000),
+      referral = { account: other, referrer: account, issuedAt },
+      signature = await referee.signTypedData(
+        { name: "RFQ Markets", version: "1", chainId: 31_337n, verifyingContract: clearing },
+        referralTypes,
+        referral,
+      ),
+      post = (body: unknown) => app.inject({ method: "POST", url: "/v1/referrals", payload: body as object });
+    assert.equal((await post({ ...referral, signature })).statusCode, 200);
+    assert.equal((await post({ ...referral, signature })).statusCode, 200, "idempotent");
+    const forged = await Wallet.createRandom().signTypedData(
+      { name: "RFQ Markets", version: "1", chainId: 31_337n, verifyingContract: clearing },
+      referralTypes,
+      { ...referral, referrer: other },
+    );
+    assert.equal((await post({ ...referral, referrer: clearing, signature: forged })).statusCode, 401);
+    assert.equal((await post({ ...referral, referrer: other, signature })).statusCode, 400, "self");
+    assert.equal((await post({ ...referral, issuedAt: issuedAt - 3_600, signature })).statusCode, 400);
+    const rebind = await referee.signTypedData(
+      { name: "RFQ Markets", version: "1", chainId: 31_337n, verifyingContract: clearing },
+      referralTypes,
+      { ...referral, referrer: clearing },
+    );
+    assert.equal((await post({ ...referral, referrer: clearing, signature: rebind })).statusCode, 409);
+    assert.deepEqual(await get(`/v1/referrals/${account}`), { account, referrer: null, referees: [other] });
+    assert.equal((await get(`/v1/referrals/${other}`)).referrer, account);
+    const referred = await get(`/v1/points/${account}`);
+    assert.equal(referred.referees, 1);
+    assert.equal(referred.referralPoints, "3");
+    assert.equal(referred.totalWithReferrals, "7");
+    for (const url of ["/v1/leaderboard?window=2d", "/v1/leaderboard?sort=fees", "/v1/points/0x12"])
+      assert.equal((await app.inject({ method: "GET", url })).statusCode, 400, url);
   } finally {
     await app.close();
     provider.destroy();

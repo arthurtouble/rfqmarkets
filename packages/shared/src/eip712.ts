@@ -51,6 +51,16 @@ export const withdrawalTypes: Record<string, Array<{ name: string; type: string 
     { name: "deadline", type: "uint64" },
   ],
 };
+/** Moves collateral into (positive `amount`) or out of (negative) the account's isolated account for `market`. */
+export const isolatedMarginTypes: Record<string, Array<{ name: string; type: string }>> = {
+  IsolatedMarginIntent: [
+    { name: "account", type: "address" },
+    { name: "market", type: "uint8" },
+    { name: "amount", type: "int256" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint64" },
+  ],
+};
 export const cancelTypes: Record<string, Array<{ name: string; type: string }>> = {
   CancelIntent: [
     { name: "account", type: "address" },
@@ -115,6 +125,13 @@ export interface MakerApproval {
 export interface WithdrawalIntent {
   account: string;
   recipient: string;
+  amount: bigint;
+  nonce: bigint;
+  deadline: bigint;
+}
+export interface IsolatedMarginIntent {
+  account: string;
+  market: number;
   amount: bigint;
   nonce: bigint;
   deadline: bigint;
@@ -254,6 +271,12 @@ export const approvalToWire = (approval: MakerApproval) => ({
   policyVersion: approval.policyVersion.toString(),
 });
 export const withdrawalToWire = (intent: WithdrawalIntent) => ({
+  ...intent,
+  amount: intent.amount.toString(),
+  nonce: intent.nonce.toString(),
+  deadline: intent.deadline.toString(),
+});
+export const isolatedMarginToWire = (intent: IsolatedMarginIntent) => ({
   ...intent,
   amount: intent.amount.toString(),
   nonce: intent.nonce.toString(),

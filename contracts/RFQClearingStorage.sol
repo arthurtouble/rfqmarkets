@@ -55,6 +55,8 @@ abstract contract RFQClearingNamespace {
         RiskOperatorBounds riskOperatorBounds;
         uint16 defaultSpreadBps; // base quote spread for markets without their own; 0 = the services' built-in default
         mapping(uint8 => uint16) marketSpreadBps; // 0 = use the default
+        // Isolated margin (v1.2, appended after the risk operator fields): isolated account => its owner and market; zero owner for ordinary accounts
+        mapping(address => IsolatedAccount) isolated;
     }
 }
 

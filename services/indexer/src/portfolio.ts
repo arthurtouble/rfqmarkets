@@ -1,6 +1,7 @@
 // Account portfolio history replayed from indexed clearing events. Realized PnL mirrors
 // RFQRiskMath.positionTransition exactly, so the replayed ledger reconciles with on-chain collateral:
-// collateral = netDeposits + realizedPnl - fees + funding - liquidationPenalties + deficitCovered.
+// collateral = netDeposits + realizedPnl - fees + funding - liquidationPenalties + deficitCovered, where
+// netDeposits also counts margin moved to or from isolated accounts (MarginTransferred).
 // Amounts are USDC micro-units, sizes are 1e18 base units, prices are USDC micro-units per whole base unit.
 
 import { marketRegistry, type Market } from "../../../packages/shared/src/markets.js";
@@ -63,6 +64,8 @@ export interface PortfolioTotals {
   deficitCovered: bigint;
   deposits: bigint;
   withdrawals: bigint;
+  /** Net margin moved in from (positive) or out to (negative) the owner's isolated accounts or their owner. */
+  transfers: bigint;
   volume: bigint;
   tradeCount: number;
 }
@@ -77,7 +80,7 @@ export interface PortfolioPoint {
   liquidationPenalties: string;
   /** realizedPnl - fees + funding - liquidationPenalties. */
   netPnl: string;
-  /** deposits - withdrawals. */
+  /** deposits - withdrawals + transfers. */
   netDeposits: string;
   /** netDeposits + netPnl + deficitCovered: the replayed collateral balance. */
   collateral: string;
@@ -132,6 +135,7 @@ export function replayPortfolio(events: readonly PortfolioEvent[]): PortfolioRep
       deficitCovered: 0n,
       deposits: 0n,
       withdrawals: 0n,
+      transfers: 0n,
       volume: 0n,
       tradeCount: 0,
     },
@@ -178,7 +182,7 @@ export function replayPortfolio(events: readonly PortfolioEvent[]): PortfolioRep
 
   const point = (event: PortfolioEvent) => {
     const netPnl = totals.realizedPnl - totals.fees + totals.funding - totals.liquidationPenalties,
-      netDeposits = totals.deposits - totals.withdrawals,
+      netDeposits = totals.deposits - totals.withdrawals + totals.transfers,
       value: PortfolioPoint = {
         timeMs: event.timestamp * 1_000,
         blockNumber: event.blockNumber,
@@ -248,6 +252,9 @@ export function replayPortfolio(events: readonly PortfolioEvent[]): PortfolioRep
           break;
         case "Withdrawn":
           totals.withdrawals += BigInt(payload.amount);
+          break;
+        case "MarginTransferred":
+          totals.transfers += BigInt(payload.amount);
           break;
         case "FundingSettled": {
           if (!market) continue;

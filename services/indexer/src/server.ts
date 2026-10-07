@@ -24,6 +24,18 @@ import {
   type PortfolioEvent,
   type PortfolioReplay,
 } from "./portfolio.js";
+import {
+  LEADERBOARD_WINDOWS,
+  mergeByOwner,
+  rankTraders,
+  weeklyPoints,
+  windowStats,
+  type LeaderboardWindow,
+  type WindowStats,
+} from "./leaderboard.js";
+import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
+import { validOwnerSignature } from "../../api/src/owner-signature.js";
+import { referralBonus, referralDigest, referralTermsError } from "./referrals.js";
 
 export interface IndexerOptions {
   rpcUrl: string;
@@ -54,6 +66,7 @@ const SCHEMA_VERSION = "2";
 const ACTIVITY_KINDS = [
   "Deposited",
   "Withdrawn",
+  "MarginTransferred",
   "NonceCancelled",
   "SessionGranted",
   "SessionRevoked",
@@ -142,6 +155,22 @@ const portfolioPageQuery = z.object({
   market: fillMarket,
   finalized: isTrue,
 });
+const leaderboardQuery = z.object({
+  window: z
+    .enum(Object.keys(LEADERBOARD_WINDOWS) as [LeaderboardWindow, ...LeaderboardWindow[]], {
+      message: "invalid window",
+    })
+    .default("7d"),
+  sort: z.enum(["volume", "pnl"], { message: "invalid sort" }).default("volume"),
+  limit: pageLimit(50),
+  finalized: isTrue,
+});
+const referralBody = z.object({
+  account: address("invalid account"),
+  referrer: address("invalid referrer"),
+  issuedAt: z.number().int().nonnegative(),
+  signature: z.string().regex(/^0x[0-9a-fA-F]{130,}$/, "invalid signature"),
+});
 /** Replays kept per (account, finality, indexed block); each request after a new block replays again. */
 const PORTFOLIO_CACHE_SIZE = 256;
 const positionsQuery = z.object({
@@ -189,6 +218,10 @@ export function buildIndexer(options: IndexerOptions) {
     );
     db.prepare("INSERT INTO metadata VALUES('schema_version',?)").run(SCHEMA_VERSION);
   }
+  // Referrals are signed by users, not read from chain, so neither a reindex nor a schema bump drops them.
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS referrals(account TEXT PRIMARY KEY,referrer TEXT NOT NULL,issued_at INTEGER NOT NULL,signature TEXT NOT NULL,created_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS referrals_referrer ON referrals(referrer)",
+  );
   db.exec(
     "CREATE TABLE IF NOT EXISTS blocks(number INTEGER PRIMARY KEY,hash TEXT NOT NULL,parent_hash TEXT NOT NULL,timestamp INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS activity(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,block_number INTEGER NOT NULL,block_hash TEXT NOT NULL,timestamp INTEGER NOT NULL,kind TEXT NOT NULL,account TEXT,market INTEGER,payload TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index)); CREATE INDEX IF NOT EXISTS activity_account_block ON activity(account,block_number DESC,log_index DESC); CREATE TABLE IF NOT EXISTS accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS finalized_accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS positions(account TEXT NOT NULL,market INTEGER NOT NULL,size TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(account,market)); CREATE TABLE IF NOT EXISTS finalized_positions(account TEXT NOT NULL,market INTEGER NOT NULL,size TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(account,market)); CREATE INDEX IF NOT EXISTS positions_market ON positions(market,account); CREATE INDEX IF NOT EXISTS finalized_positions_market ON finalized_positions(market,account); CREATE TABLE IF NOT EXISTS liquidation_marks(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,bid TEXT NOT NULL,ask TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index))",
   );
@@ -719,7 +752,7 @@ export function buildIndexer(options: IndexerOptions) {
       replay = portfolio(params.address, scope.through, query.finalized),
       totals = replay.totals,
       netPnl = totals.realizedPnl - totals.fees + totals.funding - totals.liquidationPenalties,
-      netDeposits = totals.deposits - totals.withdrawals,
+      netDeposits = totals.deposits - totals.withdrawals + totals.transfers,
       stored = db
         .prepare(
           `SELECT collateral FROM ${query.finalized ? "finalized_accounts" : "accounts"} WHERE account=?`,
@@ -739,6 +772,7 @@ export function buildIndexer(options: IndexerOptions) {
       netPnl: netPnl.toString(),
       deposits: totals.deposits.toString(),
       withdrawals: totals.withdrawals.toString(),
+      marginTransfers: totals.transfers.toString(),
       netDeposits: netDeposits.toString(),
       collateral: (netDeposits + netPnl + totals.deficitCovered).toString(),
       indexedCollateral: stored?.collateral ?? null,
@@ -800,6 +834,144 @@ export function buildIndexer(options: IndexerOptions) {
       totalFunding: items.reduce((sum, item) => sum + BigInt(item.amount), 0n).toString(),
       indexedBlock: scope.through,
     };
+  });
+  /** Isolated account -> owner, from the margin moves that created them (the address is derived, so checkable). */
+  function isolatedOwners(throughBlock: number) {
+    const owners = new Map<string, string>(),
+      rows = db
+        .prepare("SELECT payload FROM activity WHERE kind='MarginTransferred' AND block_number<=?")
+        .all(throughBlock) as Array<{ payload: string }>;
+    for (const row of rows) {
+      const { account, counterparty, market } = JSON.parse(row.payload) as Record<string, string>;
+      if (!account || !counterparty || market === undefined) continue;
+      const isolated = getAddress(account),
+        owner = getAddress(counterparty);
+      if (isolatedAccountAddress(owner, Number(market)) === isolated) owners.set(isolated, owner);
+    }
+    return owners;
+  }
+  /** Leaderboards are recomputed at most once per (indexed block, finality, window). */
+  const leaderboardCache = new Map<string, Map<string, WindowStats & { accounts: string[] }>>();
+  function traderStats(throughBlock: number, finalized: boolean, window: LeaderboardWindow) {
+    const key = `${throughBlock}:${finalized}:${window}`,
+      cached = leaderboardCache.get(key);
+    if (cached) return cached;
+    // Windows end at the newest indexed block's time, so the board only moves when the index does.
+    const endMs =
+        ((
+          db.prepare("SELECT max(timestamp) value FROM blocks WHERE number<=?").get(throughBlock) as {
+            value: number | null;
+          }
+        ).value ?? 0) * 1_000,
+      sinceMs = window === "all" ? -Infinity : endMs - LEADERBOARD_WINDOWS[window],
+      accounts = db
+        .prepare("SELECT DISTINCT account FROM activity WHERE kind='TradeExecuted' AND block_number<=?")
+        .all(throughBlock) as Array<{ account: string }>,
+      stats = new Map<string, WindowStats>();
+    for (const { account } of accounts)
+      stats.set(account, windowStats(portfolio(account, throughBlock, finalized), sinceMs));
+    const owners = isolatedOwners(throughBlock),
+      merged = mergeByOwner(stats, (account) => owners.get(account));
+    if (leaderboardCache.size >= 16) leaderboardCache.clear();
+    leaderboardCache.set(key, merged);
+    return merged;
+  }
+  app.get("/v1/leaderboard", async (request, reply) => {
+    await sync();
+    const query = parse(leaderboardQuery, request.query, reply);
+    if (!query) return;
+    const scope = await portfolioScope(query.finalized);
+    return {
+      window: query.window,
+      sort: query.sort,
+      finality: query.finalized ? "finalized" : "included",
+      indexedBlock: scope.through,
+      traders: rankTraders(
+        traderStats(scope.through, query.finalized, query.window),
+        query.sort,
+        query.limit,
+      ),
+    };
+  });
+  /** Weekly points of an owner and its isolated accounts. */
+  function pointsOf(owner: string, throughBlock: number, finalized: boolean, owners: Map<string, string>) {
+    const accounts = [
+      owner,
+      ...[...owners].filter(([, value]) => value === owner).map(([isolated]) => isolated),
+    ];
+    return {
+      accounts,
+      ...weeklyPoints(accounts.map((account) => portfolio(account, throughBlock, finalized))),
+    };
+  }
+  const refereesOf = (referrer: string) =>
+    (
+      db
+        .prepare("SELECT account FROM referrals WHERE referrer=? ORDER BY created_ms,account")
+        .all(referrer) as Array<{
+        account: string;
+      }>
+    ).map((row) => row.account);
+  app.get("/v1/points/:address", async (request, reply) => {
+    await sync();
+    const params = parse(accountParams, request.params, reply),
+      query = params && parse(finalityQuery, request.query, reply);
+    if (!params || !query) return;
+    const scope = await portfolioScope(query.finalized),
+      owners = isolatedOwners(scope.through),
+      own = pointsOf(params.address, scope.through, query.finalized, owners),
+      referees = refereesOf(params.address),
+      bonus = referralBonus(
+        referees.map((referee) => BigInt(pointsOf(referee, scope.through, query.finalized, owners).total)),
+      );
+    return {
+      account: params.address,
+      finality: query.finalized ? "finalized" : "included",
+      indexedBlock: scope.through,
+      ...own,
+      referees: referees.length,
+      referralPoints: bonus.toString(),
+      totalWithReferrals: (BigInt(own.total) + bonus).toString(),
+    };
+  });
+  let chainId: Promise<bigint> | undefined;
+  app.post("/v1/referrals", async (request, reply) => {
+    const body = parse(referralBody, request.body, reply);
+    if (!body) return;
+    const termsError = referralTermsError(body, Math.floor(Date.now() / 1_000));
+    if (termsError) return reply.code(400).send({ error: termsError });
+    chainId ??= provider.getNetwork().then((network) => network.chainId);
+    let digest: string;
+    try {
+      digest = referralDigest(await chainId, getAddress(options.clearingAddress), body);
+    } catch {
+      chainId = undefined;
+      return reply.code(503).send({ error: "chain unavailable" });
+    }
+    // An isolated account has no key, so only an EOA or an ERC-1271 wallet can bind a referrer.
+    if (!(await validOwnerSignature(body.account, digest, body.signature, readProvider)))
+      return reply.code(401).send({ error: "invalid referral signature" });
+    const inserted = db
+      .prepare(
+        "INSERT INTO referrals(account,referrer,issued_at,signature,created_ms) VALUES(?,?,?,?,?) ON CONFLICT(account) DO NOTHING",
+      )
+      .run(body.account, body.referrer, body.issuedAt, body.signature, Date.now());
+    if (!inserted.changes) {
+      const existing = db.prepare("SELECT referrer FROM referrals WHERE account=?").get(body.account) as {
+        referrer: string;
+      };
+      // Re-submitting the same referral is idempotent; a different referrer is refused.
+      if (existing.referrer !== body.referrer) return reply.code(409).send({ error: "referrer already set" });
+    }
+    return { account: body.account, referrer: body.referrer };
+  });
+  app.get("/v1/referrals/:address", async (request, reply) => {
+    const params = parse(accountParams, request.params, reply);
+    if (!params) return;
+    const row = db.prepare("SELECT referrer FROM referrals WHERE account=?").get(params.address) as
+        { referrer: string } | undefined,
+      referees = refereesOf(params.address);
+    return { account: params.address, referrer: row?.referrer ?? null, referees };
   });
   // Reads contract state directly, so it does not wait on a log sync: a slow sync must not starve the
   // hedger's once-a-second exposure check.

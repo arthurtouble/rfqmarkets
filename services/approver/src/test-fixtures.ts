@@ -149,6 +149,8 @@ export interface FakeChainState {
   limitWords: bigint[];
   position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
   sessions: Record<string, ClearingSessionStruct>;
+  /** Isolated account => owner; accounts not listed are ordinary. */
+  isolatedOwners: Record<string, string>;
   erc1271: boolean;
   backing: bigint;
   floor: bigint;
@@ -188,6 +190,7 @@ export function chainState(nowMs: number): FakeChainState {
     limitWords: [word(LARGE), word(LARGE)],
     position: { size: 0n, entryPrice: 0n, lastFundingIndex: 0n },
     sessions: {},
+    isolatedOwners: {},
     erc1271: false,
     backing: LARGE,
     floor: 0n,
@@ -251,6 +254,11 @@ export function fakeChain(state: FakeChainState): ChainClients & { calls: string
     exposureState: (index: number) => read("exposureState", () => state.books[index] as never),
     positionOf: () => read("positionOf", () => state.position),
     sessions: (signer: string) => read("sessions", () => state.sessions[signer]),
+    isolatedOwner: (account: string) =>
+      read("isolatedOwner", () => ({
+        owner: state.isolatedOwners[account] ?? "0x0000000000000000000000000000000000000000",
+        market: 0n,
+      })),
     makerBacking: () => read("makerBacking", () => state.backing),
     baseRiskCapitalTarget: () => read("baseRiskCapitalTarget", () => state.floor),
     oracle: () => read("oracle", () => state.oracle),

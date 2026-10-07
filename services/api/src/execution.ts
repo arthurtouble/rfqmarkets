@@ -41,7 +41,8 @@ import { Reply } from "./http.js";
 import { recordFlowFill } from "./journal.js";
 import type { MarketStream } from "./market-stream.js";
 import { abs, marketIndex, marketRegistry, unixSeconds } from "./markets.js";
-import { validOwnerSignature } from "./owner-signature.js";
+import type { IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
+import { signingAccount, validOwnerSignature } from "./owner-signature.js";
 import { approverPolicyRejection, publicError } from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
 import type { CreatedQuote, QuoteEngine } from "./quoting.js";
@@ -343,10 +344,16 @@ export class ExecutionService {
       try {
         signer = recoverDigestSigner(domain, intent, signature, trigger);
       } catch {}
-      if (signer === intent.account) return true;
+      // An isolated account's intents are signed by its owner (or the owner's session key).
+      const owner = await signingAccount(
+        clearing as IsolatedOwnerReader | undefined,
+        intent.account,
+        blockNumber,
+      );
+      if (signer === owner) return true;
       if (
         await validOwnerSignature(
-          intent.account,
+          owner,
           intentDigest(domain, intent, trigger),
           signature,
           provider,
@@ -357,7 +364,7 @@ export class ExecutionService {
       if (!clearing || !signer) return false;
       const session = await clearing.sessions(signer, { blockTag: blockNumber });
       return (
-        getAddress(session.account) === intent.account &&
+        getAddress(session.account) === owner &&
         BigInt(session.validUntil) >= intent.deadline &&
         maskAllows(session.marketMask, intent.market) &&
         BigInt(session.maxFee) >= intent.maxFee

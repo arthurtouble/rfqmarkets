@@ -36,6 +36,8 @@ The public surface is deliberately narrow:
 - `GET /v1/positions?finalized=true&cursor=&limit=` returns an indexed page of pseudonymous open positions.
 - `GET /v1/protocol` returns pause/resolution state and the current epoch/version metadata needed for display.
 - `GET /v1/portfolio/:address`, `/v1/portfolio/:address/history`, `/v1/portfolio/:address/trades` and `GET /v1/funding/:address` return the portfolio history described below.
+- `GET /v1/leaderboard` and `GET /v1/points/:address` return the leaderboard and trading points described below.
+- `POST /v1/referrals` and `GET /v1/referrals/:address` record and read referrals, described below. It is the indexer's only write.
 
 ## Portfolio history
 
@@ -118,3 +120,28 @@ Recovery deletes the disposable local SQLite file or restores production Postgre
 ## Contract event improvement before testnet
 
 Add a compact `AccountStateChanged` event emitted after deposit, withdrawal, trade, funding settlement and liquidation, or retain event-block state reads and benchmark them. The event reduces RPC load and makes historical auditing easier, but it increases clearing bytecode that is already near the project size gate. The preferred production split moves view/resolution helpers out first, then adds the event if the measured indexing savings justify it.
+
+## Leaderboard and points
+
+Both are derived from the same portfolio replays, so anyone can recompute them from chain. An isolated account counts towards its owner: the indexer pairs each `MarginTransferred` with its counterparty and accepts the pair only when the isolated address is the one derived from `(owner, market)`.
+
+`GET /v1/leaderboard?window=1d|7d|30d|all&sort=volume|pnl&limit=1..100&finalized=` ranks traders with at least one trade in the window (default `7d`, `volume`, 50). The window ends at the newest indexed block's timestamp. `volume` is trade notional (closes and liquidations are not counted), and `netPnl` is the change in `realizedPnl - fees + funding - liquidationPenalties` over the window. Ties go to the lower address. Results are cached per indexed block, finality and window.
+
+```json
+{ "window": "7d", "sort": "volume", "finality": "included", "indexedBlock": 40,
+  "traders": [{ "rank": 1, "account": "0x…", "volume": "400000000", "netPnl": "0", "tradeCount": 2, "points": "4" }] }
+```
+
+`GET /v1/points/:address?finalized=` returns trading points for an owner and its isolated accounts: one point per 100 USDC of trade notional, counted per UTC week (weeks start on the epoch's Thursday).
+
+```json
+{ "account": "0x…", "accounts": ["0x…", "0x…"], "total": "4",
+  "weeks": [{ "weekStartMs": 0, "volume": "400000000", "points": "4" }],
+  "referees": 1, "referralPoints": "3", "totalWithReferrals": "7" }
+```
+
+## Referrals
+
+An account names its referrer by signing `Referral(address account,address referrer,uint64 issuedAt)` under the venue's EIP-712 domain (`RFQ Markets`, version `1`, the chain id and the clearing contract) and posting `{ account, referrer, issuedAt, signature }` to `POST /v1/referrals`. The signature must come from the account (an EOA, or an ERC-1271 wallet at that address), within 10 minutes of `issuedAt`, and an account cannot refer itself. The first referral is permanent: posting the same one again is a no-op and a different referrer gets 409. Isolated accounts have no key, so their owner's referral covers them.
+
+A referrer earns 10% of its referees' points (rounded down, one level only), reported by `GET /v1/points/:address` as `referralPoints` and `totalWithReferrals`. `GET /v1/referrals/:address` returns `{ account, referrer, referees }`. Referrals are stored beside the index but are not chain data, so a reindex or schema change keeps them.

@@ -14,6 +14,9 @@ interface IRFQClearingEvents {
     event FundingSettled(address indexed account, uint8 indexed market, int256 payment);
     event Liquidated(address indexed account, uint8 market, uint256 closedBase, uint256 penalty, uint256 keeperReward);
     event DeficitAbsorbed(address indexed account, uint256 insuranceUsed, uint256 makerUsed, uint256 unresolved);
+    /// @notice Collateral moved between an account and its isolated account, emitted once for each side:
+    /// `amount` is the change to `account`'s collateral and `counterparty` is the other side.
+    event MarginTransferred(address indexed account, address indexed counterparty, uint8 indexed market, int256 amount);
     event SessionGranted(
         address indexed account, address indexed session, uint64 validUntil, uint128 maxCumulativeNotional
     );

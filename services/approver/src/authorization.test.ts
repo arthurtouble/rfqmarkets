@@ -45,7 +45,14 @@ test("checkUserAuthorization accepts account signatures and bounded sessions onl
       usedNotional: notional,
       maxFee: approval.fee,
     },
-    input = { accountSignatureValid: false, session, intent, fee: approval.fee, notional };
+    input = {
+      signingAccount: intent.account,
+      accountSignatureValid: false,
+      session,
+      intent,
+      fee: approval.fee,
+      notional,
+    };
   assert.equal(
     checkUserAuthorization({ ...input, accountSignatureValid: true, session: undefined }),
     undefined,
@@ -64,4 +71,32 @@ test("checkUserAuthorization accepts account signatures and bounded sessions onl
       error(checkUserAuthorization({ ...input, session: changed })),
       "user authorization rejected",
     );
+});
+
+test("an isolated account is authorized by its owner's session, not by a session of its own", () => {
+  const { intent, approval } = buildFixture(),
+    owner = Wallet.createRandom().address,
+    notional = 1_000_000n,
+    session = {
+      account: owner,
+      validUntil: intent.deadline,
+      marketMask: 1n,
+      maxTradeNotional: notional,
+      maxCumulativeNotional: 2n * notional,
+      usedNotional: 0n,
+      maxFee: approval.fee,
+    },
+    input = {
+      signingAccount: owner,
+      accountSignatureValid: false,
+      session,
+      intent,
+      fee: approval.fee,
+      notional,
+    };
+  assert.equal(checkUserAuthorization(input), undefined);
+  assert.equal(
+    error(checkUserAuthorization({ ...input, session: { ...session, account: intent.account } })),
+    "user authorization rejected",
+  );
 });

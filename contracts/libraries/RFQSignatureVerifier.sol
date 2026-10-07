@@ -4,6 +4,7 @@ pragma solidity 0.8.34;
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {RFQClearingNamespace, RFQClearingStorage} from "../RFQClearingStorage.sol";
+import {RFQLedger} from "./RFQLedger.sol";
 import "../RFQTypes.sol";
 
 /// @notice EIP-712 authorization for RFQClearing: trader intents, owner actions and the 2-of-3 approver quorum.
@@ -14,7 +15,8 @@ library RFQSignatureVerifier {
     }
 
     /// @notice Verifies an owner-signed action (withdraw, cancel, close, session grant) and burns its nonce.
-    /// @dev EOAs, ERC-1271 contract wallets and EIP-7702 accounts are all accepted.
+    /// @dev EOAs, ERC-1271 contract wallets and EIP-7702 accounts are all accepted. An isolated account's
+    /// actions are signed by its owner and burn the isolated account's own nonce.
     function consumeOwnerAuthorization(
         address account,
         uint256 nonce,
@@ -24,7 +26,9 @@ library RFQSignatureVerifier {
     ) public {
         mapping(uint256 => bool) storage used = RFQClearingStorage.layout().nonceUsed[account];
         if (block.timestamp > deadline || account == address(0) || used[nonce]) revert Replay();
-        if (!SignatureChecker.isValidSignatureNowCalldata(account, _hashTypedData(structHash), signature)) {
+        if (!SignatureChecker.isValidSignatureNowCalldata(
+                RFQLedger.signerOf(account), _hashTypedData(structHash), signature
+            )) {
             revert InvalidSignature();
         }
         used[nonce] = true;
@@ -102,7 +106,9 @@ library RFQSignatureVerifier {
 
         digest = _hashTypedData(structHash);
         if (approval.intentHash != digest) revert InvalidSignature();
-        if (SignatureChecker.isValidSignatureNowCalldata(intent.account, digest, signature)) {
+        // The owner signs for its isolated accounts, directly or through one of its session keys.
+        address signer = RFQLedger.signerOf(intent.account);
+        if (SignatureChecker.isValidSignatureNowCalldata(signer, digest, signature)) {
             return (digest, address(0));
         }
 
@@ -110,9 +116,8 @@ library RFQSignatureVerifier {
         sessionSigner = ECDSA.recoverCalldata(digest, signature);
         Session storage session = $.sessions[sessionSigner];
         if (
-            session.account != intent.account || block.timestamp > session.validUntil
-                || intent.deadline > session.validUntil || session.marketMask & (uint256(1) << intent.market) == 0
-                || approval.fee > session.maxFee
+            session.account != signer || block.timestamp > session.validUntil || intent.deadline > session.validUntil
+                || session.marketMask & (uint256(1) << intent.market) == 0 || approval.fee > session.maxFee
         ) revert Unauthorized();
     }
 

@@ -6,6 +6,7 @@ import { network } from "hardhat";
 import { JsonRpcProvider } from "ethers";
 import { buildApi } from "../services/api/src/server.ts";
 import { approvalTypes } from "../packages/shared/src/eip712.ts";
+import { isolatedAccountAddress } from "../packages/shared/src/isolated.ts";
 import {
   deployLinked,
   deploySignedOracle,
@@ -242,8 +243,64 @@ try {
   assert.equal(account.maintenanceMargin, account.onchain.maintenanceMargin);
   assert.equal(account.marginParameters.BTC.maxLeverage, 20);
   assert.equal(account.marginParameters.ETH.maxLeverage, 5);
+  // Isolated margin: the owner moves margin into its BTC isolated account, signs a trade for that account, and the
+  // owner's account view lists it while the isolated account reports its own margin.
+  const move = await post("/v1/isolated/margin/prepare", {
+      account: user.address,
+      market: "BTC",
+      direction: "add",
+      amount: "500",
+      nonce: "900",
+    }),
+    moved = await post("/v1/isolated/margin/execute", {
+      intent: move.intent,
+      userSignature: await user.signTypedData(move.domain, move.types, move.intent),
+    });
+  const isolated = isolatedAccountAddress(user.address, 0);
+  assert.equal(moved.isolated.account, isolated);
+  assert.equal(moved.isolated.collateral, "500000000");
+  const isolatedOrder = async (nonce, signer) => {
+    const quote = await post("/v1/quote", { market: "BTC", side: "buy", amount: "100" }),
+      prepared = await post("/v1/prepare", { quoteId: quote.quoteId, account: isolated, nonce }),
+      userSignature = await signer.signTypedData(prepared.domain, prepared.types, prepared.intent);
+    return app.inject({
+      method: "POST",
+      url: "/v1/approve",
+      payload: { quoteId: quote.quoteId, account: isolated, nonce, userSignature },
+    });
+  };
+  const filled = await isolatedOrder("901", user);
+  assert.equal(filled.statusCode, 200, filled.body);
+  assert((await clearing.positionOf(isolated, 0)).size > 0n);
+  const owner = (await app.inject(`/v1/account/${user.address}`)).json();
+  assert.equal(owner.marginMode, "cross");
+  assert.equal(owner.isolated.length, 1);
+  assert.equal(owner.isolated[0].account, isolated);
+  assert(BigInt(owner.isolated[0].size) > 0n);
+  const isolatedView = (await app.inject(`/v1/account/${isolated}`)).json();
+  assert.equal(isolatedView.marginMode, "isolated");
+  assert.equal(isolatedView.isolatedOwner, user.address);
+  assert.equal(isolatedView.initialMargin, isolatedView.onchain.initialMargin);
+  // A resting order for the isolated account is placed with the owner's signature.
+  const limit = await post("/v1/orders/prepare", {
+    account: isolated,
+    market: "BTC",
+    side: "buy",
+    amount: "100",
+    limitPrice: "1000",
+    durationSeconds: 3600,
+    nonce: "903",
+  });
+  const placed = await post("/v1/orders", {
+    orderId: limit.orderId,
+    userSignature: await user.signTypedData(limit.domain, limit.types, limit.intent),
+  });
+  assert.equal(placed.orderId, limit.orderId);
+  // Another wallet cannot sign for the isolated account.
+  const forged = await isolatedOrder("902", maker);
+  assert.notEqual(forged.statusCode, 200, forged.body);
   console.log(
-    "Runtime identity and account response E2E passed: dual RPC/code/feed/authority rejection, mixed winner/loser opening margin and separate-leg rounding match canonical clearing at a pinned block",
+    "Runtime identity and account response E2E passed: dual RPC/code/feed/authority rejection, mixed winner/loser opening margin and separate-leg rounding match canonical clearing at a pinned block; isolated margin move, owner-signed isolated trade and isolated account views",
   );
 } finally {
   await app.close();
