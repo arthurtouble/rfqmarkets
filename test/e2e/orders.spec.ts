@@ -25,8 +25,23 @@ type Prepared = {
   intent: Record<string, unknown>;
 };
 
+/**
+ * Retries a quote-to-settle round trip: right after a price control jump the first firm quote can
+ * be priced before the move and is then refused as "price moved beyond signed protection".
+ */
+async function settled(attempt: () => Promise<void>) {
+  for (let tries = 1; ; tries++) {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (tries >= 5 || !String(error).includes("price moved")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
 /** Trades through the API with the dev wallet, so these specs do not depend on the ticket. */
-async function trade(wallet: Wallet, side: "buy" | "sell", amount: string, reduceOnly = false) {
+async function tradeOnce(wallet: Wallet, side: "buy" | "sell", amount: string, reduceOnly = false) {
   const quote = await post<{ quoteId: string }>("/v1/quote", { market: MARKET, side, amount });
   const id = nonce();
   const prepared = await post<Prepared>("/v1/prepare", {
@@ -39,6 +54,9 @@ async function trade(wallet: Wallet, side: "buy" | "sell", amount: string, reduc
   await post("/v1/approve", { quoteId: quote.quoteId, account: wallet.address, nonce: id, userSignature });
 }
 
+const trade = (wallet: Wallet, side: "buy" | "sell", amount: string) =>
+  settled(() => tradeOnce(wallet, side, amount));
+
 type Position = { size: string };
 const positionSize = async (account: string) =>
   BigInt(
@@ -50,7 +68,7 @@ const positionSize = async (account: string) =>
   );
 
 /** Flattens the ETH position so each test starts from a known state. */
-async function flatten(wallet: Wallet) {
+async function flattenOnce(wallet: Wallet) {
   const size = await positionSize(wallet.address);
   if (size === 0n) return;
   const quote = await post<{ quoteId: string }>("/v1/close/quote", {
@@ -67,6 +85,8 @@ async function flatten(wallet: Wallet) {
   const userSignature = await wallet.signTypedData(prepared.domain, prepared.types, prepared.intent);
   await post("/v1/approve", { quoteId: quote.quoteId, account: wallet.address, nonce: id, userSignature });
 }
+
+const flatten = (wallet: Wallet) => settled(() => flattenOnce(wallet));
 
 async function setup(page: Page, stack: typeof import("./stack.js"), advanced = false) {
   const { privateKey } = await stack.devWallet();
