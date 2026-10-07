@@ -12,6 +12,7 @@ test("routes public reads to the indexer and market streams to the gateway", () 
   assert.equal(serviceForPath("/v1/markets/stream"), "MARKET_GATEWAY");
   assert.equal(serviceForPath("/v1/markets/history?market=BTC"), "MARKET_GATEWAY");
   assert.equal(serviceForPath("/v1/candles?market=BTC&interval=1h"), "MARKET_GATEWAY");
+  assert.equal(serviceForPath("/v1/markets/stats"), "MARKET_GATEWAY");
   const account = "0x" + "ab".repeat(20);
   assert.equal(serviceForPath(`/v1/portfolio/${account}`), "INDEXER");
   assert.equal(serviceForPath(`/v1/portfolio/${account}/history`), "INDEXER");
