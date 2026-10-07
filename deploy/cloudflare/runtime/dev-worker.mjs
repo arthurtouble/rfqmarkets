@@ -1,5 +1,5 @@
 import { Container, getContainer, switchPort } from "@cloudflare/containers";
-import { portForPath } from "./routing.mjs";
+import { hedgerOpsPath, portForPath } from "./routing.mjs";
 import { admitAtEdge } from "./edge-admission.mjs";
 import { loadJournals, saveJournals } from "./dev-journal-store.mjs";
 import { ensureIdentities, matchesDeployment, publicIdentities } from "./dev-identities.mjs";
@@ -11,6 +11,7 @@ import { ensureIdentities, matchesDeployment, publicIdentities } from "./dev-ide
 // Journals also live in Durable Object storage, keyed by proxy address, so a fresh contract
 // deployment starts with empty journals.
 const CONTROL = 4099,
+  HEDGER = 4400,
   INSTANCE = "base-mainnet-dev",
   control = (path) => `http://container${path}`;
 const json = (value, status = 200, headers = {}) =>
@@ -59,6 +60,7 @@ export class RFQDevRuntime extends Container {
       return { ready: false, reason: "approver_keys_do_not_match_deployment" };
     const secrets = {
       ...JSON.parse(this.env.RFQ_DEV_RUNTIME_SECRETS),
+      hedgeToken: await this.hedgeToken(),
       sponsorKey: identities.sponsor.privateKey,
       approverKeys: identities.approvers.map((item) => item.privateKey),
     };
@@ -89,6 +91,30 @@ export class RFQDevRuntime extends Container {
     }
     this.readyUntil = Date.now() + 15_000;
     return { ready: true };
+  }
+
+  /** The hedger's operations token, kept in this Durable Object so the dashboard route can use it. */
+  async hedgeToken() {
+    let token = await this.ctx.storage.get("hedge-ops-token");
+    if (!token) {
+      token = `dev-hedge-${crypto.randomUUID()}`;
+      await this.ctx.storage.put("hedge-ops-token", token);
+    }
+    return token;
+  }
+
+  /** Hedger status for the Access-protected operations dashboard; the token never leaves the runtime. */
+  async hedgerStatus(path, accept) {
+    const ready = await this.ensureRunning();
+    if (!ready.ready)
+      return json({ error: "runtime_unavailable", reason: ready.reason }, 503, { "retry-after": "30" });
+    const headers = { authorization: `Bearer ${await this.hedgeToken()}`, accept: accept ?? "*/*" };
+    try {
+      return await this.containerFetch(new Request(`http://container${path}`, { headers }), HEDGER);
+    } catch {
+      this.readyUntil = 0;
+      return json({ error: "runtime_starting" }, 503, { "retry-after": "5" });
+    }
   }
 
   async snapshot() {
@@ -122,7 +148,12 @@ export class RFQDevRuntime extends Container {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url),
-      port = portForPath(url.pathname, request.method);
+      hedger = hedgerOpsPath(url.pathname, request.method);
+    // Only the admin worker (deploy/cloudflare/static/private-edge.mjs, behind Access) forwards /ops/ paths;
+    // the public UI worker's allowlist never does.
+    if (hedger)
+      return getContainer(env.RFQ_DEV_RUNTIME, INSTANCE).hedgerStatus(hedger, request.headers.get("accept"));
+    const port = portForPath(url.pathname, request.method);
     if (port === null) return json({ error: "route_not_found" }, 404);
     const rejected = await admitAtEdge(request, env);
     if (rejected) return rejected;
