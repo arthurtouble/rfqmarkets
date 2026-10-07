@@ -45,9 +45,9 @@ On the trade page, the chart and your position in that market sit at the top, an
 
 ## The pages
 
-- **Trade** shows one market: the price and a chart of recent prices, the market's funding rate and maximum trade, the order ticket, your account value and, underneath, your positions, orders and history. Switch markets from the market name above the chart. The app remembers the last market you opened.
+- **Trade** shows one market: the price and a chart of recent prices, the market's funding rate and maximum trade, the order ticket, your account value and, underneath, your positions, orders and trades. Switch markets from the market name above the chart. The app remembers the last market you opened.
 - **Markets** lists every market with its price, recent change and funding rate, plus venue-wide open interest and recent trades. See [Positions and your account](../trading/positions.md#the-markets-page).
-- **Portfolio** is your account in full: account value, deposits and withdrawals, margin in use and leverage, then every position, order and past event. See [Positions and your account](../trading/positions.md).
+- **Portfolio** is your account in full: account value, margin in use and leverage, a chart of your profit or loss with realized PnL, fees, funding and volume, then every position (with **Close all**), order, trade, funding payment and transfer. See [Positions and your account](../trading/positions.md).
 - **Account** holds your wallet, [one-click trading](../trading/one-click-trading.md), the view and appearance settings, a link to these docs and a link to the [emergency exit page](../protocol/safety-and-exits.md#the-exit-page).
 
 ## Appearance

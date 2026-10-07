@@ -42,7 +42,7 @@ Not in the app yet. The contract supports stop loss, take profit and stop entry 
 
 ## Can I close part of a position?
 
-Yes. **Close** offers 25%, 50%, 75% or 100% of the position.
+Yes. **Close** offers 25%, 50%, 75% or 100% of the position. **Close all** closes every position at once.
 
 ## Does it work on a phone?
 
