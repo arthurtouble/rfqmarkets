@@ -2,8 +2,6 @@
 
 A stop order waits for the price to cross a level you choose, then trades. RFQ Markets supports three kinds: a **stop loss** that closes a position when the price moves against you, a **take profit** that closes it when the price moves in your favour, and a **stop entry** that opens a position on a breakout.
 
-> **Note.** The trading app does not offer stop orders yet. The contract and the venue's API already support them, so integrators can place them today (see [For integrators](#for-integrators)). This page describes how they behave, in the app too once they arrive there.
-
 ## The three kinds
 
 | Kind | Fires when | Typical use |
@@ -14,15 +12,47 @@ A stop order waits for the price to cross a level you choose, then trades. RFQ M
 
 Stop loss and take profit are always **reduce-only**. They can shrink or close your position but never open one or flip it to the other side. A stop entry is an ordinary opening trade that waits for its trigger.
 
+## Setting a take profit and stop loss
+
+Every open position has a **TP/SL** control: a column in the positions table on a computer, a button on the position card on a phone. It opens a sheet titled, for example, **TP/SL for BTC long**, which shows the position, its entry price, the current price and the estimated liquidation price.
+
+1. Enter a **Take-profit price**, a **Stop-loss price**, or both. The chips under each field set the price a fixed distance from the current price: +1%, +2%, +5% or +10% for a long's take profit and −1% to −10% for its stop loss, and the other way round for a short.
+2. Read the hint under each field. Once you enter a price, it shows the estimated profit or loss if the order fills there.
+3. In Advanced view, choose the **Max slippage past the trigger**: 0.5%, 1%, 2% or 5%. Simple view uses 1%.
+4. Click **Set TP/SL** and sign in your wallet.
+
+The sheet warns you if your stop loss is past the estimated liquidation price, because the position would be liquidated before the stop could fire.
+
+The position then shows its levels, for example "TP $105,000 · SL $95,000". To change them, open the sheet again, edit the prices and click **Replace TP/SL**. The new pair is placed first and the old one cancelled after, so the position is never left unprotected; each step asks for a signature. To remove both, clear the prices and click **Remove TP/SL**.
+
+If you add to the position after setting TP/SL, the existing orders still cover only the old size. The position shows a **Partial** badge and the sheet asks you to replace them to cover the whole position.
+
+## Placing a stop order
+
+A stop entry is placed from the ticket, in Advanced view:
+
+1. Switch the order type to **Stop**.
+2. Choose **Long** or **Short** and enter the amount in USDC.
+3. Enter the **Trigger price**. A long stop must be above the current price and fires when the price rises to it; a short stop must be below and fires when the price falls to it. The hint says what will happen, for example "Buys at market when the price rises to $105,000".
+4. Click **Place stop · Long BTC · $20.00** and sign in your wallet.
+
+Tick **Reduce only** as well if the stop should only shrink an existing position. Stops from the ticket are good for 30 days and use the default 1% slippage band.
+
+## Watching your orders
+
+Stop orders appear in the **Orders** tab with your limit orders. Each shows its type (Take-profit, Stop-loss, Stop or Limit), its trigger, the worst price it can fill at and, for a take profit or stop loss, the estimated profit or loss at the trigger. An open order that is waiting says why, for example when it has triggered but the price is outside its slippage band.
+
+When an order fills while you are not looking, the app shows a notice such as "BTC stop-loss filled", with the size, the trigger price and a link to the transaction.
+
 ## What triggers it
 
-The trigger is the oracle mid, the midpoint of the oracle's bid and ask. When you sign the order you choose a trigger price and a direction, "at or above" or "at or below", and both go into the message you sign. Nobody can move your trigger afterwards: the approvers and the contract each check that the oracle mid has really reached it before the trade can settle.
+The trigger is the oracle mid, the midpoint of the oracle's bid and ask. When you place the order you choose a trigger price and a direction, "at or above" or "at or below", and both go into the message you sign. Nobody can move your trigger afterwards: the approvers and the contract each check that the oracle mid has really reached it before the trade can settle.
 
 That is different from a [limit order](limit-orders.md), which waits for the maker's executable price for your size to reach your limit. A stop fires on the market's level; a limit fills only at your price.
 
 ## The price you get
 
-A stop order is a market order once it fires, so it needs price protection like any other. When you sign it, you choose how far past the trigger the fill may go, from 1 to 500 basis points. The default is 100 basis points (1%). That becomes the limit price in your signature: for a stop loss on a BTC long at 95,000 with the default, the fill can be no lower than 94,050.
+A stop order is a market order once it fires, so it needs price protection like any other. When you place it, you choose how far past the trigger the fill may go. The app offers 0.5% to 5% and defaults to 1%; the API accepts anything from 1 to 500 basis points. That becomes the limit price in your signature: for a stop loss on a BTC long at 95,000 with the default, the fill can be no lower than 94,050.
 
 If the price gaps straight through that band, for example after a sharp drop, the order does **not** fill at the worse price. It stays open, and fills if the price comes back inside the band before the order expires. A stop on RFQ Markets protects your price; it does not guarantee an exit. If you need certainty of getting out, use a wider band or close the position yourself.
 
@@ -30,7 +60,7 @@ The fee is the normal 2 basis points of the fill's notional.
 
 ## Stop loss and take profit together
 
-You can place a stop loss and a take profit on the same position as a pair. Both are sized to your whole position and signed with the same one-time nonce, so when one fills, the nonce is spent and the other can no longer execute. This is often called one-cancels-other. Cancelling either one cancels both.
+A take profit and stop loss set together from the TP/SL sheet are a pair. Both are sized to your whole position and signed with the same one-time nonce, so when one fills, the nonce is spent and the other can no longer execute. This is often called one-cancels-other. Cancelling either one cancels both.
 
 ## When your position changes
 
@@ -47,7 +77,7 @@ Stop orders are always signed by your wallet, never by a one-click trading key, 
 
 ## Expiry
 
-You choose how long a stop order lasts, from five minutes to 30 days. The app will default to 30 days. Like limit orders, stop orders are held by the venue's servers until they fill, so they only fire while the venue is running.
+The app places stop orders for 30 days. Through the API you can choose anything from five minutes to 30 days. Like limit orders, stop orders are held by the venue's servers until they fill, so they only fire while the venue is running.
 
 ## For integrators
 

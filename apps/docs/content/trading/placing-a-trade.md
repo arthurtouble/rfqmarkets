@@ -9,7 +9,7 @@ The ticket sits on the right of the trade page on a computer. On a phone, tap **
 | Control | What it does |
 | --- | --- |
 | **Long** and **Short** | The direction. Long opens or adds to a long, or reduces a short. Short does the opposite. |
-| **Market** and **Limit** | The order type, shown in Advanced view only. Market orders fill now. Limit orders wait for your price; see [Limit orders](limit-orders.md). In Simple view every order is a market order. |
+| **Market**, **Limit** and **Stop** | The order type, shown in Advanced view only. Market orders fill now. Limit orders wait for your price; see [Limit orders](limit-orders.md). Stop orders wait for the price to break a level, then trade; see [Stop loss and take profit](stop-orders.md). In Simple view every order is a market order. |
 | **Amount** | The size of the position in USDC, up to six decimals. This is the notional value, not the margin you put up: a 20 USDC long opens 20 USDC of exposure. The app converts it to BTC or ETH at the current price, and shows the result as "≈ 0.0002 BTC" under the field. |
 | **25%, 50%, 75%, Max** | Shortcuts that size the trade as a share of the most you can open: the market's per-trade cap, or your **Available** margin at 5x, whichever is smaller. |
 | **Reduce only** | Advanced view only. Guarantees the trade can only shrink your existing position. It can never increase it or flip it to the other side. |

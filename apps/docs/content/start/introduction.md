@@ -12,6 +12,7 @@ The point of this design is a clean trading experience without giving up custody
 
 - **Trade BTC and ETH perpetuals** with up to 20x leverage, long or short, around the clock. Markets are open 24/7; there is no session close and no weekend gap. New markets are listed by governance without a new release of the app.
 - **Use one pool of USDC for every market.** Margin is shared across your positions, so you do not have to fund each one separately.
+- **Protect positions with a take profit and stop loss**, or enter on a breakout with a stop order. Both trigger on the oracle price and fill within a slippage band you choose.
 - **Place market orders or resting limit orders.** A market order fills at once, all or nothing, within a price protection you sign. A limit order waits until the maker's executable price reaches your limit.
 - **Connect the way you like**: a browser wallet, a phone wallet through WalletConnect, or a passkey with Base Account, which needs nothing installed.
 - **Trade without wallet pop-ups** by turning on one-click trading, a short-lived session key that can trade within limits the contract enforces and can never withdraw.
@@ -52,7 +53,6 @@ RFQ Markets is a development deployment that happens to run on Base mainnet rath
 | Hedging | Simulated; no external orders are placed | Live hedging, Hyperliquid first |
 | Liquidation keepers | Permissionless, but no operator keeper is running yet | Independent keepers |
 | Markets | BTC and ETH, up to 20x | More 24/7 crypto markets, added by governance |
-| Stop loss and take profit | Supported by the contract and API, not yet in the app | In the app |
 
 Everything in these docs describes the product as it works today, and calls out where production will differ.
 
