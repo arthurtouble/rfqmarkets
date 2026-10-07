@@ -44,13 +44,14 @@ abstract contract RFQClearingNamespace {
         uint64 makerIncidentSince;
         uint64 makerIncidentGracePeriod;
         ResolutionState resolution;
+        // Appended after the first v1 deployment.
+        int256[2] costBasis; // per market: sum of size * entryPrice / 1e18 over open positions
     }
 }
 
 /// @notice Accessor for the clearing namespace.
 /// @dev Libraries run by DELEGATECALL in the proxy's context, so `layout()` resolves to proxy storage.
 library RFQClearingStorage {
-
     // keccak256(abi.encode(uint256(keccak256("rfq.clearing.v1")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 internal constant SLOT = 0x380d1b904479cc040b615065b149573a5f65fb6ce8d21382c296a05a0cc86d00;
 
