@@ -47,7 +47,8 @@ export function devConfirmation(action:string,owner:string,record?:DeploymentRec
 const STATE=resolve(process.env.RFQ_MAINNET_DEV_STATE_DIR??".local-state/base-mainnet-dev"),RECORD=resolve(STATE,"deployment.json"),MANIFEST=resolve(STATE,"dev-manifest.json"),RUNTIME=resolve(STATE,"runtime-identities.json");
 const env=(name:string)=>{const value=process.env[name];if(!value)throw new Error(`${name} is required`);return value;};
 const writePrivate=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(value,null,2)+"\n",{mode:0o600});chmodSync(path,0o600);};
-const rpcUrl=()=>process.env.RFQ_BASE_MAINNET_RPC_URL||"https://mainnet.base.org";
+/** RFQ_BASE_MAINNET_RPC_URL, else Alchemy when ALCHEMY_API_KEY is set, else the public Base RPC. */
+export const rpcUrl=(env:NodeJS.ProcessEnv=process.env)=>env.RFQ_BASE_MAINNET_RPC_URL||(env.ALCHEMY_API_KEY?`https://base-mainnet.g.alchemy.com/v2/${env.ALCHEMY_API_KEY}`:"https://mainnet.base.org");
 const ownerKey=()=>env("RFQ_DEV_OWNER_KEY");
 async function ownerWallet(){
   const provider=new JsonRpcProvider(rpcUrl());const chainId=(await provider.getNetwork()).chainId;if(chainId!==8453n)throw new Error(`expected Base mainnet 8453, RPC reports ${chainId}`);

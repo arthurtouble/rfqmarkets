@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Wallet } from "ethers";
-import { devConfirmation, devManifestFor, oracleSignersFor, type RuntimeIdentities } from "./base-mainnet-dev-ci.js";
+import { devConfirmation, devManifestFor, oracleSignersFor, rpcUrl, type RuntimeIdentities } from "./base-mainnet-dev-ci.js";
 import { validateDevManifest } from "./mainnet-manifest.js";
 
 const owner=Wallet.createRandom().address,runtime:RuntimeIdentities={emergency:Wallet.createRandom().address,approvers:[Wallet.createRandom().address,Wallet.createRandom().address,Wallet.createRandom().address],sponsor:Wallet.createRandom().address};
@@ -37,4 +37,10 @@ test("confirmation strings match what base-mainnet-cli expects",()=>{
   assert.match(devConfirmation("dev-deploy",owner),new RegExp(`^dev-deploy-8453-${owner.toLowerCase()}-[0-9a-f]{12}$`));
   const record={contracts:{clearingProxy:"0xAbCdEf0123456789aBCdef0123456789AbCdEf01"}} as Parameters<typeof devConfirmation>[2];
   assert.equal(devConfirmation("dev-configure",owner,record),`dev-configure-8453-${owner.toLowerCase()}-abcdef01`);
+});
+
+test("the RPC is RFQ_BASE_MAINNET_RPC_URL, else Alchemy when ALCHEMY_API_KEY is set, else the public Base RPC",()=>{
+  assert.equal(rpcUrl({}),"https://mainnet.base.org");
+  assert.equal(rpcUrl({ALCHEMY_API_KEY:"k"}),"https://base-mainnet.g.alchemy.com/v2/k");
+  assert.equal(rpcUrl({ALCHEMY_API_KEY:"k",RFQ_BASE_MAINNET_RPC_URL:"https://rpc.example"}),"https://rpc.example");
 });
