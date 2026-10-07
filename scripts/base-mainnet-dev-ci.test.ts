@@ -99,6 +99,10 @@ test("confirmation strings match what base-mainnet-cli expects", () => {
     devConfirmation("dev-configure", owner, record),
     `dev-configure-8453-${owner.toLowerCase()}-abcdef01`,
   );
+  assert.equal(
+    devConfirmation("dev-risk-operator", owner, undefined, "0x1234ABCD00000000000000000000000000000000"),
+    `dev-risk-operator-8453-${owner.toLowerCase()}-1234abcd`,
+  );
 });
 
 test("the RPC is RFQ_BASE_MAINNET_RPC_URL, else Alchemy when ALCHEMY_API_KEY is set, else the public Base RPC", () => {

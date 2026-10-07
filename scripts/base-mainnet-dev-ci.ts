@@ -67,11 +67,13 @@ export function devManifestFor(
 }
 
 /** Confirmation string base-mainnet-cli expects for a dev action. */
-export function devConfirmation(action: string, owner: string, record?: DeploymentRecord) {
+export function devConfirmation(action: string, owner: string, record?: DeploymentRecord, operator?: string) {
   const suffix =
     action === "dev-configure"
       ? record!.contracts.clearingProxy.slice(2, 10).toLowerCase()
-      : identifyCandidate().candidateHash.slice(0, 12);
+      : action === "dev-risk-operator"
+        ? operator!.slice(2, 10).toLowerCase()
+        : identifyCandidate().candidateHash.slice(0, 12);
   return `${action}-8453-${owner.toLowerCase()}-${suffix}`;
 }
 
@@ -148,6 +150,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         action,
         new Wallet(ownerKey()).address,
         action === "dev-configure" ? loadRecord() : undefined,
+        flags[0],
       );
       execFileSync(
         process.execPath,
