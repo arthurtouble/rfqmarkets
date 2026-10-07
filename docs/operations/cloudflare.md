@@ -9,7 +9,7 @@ The Base mainnet **dev** environment (UI, docs and all services on Cloudflare, a
 | Surface | URL | Status |
 | --- | --- | --- |
 | Trading terminal | `https://rfq-markets-testnet.rfq-markets.workers.dev` | Deployed behind the edge Worker with same-origin service routes; trading remains disabled until API, indexer and market-stream bindings are live. |
-| Public documentation | `https://rfq-markets-docs-testnet.rfq-markets.workers.dev` | Deployed and usable. |
+| Public documentation | `https://docs.rfq-markets.workers.dev` | Deployed and usable. |
 | Internal manuals | Local port 4176 only | Deliberately withheld until Cloudflare Access is configured and verified deny-by-default. |
 
 Both public surfaces send CSP, HSTS, frame-denial, MIME-sniffing, referrer and permissions-policy headers. Hashed assets use immutable caching; HTML revalidates. `npm run validate:cloudflare-static` rejects production bundles containing the local service ports and rejects missing security-header files.

@@ -40,7 +40,7 @@ wrangler deploy --config "$generated"
 # approver quorum. Without it, drpc is primary and mainnet.base.org secondary. Either way the indexer reads
 # logs from mainnet.base.org in 500-block steps (its cap): Alchemy's free tier and drpc cap eth_getLogs at
 # 10 blocks. Override with the RFQ_BASE_MAINNET_* variables.
-node -e 'const env=process.env,key=env.ALCHEMY_API_KEY,sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN;const rpc=env.RFQ_BASE_MAINNET_RPC_URL||(key?`https://base-mainnet.g.alchemy.com/v2/${key}`:"https://base.drpc.org");process.stdout.write(JSON.stringify({rpcUrl:rpc,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||(key?"https://base.drpc.org":"https://mainnet.base.org"),indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||"https://mainnet.base.org",maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||500),oracleNodes:[1,2,3].map(n=>`https://rfq-markets-oracle-${n}.${sub}.workers.dev`)}))' \
+node -e 'const env=process.env,key=env.ALCHEMY_API_KEY,sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN;const rpc=env.RFQ_BASE_MAINNET_RPC_URL||(key?`https://base-mainnet.g.alchemy.com/v2/${key}`:"https://base.drpc.org");process.stdout.write(JSON.stringify({rpcUrl:rpc,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||(key?"https://base.drpc.org":"https://mainnet.base.org"),indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||"https://mainnet.base.org",maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||500),oracleNodes:[1,2,3].map(n=>`https://oracle-${n}.${sub}.workers.dev`)}))' \
   | wrangler secret put RFQ_DEV_RUNTIME_SECRETS --name rfq-markets-runtime-dev
 wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
 wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc

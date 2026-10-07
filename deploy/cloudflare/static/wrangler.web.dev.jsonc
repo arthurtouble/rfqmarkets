@@ -1,7 +1,7 @@
 // Trading UI for the Base mainnet dev deployment. Service routes go to the dev runtime worker.
 {
   "$schema": "../../../node_modules/wrangler/config-schema.json",
-  "name": "rfq-markets-dev",
+  "name": "dev",
   "main": "web-edge.mjs",
   "compatibility_date": "2026-09-11",
   "assets": {

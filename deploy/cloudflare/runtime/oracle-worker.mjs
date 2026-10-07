@@ -4,7 +4,7 @@ import { OracleHistory, handleHistoryRequest, syncHistory } from "./oracle-histo
 import { ensureOracleSigner, oracleDomainFor, publicOracleSigner } from "./oracle-identity.mjs";
 import { oracleRequestRoute, oracleWorkerSettings } from "./oracle-worker-routes.mjs";
 
-// One oracle node (services/oracle-node) per worker: rfq-markets-oracle-1/-2/-3, deployed one at a time
+// One oracle node (services/oracle-node) per worker: oracle-1/-2/-3, deployed one at a time
 // from wrangler.oracle.jsonc. The Durable Object owns the node's signer key (oracle-identity.mjs), starts
 // the container only for the adapter recorded in KV `deployment.json` when this node is one of its
 // signers, and keeps price history in its SQLite storage (oracle-history.mjs).

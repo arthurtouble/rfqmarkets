@@ -4,9 +4,9 @@ A development deployment people can open in a browser: the trading UI and docs o
 
 | Piece | Where | Updated by |
 | --- | --- | --- |
-| Trading UI | Worker `rfq-markets-dev` → `https://rfq-markets-dev.<account>.workers.dev` | Every green CI run on `main` (`deploy-cloudflare-dev.yml`) |
-| Docs | Worker `rfq-markets-docs-testnet` | Same |
-| Oracle nodes 1-3 | Workers `rfq-markets-oracle-1` (`wnam`), `-2` (`weur`), `-3` (`apac`), each one container | Same, one node at a time |
+| Trading UI | Worker `dev` → `https://dev.<account>.workers.dev` | Every green CI run on `main` (`deploy-cloudflare-dev.yml`) |
+| Docs | Worker `docs` → `https://docs.<account>.workers.dev` | Same |
+| Oracle nodes 1-3 | Workers `oracle-1` (`wnam`), `-2` (`weur`), `-3` (`apac`), each one container | Same, one node at a time |
 | API, 3 approvers, indexer, simulated hedger, gateway | Container behind Worker `rfq-markets-runtime-dev` (no public route; reached only through the UI worker's service bindings) | Same |
 | Contracts | Base mainnet, dev profile | Manually, `dev-contracts.yml`, each run approved in GitHub |
 
@@ -22,9 +22,9 @@ A development deployment people can open in a browser: the trading UI and docs o
 
 | Node | URL | Durable Object region |
 | --- | --- | --- |
-| 1 | `https://rfq-markets-oracle-1.rfq-markets.workers.dev` | `wnam` (western North America) |
-| 2 | `https://rfq-markets-oracle-2.rfq-markets.workers.dev` | `weur` (western Europe) |
-| 3 | `https://rfq-markets-oracle-3.rfq-markets.workers.dev` | `apac` (Asia-Pacific) |
+| 1 | `https://oracle-1.rfq-markets.workers.dev` | `wnam` (western North America) |
+| 2 | `https://oracle-2.rfq-markets.workers.dev` | `weur` (western Europe) |
+| 3 | `https://oracle-3.rfq-markets.workers.dev` | `apac` (Asia-Pacific) |
 
 Each node is its own Worker (`deploy/cloudflare/runtime/oracle-worker.mjs`, rendered from `wrangler.oracle.jsonc`) with one Container-backed Durable Object running `services/oracle-node` (`Dockerfile.cloudflare-oracle`). The region is a location hint for the Durable Object; Cloudflare places the container near it. Separate workers mean a deploy rolls one node at a time and each key lives in its own Durable Object namespace.
 
@@ -40,7 +40,7 @@ Both workflows run shell scripts that work from any machine with Docker, Node an
 - `scripts/cloudflare-dev-deploy.sh` builds and publishes the oracle nodes (`scripts/cloudflare-oracle-deploy.sh`, which waits for each node before deploying the next), the runtime, UI and docs, and records the commit in KV `deployed-commit`. Set `CLOUDFLARE_WORKERS_SUBDOMAIN` if the account's `workers.dev` subdomain is not `rfq-markets`. Behind a TLS-intercepting proxy, set `RFQ_DOCKER_BUILD_CA` to the proxy's CA bundle.
 - `scripts/dev-contracts.sh ACTION [AMOUNT]` runs a dev-contracts action with the state from KV. Everything except `identities` and `preflight` sends Base mainnet transactions.
 
-The live environment is on the RFQ Markets account: UI `https://rfq-markets-dev.rfq-markets.workers.dev`, docs `https://rfq-markets-docs-testnet.rfq-markets.workers.dev`.
+The live environment is on the RFQ Markets account: UI `https://dev.rfq-markets.workers.dev`, docs `https://docs.rfq-markets.workers.dev`.
 
 ## One-time setup (GitHub automation)
 
@@ -59,7 +59,7 @@ The live environment is on the RFQ Markets account: UI `https://rfq-markets-dev.
 4. `fund-maker` with an amount (default 100 USDC, the dev manifest's floor). Trades fail until maker capital meets the floor.
 5. Open the UI and connect a wallet on Base.
 
-Later: `upgrade` after contract changes land on `main` (storage-checked against the deployed build), `configure` after changing `RFQ_DEV_POLICY_JSON`, `fund-sponsor` when the sponsor runs low, `verify` and `basescan` any time. To start over on a fresh proxy, delete `deployment.json` from the KV namespace and run `deploy` again. If the runtime's Durable Object storage is ever lost, it generates new keys and refuses the old deployment; rotate approvers with the owner or deploy fresh.
+Later: `upgrade` after contract changes land on `main` (storage-checked against the deployed build), `configure` after changing `RFQ_DEV_POLICY_JSON`, `fund-sponsor` when the sponsor runs low, `verify` and `basescan` any time. To start over on a fresh proxy, delete `deployment.json` from the KV namespace and run `deploy` again. If the runtime's Durable Object storage is ever lost, it generates new keys and refuses the old deployment; rotate approvers with the owner or deploy fresh. If an oracle node worker is replaced or renamed, it gets a new Durable Object and a new key; once the new nodes have published their addresses, run `oracle-signers` to move the adapter to them (one owner transaction), then delete the old workers.
 
 ## Not covered yet
 
