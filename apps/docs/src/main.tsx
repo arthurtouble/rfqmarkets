@@ -30,7 +30,12 @@ function ThemeSwitch({ className }: { className: string }) {
   );
 }
 
-const normalize = (path: string) => (path.length > 1 ? path.replace(/\/+$/, "") : path);
+// Pages that were renamed keep working at their old address.
+const MOVED: Record<string, string> = { "/trading/quick-trading": "/trading/one-click-trading" };
+const normalize = (path: string) => {
+  const trimmed = path.length > 1 ? path.replace(/\/+$/, "") : path;
+  return MOVED[trimmed] ?? trimmed;
+};
 
 function useRoute() {
   const [route, setRoute] = useState(() => normalize(window.location.pathname));
