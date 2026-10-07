@@ -13,7 +13,9 @@ pragma solidity 0.8.34;
 // ---------------------------------------------------------------------------
 
 uint256 constant BASE_UNIT = 1e18;
-uint8 constant MARKET_COUNT = 2; // 0 = BTC, 1 = ETH
+/// @dev Markets are registered by governance with ids 0, 1, 2, ... up to this many. It bounds the loops over
+/// all markets (exposure, stress, resolution) and fits a session's market mask in one word.
+uint8 constant MAX_MARKETS = 128;
 
 /// @dev Oracle reports older than this are rejected, and open legs must have a price this fresh.
 uint256 constant MAX_ORACLE_AGE = 15;
@@ -56,7 +58,7 @@ bytes32 constant WITHDRAWAL_TYPEHASH =
 bytes32 constant CANCEL_TYPEHASH = keccak256("CancelIntent(address account,uint256 nonce,uint64 deadline)");
 bytes32 constant CLOSE_TYPEHASH = keccak256("CloseIntent(address account,uint8 market,uint256 nonce,uint64 deadline)");
 bytes32 constant SESSION_GRANT_TYPEHASH = keccak256(
-    "SessionGrant(address account,address session,uint8 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline)"
+    "SessionGrant(address account,address session,uint256 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline)"
 );
 
 // ---------------------------------------------------------------------------
@@ -72,6 +74,7 @@ struct Position {
 struct Account {
     int256 collateral;
     mapping(uint8 market => Position) positions;
+    uint256 openMarkets; // bit i set while the account holds a position in market i
 }
 
 struct Market {
@@ -98,13 +101,25 @@ struct ExposureBook {
     uint128 sideLimit;
 }
 
-/// @notice Launch configuration for one market, applied in `initialize`.
+/// @notice Per-market risk parameters, set by governance.
+struct MarketParams {
+    bytes32 symbol; // e.g. "BTC"; one market unit is 1e18 base units of this symbol
+    uint32 impactK; // inventory-impact coefficient (BTC 10_000, ETH 12_000; see ECONOMIC-SPECIFICATION.md)
+    uint16 shockBps; // stress move applied to the market's net customer skew (BTC 4_000 = 40%)
+    uint16 marginScaleBps; // multiplier on the tiered margin rates; 10_000 = the base tiers
+}
+
+/// @notice Configuration for a market, used by `initialize` and `addMarket`.
 struct MarketConfig {
+    bytes32 symbol;
     bool enabled;
     uint128 maxTradeNotional;
     uint128 maxMarketNotional;
     uint128 grossLimit;
     uint128 sideLimit;
+    uint32 impactK;
+    uint16 shockBps;
+    uint16 marginScaleBps;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +152,7 @@ struct MakerApproval {
 struct Session {
     address account;
     uint64 validUntil;
-    uint8 marketMask;
+    uint256 marketMask;
     uint128 maxTradeNotional;
     uint128 maxCumulativeNotional;
     uint128 usedNotional;
@@ -147,7 +162,7 @@ struct Session {
 struct SessionGrant {
     address account;
     address session;
-    uint8 marketMask;
+    uint256 marketMask;
     uint128 maxTradeNotional;
     uint128 maxCumulativeNotional;
     uint128 maxFee;
@@ -164,11 +179,11 @@ struct ResolutionState {
     uint64 triggerTime;
     bool pricesReady;
     bool finalized;
-    uint8[2] sampleCount;
-    uint64[2] firstSampleTime;
-    uint64[2] lastSampleTime;
-    uint256[3][2] samples;
-    uint256[2] price;
+    mapping(uint8 market => uint8) sampleCount;
+    mapping(uint8 market => uint64) firstSampleTime;
+    mapping(uint8 market => uint64) lastSampleTime;
+    mapping(uint8 market => uint256[3]) samples;
+    mapping(uint8 market => uint256) price;
     uint256 cursor;
     uint256 totalClaims;
     uint256 assets;

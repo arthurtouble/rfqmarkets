@@ -53,22 +53,37 @@ library RFQResolution {
 
     // ---- Resolution ----
 
-    /// @notice Records one of the first three post-trigger reports for its market. The first and third must be
-    /// at least 30 seconds apart; the median of the three is the market's resolution price.
+    /// @notice Records the post-trigger prices in a report as samples, up to three per market. A market's
+    /// first and third samples must be at least 30 seconds apart; the median of the three is its resolution
+    /// price. Markets that already have their samples, or whose price is not newer than their last sample,
+    /// are skipped; a report that records nothing reverts. Prices are ready once every market with open
+    /// exposure has its resolution price.
     function submitObservation(bytes calldata report) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         ResolutionState storage r = $.resolution;
         if (!$.resolutionRequired || r.pricesReady) revert InvalidTrade();
-        IPriceOracle.Observation memory o = RFQLedger.verifyReport(report, type(uint8).max);
-        if (o.observedAt < r.triggerTime) revert Stale();
+        IPriceOracle.Observation[] memory observations = RFQLedger.verifyReport(report);
+        bool recorded;
+        for (uint256 i; i < observations.length; ++i) {
+            if (recordSample(r, observations[i])) recorded = true;
+        }
+        if (!recorded) revert InvalidTrade();
+        uint8 markets = $.marketCount;
+        for (uint8 m; m < markets; ++m) {
+            ExposureBook storage book = $.exposure[m];
+            if (book.longBase + book.shortBase != 0 && r.sampleCount[m] < RESOLUTION_SAMPLES) return;
+        }
+        r.pricesReady = true;
+    }
+
+    function recordSample(ResolutionState storage r, IPriceOracle.Observation memory o) private returns (bool) {
         uint8 market = o.market;
         uint8 count = r.sampleCount[market];
-        if (count >= RESOLUTION_SAMPLES || (count != 0 && o.observedAt <= r.lastSampleTime[market])) {
-            revert InvalidTrade();
-        }
-        if (count == 0) r.firstSampleTime[market] = o.observedAt;
+        if (o.observedAt < r.triggerTime || count >= RESOLUTION_SAMPLES) return false;
+        if (count != 0 && o.observedAt <= r.lastSampleTime[market]) return false;
         bool last = count == RESOLUTION_SAMPLES - 1;
-        if (last && o.observedAt < r.firstSampleTime[market] + RESOLUTION_MIN_SAMPLE_SPAN) revert Stale();
+        if (last && o.observedAt < r.firstSampleTime[market] + RESOLUTION_MIN_SAMPLE_SPAN) return false;
+        if (count == 0) r.firstSampleTime[market] = o.observedAt;
         r.samples[market][count] = (o.bid + o.ask) / 2;
         r.sampleCount[market] = count + 1;
         r.lastSampleTime[market] = o.observedAt;
@@ -77,7 +92,7 @@ library RFQResolution {
             r.price[market] = RFQRiskMath.median3(samples[0], samples[1], samples[2]);
             emit IRFQClearingEvents.ResolutionPriceReady(market, r.price[market]);
         }
-        r.pricesReady = r.sampleCount[0] == RESOLUTION_SAMPLES && r.sampleCount[1] == RESOLUTION_SAMPLES;
+        return true;
     }
 
     /// @notice Crystallizes up to `maxAccounts` claims in registration order; finalizes after the last one.
@@ -95,10 +110,12 @@ library RFQResolution {
             uint256 owed = equity > 0 ? uint256(equity) : 0;
             r.claim[owner] = owed;
             claims += owed;
-            $.accounts[owner].collateral = 0;
-            for (uint8 m; m < MARKET_COUNT; ++m) {
-                delete $.accounts[owner].positions[m];
+            Account storage account = $.accounts[owner];
+            account.collateral = 0;
+            for (uint256 open = account.openMarkets; open != 0; open &= open - 1) {
+                delete account.positions[uint8(RFQRiskMath.lowestBit(open))];
             }
+            account.openMarkets = 0;
         }
         r.totalClaims += claims;
         r.cursor = end;
@@ -110,7 +127,8 @@ library RFQResolution {
         $.totalCustomerCollateral = 0;
         $.makerBacking = 0;
         $.insuranceBalance = 0;
-        for (uint8 i; i < MARKET_COUNT; ++i) {
+        uint8 markets = $.marketCount;
+        for (uint8 i; i < markets; ++i) {
             $.exposure[i].longBase = 0;
             $.exposure[i].shortBase = 0;
             $.markets[i].aggregateBase = 0;
@@ -159,9 +177,11 @@ library RFQResolution {
     /// @notice Collateral plus PnL at the resolution prices, minus unsettled funding.
     function resolutionEquity(address owner) public view returns (int256 value) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        value = $.accounts[owner].collateral;
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            Position storage p = $.accounts[owner].positions[i];
+        Account storage account = $.accounts[owner];
+        value = account.collateral;
+        for (uint256 open = account.openMarkets; open != 0; open &= open - 1) {
+            uint8 i = uint8(RFQRiskMath.lowestBit(open));
+            Position storage p = account.positions[i];
             value += RFQRiskMath.positionPnl(p.size, p.entryPrice, $.resolution.price[i]) - p.size
             * ($.markets[i].fundingIndex - p.lastFundingIndex) / int256(BASE_UNIT);
         }

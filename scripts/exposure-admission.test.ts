@@ -21,8 +21,8 @@ test('capital floor includes funding and realized PnL rather than fee-funded pro
  input.backing=input.floor;input.position={size:BASE/10n,entryPrice:90_000_000_000n,lastFundingIndex:0n};input.delta=-BASE/5n;assert.equal(exposureAdmission(input).reason,'maker_capital_or_disabled','crossing trade must include realized winner debit');
  input.delta=-BASE/10n;assert.equal(exposureAdmission(input).allowed,true,'closing a funded winner may cross the opening capital floor');
 });
-test('stress scenarios preserve separate-leg floor rounding for negative quantities',()=>{
- assert.equal(makerStress(1n,-1n),0n);assert.equal(makerStress(101n,-1n),39n);assert.equal(makerStress(-101n,1n),39n);
+test('stress sums each market leg rounded up, independent of sign',()=>{
+ assert.equal(makerStress(0n,0n),0n);assert.equal(makerStress(1n,-1n),2n);assert.equal(makerStress(101n,-1n),42n);assert.equal(makerStress(-101n,1n),42n);assert.equal(makerStress(10_000n,-10_000n),9_000n);
 });
 test('pending maker debit bounds realized PnL and funding across seeded positions',()=>{
  let seed=0x51f15e;const rand=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return seed>>>0;},abs=(value:bigint)=>value<0n?-value:value,YEAR=365n*86400n,RATE=10n**12n;

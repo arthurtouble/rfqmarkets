@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Wallet } from "ethers";
-import { checkChainPolicy, readChainState, verifyPythReport, type ChainSnapshot } from "./chain-state.js";
+import { checkChainPolicy, readChainState, verifySignedReport, type ChainSnapshot } from "./chain-state.js";
 import { CLEARING, LARGE, buildFixture, chainState, fakeChain, word } from "./test-fixtures.js";
 
 const signer = Wallet.createRandom().address;
@@ -108,11 +108,15 @@ test("checkChainPolicy requires matching versions, an open venue and signer memb
     );
 });
 
-test("verifyPythReport dry-runs the adapter and returns its observation", async () => {
+test("verifySignedReport dry-runs the adapter and returns the market's observation", async () => {
   const state = chainState(Date.now());
-  state.pythObservation = { market: 0n, bid: 5n, ask: 6n, observedAt: 7n, validUntil: LARGE };
+  const btc = { market: 0n, bid: 5n, ask: 6n, observedAt: 7n, validUntil: LARGE };
+  state.signedObservations = [btc, { ...btc, market: 1n }];
   const chain = fakeChain(state);
-  assert.deepEqual(await verifyPythReport(chain, "0x01", CLEARING, 100), state.pythObservation);
+  assert.deepEqual(await verifySignedReport(chain, "0x01", CLEARING, 100, 0), btc);
+  await assert.rejects(
+    verifySignedReport(fakeChain({ ...state, signedObservations: [] }), "0x01", CLEARING, 100, 0),
+  );
   assert.deepEqual(
     chain.calls.filter((call) => call === "oracle" || call === "eth_call"),
     ["oracle", "eth_call", "eth_call"],

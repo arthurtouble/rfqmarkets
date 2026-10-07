@@ -46,6 +46,8 @@ library RFQLedger {
         p.size = next;
         p.entryPrice = entry;
         p.lastFundingIndex = $.markets[market].fundingIndex;
+        if (next == 0) $.accounts[account].openMarkets &= ~(uint256(1) << market);
+        else $.accounts[account].openMarkets |= uint256(1) << market;
     }
 
     /// @notice Closes every leg at the stored exit prices, netting PnL against the maker once.
@@ -113,52 +115,75 @@ library RFQLedger {
 
     // ---- Oracle ----
 
-    /// @notice Verifies a report, records it if it is newer than the stored price, and accrues funding.
+    /// @notice Verifies a report, records every price in it that is newer than the stored one, and accrues
+    /// funding in those markets.
     /// @dev Stored prices never move backwards in time, so a keeper cannot pick an older, more adverse price
-    /// that is still inside the freshness window. The returned observation is the report itself.
+    /// that is still inside the freshness window. Returns the report's observation for `expectedMarket`
+    /// (or its first observation when `expectedMarket` is `type(uint8).max`).
     function touchOracle(bytes calldata report, uint8 expectedMarket)
         internal
-        returns (IPriceOracle.Observation memory o)
+        returns (IPriceOracle.Observation memory expected)
     {
-        o = verifyReport(report, expectedMarket);
-        Market storage market = RFQClearingStorage.layout().markets[o.market];
-        if (o.observedAt > market.lastPriceTime) {
-            market.lastBid = o.bid;
-            market.lastAsk = o.ask;
-            market.lastPriceTime = o.observedAt;
+        IPriceOracle.Observation[] memory observations = verifyReport(report);
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        bool found = expectedMarket == type(uint8).max;
+        for (uint256 i; i < observations.length; ++i) {
+            IPriceOracle.Observation memory o = observations[i];
+            Market storage market = $.markets[o.market];
+            if (o.observedAt > market.lastPriceTime) {
+                market.lastBid = o.bid;
+                market.lastAsk = o.ask;
+                market.lastPriceTime = o.observedAt;
+            }
+            updateFunding(o.market);
+            if (o.market == expectedMarket || i == 0 && found) expected = o;
+            if (o.market == expectedMarket) found = true;
         }
-        updateFunding(o.market);
+        if (!found) revert OracleInvalid();
     }
 
-    /// @param expectedMarket The market the report must be for, or `type(uint8).max` for either.
-    function verifyReport(bytes calldata report, uint8 expectedMarket)
-        internal
-        returns (IPriceOracle.Observation memory o)
-    {
-        o = RFQClearingStorage.layout().oracle.verify{value: msg.value}(report);
-        if (
-            o.market >= MARKET_COUNT || (expectedMarket != type(uint8).max && o.market != expectedMarket) || o.bid == 0
-                || o.ask < o.bid
-        ) revert OracleInvalid();
-        if (
-            block.timestamp < o.observedAt || block.timestamp > o.validUntil
-                || block.timestamp - o.observedAt > MAX_ORACLE_AGE
-        ) revert Stale();
-        uint256 mid = (o.bid + o.ask) / 2;
-        if ((o.ask - o.bid) * 10_000 > mid * MAX_ORACLE_WIDTH_BPS) revert OracleInvalid();
+    /// @notice Verifies a report through the oracle and checks every observation in it: a registered market,
+    /// strictly ascending ids, a sane bid/ask and a fresh timestamp. An empty report is invalid.
+    function verifyReport(bytes calldata report) internal returns (IPriceOracle.Observation[] memory observations) {
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        observations = $.oracle.verify{value: msg.value}(report);
+        if (observations.length == 0) revert OracleInvalid();
+        uint8 count = $.marketCount;
+        for (uint256 i; i < observations.length; ++i) {
+            IPriceOracle.Observation memory o = observations[i];
+            if (
+                o.market >= count || (i != 0 && o.market <= observations[i - 1].market) || o.bid == 0
+                    || o.ask < o.bid
+            ) revert OracleInvalid();
+            if (
+                block.timestamp < o.observedAt || block.timestamp > o.validUntil
+                    || block.timestamp - o.observedAt > MAX_ORACLE_AGE
+            ) revert Stale();
+            uint256 mid = (o.bid + o.ask) / 2;
+            if ((o.ask - o.bid) * 10_000 > mid * MAX_ORACLE_WIDTH_BPS) revert OracleInvalid();
+        }
     }
 
     function requireFreshPositions(address account) internal view {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            if ($.accounts[account].positions[i].size != 0 && !RFQRiskMath.isFresh($.markets[i])) revert Stale();
+        uint256 open = $.accounts[account].openMarkets;
+        while (open != 0) {
+            uint8 i = lowestBit(open);
+            open &= open - 1;
+            if (!RFQRiskMath.isFresh($.markets[i])) revert Stale();
         }
+    }
+
+    /// @notice Index of the lowest set bit of a non-zero word.
+    function lowestBit(uint256 word) internal pure returns (uint8 index) {
+        return uint8(RFQRiskMath.lowestBit(word));
     }
 
     // ---- Funding ----
 
     function updateAllFunding() internal {
-        for (uint8 i; i < MARKET_COUNT; ++i) {
+        uint8 count = RFQClearingStorage.layout().marketCount;
+        for (uint8 i; i < count; ++i) {
             updateFunding(i);
         }
     }
@@ -177,12 +202,16 @@ library RFQLedger {
         );
     }
 
-    /// @notice Accrues both markets and settles the account's funding on every leg as one net transfer.
-    /// No-op if the maker cannot pay and resolution starts.
+    /// @notice Accrues every market the account holds and settles its funding on those legs as one net
+    /// transfer. No-op if the maker cannot pay and resolution starts.
     function settleAllFunding(address account) internal {
-        updateAllFunding();
-        (int256[2] memory payments, int256 total) = RFQRiskMath.fundingPayments(account);
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        uint256 open = $.accounts[account].openMarkets;
+        for (uint256 rest = open; rest != 0; rest &= rest - 1) {
+            updateFunding(lowestBit(rest));
+        }
+        int256 total = RFQRiskMath.fundingTotal(account);
         if (!transferPnl(account, -total)) return;
-        RFQRiskMath.recordFunding(account, payments);
+        RFQRiskMath.recordFunding(account);
     }
 }

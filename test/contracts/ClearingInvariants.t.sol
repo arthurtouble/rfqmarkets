@@ -51,7 +51,7 @@ contract ClearingHandler is ClearingFixture {
 
     function open(uint256 who, uint256 marketSeed, int256 delta) external {
         tick();
-        uint8 market = uint8(marketSeed % MARKET_COUNT);
+        uint8 market = uint8(marketSeed % clearing.marketCount());
         int256 maxBase = market == 0 ? int256(3e17) : int256(5e18);
         delta = bound(delta, -maxBase, maxBase);
         if (delta == 0) return;
@@ -62,7 +62,7 @@ contract ClearingHandler is ClearingFixture {
     function reduce(uint256 who, uint256 marketSeed, uint256 fraction) external {
         tick();
         Trader memory trader = traders[who % traders.length];
-        uint8 market = uint8(marketSeed % MARKET_COUNT);
+        uint8 market = uint8(marketSeed % clearing.marketCount());
         int256 size = clearing.positionOf(trader.account, market).size;
         if (size == 0) return;
         int256 delta = -size * int256(bound(fraction, 1, 100)) / 100;
@@ -80,7 +80,7 @@ contract ClearingHandler is ClearingFixture {
 
     function movePrice(uint256 marketSeed, int256 bps) external {
         vm.warp(vm.getBlockTimestamp() + 1);
-        uint8 market = uint8(marketSeed % MARKET_COUNT);
+        uint8 market = uint8(marketSeed % clearing.marketCount());
         bps = bound(bps, -2_000, 2_000);
         prices[market] = prices[market] * uint256(10_000 + bps) / 10_000;
         refreshAll();
@@ -90,7 +90,7 @@ contract ClearingHandler is ClearingFixture {
     function liquidate() external {
         tick();
         for (uint256 i; i < traders.length; ++i) {
-            for (uint8 market; market < MARKET_COUNT; ++market) {
+            for (uint8 market; market < clearing.marketCount(); ++market) {
                 if (clearing.positionOf(traders[i].account, market).size == 0) continue;
                 vm.prank(keeper);
                 try clearing.liquidate(traders[i].account, market, currentReport(market)) {
@@ -118,6 +118,7 @@ interface IClearingView {
     function collateralOf(address account) external view returns (int256);
     function maintenanceEquity(address account) external view returns (int256);
     function customerUnrealizedGain() external view returns (uint256);
+    function marketCount() external view returns (uint8);
 }
 
 contract ClearingInvariantsTest is Test {
@@ -148,7 +149,7 @@ contract ClearingInvariantsTest is Test {
     /// @notice Market aggregates and exposure books equal the sum of customer positions.
     function invariant_aggregatesMatchPositions() public view {
         uint256 count = handler.traderCount();
-        for (uint8 market; market < MARKET_COUNT; ++market) {
+        for (uint8 market; market < clearing.marketCount(); ++market) {
             int256 net;
             uint256 longs;
             uint256 shorts;

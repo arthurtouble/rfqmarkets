@@ -22,7 +22,7 @@ Public taker flow is deliberately treated as a stress covariate rather than a mo
 - No candidate may enter shadow mode unless the tape spans at least 24 hours, contains both markets, contains at least 10,000 trades from at least two venues, includes a five-minute label, has a clean capture-integrity summary, and beats the current model without exceeding a 5% holdout underquote rate.
 - Shadow eligibility permits observation only. Price activation requires multiple non-overlapping periods, stable parameters, real RFQ markouts, measured hedge fills, risk approval, and a new explicit model version.
 
-Two public venues do not form an oracle quorum. The settlement price remains the on-chain-verifiable Pyth observation. Venue disagreement widens the research basis feature; it never replaces settlement truth. Add a third independent market venue before using cross-venue reference estimates for production detection.
+Two public venues do not form an oracle quorum. The settlement price remains the on-chain-verifiable signed oracle observation. Venue disagreement widens the research basis feature; it never replaces settlement truth. Add a third independent market venue before using cross-venue reference estimates for production detection.
 
 ## Run it
 

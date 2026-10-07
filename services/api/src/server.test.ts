@@ -452,8 +452,8 @@ test("refreshes the authenticated settlement proof after wallet signing", async 
   const observation = (bid: bigint, ask: bigint, reportTag: string) => ({
     snapshot: { market: "BTC" as const, bid, ask, observedAtMs: Date.now() },
     report: AbiCoder.defaultAbiCoder().encode(
-      ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],
-      [[0, bid, ask, now, now + 15]],
+      ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)[]"],
+      [[[0, bid, ask, now, now + 15]]],
     ),
     validUntil: now + 15,
     reportTag,
@@ -512,8 +512,8 @@ test("rejects a refreshed settlement price outside the signed protection", async
   const observation = (bid: bigint, ask: bigint) => ({
       snapshot: { market: "BTC" as const, bid, ask, observedAtMs: Date.now() },
       report: AbiCoder.defaultAbiCoder().encode(
-        ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],
-        [[0, bid, ask, now, now + 15]],
+        ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)[]"],
+        [[[0, bid, ask, now, now + 15]]],
       ),
       validUntil: now + 15,
     }),
@@ -566,8 +566,8 @@ test("refreshes and re-approves automatically when the first proof lacks inclusi
       observedAtMs: Date.now(),
     },
     report: AbiCoder.defaultAbiCoder().encode(
-      ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)"],
-      [[0, 99_990n * 1_000_000n, 100_010n * 1_000_000n, now, now + validFor]],
+      ["tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)[]"],
+      [[[0, 99_990n * 1_000_000n, 100_010n * 1_000_000n, now, now + validFor]]],
     ),
     validUntil: now + validFor,
   });

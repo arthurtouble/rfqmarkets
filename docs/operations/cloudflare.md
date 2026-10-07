@@ -53,7 +53,7 @@ Browser
        -> market-sharded Durable Object for SSE
        -> private service binding to active API coordinator
             -> private approver A / B / C
-            -> Base RPC quorum and Pyth
+            -> Base RPC quorum and the oracle nodes
             -> sponsor sender journal
   -> Base clearing contract
 
@@ -121,7 +121,7 @@ After the repository-side setup passes locally, the remaining inputs are:
 4. Authorization to install the Cloudflare GitHub App or permission to add the two GitHub environment secrets and one enable variable listed above.
 5. The identities allowed into the internal-docs and hedge-operations Access application.
 
-No Pyth, RPC, sponsor, approver or Hyperliquid secret should be sent in chat. They will be entered directly into the corresponding Cloudflare secret store or future private host.
+No RPC, sponsor, approver or Hyperliquid secret should be sent in chat. They will be entered directly into the corresponding Cloudflare secret store or future private host.
 
 ## Verification and rollback
 

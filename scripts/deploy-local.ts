@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Contract, ContractFactory, Interface, JsonRpcProvider, MaxUint256, NonceManager, Wallet, parseEther } from "ethers";
-import { MAX_MARKET_CONFIG, deployLinked } from "./lib/contract-fixture.mjs";
+import { deployLinked, launchMarkets } from "./lib/contract-fixture.mjs";
 
 const rpcUrl=process.env.RFQ_RPC_URL??"http://127.0.0.1:8545";
 const provider=new JsonRpcProvider(rpcUrl);const owner=await provider.getSigner(0);const ownerAddress=await owner.getAddress();const emergencyAddress=await provider.getSigner(1).then(signer=>signer.getAddress());const deployer=new NonceManager(owner);
@@ -16,7 +16,7 @@ const chain=await provider.getNetwork(); if(chain.chainId!==31_337n)throw new Er
 const approvers=[Wallet.createRandom(),Wallet.createRandom(),Wallet.createRandom()];
 const token=await deploy("MockUSDC") as unknown as Contract; const oracle=await deploy("MockPriceOracle"); const riskMath=await deploy("RFQRiskMath");libraryAddresses.RFQRiskMath=await riskMath.getAddress();const signatureVerifier=await deploy("RFQSignatureVerifier");libraryAddresses.RFQSignatureVerifier=await signatureVerifier.getAddress();const implementation=await deploy("RFQClearing");
 const clearingInterface=new Interface(artifact("RFQClearing").abi);
-const init=clearingInterface.encodeFunctionData("initialize",[await token.getAddress(),await oracle.getAddress(),ownerAddress,emergencyAddress,approvers.map(item=>item.address),1_000_000_000_000n,[MAX_MARKET_CONFIG,MAX_MARKET_CONFIG]]);
+const init=clearingInterface.encodeFunctionData("initialize",[await token.getAddress(),await oracle.getAddress(),ownerAddress,emergencyAddress,approvers.map(item=>item.address),1_000_000_000_000n,launchMarkets()]);
 const proxy=await deploy("TestProxy",[await implementation.getAddress(),ownerAddress,init]); const clearing=new Contract(await proxy.getAddress(),artifact("RFQClearing").abi,deployer); await (await clearing.unpause()).wait();
 const adminWord=await provider.getStorage(await proxy.getAddress(),"0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"),proxyAdminAddress=`0x${adminWord.slice(-40)}`;
 await (await token.mint(ownerAddress,12_000_000_000_000n)).wait(); await (await token.approve(await clearing.getAddress(),MaxUint256)).wait();

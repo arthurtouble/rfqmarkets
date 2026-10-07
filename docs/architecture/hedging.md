@@ -51,15 +51,6 @@ Local endpoints:
 
 The status snapshot, status stream, manual tick and quote-admission snapshot all require the operations token whenever one is configured. The public `/health` route reports availability only. The local stack uses a fixed loopback-only development token so the Vite dashboard can exercise authenticated streaming; Base Sepolia and deployed environments should set a random `RFQ_HEDGE_OPS_TOKEN`. A production browser must reach these routes through an identity-aware private reverse proxy that injects the upstream credential. Never compile the upstream token into a public bundle.
 
-## Chainlink Data Streams
+## Reference prices
 
-Data Streams is the intended primary execution oracle. It is pull-based, but authenticated reports are not freely accessible. Chainlink currently requires a self-service account, paid feed subscriptions, feed IDs and HMAC credentials. The public Discovery endpoint can list public streams without authentication. The exact-pinned official TypeScript SDK now handles authenticated REST acquisition, retries and v3 decoding behind the API's `OracleSource` boundary.
-
-Keep the Data Streams secret out of the frontend. The API fetches the report needed for settlement and passes the unmodified signed blob into the clearing call. The deployed Chainlink adapter verifies the report through the configured VerifierProxy and pins feed IDs and decimals. Approvers independently validate the blob, entitlement-independent report fields, freshness, spread and selection policy; for infrastructure isolation they should use separately scoped credentials and separate active-active connections where the subscription permits it.
-
-Official references:
-
-- [Data Streams overview](https://docs.chain.link/data-streams)
-- [Account, credentials and subscription requirements](https://docs.chain.link/data-streams/sign-up)
-- [HMAC authentication](https://docs.chain.link/data-streams/reference/data-streams-api/authentication)
-- [Onchain EVM verification](https://docs.chain.link/data-streams/reference/data-streams-api/onchain-verification)
+The hedge worker and quoting use the same signed oracle prices as settlement; see [Price oracle](oracle.md).

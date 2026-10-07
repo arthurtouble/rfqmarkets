@@ -78,7 +78,7 @@ library RFQSignatureVerifier {
         Session storage session = $.sessions[sessionSigner];
         if (
             session.account != intent.account || block.timestamp > session.validUntil
-                || intent.deadline > session.validUntil || session.marketMask & uint8(1 << intent.market) == 0
+                || intent.deadline > session.validUntil || session.marketMask & (uint256(1) << intent.market) == 0
                 || approval.fee > session.maxFee
         ) revert Unauthorized();
     }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { network } from "hardhat";
-import { MAX_MARKET_CONFIG, deployLinked } from "./lib/contract-fixture.mjs";
+import { deployLinked, launchMarkets } from "./lib/contract-fixture.mjs";
 
 const { ethers } = await network.create({ network:"hardhatOp", chainType:"op" });
 const [governance, emergency, approverA, approverB, approverC, maker, relayer, ...users] = await ethers.getSigners();
@@ -12,7 +12,7 @@ const token=await deploy("MockUSDC"),oracle=await deploy("MockPriceOracle"),risk
 const implementation=await deploy("RFQClearing");
 const init=new ethers.Interface(artifact("RFQClearing").abi).encodeFunctionData("initialize",[
   await token.getAddress(),await oracle.getAddress(),governance.address,emergency.address,
-  [approverA.address,approverB.address,approverC.address],600_000_000_000n,[MAX_MARKET_CONFIG,MAX_MARKET_CONFIG],
+  [approverA.address,approverB.address,approverC.address],600_000_000_000n,launchMarkets(),
 ]);
 const proxy=await deploy("TestProxy",[await implementation.getAddress(),governance.address,init]);
 const clearing=new ethers.Contract(await proxy.getAddress(),artifact("RFQClearing").abi,governance);await (await clearing.unpause()).wait();
@@ -22,7 +22,7 @@ for(const trader of traders){await (await token.mint(trader.address,100_000_000_
 
 const coder=ethers.AbiCoder.defaultAbiCoder(),observationType="tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)";
 const prices=[{bid:99_990_000_000n,ask:100_010_000_000n},{bid:3_999_000_000n,ask:4_001_000_000n}];
-const report=async market=>{const block=await ethers.provider.getBlock("latest"),price=prices[market];return coder.encode([observationType],[[market,price.bid,price.ask,BigInt(block.timestamp),BigInt(block.timestamp+60)]]);};
+const report=async market=>{const block=await ethers.provider.getBlock("latest"),price=prices[market];return coder.encode([`${observationType}[]`],[[[market,price.bid,price.ask,BigInt(block.timestamp),BigInt(block.timestamp+60)]]]);};
 for(let market=0;market<2;market++)await (await clearing.refreshOracle(await report(market))).wait();
 const chain=await ethers.provider.getNetwork(),domain={name:"RFQ Markets",version:"1",chainId:chain.chainId,verifyingContract:await clearing.getAddress()};
 const intentTypes={TradeIntent:[
@@ -62,7 +62,7 @@ for(let step=0;step<steps;step++){
   // executeTrade records the target market's new observation before evaluating
   // cross-market impact, so the reference state must use that same observation.
   const btcUsd=btc.aggregateBase*(prices[0].bid+prices[0].ask)/2n/10n**18n,ethUsd=eth.aggregateBase*(prices[1].bid+prices[1].ask)/2n/10n**18n,deltaUsd=delta*mid/10n**18n;
-  const rawImpact=await risk.impactCost(btcUsd,ethUsd,market,deltaUsd),impact=rawImpact>0n?rawImpact:0n;
+  const rawImpact=await risk.impactCost([10_000,12_000][market],[btcUsd,ethUsd][market],deltaUsd),impact=rawImpact>0n?rawImpact:0n;
   // One price quantum can be smaller than one USDC micro-unit of delivered
   // impact. Round the premium until the contract's two-floor calculation meets
   // the required charge exactly; this mirrors the production quoter's guarantee.

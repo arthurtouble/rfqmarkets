@@ -15,10 +15,6 @@ import "../RFQTypes.sol";
 library RFQRiskMath {
     // Funding and inventory-impact scale: 1e12 = 100% APR.
     int256 internal constant RATE = 1e12;
-    // Inventory-impact coefficients (see ECONOMIC-SPECIFICATION.md).
-    int256 internal constant K_BTC = 10_000;
-    int256 internal constant K_ETH = 12_000;
-    int256 internal constant K_CROSS = 6_573;
 
     uint256 internal constant LIQUIDATION_PENALTY_BPS = 50;
     uint256 internal constant KEEPER_REWARD_BPS = 10;
@@ -53,19 +49,24 @@ library RFQRiskMath {
         bool reduction = isReduction(previous, next);
         if (!reduction && (!$.markets[intent.market].enabled || backing < $.baseRiskCapitalTarget)) revert Margin();
 
-        int256[2] memory skewBefore;
-        int256[2] memory skewAfter;
-        for (uint8 i; i < MARKET_COUNT; ++i) {
+        uint256 stressBefore;
+        uint256 stressAfter;
+        uint8 count = $.marketCount;
+        for (uint8 i; i < count; ++i) {
             Market storage market = $.markets[i];
             ExposureBook storage book = $.exposure[i];
             uint256 longs = book.longBase;
             uint256 shorts = book.shortBase;
+            if (longs + shorts == 0 && i != intent.market) continue;
             if (longs + shorts != 0 && !isFresh(market)) revert Stale();
 
             uint256 mark = (market.lastBid + market.lastAsk) / 2;
             int256 delta = i == intent.market ? intent.baseDelta : int256(0);
-            skewBefore[i] = market.aggregateBase * int256(mark) / int256(BASE_UNIT);
-            skewAfter[i] = (market.aggregateBase + delta) * int256(mark) / int256(BASE_UNIT);
+            int256 skewBefore = market.aggregateBase * int256(mark) / int256(BASE_UNIT);
+            int256 skewAfter = (market.aggregateBase + delta) * int256(mark) / int256(BASE_UNIT);
+            uint16 shock = $.marketParams[i].shockBps;
+            stressBefore += stressContribution(skewBefore, shock);
+            stressAfter += stressContribution(skewAfter, shock);
 
             uint256 ask = market.lastAsk;
             uint256 grossBefore = (longs + shorts) * ask / BASE_UNIT;
@@ -76,11 +77,9 @@ library RFQRiskMath {
             enforceLimit((longs + shorts) * ask / BASE_UNIT, book.grossLimit, grossBefore, reduction);
             enforceLimit(longs * ask / BASE_UNIT, book.sideLimit, longBefore, reduction);
             enforceLimit(shorts * ask / BASE_UNIT, book.sideLimit, shortBefore, reduction);
-            enforceLimit(abs(skewAfter[i]), $.limits[i].maxMarketNotional, abs(skewBefore[i]), reduction);
+            enforceLimit(abs(skewAfter), $.limits[i].maxMarketNotional, abs(skewBefore), reduction);
         }
-        enforceLimit(
-            stressLoss(skewAfter[0], skewAfter[1]), backing / 4, stressLoss(skewBefore[0], skewBefore[1]), reduction
-        );
+        enforceLimit(stressAfter, backing / 4, stressBefore, reduction);
     }
 
     /// @notice Checks per-trade and session limits and the on-chain inventory-impact price floor.
@@ -93,15 +92,13 @@ library RFQRiskMath {
         address sessionSigner
     ) public view returns (uint256 notional) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        (int256 btc, int256 eth) = portfolioExposure();
         int256 requiredImpact;
         int256 deliveredImpact;
         bool reduces;
         (notional, requiredImpact, deliveredImpact, reduces) = tradeAssessment(
-            btc,
-            eth,
+            $.marketParams[intent.market].impactK,
+            marketSkew($.markets[intent.market]),
             $.accounts[intent.account].positions[intent.market].size,
-            intent.market,
             intent.baseDelta,
             approval.executionPrice,
             bid,
@@ -124,7 +121,8 @@ library RFQRiskMath {
     function validateSessionConfiguration(SessionGrant calldata grant) public view {
         if (
             grant.account == address(0) || grant.session == address(0) || grant.session == grant.account
-                || grant.marketMask == 0 || grant.marketMask >= 1 << MARKET_COUNT || grant.maxTradeNotional == 0
+                || grant.marketMask == 0 || grant.marketMask >> RFQClearingStorage.layout().marketCount != 0
+                || grant.maxTradeNotional == 0
                 || grant.maxTradeNotional > grant.maxCumulativeNotional || grant.maxFee == 0
                 || grant.validUntil <= block.timestamp || grant.validUntil > block.timestamp + MAX_SESSION_DURATION
         ) revert InvalidTrade();
@@ -143,26 +141,34 @@ library RFQRiskMath {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Account storage account = $.accounts[owner];
         value = account.collateral;
-        for (uint8 i; i < MARKET_COUNT; ++i) {
+        for (uint256 open = account.openMarkets; open != 0; open &= open - 1) {
+            uint8 i = uint8(lowestBit(open));
             Position storage p = account.positions[i];
             int256 pnl = positionPnl(p.size, p.entryPrice, exitPrice($.markets[i], p.size));
             if (includeGains || pnl < 0) value += pnl;
         }
     }
 
-    /// @notice Tiered initial or maintenance margin across both legs, each valued at the ask.
+    /// @notice Tiered initial or maintenance margin across every leg, each valued at the ask and scaled by
+    /// its market's margin multiplier.
     function accountMargin(address owner, bool initial) public view returns (uint256 total) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            uint256 notional = abs($.accounts[owner].positions[i].size) * $.markets[i].lastAsk / BASE_UNIT;
-            total += notional * marginRate(notional, initial) / 10_000;
+        Account storage account = $.accounts[owner];
+        for (uint256 open = account.openMarkets; open != 0; open &= open - 1) {
+            uint8 i = uint8(lowestBit(open));
+            uint256 notional = abs(account.positions[i].size) * $.markets[i].lastAsk / BASE_UNIT;
+            total += notional * scaledMarginRate(notional, initial, $.marketParams[i].marginScaleBps) / 10_000;
         }
     }
 
-    /// @notice Net customer skew per market at mid, in USDC. Reverts if an open market's price is stale.
-    function portfolioExposure() public view returns (int256 btc, int256 eth) {
+    /// @notice Worst-case maker loss from the stress moves: the sum over markets of |net customer skew at mid|
+    /// times the market's shock. Reverts if a market with open exposure has a stale price.
+    function portfolioStress() public view returns (uint256 stress) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        return (marketSkew($.markets[0]), marketSkew($.markets[1]));
+        uint8 count = $.marketCount;
+        for (uint8 i; i < count; ++i) {
+            stress += stressContribution(marketSkew($.markets[i]), $.marketParams[i].shockBps);
+        }
     }
 
     /// @notice What the maker would owe if every customer closed at mid now, net across markets and floored
@@ -170,7 +176,8 @@ library RFQRiskMath {
     function customerUnrealizedGain() public view returns (uint256) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         int256 gain;
-        for (uint8 i; i < MARKET_COUNT; ++i) {
+        uint8 count = $.marketCount;
+        for (uint8 i; i < count; ++i) {
             gain += marketSkew($.markets[i]) - $.costBasis[i];
         }
         return gain > 0 ? uint256(gain) : 0;
@@ -181,12 +188,12 @@ library RFQRiskMath {
     function makerIncident() public view returns (bool) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         uint256 gross;
-        for (uint8 i; i < MARKET_COUNT; ++i) {
+        uint8 count = $.marketCount;
+        for (uint8 i; i < count; ++i) {
             gross += $.exposure[i].longBase + $.exposure[i].shortBase;
         }
         if (gross == 0) return false;
-        (int256 btc, int256 eth) = portfolioExposure();
-        return $.makerBacking < $.baseRiskCapitalTarget || stressLoss(btc, eth) > $.makerBacking / 4;
+        return $.makerBacking < $.baseRiskCapitalTarget || portfolioStress() > $.makerBacking / 4;
     }
 
     // =======================================================================
@@ -196,8 +203,10 @@ library RFQRiskMath {
     /// @notice Realized PnL and closed notional if every leg of `owner` were closed at the stored exit prices.
     function closeAssessment(address owner) public view returns (int256 pnl, uint256 notional) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            Position storage p = $.accounts[owner].positions[i];
+        Account storage account = $.accounts[owner];
+        for (uint256 open = account.openMarkets; open != 0; open &= open - 1) {
+            uint8 i = uint8(lowestBit(open));
+            Position storage p = account.positions[i];
             uint256 price = exitPrice($.markets[i], p.size);
             pnl += positionPnl(p.size, p.entryPrice, price);
             notional += abs(p.size) * price / BASE_UNIT;
@@ -207,31 +216,41 @@ library RFQRiskMath {
     /// @notice Removes every leg of `owner` from the books. The caller has already moved the PnL.
     function clearPortfolio(address owner) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            Position storage position = $.accounts[owner].positions[i];
+        Account storage account = $.accounts[owner];
+        for (uint256 open = account.openMarkets; open != 0; open &= open - 1) {
+            uint8 i = uint8(lowestBit(open));
+            Position storage position = account.positions[i];
             int256 size = position.size;
-            if (size == 0) continue;
             uint256 price = exitPrice($.markets[i], size);
             moveLeg(i, size, position.entryPrice, 0, 0);
-            delete $.accounts[owner].positions[i];
+            delete account.positions[i];
             emit IRFQClearingEvents.PositionClosed(owner, i, -size, price);
         }
+        account.openMarkets = 0;
     }
 
-    function fundingPayments(address owner) public view returns (int256[2] memory payments, int256 total) {
+    /// @notice Net funding owed by `owner` across its legs at the current indexes (positive = owed).
+    function fundingTotal(address owner) public view returns (int256 total) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            Position storage p = $.accounts[owner].positions[i];
-            payments[i] = p.size * ($.markets[i].fundingIndex - p.lastFundingIndex) / int256(BASE_UNIT);
-            total += payments[i];
+        Account storage account = $.accounts[owner];
+        for (uint256 open = account.openMarkets; open != 0; open &= open - 1) {
+            uint8 i = uint8(lowestBit(open));
+            Position storage p = account.positions[i];
+            total += p.size * ($.markets[i].fundingIndex - p.lastFundingIndex) / int256(BASE_UNIT);
         }
     }
 
-    function recordFunding(address owner, int256[2] memory payments) public {
+    /// @notice Marks every leg's funding as settled at the current indexes, emitting each non-zero payment.
+    function recordFunding(address owner) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            $.accounts[owner].positions[i].lastFundingIndex = $.markets[i].fundingIndex;
-            if (payments[i] != 0) emit IRFQClearingEvents.FundingSettled(owner, i, payments[i]);
+        Account storage account = $.accounts[owner];
+        for (uint256 open = account.openMarkets; open != 0; open &= open - 1) {
+            uint8 i = uint8(lowestBit(open));
+            Position storage p = account.positions[i];
+            int256 index = $.markets[i].fundingIndex;
+            int256 payment = p.size * (index - p.lastFundingIndex) / int256(BASE_UNIT);
+            p.lastFundingIndex = index;
+            if (payment != 0) emit IRFQClearingEvents.FundingSettled(owner, i, payment);
         }
     }
 
@@ -244,9 +263,7 @@ library RFQRiskMath {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Account storage account = $.accounts[owner];
         if (account.collateral >= 0) return (0, 0, 0, 0);
-        for (uint8 i; i < MARKET_COUNT; ++i) {
-            if (account.positions[i].size != 0) revert Insolvent();
-        }
+        if (account.openMarkets != 0) revert Insolvent();
         debt = uint256(-account.collateral);
         insuranceUsed = Math.min(debt, $.insuranceBalance);
         makerUsed = Math.min(debt - insuranceUsed, $.makerBacking);
@@ -276,11 +293,10 @@ library RFQRiskMath {
     // Pure risk arithmetic
     // =======================================================================
 
-    function impactCost(int256 btc, int256 eth, uint8 market, int256 delta) public pure returns (int256) {
-        int256 beforeValue = potential(btc, eth);
-        if (market == 0) btc += delta;
-        else eth += delta;
-        return potential(btc, eth) - beforeValue;
+    /// @notice Inventory-impact charge for moving a market's net customer skew from `skew` to `skew + delta`
+    /// (USDC at mid): k * ((skew + delta)^2 - skew^2) / (2 * RATE * 1e6), each square floored separately.
+    function impactCost(uint32 impactK, int256 skew, int256 delta) public pure returns (int256) {
+        return potential(impactK, skew + delta) - potential(impactK, skew);
     }
 
     /// @return notional Trade notional at the execution price.
@@ -288,10 +304,9 @@ library RFQRiskMath {
     /// @return deliveredImpact What the execution price actually collects relative to the oracle side.
     /// @return reduces Whether the trade shrinks the account's position without flipping it.
     function tradeAssessment(
-        int256 btc,
-        int256 eth,
+        uint32 impactK,
+        int256 skew,
         int256 oldSize,
-        uint8 market,
         int256 baseDelta,
         uint256 executionPrice,
         uint256 bid,
@@ -300,23 +315,17 @@ library RFQRiskMath {
         uint256 quantity = abs(baseDelta);
         notional = quantity * executionPrice / BASE_UNIT;
         uint256 mark = (bid + ask) / 2;
-        requiredImpact = impactCost(btc, eth, market, baseDelta * int256(mark) / int256(BASE_UNIT));
+        requiredImpact = impactCost(impactK, skew, baseDelta * int256(mark) / int256(BASE_UNIT));
         deliveredImpact = baseDelta > 0
             ? int256(quantity * executionPrice / BASE_UNIT) - int256(quantity * ask / BASE_UNIT)
             : int256(quantity * bid / BASE_UNIT) - int256(quantity * executionPrice / BASE_UNIT);
         reduces = oldSize != 0 && isReduction(oldSize, oldSize + baseDelta);
     }
 
-    /// @notice Worst loss to the maker across six fixed BTC/ETH shock scenarios.
-    function stressLoss(int256 btc, int256 eth) public pure returns (uint256) {
-        int256 worst;
-        worst = max(worst, scenario(btc, eth, 20, 25));
-        worst = max(worst, scenario(btc, eth, -20, -25));
-        worst = max(worst, scenario(btc, eth, 15, -20));
-        worst = max(worst, scenario(btc, eth, -15, 20));
-        worst = max(worst, scenario(btc, eth, 40, 50));
-        worst = max(worst, scenario(btc, eth, -40, -50));
-        return uint256(worst);
+    /// @notice One market's share of the stress loss: |skew| * shock, rounded up. Summing it over markets
+    /// assumes every market moves against the maker at once, which is never less than any fixed scenario.
+    function stressContribution(int256 skew, uint16 shockBps) public pure returns (uint256) {
+        return Math.ceilDiv(abs(skew) * shockBps, 10_000);
     }
 
     /// @notice Tiered margin rate in basis points. The top tier also applies above 5M notional, so a leg
@@ -330,14 +339,23 @@ library RFQRiskMath {
         return initial ? 10_000 : 6_000;
     }
 
+    /// @notice `marginRate` scaled by a market's multiplier, capped at 100%.
+    function scaledMarginRate(uint256 notional, bool initial, uint16 scaleBps) public pure returns (uint256) {
+        return Math.min(marginRate(notional, initial) * scaleBps / 10_000, 10_000);
+    }
+
     /// @notice Base to close in one liquidation call: enough to bring equity back to the leg's maintenance
     /// rate plus a 10-point buffer after the penalty, at most 25% of the leg per call, and the whole leg when
     /// it is small or equity is gone.
-    function liquidationClose(int256 size, uint256 mark, int256 equity) public pure returns (uint256 closed) {
+    function liquidationClose(int256 size, uint256 mark, int256 equity, uint16 marginScaleBps)
+        public
+        pure
+        returns (uint256 closed)
+    {
         uint256 quantity = abs(size);
         uint256 notional = quantity * mark / BASE_UNIT;
         if (notional <= FULL_LIQUIDATION_NOTIONAL || equity <= 0) return quantity;
-        uint256 targetBps = marginRate(notional, false) + LIQUIDATION_TARGET_BUFFER_BPS;
+        uint256 targetBps = scaledMarginRate(notional, false, marginScaleBps) + LIQUIDATION_TARGET_BUFFER_BPS;
         uint256 target = targetBps * notional;
         uint256 shortfall = target > uint256(equity) * 10_000 ? target - uint256(equity) * 10_000 : 0;
         // Closing X at the exit price keeps equity except for the penalty: E - X * penalty >= target * (N - X).
@@ -405,6 +423,13 @@ library RFQRiskMath {
         nextFundingTime = currentTime;
     }
 
+    /// @notice Index of the lowest set bit of a non-zero word.
+    function lowestBit(uint256 word) internal pure returns (uint256) {
+        unchecked {
+            return Math.log2(word & (~word + 1));
+        }
+    }
+
     function median3(uint256 a, uint256 b, uint256 c) public pure returns (uint256) {
         if (a > b) (a, b) = (b, a);
         if (b > c) (b, c) = (c, b);
@@ -457,7 +482,7 @@ library RFQRiskMath {
         return size > 0 ? market.lastBid : market.lastAsk;
     }
 
-    function marketSkew(Market storage market) private view returns (int256) {
+    function marketSkew(Market storage market) internal view returns (int256) {
         if (market.aggregateBase != 0 && !isFresh(market)) revert Stale();
         return market.aggregateBase * int256((market.lastBid + market.lastAsk) / 2) / int256(BASE_UNIT);
     }
@@ -466,16 +491,8 @@ library RFQRiskMath {
         if (next > limit && (!reduction || next > previous)) revert Margin();
     }
 
-    function potential(int256 btc, int256 eth) private pure returns (int256) {
-        return floorDiv(K_BTC * btc * btc + 2 * K_CROSS * btc * eth + K_ETH * eth * eth, 2 * RATE * 1e6);
-    }
-
-    function scenario(int256 btc, int256 eth, int256 btcReturn, int256 ethReturn) private pure returns (int256) {
-        return floorDiv(btc * btcReturn, 100) + floorDiv(eth * ethReturn, 100);
-    }
-
-    function max(int256 a, int256 b) private pure returns (int256) {
-        return a > b ? a : b;
+    function potential(uint32 impactK, int256 skew) private pure returns (int256) {
+        return floorDiv(int256(uint256(impactK)) * skew * skew, 2 * RATE * 1e6);
     }
 
     function abs(int256 value) internal pure returns (uint256) {

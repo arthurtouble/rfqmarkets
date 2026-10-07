@@ -1,0 +1,27 @@
+// Oracle node template: scripts/cloudflare-oracle-deploy.sh renders it once per node (1 wnam, 2 weur,
+// 3 apac) into wrangler.oracle-<n>.generated.jsonc, filling the node index and location hint placeholders,
+// the DEV_STATE id and the image. Public on workers.dev, GET only.
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "rfq-markets-oracle-ORACLE_NODE_INDEX_VALUE",
+  "main": "oracle-worker.mjs",
+  "compatibility_date": "2026-09-11",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {"ORACLE_NODE_INDEX": "ORACLE_NODE_INDEX_VALUE", "ORACLE_LOCATION_HINT": "ORACLE_LOCATION_HINT_VALUE"},
+  "containers": [{
+    "class_name": "RFQOracleNode",
+    "image": "../../../Dockerfile.cloudflare-oracle",
+    "max_instances": 1,
+    "instance_type": "basic"
+  }],
+  "durable_objects": {"bindings": [{"name": "ORACLE_NODE", "class_name": "RFQOracleNode"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["RFQOracleNode"]}],
+  "kv_namespaces": [{"binding": "DEV_STATE", "id": "REPLACED_AT_DEPLOY"}],
+  "triggers": {"crons": ["* * * * *"]},
+  "ratelimits": [
+    {"name":"PUBLIC_READ_LIMIT","namespace_id":"84531ORACLE_NODE_INDEX_VALUE1","simple":{"limit":600,"period":60}},
+    {"name":"GLOBAL_READ_LIMIT","namespace_id":"84531ORACLE_NODE_INDEX_VALUE2","simple":{"limit":12000,"period":60}}
+  ],
+  "observability": {"enabled": true, "head_sampling_rate": 0.1}
+}

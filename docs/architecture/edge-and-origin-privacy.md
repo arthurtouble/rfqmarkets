@@ -17,7 +17,7 @@ flowchart LR
   T --> P[Bounded public Ponder gateway]
   API --> A[Private approver network]
   API --> RPC[Base RPC]
-  API --> CL[Chainlink Data Streams]
+  API --> CL[Signed oracle nodes]
   H[Hedge worker and admin UI] --> RPC
   H --> V[Hedge venues]
 ```
@@ -36,6 +36,6 @@ Use layered abuse controls by endpoint and economic cost:
 
 Cloudflare is an availability and origin-isolation layer, not a protocol authority. A malicious or unavailable edge can censor or alter unsigned indicative data, but it cannot create a valid user signature, two approver signatures, an oracle report, or a clearing-contract state transition. Publish a second static frontend and direct Base interaction instructions for cancellation, session revocation, conservative close, and eligible withdrawals.
 
-The API consumes Chainlink Data Streams over the official SDK's WebSocket stream and keeps the latest validated full reports in memory. Size-specific firm quotes reuse a sufficiently fresh report and fall back to the authenticated REST latest-report endpoint if the stream is stale. The client receives normalized public price fields over SSE; Chainlink credentials and full report acquisition stay server-side.
+The API subscribes to the three oracle nodes' signed batch streams, falls back to REST polling when a stream drops, and keeps the latest combined report in memory. The client receives normalized public price fields over SSE.
 
 Primary reference: [Cloudflare Tunnel security guidance](https://cf-assets.www.cloudflare.com/slt3lc6tev37/7oEleWnoR1ggS7GfMUb3oO/bc05cd36279b0e4bc5fcc942f2a3264e/Cloudflare-security-guide-for-small-and-medium-enterprises.pdf).

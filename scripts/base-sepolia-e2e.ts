@@ -65,7 +65,7 @@ try{
   const approverRpc="https://base-sepolia-rpc.publicnode.com";
   for(let index=0;index<3;index++){
     const token=`smoke-${index}-${crypto.randomUUID()}`;
-    const app=buildApprover({privateKey:identities.approvers[index].privateKey,transportToken:token,databasePath:join(directory,`approver-${index}.sqlite`),expectedChainId:BigInt(manifest.chainId),expectedVerifyingContract:manifest.contracts.clearingProxy,rpcUrl:approverRpc,secondaryRpcUrl:config.rpcUrl,oracleMode:"pyth"});
+    const app=buildApprover({privateKey:identities.approvers[index].privateKey,transportToken:token,databasePath:join(directory,`approver-${index}.sqlite`),expectedChainId:BigInt(manifest.chainId),expectedVerifyingContract:manifest.contracts.clearingProxy,rpcUrl:approverRpc,secondaryRpcUrl:config.rpcUrl,oracleMode:"signed"});
     const url=await app.listen({host:"127.0.0.1",port:0});apps.push(app);approvers.push({url,token});
   }
   const source=new PythHermesSource({apiKey:key,feedIds:{BTC:manifest.feedIds[0],ETH:manifest.feedIds[1]}});

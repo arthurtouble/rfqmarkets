@@ -12,4 +12,5 @@ dist/
 output/
 out/
 deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
+deploy/cloudflare/runtime/wrangler.oracle-*.generated.jsonc
 .claude/worktrees/

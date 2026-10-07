@@ -1,24 +1,24 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {network} from 'hardhat';
-import {MAX_MARKET_CONFIG,deployLinked} from './lib/contract-fixture.mjs';
+import {deployLinked,launchMarkets} from './lib/contract-fixture.mjs';
 const {ethers}=await network.create({network:'hardhatOp',chainType:'op'});
 const [gov,emergency,a,b,c,maker,long,short,third]=await ethers.getSigners(),libraries={};
 const artifact=name=>JSON.parse(fs.readFileSync(`artifacts/${name}.json`,'utf8'));
 const deploy=(name,args=[])=>deployLinked(gov,name,args,libraries);
 const token=await deploy('MockUSDC'),oracle=await deploy('MockPriceOracle'),risk=await deploy('RFQRiskMath');libraries.RFQRiskMath=await risk.getAddress();const signatures=await deploy('RFQSignatureVerifier');libraries.RFQSignatureVerifier=await signatures.getAddress();
-const implementation=await deploy('RFQClearing'),init=new ethers.Interface(artifact('RFQClearing').abi).encodeFunctionData('initialize',[await token.getAddress(),await oracle.getAddress(),gov.address,emergency.address,[a.address,b.address,c.address],100_000_000_000n,[MAX_MARKET_CONFIG,MAX_MARKET_CONFIG]]);
+const implementation=await deploy('RFQClearing'),init=new ethers.Interface(artifact('RFQClearing').abi).encodeFunctionData('initialize',[await token.getAddress(),await oracle.getAddress(),gov.address,emergency.address,[a.address,b.address,c.address],100_000_000_000n,launchMarkets()]);
 const proxy=await deploy('TestProxy',[await implementation.getAddress(),gov.address,init]),clearing=new ethers.Contract(await proxy.getAddress(),artifact('RFQClearing').abi,gov);await (await clearing.unpause()).wait();
 await (await token.mint(maker.address,200_000_000_000n)).wait();await (await token.connect(maker).approve(await proxy.getAddress(),ethers.MaxUint256)).wait();await (await clearing.connect(maker).fundMaker(99_999_000_000n)).wait();
 for(const user of [long,short,third]){await (await token.mint(user.address,100_000_000_000n)).wait();await (await token.connect(user).approve(await proxy.getAddress(),ethers.MaxUint256)).wait();await (await clearing.connect(user).deposit(100_000_000_000n)).wait();}
-const prices=[100_000_000_000n,4_000_000_000n],BASE=10n**18n;
-const report=async market=>{const block=await ethers.provider.getBlock('latest');return ethers.AbiCoder.defaultAbiCoder().encode(['tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)'],[[market,prices[market],prices[market],block.timestamp,block.timestamp+60]]);};
+const IMPACT_K=[10_000,12_000],prices=[100_000_000_000n,4_000_000_000n],BASE=10n**18n;
+const report=async market=>{const block=await ethers.provider.getBlock('latest');return ethers.AbiCoder.defaultAbiCoder().encode(['tuple(uint8 market,uint256 bid,uint256 ask,uint64 observedAt,uint64 validUntil)[]'],[[[market,prices[market],prices[market],block.timestamp,block.timestamp+60]]]);};
 const refresh=async()=>{for(let i=0;i<2;i++)await (await clearing.refreshOracle(await report(i))).wait();};
 const domain={name:'RFQ Markets',version:'1',chainId:(await ethers.provider.getNetwork()).chainId,verifyingContract:await proxy.getAddress()};
 const types={TradeIntent:[{name:'account',type:'address'},{name:'market',type:'uint8'},{name:'baseDelta',type:'int256'},{name:'limitPrice',type:'uint256'},{name:'maxFee',type:'uint256'},{name:'nonce',type:'uint256'},{name:'deadline',type:'uint64'},{name:'reduceOnly',type:'bool'}]},approvalTypes={MakerApproval:[{name:'intentHash',type:'bytes32'},{name:'executionPrice',type:'uint256'},{name:'impactCharge',type:'int256'},{name:'fee',type:'uint256'},{name:'oracleReportHash',type:'bytes32'},{name:'deadline',type:'uint64'},{name:'leaderEpoch',type:'uint64'},{name:'signerSetVersion',type:'uint64'},{name:'policyVersion',type:'uint64'}]};
 let nonce=0n;
 const trade=async(user,delta,market=0,reduceOnly=false)=>{
- const proof=await report(market),btc=await clearing.markets(0),eth=await clearing.markets(1),impact=await risk.impactCost(btc.aggregateBase*prices[0]/BASE,eth.aggregateBase*prices[1]/BASE,market,delta*prices[market]/BASE),charge=impact>0n?impact:0n,premium=(charge*BASE+(delta<0n?-delta:delta)-1n)/(delta<0n?-delta:delta),price=prices[market]+(delta>0n?premium:-premium);
+ const proof=await report(market),btc=await clearing.markets(0),eth=await clearing.markets(1),impact=await risk.impactCost(IMPACT_K[market],[btc,eth][market].aggregateBase*prices[market]/BASE,delta*prices[market]/BASE),charge=impact>0n?impact:0n,premium=(charge*BASE+(delta<0n?-delta:delta)-1n)/(delta<0n?-delta:delta),price=prices[market]+(delta>0n?premium:-premium);
  const block=await ethers.provider.getBlock('latest'),intent={account:user.address,market,baseDelta:delta,limitPrice:price,maxFee:0n,nonce:++nonce,deadline:BigInt(block.timestamp+60),reduceOnly},approval={intentHash:ethers.TypedDataEncoder.hash(domain,types,intent),executionPrice:price,impactCharge:charge,fee:0n,oracleReportHash:ethers.keccak256(proof),deadline:intent.deadline,leaderEpoch:await clearing.leaderEpoch(),signerSetVersion:await clearing.signerSetVersion(),policyVersion:await clearing.policyVersion()};
  return (await clearing.executeTrade(intent,approval,proof,await user.signTypedData(domain,types,intent),await a.signTypedData(domain,approvalTypes,approval),await b.signTypedData(domain,approvalTypes,approval))).wait();
 };

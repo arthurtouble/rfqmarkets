@@ -123,7 +123,10 @@ export class KeeperEngine {
         });
         return;
       }
+      // Prices are ready once every market with open interest has its samples; a further
+      // sample for an idle market would revert.
       for (const market of [0, 1] as const) {
+        if (state.resolutionPricesReady) return;
         if (state.sampleCounts[market] < 3 && writes < this.limits.maxTransactions)
           await execute({ kind: "sample", market, proof: await proof(market) });
       }

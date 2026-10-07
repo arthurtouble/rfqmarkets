@@ -4,7 +4,11 @@ import type { Market } from "./markets.js";
 export { BASE, RATE, USDC, ceilDiv } from "./numeric.js";
 export type { Market } from "./markets.js";
 
-const K = { BTC: 10_000n, ETH: 12_000n, CROSS: 6_573n } as const;
+/**
+ * Inventory-impact coefficients the launch markets are registered with on chain (`marketParams(id).impactK`).
+ * The charge is per market: there is no cross-market term.
+ */
+export const IMPACT_K = { BTC: 10_000n, ETH: 12_000n } as const;
 export type Exposure = Record<Market, bigint>;
 export type QuoteRequest = { market: Market; side: "buy" | "sell"; amount: string };
 
@@ -22,16 +26,17 @@ function floorDiv(numerator: bigint, denominator: bigint): bigint {
   if (numerator < 0n && numerator % denominator !== 0n) quotient -= 1n;
   return quotient;
 }
-export function potential(exposure: Exposure): bigint {
-  const numerator =
-    K.BTC * exposure.BTC * exposure.BTC +
-    2n * K.CROSS * exposure.BTC * exposure.ETH +
-    K.ETH * exposure.ETH * exposure.ETH;
-  return floorDiv(numerator, 2n * RATE * USDC);
+/** One market's impact potential: floor(k * skew^2 / (2 * RATE * 1e6)), as `RFQRiskMath.potential`. */
+export function marketPotential(impactK: bigint, skew: bigint): bigint {
+  return floorDiv(impactK * skew * skew, 2n * RATE * USDC);
 }
+export function potential(exposure: Exposure): bigint {
+  return marketPotential(IMPACT_K.BTC, exposure.BTC) + marketPotential(IMPACT_K.ETH, exposure.ETH);
+}
+/** Mirrors `RFQRiskMath.impactCost(impactK, skew, delta)` for the market being traded. */
 export function impactCost(exposure: Exposure, market: Market, delta: bigint): bigint {
-  const next = { ...exposure, [market]: exposure[market] + delta };
-  return potential(next) - potential(exposure);
+  const skew = exposure[market];
+  return marketPotential(IMPACT_K[market], skew + delta) - marketPotential(IMPACT_K[market], skew);
 }
 export function requiredPendingImpact(
   settled: Exposure,

@@ -1,5 +1,6 @@
 name: Deploy Cloudflare dev (Base mainnet)
-# Every green CI run on main redeploys the trading UI, the docs and the dev runtime container.
+# Every green CI run on main redeploys the three oracle nodes (one at a time), the trading UI, the docs
+# and the dev runtime container.
 # Contracts are deployed and upgraded separately by dev-contracts.yml.
 on:
   workflow_dispatch:
@@ -13,7 +14,7 @@ concurrency:
   group: cloudflare-dev
   cancel-in-progress: false
 jobs:
-  # Repository secrets CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and PYTH_API_KEY turn this on.
+  # Repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID turn this on.
   configured:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
@@ -29,11 +30,11 @@ jobs:
     needs: configured
     if: ${{ needs.configured.outputs.ok == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      PYTH_API_KEY: ${{ secrets.PYTH_API_KEY }}
+      CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}
       RFQ_BASE_MAINNET_RPC_URL: ${{ secrets.RFQ_BASE_MAINNET_RPC_URL }}
       RFQ_BASE_MAINNET_SECONDARY_RPC_URL: ${{ secrets.RFQ_BASE_MAINNET_SECONDARY_RPC_URL }}
     steps:

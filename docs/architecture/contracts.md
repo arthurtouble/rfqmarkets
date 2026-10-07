@@ -49,11 +49,9 @@ The contract recomputes impact from settled aggregate BTC/ETH inventory and requ
 
 ## Oracle boundary
 
-`contracts/oracle/ChainlinkDataStreamsV3Adapter.sol` is intentionally narrow. Only the clearing contract may call it. It forwards the report to the configured Chainlink VerifierProxy, accepts only the two configured feed IDs, rejects nonpositive or inverted bid/ask values and normalizes the configured feed decimals to USDC decimals. Clearing separately checks age, expiry and width.
+`contracts/oracle/SignedPriceOracle.sol` is intentionally narrow. Only the clearing contract may call it. It requires a majority of authorized node signatures over EIP-712 price batches, takes the median per market and leaves out any market whose signers disagree or whose price jumps, so that market has no fresh price and fails closed. Clearing separately checks that reported markets are registered and ascending, and checks age, expiry and width. Approvers require an observation no more than eight seconds old when signing; the contract permits up to fifteen seconds so a valid approval has bounded inclusion time. See [Price oracle](oracle.md).
 
-The adapter follows Chainlink's published v3 fields and `verifier.verify(unverifiedReport, bytes(""))` subscription-billing pattern. Approvers require an observation no more than eight seconds old when signing; the contract permits up to fifteen seconds so a valid approval has bounded inclusion time. Production deployment must obtain and verify the current Base VerifierProxy, feed IDs, decimals and billing behavior; none are guessed in source.
-
-`contracts/oracle/PythCoreAdapter.sol` accepts authenticated pull-update blobs, requires the exact on-chain verification fee so excess ETH cannot be trapped, parses only the configured feed inside a block-relative fifteen-second window, and conservatively turns Pyth's confidence interval into bid and ask. Parsing the signed payload directly keeps settlement independent of Pyth's shared stored-price cache. Pyth's current Hermes service requires an API key, so this removes the Chainlink verifier dependency but does not remove every off-chain data-access credential.
+Markets live in an on-chain registry: governance lists them with `addMarket` (up to 128) and retunes impact, stress shock and margin scale with `setMarketRisk`, without an upgrade.
 
 ## Margin, liquidation and resolution
 
@@ -96,4 +94,4 @@ Governance can withdraw maker capital only when the remaining backing, less cust
 
 Runtime sizes with the IR pipeline at `optimizer_runs = 1`: RFQClearing 18,706 bytes, RFQRiskMath 9,799, RFQResolution 6,776, RFQSettlement 6,582, RFQLiquidation 5,804, RFQSignatureVerifier 2,700. `scripts/compile-contracts.mjs` fails the build if any contract exceeds EIP-170. Library addresses are recorded in the deployment manifest and must be verified with the implementation and proxy.
 
-Production still needs the timelock handover above, live Chainlink or Pyth validation on Base, and an external audit. The browser prototype keeps the limited session secret in tab-scoped storage; production requires a strict content-security policy, no unreviewed third-party scripts and a provider/session design chosen after wallet testing.
+Production still needs the timelock handover above, live validation of the oracle nodes on Base, and an external audit. The browser prototype keeps the limited session secret in tab-scoped storage; production requires a strict content-security policy, no unreviewed third-party scripts and a provider/session design chosen after wallet testing.

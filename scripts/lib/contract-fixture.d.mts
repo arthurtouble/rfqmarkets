@@ -1,15 +1,20 @@
 import type { BaseContract, Signer } from "ethers";
 
 export interface MarketConfig {
+  symbol: string;
   enabled: boolean;
   maxTradeNotional: bigint;
   maxMarketNotional: bigint;
   grossLimit: bigint;
   sideLimit: bigint;
+  impactK: number;
+  shockBps: number;
+  marginScaleBps: number;
 }
 
 export const BASE: bigint;
 export const MAX_MARKET_CONFIG: MarketConfig;
+export function launchMarkets(limits?: Partial<MarketConfig>): MarketConfig[];
 export const TRADE_INTENT_TYPES: Record<string, { name: string; type: string }[]>;
 export const MAKER_APPROVAL_TYPES: Record<string, { name: string; type: string }[]>;
 

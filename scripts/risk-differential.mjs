@@ -15,10 +15,10 @@ const floorDiv=(numerator,denominator)=>{
   if(numerator<0n&&numerator%denominator!==0n)quotient--;
   return quotient;
 };
-const potential=(btc,eth)=>floorDiv(10_000n*btc*btc+2n*6_573n*btc*eth+12_000n*eth*eth,2n*RATE*1_000_000n);
-const impactCost=(btc,eth,market,delta)=>potential(btc+(market===0?delta:0n),eth+(market===1?delta:0n))-potential(btc,eth);
-const tradeAssessment=(btc,eth,oldSize,market,baseDelta,executionPrice,bid,ask)=>{
-  const absoluteBase=abs(baseDelta),notional=absoluteBase*executionPrice/BASE,mark=(bid+ask)/2n,requiredImpact=impactCost(btc,eth,market,baseDelta*mark/BASE);
+const potential=(k,skew)=>floorDiv(k*skew*skew,2n*RATE*1_000_000n);
+const impactCost=(k,skew,delta)=>potential(k,skew+delta)-potential(k,skew);
+const tradeAssessment=(k,skew,oldSize,baseDelta,executionPrice,bid,ask)=>{
+  const absoluteBase=abs(baseDelta),notional=absoluteBase*executionPrice/BASE,mark=(bid+ask)/2n,requiredImpact=impactCost(k,skew,baseDelta*mark/BASE);
   const deliveredImpact=baseDelta>0n?absoluteBase*executionPrice/BASE-absoluteBase*ask/BASE:absoluteBase*bid/BASE-absoluteBase*executionPrice/BASE,next=oldSize+baseDelta;
   const reduces=oldSize!==0n&&abs(next)<abs(oldSize)&&(next===0n||(next>0n)===(oldSize>0n));return [notional,requiredImpact,deliveredImpact,reduces];
 };
@@ -34,12 +34,13 @@ const positionTransition=(oldSize,oldEntry,delta,price)=>{
   return [nextSize,nextEntry,realized];
 };
 const positionPnl=(size,entry,mark)=>size===0n?0n:size>0n?abs(size)*mark/BASE-abs(size)*entry/BASE:abs(size)*entry/BASE-abs(size)*mark/BASE;
-const stressLoss=(btc,eth)=>[[20n,25n],[-20n,-25n],[15n,-20n],[-15n,20n],[40n,50n],[-40n,-50n]].reduce((best,[b,e])=>{const value=floorDiv(btc*b,100n)+floorDiv(eth*e,100n);return value>best?value:best;},0n);
+const stressContribution=(skew,shock)=>(abs(skew)*shock+9_999n)/10_000n;
 const marginRate=(notional,initial)=>notional<=25_000n*1_000_000n?(initial?2_000n:1_200n):notional<=100_000n*1_000_000n?(initial?2_500n:1_500n):notional<=250_000n*1_000_000n?(initial?3_300n:2_000n):notional<=1_000_000n*1_000_000n?(initial?5_000n:3_000n):notional<=2_500_000n*1_000_000n?(initial?6_700n:4_000n):(initial?10_000n:6_000n);
-const liquidationClose=(size,mark,equity)=>{
+const scaledMarginRate=(notional,initial,scale)=>{const rate=marginRate(notional,initial)*scale/10_000n;return rate<10_000n?rate:10_000n;};
+const liquidationClose=(size,mark,equity,scale)=>{
   const absoluteBase=abs(size),notional=absoluteBase*mark/BASE;
   if(notional<=10_000n*1_000_000n||equity<=0n)return absoluteBase;
-  const targetBps=marginRate(notional,false)+1_000n;
+  const targetBps=scaledMarginRate(notional,false,scale)+1_000n;
   const shortfall=targetBps*notional>equity*10_000n?targetBps*notional-equity*10_000n:0n;
   const needed=(shortfall+targetBps-51n)/(targetBps-50n),closeNotional=needed<notional/4n?needed:notional/4n;
   const closed=(closeNotional*BASE+mark-1n)/mark;
@@ -61,15 +62,16 @@ for(let start=0;start<vectors;start+=chunkSize){
     const oldSize=signed(25_000)*10n**15n,delta=signed(30_000)*10n**15n,entry=BigInt(1+random()%150_000)*1_000_000n,price=BigInt(1+random()%150_000)*1_000_000n;
     assert.deepEqual([...(await risk.positionTransition(oldSize,entry,delta,price))],positionTransition(oldSize,entry,delta,price));
     assert.equal(await risk.positionPnl(oldSize,entry,price),positionPnl(oldSize,entry,price));
-    const btc=signed(5_000_000)*1_000_000n,eth=signed(5_000_000)*1_000_000n,market=random()%2,usdDelta=signed(1_000_000)*1_000_000n;
-    assert.equal(await risk.impactCost(btc,eth,market,usdDelta),impactCost(btc,eth,market,usdDelta));
+    const skew=signed(5_000_000)*1_000_000n,k=BigInt(1+random()%1_000_000),shock=BigInt(500+random()%9_501),scale=BigInt(10_000+random()%40_001),usdDelta=signed(1_000_000)*1_000_000n;
+    assert.equal(await risk.impactCost(k,skew,usdDelta),impactCost(k,skew,usdDelta));
     const spread=price/10_000n+1n,bid=price-spread,ask=price+spread,executionPrice=delta>0n?ask+BigInt(random()%100)*1_000_000n:bid-BigInt(random()%100)*1_000_000n;
-    assert.deepEqual([...(await risk.tradeAssessment(btc,eth,oldSize,market,delta,executionPrice,bid,ask))],tradeAssessment(btc,eth,oldSize,market,delta,executionPrice,bid,ask));
-    assert.equal(await risk.stressLoss(btc,eth),stressLoss(btc,eth));
+    assert.deepEqual([...(await risk.tradeAssessment(k,skew,oldSize,delta,executionPrice,bid,ask))],tradeAssessment(k,skew,oldSize,delta,executionPrice,bid,ask));
+    assert.equal(await risk.stressContribution(skew,shock),stressContribution(skew,shock));
     const notional=BigInt(random()%7_000_000)*1_000_000n,initial=random()%2===0;
     assert.equal(await risk.marginRate(notional,initial),marginRate(notional,initial));
-    const equity=signed(1_000_000)*1_000_000n,closed=liquidationClose(oldSize,price,equity);
-    assert.equal(await risk.liquidationClose(oldSize,price,equity),closed);
+    assert.equal(await risk.scaledMarginRate(notional,initial,scale),scaledMarginRate(notional,initial,scale));
+    const equity=signed(1_000_000)*1_000_000n,closed=liquidationClose(oldSize,price,equity,scale);
+    assert.equal(await risk.liquidationClose(oldSize,price,equity,scale),closed);
     const available=BigInt(random()%1_000_000)*1_000_000n;
     const closedNotional=closed*price/BASE;
     assert.deepEqual([...(await risk.liquidationCharge(closedNotional,available))],liquidationCharge(closedNotional,available));
@@ -77,4 +79,4 @@ for(let start=0;start<vectors;start+=chunkSize){
     assert.deepEqual([...(await risk.fundingStep(oldSize,price,index,fundingTime,currentTime,maxNotional))],fundingStep(oldSize,price,index,fundingTime,currentTime,maxNotional));
   }));
 }
-console.log(`Risk differential passed: ${vectors} seeded vectors across 9 independently modeled functions (${vectors*9} comparisons)`);
+console.log(`Risk differential passed: ${vectors} seeded vectors across 10 independently modeled functions (${vectors*10} comparisons)`);

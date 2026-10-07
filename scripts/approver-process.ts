@@ -15,7 +15,7 @@ const integer = (name: string, fallback?: number) => {
   return value;
 };
 const oracleMode = (env.RFQ_ORACLE_MODE ?? "local") as OracleMode;
-if (!["local", "chainlink", "pyth"].includes(oracleMode)) throw new Error("invalid RFQ_ORACLE_MODE");
+if (!["local", "signed"].includes(oracleMode)) throw new Error("invalid RFQ_ORACLE_MODE");
 
 const rpcUrl = required("RFQ_RPC_URL");
 const app = buildApprover({
@@ -30,13 +30,6 @@ const app = buildApprover({
   rpcBatchMaxCount: integer("RFQ_RPC_BATCH_MAX_COUNT", 1),
   maxFutureSeconds: integer("RFQ_MAX_FUTURE_SECONDS", 5),
   oracleMode,
-  dataStreams:
-    oracleMode === "chainlink" && env.RFQ_BTC_FEED_ID && env.RFQ_ETH_FEED_ID
-      ? {
-          feedIds: [env.RFQ_BTC_FEED_ID, env.RFQ_ETH_FEED_ID],
-          feedDecimals: [integer("RFQ_BTC_FEED_DECIMALS", 8), integer("RFQ_ETH_FEED_DECIMALS", 8)],
-        }
-      : undefined,
   hedgeRisk:
     env.RFQ_HEDGE_RISK_URL && env.RFQ_HEDGE_RISK_TOKEN
       ? {

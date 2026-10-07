@@ -23,7 +23,7 @@ flowchart TB
     A[Private approver A]
     B[Private approver B]
     C[Private approver C]
-    O[Chainlink reports and independent reference data]
+    O[Our three signed oracle nodes]
     RPC[Independent Base RPC paths and live observers]
     CH[Base clearing proxy: funds, positions and enforcement]
     P[Rebuildable chain-event indexer]
@@ -75,7 +75,7 @@ The oracle report bundle accompanies applicable settlement/keeper calls for on-c
 | API journal | SQLite baseline candidate for one writer; tested recovery | Pending intents, escaped approvals, reservations, sender nonces and replacements. No second customer balance ledger. |
 | Approvers A/B/C | Minimal isolated services; TypeScript/viem candidate | Each independently verifies the complete deterministic policy and signs identical exact terms with its own key. |
 | Clearing system | Solidity, stable upgradeable proxy; Foundry for tests | Authoritative collateral, positions, funding, settlement, margin, risk, replay and resolution rules. |
-| Oracle adapter | Authenticated Pyth Core/Hermes SSE with coalesced REST recovery; Chainlink Data Streams remains supported | Caches exact signed update bundles; each approver simulates Pyth verification at the adapter boundary and clearing verifies again on settlement. Independent reference feeds only supplement approval safety. |
+| Oracle | Three signed oracle nodes on Cloudflare (US, Europe, Asia) and the on-chain `SignedPriceOracle` (2-of-3 median) | The API combines node batches into one report; each approver dry-runs the adapter and clearing verifies again on settlement. See [Price oracle](oracle.md). |
 | Live chain observers | Independent RPC subscriptions plus reconciled reads | Fresh state for API, approvers, hedging and keepers; checkpointed disposable caches. |
 | User read model | Current local SQLite event projection; production database chosen after load measurement | Rebuildable chain-derived application read model for positions and history. Live risk is computed from block-tagged contract views plus the current oracle snapshot. It never authorizes settlement. |
 | Hedge executor | TypeScript/venue adapter candidate + SQLite operational journal | Actual external orders, fills and reconciled hedge exposure; separate trade authority. |

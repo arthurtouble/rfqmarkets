@@ -30,7 +30,8 @@ jobs:
       RFQ_DEV_OWNER_KEY: ${{ secrets.RFQ_DEV_OWNER_KEY }}
       RFQ_BASE_MAINNET_RPC_URL: ${{ secrets.RFQ_BASE_MAINNET_RPC_URL }}
       RFQ_BASESCAN_API_KEY: ${{ secrets.RFQ_BASESCAN_API_KEY }}
-      RFQ_PYTH_CORE_ADDRESS: ${{ vars.RFQ_PYTH_CORE_ADDRESS }}
+      # Comma-separated oracle node signer addresses (3..16) for the SignedPriceOracle.
+      RFQ_DEV_ORACLE_SIGNERS: ${{ vars.RFQ_DEV_ORACLE_SIGNERS }}
       RFQ_DEV_POLICY_JSON: ${{ vars.RFQ_DEV_POLICY_JSON }}
       ACTION: ${{ inputs.action }}
       AMOUNT: ${{ inputs.amount }}
