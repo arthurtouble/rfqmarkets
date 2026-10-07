@@ -34,7 +34,7 @@
 ## Safety boundaries
 
 - Do not deploy, upgrade contracts, fund accounts, publish images, or run live
-  Base Sepolia/Hyperliquid smoke tests unless the task explicitly requests it.
+  Base mainnet/Hyperliquid smoke tests unless the task explicitly requests it.
 - Do not weaken signature, quorum, replay, oracle-freshness, exposure, or
   fail-closed checks to make a test pass.
 - Preserve unrelated working-tree changes. The repository may contain active

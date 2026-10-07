@@ -61,8 +61,6 @@ Each deployment creates a throwaway browser test wallet, funds it with local ETH
 
 The local market-data adapter subscribes to Coinbase Advanced Trade's unauthenticated BTC-USD and ETH-USD ticker channel and consumes its best bid and ask. It maintains a heartbeat subscription, reconnects after failure and falls back to Coinbase Exchange's public ticker REST endpoint when the WebSocket observation is absent or older than 1.5 seconds. The API fails closed if neither transport produces a fresh observation. The adapter encodes those prices into the mock oracle's contract report. This exercises the full report/approval/settlement path but does not claim Coinbase data is a production oracle; external deployments use contract-verifiable Pyth Core or Chainlink Data Streams reports.
 
-The Base Sepolia path now uses authenticated Pyth Core data instead. After sourcing the ignored `base-sepolia.env`, run `npm run dev:testnet-services` to start the API, three approvers, indexer, simulated hedge worker and SSE gateway against the deployed contracts. Pyth's signed BTC/ETH bundles arrive at the API over authenticated SSE and remain usable after an authenticated REST recovery fetch. Use `npm run smoke:base-sepolia-pyth` for oracle-only verification and `npm run smoke:base-sepolia-e2e` for a real 1 USDC testnet RFQ.
-
 With the services running, exercise the real HTTP signature path using an ephemeral local EOA. The smoke test signs and settles a simulated Ethereum-to-Base deposit before trading against that collateral:
 
 ```bash

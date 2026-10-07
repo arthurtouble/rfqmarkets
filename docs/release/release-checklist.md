@@ -23,7 +23,7 @@ Status date: 2026-09-16. This is the promotion record for a capped Base mainnet 
 
 ## External integration gates
 
-- [ ] Run `soak:base-sepolia-iteration` for the agreed window with authenticated Pyth, independent Base RPCs and Hyperliquid testnet. Preserve per-cycle transaction/order IDs and p50/p95/p99/error measurements.
+- [ ] Run a soak on the Base mainnet dev deployment for the agreed window with the own oracle, independent Base RPCs and Hyperliquid testnet. Preserve per-cycle transaction/order IDs and p50/p95/p99/error measurements.
 - [ ] Test oracle disconnect, stale/short-lived proof replacement, malformed proof, market mismatch, fee change and provider disagreement. New risk must fail closed; an authorized conservative exit must remain available.
 - [ ] Test RPC throttling, divergent heads, delayed receipts, nonce replacement, sponsor depletion and API death after durable signing and after broadcast.
 - [ ] Fence the Hyperliquid agent to the dedicated account, cap available venue capital, rotate it, restore it on a clean host and prove a standby cannot become a second writer.

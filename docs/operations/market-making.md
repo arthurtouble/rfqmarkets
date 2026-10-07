@@ -76,8 +76,6 @@ Paid-flow evidence is journaled and restored when the active API leader restarts
 
 `npm run capture:market-flow` now records public Coinbase and Binance BTC/ETH trades and BBOs into a normalized append-only CSV. `npm run calibrate:market-flow` converts that tape into causal features and 1-second, 5-second, 30-second and 5-minute markouts under explicit 5%, 25%, 50% and 90% toxicity mixtures, then generates hashed JSON and private HTML evidence. A short live two-venue capture passed end to end, but correctly failed the 24-hour, 10,000-trade and five-minute-label data gates. See the [market-flow calibration guide](market-flow-calibration.md).
 
-Run a checkpointed 72-hour testnet exercise with `RFQ_TESTNET_SOAK_HOURS=72 npm run soak:base-sepolia-iteration`. The runner records every lifecycle failure and exits nonzero if any cycle failed.
-
 ## External production gates
 
 Before mainnet capital, complete independent contract and infrastructure audits, an oracle-commercial review, production key ceremonies, monitored multi-provider RPC and feed agreements, formal incident drills, economic parameter sign-off, legal review, and a capped launch. Testnet evidence reduces uncertainty but cannot replace those gates.
