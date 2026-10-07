@@ -3,6 +3,7 @@ import { hedgerOpsPath, portForPath } from "./routing.mjs";
 import { admitAtEdge } from "./edge-admission.mjs";
 import { loadJournals, saveJournals } from "./dev-journal-store.mjs";
 import { ensureIdentities, matchesDeployment, publicIdentities } from "./dev-identities.mjs";
+import { needsRestart } from "./dev-restart.mjs";
 
 // Base mainnet dev runtime: one container runs every service (scripts/cloudflare-dev-container.ts).
 // The deployment record comes from the DEV_STATE KV namespace, written by the dev-contracts workflow.
@@ -66,11 +67,8 @@ export class RFQDevRuntime extends Container {
     };
     await this.startAndWaitForPorts(CONTROL);
     let status = await this.status();
-    if (
-      status.phase !== "waiting" &&
-      (status.phase === "exited" || status.clearing?.toLowerCase() !== clearing)
-    ) {
-      // A crashed stack or a new deployment: keep the journals of what ran, then start clean.
+    if (needsRestart(status, deployment)) {
+      // A crashed stack, a new deployment or new oracle signers: keep the journals of what ran, then start clean.
       await this.snapshot();
       await this.destroy();
       await this.startAndWaitForPorts(CONTROL);
