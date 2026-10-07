@@ -66,7 +66,7 @@ The oracle report bundle accompanies applicable settlement/keeper calls for on-c
 
 | Element | Baseline technology | Responsibility / authority |
 | --- | --- | --- |
-| Frontend | React, TypeScript; injected EIP-1193 wallet through ethers | Quotes, generated user limits, exact typed signatures, positions, collateral and transaction state. Never trusted accounting. |
+| Frontend | React, TypeScript, TanStack Router and Query; wallets through wagmi/viem (EIP-6963 discovery) | Quotes, generated user limits, exact typed signatures, positions, collateral and transaction state. Never trusted accounting. |
 | Public ingress | Managed edge candidate plus independent fallback | Static delivery, abuse limits and routing; cannot approve trades. Exact vendor configuration pending. |
 | Public gateways | Stateless regional HTTP + SSE; optional equivalent WebSocket transport | Fan out shared pricing frames and forward one-shot firm requests; hold no settlement authority. |
 | API leader + warm standby | TypeScript, Fastify | Produces pricing frames and serializes firm pricing, portfolio admission, reservations, approval collection, gas signing and broadcast. Only this writer is single-active. |
