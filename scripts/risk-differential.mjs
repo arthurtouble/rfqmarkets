@@ -35,16 +35,17 @@ const positionTransition=(oldSize,oldEntry,delta,price)=>{
 };
 const positionPnl=(size,entry,mark)=>size===0n?0n:size>0n?abs(size)*mark/BASE-abs(size)*entry/BASE:abs(size)*entry/BASE-abs(size)*mark/BASE;
 const stressLoss=(btc,eth)=>[[20n,25n],[-20n,-25n],[15n,-20n],[-15n,20n],[40n,50n],[-40n,-50n]].reduce((best,[b,e])=>{const value=floorDiv(btc*b,100n)+floorDiv(eth*e,100n);return value>best?value:best;},0n);
-const marginRate=(notional,initial)=>notional<=25_000n*1_000_000n?(initial?2_000n:1_200n):notional<=100_000n*1_000_000n?(initial?2_500n:1_500n):notional<=250_000n*1_000_000n?(initial?3_300n:2_000n):notional<=1_000_000n*1_000_000n?(initial?5_000n:3_000n):notional<=2_500_000n*1_000_000n?(initial?6_700n:4_000n):notional<=5_000_000n*1_000_000n?(initial?10_000n:6_000n):(1n<<256n)-1n;
+const marginRate=(notional,initial)=>notional<=25_000n*1_000_000n?(initial?2_000n:1_200n):notional<=100_000n*1_000_000n?(initial?2_500n:1_500n):notional<=250_000n*1_000_000n?(initial?3_300n:2_000n):notional<=1_000_000n*1_000_000n?(initial?5_000n:3_000n):notional<=2_500_000n*1_000_000n?(initial?6_700n:4_000n):(initial?10_000n:6_000n);
 const liquidationClose=(size,mark,equity)=>{
   const absoluteBase=abs(size),notional=absoluteBase*mark/BASE;
   if(notional<=10_000n*1_000_000n||equity<=0n)return absoluteBase;
-  const shortfall=2_200n*notional>equity*10_000n?2_200n*notional-equity*10_000n:0n;
-  const needed=(shortfall+2_149n)/2_150n,closeNotional=needed<notional/4n?needed:notional/4n;
+  const targetBps=marginRate(notional,false)+1_000n;
+  const shortfall=targetBps*notional>equity*10_000n?targetBps*notional-equity*10_000n:0n;
+  const needed=(shortfall+targetBps-51n)/(targetBps-50n),closeNotional=needed<notional/4n?needed:notional/4n;
   const closed=(closeNotional*BASE+mark-1n)/mark;
   return closed>absoluteBase?absoluteBase:closed;
 };
-const liquidationCharge=(closed,mark,available)=>{let penalty=closed*mark/BASE*50n/10_000n;if(penalty>available)penalty=available;let reward=closed*mark/BASE*10n/10_000n;if(reward>penalty/5n)reward=penalty/5n;return [penalty,reward];};
+const liquidationCharge=(notional,available)=>{let penalty=notional*50n/10_000n;if(penalty>available)penalty=available;let reward=notional*10n/10_000n;if(reward>penalty/5n)reward=penalty/5n;return [penalty,reward];};
 const fundingStep=(aggregate,mark,index,fundingTime,currentTime,maxNotional)=>{
   let elapsed=currentTime-fundingTime;if(elapsed===0n)return [index,fundingTime];
   const skew=aggregate*mark/BASE;let apr=skew*RATE/maxNotional;if(apr>RATE)apr=RATE;if(apr<-RATE)apr=-RATE;
@@ -70,7 +71,8 @@ for(let start=0;start<vectors;start+=chunkSize){
     const equity=signed(1_000_000)*1_000_000n,closed=liquidationClose(oldSize,price,equity);
     assert.equal(await risk.liquidationClose(oldSize,price,equity),closed);
     const available=BigInt(random()%1_000_000)*1_000_000n;
-    assert.deepEqual([...(await risk.liquidationCharge(closed,price,available))],liquidationCharge(closed,price,available));
+    const closedNotional=closed*price/BASE;
+    assert.deepEqual([...(await risk.liquidationCharge(closedNotional,available))],liquidationCharge(closedNotional,available));
     const fundingTime=1_000_000n,currentTime=fundingTime+BigInt(random()%(10*86_400)),maxNotional=BigInt(1+random()%5_000_000)*1_000_000n,index=signed(100_000)*1_000_000n;
     assert.deepEqual([...(await risk.fundingStep(oldSize,price,index,fundingTime,currentTime,maxNotional))],fundingStep(oldSize,price,index,fundingTime,currentTime,maxNotional));
   }));

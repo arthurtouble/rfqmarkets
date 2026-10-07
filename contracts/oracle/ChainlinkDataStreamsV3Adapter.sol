@@ -4,7 +4,10 @@ pragma solidity 0.8.34;
 import "../interfaces/IPriceOracle.sol";
 
 interface IVerifierProxy {
-    function verify(bytes calldata payload, bytes calldata parameterPayload) external payable returns (bytes memory verifierResponse);
+    function verify(bytes calldata payload, bytes calldata parameterPayload)
+        external
+        payable
+        returns (bytes memory verifierResponse);
 }
 
 /// @notice Narrow adapter for Chainlink crypto Data Streams report schema v3.
@@ -46,7 +49,9 @@ contract ChainlinkDataStreamsV3Adapter is IPriceOracle {
         if (decoded.feedId == feedIds[0]) market = 0;
         else if (decoded.feedId == feedIds[1]) market = 1;
         else revert InvalidReport();
-        if (decoded.bid <= 0 || decoded.ask <= 0 || decoded.price <= 0 || decoded.ask < decoded.bid) revert InvalidReport();
+        if (decoded.bid <= 0 || decoded.ask <= 0 || decoded.price <= 0 || decoded.ask < decoded.bid) {
+            revert InvalidReport();
+        }
         observation = Observation({
             market: market,
             bid: _toUsdc(uint256(int256(decoded.bid)), feedDecimals[market]),

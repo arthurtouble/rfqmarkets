@@ -5,5 +5,6 @@ import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.so
 
 contract TestProxy is TransparentUpgradeableProxy {
     constructor(address implementation, address initialOwner, bytes memory data)
-        TransparentUpgradeableProxy(implementation, initialOwner, data) {}
+        TransparentUpgradeableProxy(implementation, initialOwner, data)
+    {}
 }
