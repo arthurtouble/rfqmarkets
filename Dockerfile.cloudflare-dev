@@ -1,0 +1,17 @@
+# Base mainnet dev runtime for Cloudflare Containers (deploy/cloudflare/runtime/wrangler.dev.jsonc).
+# Hedging is simulated, so the Python Hyperliquid bridge is not installed.
+# NODE_IMAGE lets a build use a Docker Hub mirror (scripts/cloudflare-dev-deploy.sh, RFQ_DOCKER_NODE_IMAGE).
+ARG NODE_IMAGE=node:24-bookworm-slim
+FROM ${NODE_IMAGE}
+
+ENV NODE_ENV=production RFQ_DEV_RUNTIME_DIR=/tmp/rfq-dev-runtime
+WORKDIR /app
+COPY package.json package-lock.json ./
+# The optional "ca" build secret (scripts/cloudflare-dev-deploy.sh) trusts a TLS-intercepting proxy during install only.
+RUN --mount=type=secret,id=ca,target=/tmp/build-ca.crt,required=false NODE_EXTRA_CA_CERTS=/tmp/build-ca.crt npm ci --include=dev --ignore-scripts
+COPY packages ./packages
+COPY services ./services
+COPY scripts ./scripts
+
+EXPOSE 4099 4100 4300 4500
+CMD ["node", "--import", "tsx", "scripts/cloudflare-dev-container.ts"]
