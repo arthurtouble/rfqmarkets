@@ -28,7 +28,6 @@
     "dev:scenario": "tsx scripts/dev-scenario.ts",
     "dev:testnet-services": "tsx scripts/base-sepolia-stack.ts",
     "dev:oracle-node": "node --import tsx services/oracle-node/src/main.ts",
-    "prepare:cloudflare-runtime": "node --import tsx scripts/prepare-cloudflare-runtime.ts",
     "dev:web": "vite apps/web",
     "dev:admin": "vite apps/admin",
     "dev:chain": "hardhat --verbosity 0 node --network hardhatOp --hostname 127.0.0.1 --port 8545",
