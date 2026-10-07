@@ -187,6 +187,7 @@ test("query and path parameters are validated before reading the index", async (
       ["/v1/positions?market=SOL", "invalid market"],
       ["/v1/positions?cursor=0x12", "invalid cursor"],
       [`/v1/account/${account}/activity?cursor=1:x`, "invalid cursor"],
+      [`/v1/account/${account}/activity?exclude=TradeExecuted,Minted`, "invalid activity kind"],
     ]) {
       const response = await get(url);
       assert.equal(response.statusCode, 400, url);
@@ -198,6 +199,15 @@ test("query and path parameters are validated before reading the index", async (
     assert.equal(all.items.length, 1);
     assert.equal(all.items[0].kind, "Deposited");
     assert.equal(all.items[0].finality, "finalized");
+    const withoutTrades = (
+      await get(`/v1/account/${account}/activity?exclude=TradeExecuted,FundingSettled`)
+    ).json();
+    assert.deepEqual(
+      withoutTrades.items.map((item: { kind: string }) => item.kind),
+      ["Deposited"],
+    );
+    const withoutDeposits = (await get(`/v1/account/${account}/activity?exclude=Deposited`)).json();
+    assert.equal(withoutDeposits.items.length, 0);
     const positions = (await get("/v1/positions?finalized=false&limit=abc")).json();
     assert.equal(positions.finality, "included");
     assert.equal(positions.total, 0);

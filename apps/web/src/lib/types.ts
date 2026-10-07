@@ -84,6 +84,7 @@ export type Activity = {
   account: string; market: number | null; finality: "included" | "finalized";
   payload: { baseDelta?: string; price?: string; fee?: string; amount?: string };
 };
+export type ActivityPage = { items: Activity[]; nextCursor: string | null };
 
 export type RiskMarket = { longBase: string; shortBase: string; netBase: string; longAccounts: number; shortAccounts: number };
 export type Risk = { indexedBlock: number; accountCount: number; totalCollateral: string; markets: Record<Market, RiskMarket> };
