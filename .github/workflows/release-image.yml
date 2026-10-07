@@ -11,8 +11,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
 
 jobs:
   validate:
@@ -47,6 +45,10 @@ jobs:
   publish:
     if: inputs.publish
     needs: validate
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     runs-on: ubuntu-latest
     env:
       IMAGE: ghcr.io/${{ github.repository }}/host
