@@ -5,6 +5,8 @@ const READS = [
   [/^\/v1\/(activity|positions|protocol|risk|updates\/stream)$/, "INDEXER"],
   [new RegExp(`^/v1/portfolio/${ADDRESS}(?:/(?:history|trades))?$`), "INDEXER"],
   [new RegExp(`^/v1/funding/${ADDRESS}$`), "INDEXER"],
+  [/^\/v1\/leaderboard$/, "INDEXER"],
+  [new RegExp(`^/v1/points/${ADDRESS}$`), "INDEXER"],
   [/^\/v1\/markets\/(stream|history|stats)$/, "MARKET_GATEWAY"],
   [/^\/v1\/candles$/, "MARKET_GATEWAY"],
   [/^\/v1\/(config|markets)$/, "API"],

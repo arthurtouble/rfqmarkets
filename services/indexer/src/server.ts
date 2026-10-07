@@ -24,6 +24,16 @@ import {
   type PortfolioEvent,
   type PortfolioReplay,
 } from "./portfolio.js";
+import {
+  LEADERBOARD_WINDOWS,
+  mergeByOwner,
+  rankTraders,
+  weeklyPoints,
+  windowStats,
+  type LeaderboardWindow,
+  type WindowStats,
+} from "./leaderboard.js";
+import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 
 export interface IndexerOptions {
   rpcUrl: string;
@@ -141,6 +151,16 @@ const portfolioPageQuery = z.object({
   cursor: activityCursor,
   limit: pageLimit(25),
   market: fillMarket,
+  finalized: isTrue,
+});
+const leaderboardQuery = z.object({
+  window: z
+    .enum(Object.keys(LEADERBOARD_WINDOWS) as [LeaderboardWindow, ...LeaderboardWindow[]], {
+      message: "invalid window",
+    })
+    .default("7d"),
+  sort: z.enum(["volume", "pnl"], { message: "invalid sort" }).default("volume"),
+  limit: pageLimit(50),
   finalized: isTrue,
 });
 /** Replays kept per (account, finality, indexed block); each request after a new block replays again. */
@@ -801,6 +821,83 @@ export function buildIndexer(options: IndexerOptions) {
       ...replayPage(items, query.cursor, query.limit, scope.finalizedBlock),
       totalFunding: items.reduce((sum, item) => sum + BigInt(item.amount), 0n).toString(),
       indexedBlock: scope.through,
+    };
+  });
+  /** Isolated account -> owner, from the margin moves that created them (the address is derived, so checkable). */
+  function isolatedOwners(throughBlock: number) {
+    const owners = new Map<string, string>(),
+      rows = db
+        .prepare("SELECT payload FROM activity WHERE kind='MarginTransferred' AND block_number<=?")
+        .all(throughBlock) as Array<{ payload: string }>;
+    for (const row of rows) {
+      const { account, counterparty, market } = JSON.parse(row.payload) as Record<string, string>;
+      if (!account || !counterparty || market === undefined) continue;
+      const isolated = getAddress(account),
+        owner = getAddress(counterparty);
+      if (isolatedAccountAddress(owner, Number(market)) === isolated) owners.set(isolated, owner);
+    }
+    return owners;
+  }
+  /** Leaderboards are recomputed at most once per (indexed block, finality, window). */
+  const leaderboardCache = new Map<string, Map<string, WindowStats & { accounts: string[] }>>();
+  function traderStats(throughBlock: number, finalized: boolean, window: LeaderboardWindow) {
+    const key = `${throughBlock}:${finalized}:${window}`,
+      cached = leaderboardCache.get(key);
+    if (cached) return cached;
+    // Windows end at the newest indexed block's time, so the board only moves when the index does.
+    const endMs =
+        ((
+          db.prepare("SELECT max(timestamp) value FROM blocks WHERE number<=?").get(throughBlock) as {
+            value: number | null;
+          }
+        ).value ?? 0) * 1_000,
+      sinceMs = window === "all" ? -Infinity : endMs - LEADERBOARD_WINDOWS[window],
+      accounts = db
+        .prepare("SELECT DISTINCT account FROM activity WHERE kind='TradeExecuted' AND block_number<=?")
+        .all(throughBlock) as Array<{ account: string }>,
+      stats = new Map<string, WindowStats>();
+    for (const { account } of accounts)
+      stats.set(account, windowStats(portfolio(account, throughBlock, finalized), sinceMs));
+    const owners = isolatedOwners(throughBlock),
+      merged = mergeByOwner(stats, (account) => owners.get(account));
+    if (leaderboardCache.size >= 16) leaderboardCache.clear();
+    leaderboardCache.set(key, merged);
+    return merged;
+  }
+  app.get("/v1/leaderboard", async (request, reply) => {
+    await sync();
+    const query = parse(leaderboardQuery, request.query, reply);
+    if (!query) return;
+    const scope = await portfolioScope(query.finalized);
+    return {
+      window: query.window,
+      sort: query.sort,
+      finality: query.finalized ? "finalized" : "included",
+      indexedBlock: scope.through,
+      traders: rankTraders(
+        traderStats(scope.through, query.finalized, query.window),
+        query.sort,
+        query.limit,
+      ),
+    };
+  });
+  app.get("/v1/points/:address", async (request, reply) => {
+    await sync();
+    const params = parse(accountParams, request.params, reply),
+      query = params && parse(finalityQuery, request.query, reply);
+    if (!params || !query) return;
+    const scope = await portfolioScope(query.finalized),
+      owners = isolatedOwners(scope.through),
+      accounts = [
+        params.address,
+        ...[...owners].filter(([, owner]) => owner === params.address).map(([isolated]) => isolated),
+      ];
+    return {
+      account: params.address,
+      accounts,
+      finality: query.finalized ? "finalized" : "included",
+      indexedBlock: scope.through,
+      ...weeklyPoints(accounts.map((account) => portfolio(account, scope.through, query.finalized))),
     };
   });
   // Reads contract state directly, so it does not wait on a log sync: a slow sync must not starve the

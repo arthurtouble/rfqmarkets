@@ -113,6 +113,17 @@ export class RfqClient {
   async orders(address?: string) {
     return this.request(`/v1/orders/${await this.accountOf(address)}`);
   }
+  leaderboard(input: { window?: "1d" | "7d" | "30d" | "all"; sort?: "volume" | "pnl"; limit?: number } = {}) {
+    const query = new URLSearchParams({
+      window: input.window ?? "7d",
+      sort: input.sort ?? "volume",
+      limit: String(input.limit ?? 50),
+    });
+    return this.request(`/v1/leaderboard?${query}`);
+  }
+  async points(address?: string) {
+    return this.request(`/v1/points/${await this.accountOf(address)}`);
+  }
   candles(market: string, interval = "1m", limit = 100) {
     return this.request(`/v1/candles?${new URLSearchParams({ market, interval, limit: String(limit) })}`);
   }

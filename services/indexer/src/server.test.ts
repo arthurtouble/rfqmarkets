@@ -15,6 +15,7 @@ import {
 } from "ethers";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
 import { LAUNCH_MARKETS, encodeMarketSymbol } from "../../../packages/shared/src/markets.js";
+import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import { buildIndexer } from "./server.js";
 
 const account = "0x0000000000000000000000000000000000000002",
@@ -436,6 +437,91 @@ test("portfolio endpoints replay realized PnL, fees, funding and deposits from i
     const empty = await get(`/v1/portfolio/${clearing}`);
     assert.equal(empty.tradeCount, 0);
     assert.equal(empty.indexedCollateral, null);
+  } finally {
+    await app.close();
+    provider.destroy();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("leaderboard ranks owners with their isolated accounts, and points sum trade volume", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-index-")),
+    E = 10n ** 18n,
+    usdc = (value: bigint) => value * 1_000_000n,
+    other = "0x0000000000000000000000000000000000000003",
+    isolated = isolatedAccountAddress(account, 0),
+    blockHash = (number: number) => "0x" + number.toString(16).padStart(64, "0"),
+    log = (number: number, index: number, name: string, args: unknown[]) => ({
+      ...iface.encodeEventLog(iface.getEvent(name)!, args),
+      blockNumber: number,
+      blockHash: blockHash(number),
+      transactionHash: "0x" + (number * 100 + index).toString(16).padStart(64, "0"),
+      index,
+    }),
+    intent = "0x" + "33".repeat(32);
+  class LeaderboardChain extends JsonRpcProvider {
+    override async getBlockNumber() {
+      return 40;
+    }
+    override async getBlock(number: unknown) {
+      const height = Number(number);
+      return {
+        number: height,
+        hash: blockHash(height),
+        parentHash: hash,
+        timestamp: height * 3_600,
+      } as Block;
+    }
+    override async getLogs() {
+      return [
+        log(10, 0, "MarginTransferred", [account, isolated, 0, -usdc(500n)]),
+        log(10, 1, "MarginTransferred", [isolated, account, 0, usdc(500n)]),
+        // Two days before the newest block: inside 7d, outside 1d.
+        log(10, 2, "TradeExecuted", [intent, isolated, 0, E, usdc(300n), 0n]),
+        log(39, 0, "TradeExecuted", [intent, account, 0, E, usdc(100n), 0n]),
+        log(40, 0, "TradeExecuted", [intent, other, 0, 2n * E, usdc(150n), 0n]),
+      ] as unknown as Log[];
+    }
+    override async call(request: TransactionRequest) {
+      const decoded = iface.parseTransaction({ data: String(request.data) })!;
+      return iface.encodeFunctionResult(decoded.name, chainResult(decoded.name, decoded.args));
+    }
+  }
+  const provider = new LeaderboardChain(),
+    app = buildIndexer({
+      rpcUrl: "http://unused",
+      provider,
+      clearingAddress: clearing,
+      databasePath: join(directory, "index.sqlite"),
+      startBlock: 10,
+      confirmations: 0,
+      pollMs: 60_000,
+    });
+  const get = async (url: string) => {
+    const response = await app.inject({ method: "GET", url });
+    assert.equal(response.statusCode, 200, `${url}: ${response.body}`);
+    return response.json();
+  };
+  try {
+    await app.ready();
+    const week = await get("/v1/leaderboard?window=7d");
+    assert.deepEqual(
+      week.traders.map((row: { account: string; volume: string }) => [row.account, row.volume]),
+      [
+        [account, usdc(400n).toString()],
+        [other, usdc(300n).toString()],
+      ],
+    );
+    const day = await get("/v1/leaderboard?window=1d");
+    assert.deepEqual(
+      day.traders.map((row: { account: string }) => row.account),
+      [other, account],
+    );
+    const points = await get(`/v1/points/${account}`);
+    assert.deepEqual(points.accounts, [account, isolated]);
+    assert.equal(points.total, "4");
+    for (const url of ["/v1/leaderboard?window=2d", "/v1/leaderboard?sort=fees", "/v1/points/0x12"])
+      assert.equal((await app.inject({ method: "GET", url })).statusCode, 400, url);
   } finally {
     await app.close();
     provider.destroy();
