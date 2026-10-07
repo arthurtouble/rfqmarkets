@@ -2,6 +2,9 @@
 export const urls = {
   web: "http://127.0.0.1:4173",
   docs: "http://127.0.0.1:4175",
+  /** Hedge operations dashboard (apps/admin); it reads the indexer and hedger directly in dev. */
+  admin: "http://127.0.0.1:4174",
+  internalDocs: "http://127.0.0.1:4176",
   api: "http://127.0.0.1:4100",
   indexer: "http://127.0.0.1:4300",
   priceControl: "http://127.0.0.1:4600",
