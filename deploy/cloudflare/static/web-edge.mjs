@@ -13,6 +13,7 @@ const READS = [
 const WRITES = [
   /^\/v1\/(quote|prepare|approve|orders)$/,
   /^\/v1\/(withdraw|session)\/(prepare|execute)$/,
+  /^\/v1\/isolated\/margin\/(prepare|execute)$/,
   /^\/v1\/nonce\/cancel\/(prepare|execute)$/,
   /^\/v1\/close\/(prepare|execute|quote)$/,
   /^\/v1\/close\/all\/quote$/,
