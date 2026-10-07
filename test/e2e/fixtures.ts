@@ -4,6 +4,12 @@ import { test as base, expect, type Page } from "@playwright/test";
 import { TERMS_KEY, withAcceptance } from "../../apps/web/src/lib/legal.js";
 import * as stack from "./stack.js";
 
+/** Hardhat accounts #9 and #7, which the mock extension wallet (mock-wallet.js) connects with. */
+const MOCK_WALLET_ACCOUNTS = [
+  "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720",
+  "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+];
+
 type Fixtures = {
   /** Local stack helpers: URLs, dev wallet and simulated price control. */
   stack: typeof stack;
@@ -21,11 +27,16 @@ export const test = base.extend<Fixtures & { pageErrors: void; termsAccepted: vo
     async ({ page, acceptTerms }, use) => {
       if (acceptTerms) {
         const { account } = await stack.devWallet();
+        // The dev key plus the mock extension wallet's accounts (wallet-connect.spec.ts).
+        const accepted = [account, ...MOCK_WALLET_ACCOUNTS].reduce<string | null>(
+          (raw, item) => withAcceptance(raw, item, 0),
+          null,
+        );
         await page.addInitScript(
           ([key, value]) => {
             if (!localStorage.getItem(key)) localStorage.setItem(key, value);
           },
-          [TERMS_KEY, withAcceptance(null, account, 0)],
+          [TERMS_KEY, accepted!],
         );
       }
       await use();
