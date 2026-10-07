@@ -7,6 +7,7 @@
 import { readFile } from "node:fs/promises";
 import type { BrowserContext, Page } from "@playwright/test";
 import { expect, expectNoHorizontalOverflow, test } from "./fixtures.js";
+import { ensureCollateral } from "./stack.js";
 
 const mockWallet = await readFile(new URL("./mock-wallet.js", import.meta.url), "utf8");
 /** Hardhat account #9, the mock wallet's default account. */
@@ -50,6 +51,10 @@ async function connect(page: Page) {
 }
 
 test.describe("wallet connect", () => {
+  // Sponsored actions such as a one-click session grant need collateral on the account.
+  test.beforeAll(async () => {
+    for (const account of [ACCOUNT, OTHER_ACCOUNT]) await ensureCollateral(account);
+  });
   test.beforeEach(async ({ context }) => installWallet(context));
 
   test("the sheet lists every kind of wallet, loads no wallet SDK, and closes", async ({ page }) => {

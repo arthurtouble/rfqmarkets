@@ -246,6 +246,8 @@ test.describe("positions and portfolio", () => {
   });
 
   test("portfolio shows PnL, trades, funding and transfers", async ({ page }) => {
+    // The dev wallet's seed deposit predates the indexer's start block, so make one it can list.
+    await deposit(10_000_000n);
     await trade("BTC", "buy", "1500");
     await flatten();
     await page.goto("/portfolio");
@@ -272,7 +274,7 @@ test.describe("positions and portfolio", () => {
     await page.goto("/account");
     await expect(page.getByText(`${account.slice(0, 6)}…${account.slice(-4)}`)).toBeVisible();
     await expect(page.getByText("Local dev wallet", { exact: false })).toBeVisible();
-    await expect(page.getByText(/Trades up to \$2,500 fill without a wallet prompt|On until/)).toBeVisible();
+    await expect(page.getByText(/trades up to \$2,500 fill without a wallet prompt/i)).toBeVisible();
     for (const name of [/Help and docs/, /Emergency exit/])
       await expect(page.getByRole("link", { name })).toHaveAttribute("target", "_blank");
     await expectNoHorizontalOverflow(page);
@@ -324,9 +326,10 @@ test.describe("positions and portfolio", () => {
       await expect(page.getByText("ETH position closed", { exact: true })).toBeVisible();
       await expect.poll(async () => (await sizes()).ETH).toBe(0n);
     } finally {
+      // The reload clears this tab's session key, so the grant is revoked rather than turned off.
       await page.goto("/account");
-      await page.getByRole("button", { name: "Turn off" }).click();
-      await expect(page.getByText(/^Trades up to/)).toBeVisible();
+      await page.getByRole("button", { name: /^(Turn off|Revoke)$/ }).click();
+      await expect(page.getByText(/^Approve once, then trades up to/)).toBeVisible();
     }
   });
 

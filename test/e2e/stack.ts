@@ -32,3 +32,19 @@ export const setPrice = async (market: string, price: number) =>
       body: JSON.stringify({ market, price }),
     }),
   );
+
+/** Gives an account collateral through the local faucet unless it already has some. */
+export async function ensureCollateral(account: string, amount = "1000") {
+  const { collateral } = await json<{ collateral: string }>(await fetch(`${urls.api}/v1/account/${account}`));
+  if (BigInt(collateral) === 0n) await deposit(account, amount);
+}
+
+/** Mints USDC and deposits it for an account through the local faucet, recording a Deposited event. */
+export const deposit = async (account: string, amount: string) =>
+  json(
+    await fetch(`${urls.api}/v1/dev/fund`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ account, amount, to: "collateral" }),
+    }),
+  );
