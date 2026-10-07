@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkPricePolicy, checkQuoteModel, checkQuoteSpread } from "./pricing-policy.js";
+import { discountedFee } from "../../../packages/shared/src/fee-tiers.js";
+import {
+  MAX_FEE_DISCOUNT_BPS,
+  checkPricePolicy,
+  checkQuoteModel,
+  checkQuoteSpread,
+} from "./pricing-policy.js";
 import { buildFixture } from "./test-fixtures.js";
 
 const error = (rejection: { body: { error: string } } | undefined) => rejection?.body.error;
@@ -81,6 +87,14 @@ test("checkPricePolicy enforces freshness, rounding, notional cap, fee floor and
     },
   ];
   for (const input of rejected) assert.equal(error(checkPricePolicy(input)), "policy rejected");
+  // Volume tiers may discount the fee down to the deepest tier, and no further.
+  const deepest = discountedFee(base.approval.fee, MAX_FEE_DISCOUNT_BPS);
+  assert(deepest < base.approval.fee);
+  assert.equal(checkPricePolicy({ ...base, approval: { ...base.approval, fee: deepest } }), undefined);
+  assert.equal(
+    error(checkPricePolicy({ ...base, approval: { ...base.approval, fee: deepest - 1n } })),
+    "policy rejected",
+  );
   const large = buildFixture({ amount: "1000001" });
   const largeInput = {
     ...base,

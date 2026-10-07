@@ -1581,3 +1581,34 @@ test("an armed trigger order survives API restart with its type and trigger", as
     await restarted.app.close();
   }
 });
+
+test("volume fee tiers discount quotes for the account and settle at the discounted fee", async () => {
+  const tiered = buildApi({
+    approvers: apps.map((_, index) => ({ url: `http://approver-${index}`, token: `transport-${index}` })),
+    fetchImpl: routedFetch,
+    feeTierSource: { discountBps: async (account) => (account === user.address ? 2_200 : 0) },
+  });
+  await tiered.ready();
+  try {
+    const quote = async (account?: string) =>
+      (
+        await tiered.inject({
+          method: "POST",
+          url: "/v1/quote",
+          payload: { market: "BTC", side: "buy", amount: "10000", ...(account ? { account } : {}) },
+        })
+      ).json();
+    const base = await quote(),
+      discounted = await quote(user.address);
+    assert.equal(base.feeDiscountBps, 0);
+    assert.equal(discounted.feeDiscountBps, 2_200);
+    assert.equal(BigInt(discounted.fee), BigInt(base.fee) - (BigInt(base.fee) * 2_200n) / 10_000n);
+    // A quote taken without the account still settles at the account's tier, under its signed maxFee.
+    const result = await approveQuote(tiered, base);
+    assert.equal(result.statusCode, 200, result.body);
+    const approved = result.json();
+    assert(BigInt(approved.approval.fee) <= BigInt(approved.intent.maxFee));
+  } finally {
+    await tiered.close();
+  }
+});

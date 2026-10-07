@@ -1,12 +1,15 @@
 import type { ApproverPayload } from "../../../packages/shared/src/approver-payload.js";
 import type { MakerApproval, TradeIntent } from "../../../packages/shared/src/eip712.js";
 import { BASE, USDC, abs, ceilDiv } from "../../../packages/shared/src/numeric.js";
+import { FEE_TIERS, discountedFee } from "../../../packages/shared/src/fee-tiers.js";
 import { reject, type Rejection } from "./rejection.js";
 
 type WireQuote = ApproverPayload["quote"];
 
-/** Protocol fee floor charged on every fill. */
+/** Protocol fee charged on every fill before volume discounts. */
 export const MIN_FEE_BPS = 2n;
+/** The deepest published volume-tier discount; the fee floor allows no more than this off the base fee. */
+export const MAX_FEE_DISCOUNT_BPS = Math.max(...FEE_TIERS.map((tier) => tier.discountBps));
 /** Adaptive-spread bounds the approver accepts from the leader. */
 export const MIN_BASE_SPREAD_BPS = 2n;
 export const MAX_SPREAD_BPS = 100n;
@@ -71,7 +74,8 @@ export function checkPricePolicy(input: {
 }): Rejection | undefined {
   const { quote, intent, approval, nowMs, maxFutureSeconds, capNotional } = input;
   const notional = BigInt(quote.amount),
-    requiredFee = ceilDiv(notional * MIN_FEE_BPS, 10_000n),
+    // Approvers cannot see an account's volume tier, so the floor is the base fee at the deepest tier.
+    requiredFee = discountedFee(ceilDiv(notional * MIN_FEE_BPS, 10_000n), MAX_FEE_DISCOUNT_BPS),
     observedAge = nowMs - quote.observedAtMs,
     mid = (BigInt(quote.bid) + BigInt(quote.ask)) / 2n;
   const baseRounding = abs(abs(intent.baseDelta) - (notional * BASE) / mid),

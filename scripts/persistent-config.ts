@@ -47,6 +47,8 @@ export const persistentConfigSchema = z
     corsOrigin: z.string().url(),
     hedgeRiskUrl: z.string().url(),
     indexerUrl: z.string().url(),
+    /** API: price fees at volume tiers read from indexerUrl. Enable only once every approver accepts tiers. */
+    feeTiers: z.boolean().optional(),
     apiUrl: z.string().url(),
     /** Pyth feed ids: `[BTC, ETH]`, or a map from market symbol to feed id for any registered market. */
     feedIds: z.union([

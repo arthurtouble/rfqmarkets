@@ -8,6 +8,7 @@ const READS = [
   [/^\/v1\/leaderboard$/, "INDEXER"],
   [new RegExp(`^/v1/points/${ADDRESS}$`), "INDEXER"],
   [new RegExp(`^/v1/referrals/${ADDRESS}$`), "INDEXER"],
+  [new RegExp(`^/v1/fees/${ADDRESS}$`), "INDEXER"],
   [/^\/v1\/markets\/(stream|history|stats)$/, "MARKET_GATEWAY"],
   [/^\/v1\/candles$/, "MARKET_GATEWAY"],
   [/^\/v1\/(config|markets)$/, "API"],

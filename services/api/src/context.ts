@@ -5,6 +5,7 @@ import { DOMAIN_NAME, DOMAIN_VERSION, type SigningDomain } from "../../../packag
 import { bindGrossContext } from "../../../packages/shared/src/gross-reservation-journal.js";
 import { GrossReservationBook } from "../../../packages/shared/src/gross-reservations.js";
 import type { HedgeRiskSource } from "../../../packages/shared/src/hedge-risk.js";
+import type { FeeTierSource } from "./fee-tiers.js";
 import type { Exposure, PriceSnapshot } from "../../../packages/shared/src/policy.js";
 import { PendingExposureBook } from "./bounded-state.js";
 import { FlowRiskTracker } from "./flow-risk.js";
@@ -45,6 +46,8 @@ export interface ApiOptions {
   publicWriteBurst?: number;
   maxRestingOrders?: number;
   hedgeRiskSource?: HedgeRiskSource;
+  /** Volume fee tiers; without one every account pays the full fee. */
+  feeTierSource?: FeeTierSource;
   hedgeRiskMaxAgeMs?: number;
   approverTimeoutMs?: number;
   minSettlementInclusionSeconds?: number;
