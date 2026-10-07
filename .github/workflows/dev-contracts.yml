@@ -28,6 +28,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       # Optional: without it the owner key generated into the dev KV namespace is used.
       RFQ_DEV_OWNER_KEY: ${{ secrets.RFQ_DEV_OWNER_KEY }}
+      ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
       RFQ_BASE_MAINNET_RPC_URL: ${{ secrets.RFQ_BASE_MAINNET_RPC_URL }}
       RFQ_BASESCAN_API_KEY: ${{ secrets.RFQ_BASESCAN_API_KEY }}
       # Comma-separated oracle node signer addresses (3..16) for the SignedPriceOracle.

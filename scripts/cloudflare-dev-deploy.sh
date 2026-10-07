@@ -3,7 +3,7 @@
 # (scripts/cloudflare-oracle-deploy.sh), the dev runtime container, the trading UI and the docs
 # (deploy/cloudflare/DEV-ENVIRONMENT.md). Used by deploy-cloudflare-dev.yml and for redeploys from any
 # machine with Docker.
-# Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; RFQ_BASE_MAINNET_RPC_URL,
+# Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; ALCHEMY_API_KEY, RFQ_BASE_MAINNET_RPC_URL,
 # RFQ_BASE_MAINNET_SECONDARY_RPC_URL, RFQ_BASE_MAINNET_INDEXER_RPC_URL, RFQ_BASE_MAINNET_MAX_LOG_RANGE and
 # CLOUDFLARE_WORKERS_SUBDOMAIN (default rfq-markets) are optional. Behind a TLS-intercepting proxy, set
 # RFQ_DOCKER_BUILD_CA to a CA bundle; it is mounted only while npm installs and stays out of the image.
@@ -36,9 +36,11 @@ sed -e "s/REPLACED_AT_DEPLOY/$kv/" \
     deploy/cloudflare/runtime/wrangler.dev.jsonc > "$generated"
 wrangler deploy --config "$generated"
 
-# Free public RPCs: drpc answers calls quickly but caps eth_getLogs at ~10 blocks, so the indexer reads
-# logs from mainnet.base.org in 500-block steps (its cap). Override with the RFQ_BASE_MAINNET_* variables.
-node -e 'const env=process.env,rpc=env.RFQ_BASE_MAINNET_RPC_URL||"https://base.drpc.org",sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN;process.stdout.write(JSON.stringify({rpcUrl:rpc,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||"https://mainnet.base.org",indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||"https://mainnet.base.org",maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||500),oracleNodes:[1,2,3].map(n=>`https://rfq-markets-oracle-${n}.${sub}.workers.dev`)}))' \
+# With ALCHEMY_API_KEY set, the runtime sends calls to Alchemy and keeps drpc as the second RPC for the
+# approver quorum. Without it, drpc is primary and mainnet.base.org secondary. Either way the indexer reads
+# logs from mainnet.base.org in 500-block steps (its cap): Alchemy's free tier and drpc cap eth_getLogs at
+# 10 blocks. Override with the RFQ_BASE_MAINNET_* variables.
+node -e 'const env=process.env,key=env.ALCHEMY_API_KEY,sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN;const rpc=env.RFQ_BASE_MAINNET_RPC_URL||(key?`https://base-mainnet.g.alchemy.com/v2/${key}`:"https://base.drpc.org");process.stdout.write(JSON.stringify({rpcUrl:rpc,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||(key?"https://base.drpc.org":"https://mainnet.base.org"),indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||"https://mainnet.base.org",maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||500),oracleNodes:[1,2,3].map(n=>`https://rfq-markets-oracle-${n}.${sub}.workers.dev`)}))' \
   | wrangler secret put RFQ_DEV_RUNTIME_SECRETS --name rfq-markets-runtime-dev
 wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
 wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
