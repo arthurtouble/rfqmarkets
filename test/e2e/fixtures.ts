@@ -22,7 +22,9 @@ export const test = base.extend<Fixtures & { pageErrors: void; termsAccepted: vo
       if (acceptTerms) {
         const { account } = await stack.devWallet();
         await page.addInitScript(
-          ([key, value]) => { if (!localStorage.getItem(key)) localStorage.setItem(key, value); },
+          ([key, value]) => {
+            if (!localStorage.getItem(key)) localStorage.setItem(key, value);
+          },
           [TERMS_KEY, withAcceptance(null, account, 0)],
         );
       }

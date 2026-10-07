@@ -14,7 +14,10 @@ test.describe("terms acceptance", () => {
     const agree = dialog.getByRole("button", { name: "Agree and continue" });
     await expect(agree).toBeDisabled();
     for (const box of await dialog.getByRole("checkbox").all()) await box.check();
-    await expect(dialog.getByRole("link", { name: "Terms of Service" })).toHaveAttribute("href", /\/legal\/terms-of-service$/);
+    await expect(dialog.getByRole("link", { name: "Terms of Service" })).toHaveAttribute(
+      "href",
+      /\/legal\/terms-of-service$/,
+    );
     await agree.click();
     await expect(dialog).toBeHidden();
     await expect(page.getByRole("button", { name: `Account ${wallet.account.slice(0, 6)}` })).toBeVisible();
