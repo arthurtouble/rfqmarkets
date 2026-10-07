@@ -16,7 +16,7 @@ export CLOUDFLARE_WORKERS_SUBDOMAIN="${CLOUDFLARE_WORKERS_SUBDOMAIN:-rfq-markets
 wrangler() { npx wrangler "$@"; }
 
 npm run build:web
-npm run build:docs
+DOCS_SITE_URL="https://docs.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev" npm run build:docs
 npm run validate:cloudflare-static
 kv=$(node scripts/cloudflare-kv-namespace.mjs rfq-markets-dev-state)
 sha=$(git rev-parse --short=12 HEAD)

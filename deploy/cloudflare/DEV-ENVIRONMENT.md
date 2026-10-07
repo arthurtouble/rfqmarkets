@@ -21,6 +21,10 @@ A development deployment people can open in a browser: the trading UI and docs o
 - **Hedging** is the local simulator. Nothing is sent to Hyperliquid.
 - **Prices** come from our three oracle nodes (below). The API combines their signed batches and trades settle against the `SignedPriceOracle` adapter, which accepts a 2-of-3 majority.
 
+## Docs for search engines and AI tools
+
+The docs build renders every page to static HTML, so crawlers that do not run JavaScript read the full text and links. It also writes `sitemap.xml`, `robots.txt`, [`llms.txt`](https://llmstxt.org) with `llms-full.txt`, and each page's Markdown at its address plus `.md`. Canonical links use `DOCS_SITE_URL`, which the deploy script sets to the docs worker's address. Unknown addresses get `404.html` with a real 404 status, and renamed pages redirect through `_redirects` (`MOVED` in `apps/docs/src/App.tsx`).
+
 ## Oracle nodes
 
 | Node | URL | Durable Object region |
