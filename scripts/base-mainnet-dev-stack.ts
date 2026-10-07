@@ -84,6 +84,12 @@ const stack = await startServiceStack({
     minOrderUsdc: 0n,
   },
   api: { publicRpcUrl: "https://mainnet.base.org" },
+  // The oracle node workers keep one-minute candles in Durable Object SQLite, so charts survive restarts here.
+  gateway: {
+    candleBackfill: {
+      urls: secrets.oracleNodes.map((url) => `${url.replace(/\/+$/, "")}/v1/history/candles`),
+    },
+  },
   stopOnApproverExit: true,
 });
 console.log(`Base mainnet dev services ready for ${clearing} from block ${record.deploymentBlock}`);

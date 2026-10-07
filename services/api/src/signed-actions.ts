@@ -306,6 +306,7 @@ export function registerSignedActions(
           transaction: transactionOf(receipt),
         });
       const position = await clearing.positionOf(intent.account, intent.market);
+      ctx.notifyPositionChange(intent.account, marketName(intent.market));
       return {
         status: "included",
         transaction: transactionOf(receipt),

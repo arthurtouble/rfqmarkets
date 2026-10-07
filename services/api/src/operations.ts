@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { QUOTE_MODEL_VERSION } from "../../../packages/shared/src/pricing.js";
+import { MARGIN_TIERS, QUOTE_MODEL_VERSION, marketMarginView } from "../../../packages/shared/src/pricing.js";
+import type { ChainReader } from "./chain.js";
 import type { ApiContext } from "./context.js";
 import type { MarketStream } from "./market-stream.js";
 import { MARKETS } from "./markets.js";
@@ -12,6 +13,8 @@ import type { QuoteEngine } from "./quoting.js";
  * `included`, `reverted` and `superseded` are final, so none of those make the leader unhealthy.
  */
 const UNRESOLVED_SENDER_STATUSES = new Set(["ambiguous", "reorged"]);
+/** Longest `/v1/config` waits on the margin parameter read before answering without it. */
+const CONFIG_CHAIN_READ_MS = 1_500;
 
 export function senderHealthy(rows: ReadonlyArray<Record<string, unknown>> | undefined) {
   return !rows?.some((row) => UNRESOLVED_SENDER_STATUSES.has(String(row.status)));
@@ -21,7 +24,13 @@ export function senderHealthy(rows: ReadonlyArray<Record<string, unknown>> | und
 export function registerOperationsRoutes(
   app: FastifyInstance,
   ctx: ApiContext,
-  services: { quoting: QuoteEngine; stream: MarketStream; orders: LimitOrders; metrics: RuntimeMetrics },
+  services: {
+    chain: ChainReader;
+    quoting: QuoteEngine;
+    stream: MarketStream;
+    orders: LimitOrders;
+    metrics: RuntimeMetrics;
+  },
 ) {
   const { options, domain } = ctx;
 
@@ -74,5 +83,21 @@ export function registerOperationsRoutes(
     rpcUrl: options.publicRpcUrl,
     clearingAddress: domain.verifyingContract,
     tokenAddress: options.chain?.tokenAddress,
+    // Margin per market for leverage presets and liquidation estimates; null if the chain read fails.
+    markets: await Promise.race([
+      services.chain
+        .marginScales()
+        .then((scales) =>
+          Object.fromEntries(MARKETS.map((market) => [market, marketMarginView(scales[market])])),
+        )
+        .catch(() => null),
+      // Boot config must stay fast when the chain is slow; clients then fall back to /v1/markets.
+      new Promise<null>((resolve) => setTimeout(resolve, CONFIG_CHAIN_READ_MS, null).unref()),
+    ]),
+    marginTiers: MARGIN_TIERS.map((tier) => ({
+      maxNotional: tier.maxNotional?.toString() ?? null,
+      initialBps: Number(tier.initialBps),
+      maintenanceBps: Number(tier.maintenanceBps),
+    })),
   }));
 }

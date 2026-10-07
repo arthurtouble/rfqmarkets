@@ -13,7 +13,7 @@ const error = (rejection: { body: { error: string } } | undefined) => rejection?
 
 test("decodeEnvelope rejects malformed integers and addresses", () => {
   const { payload, domain, intent, approval } = buildFixture();
-  assert.deepEqual(decodeEnvelope(payload), { domain, intent, approval });
+  assert.deepEqual(decodeEnvelope(payload), { domain, intent, approval, fill: intent });
   assert.equal(decodeEnvelope({ ...payload, intent: { ...payload.intent, account: "0x1234" } }), undefined);
   assert.equal(
     decodeEnvelope({ ...payload, domain: { ...payload.domain, verifyingContract: "nope" } }),

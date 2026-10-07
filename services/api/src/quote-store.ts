@@ -1,4 +1,4 @@
-import type { TradeIntent } from "../../../packages/shared/src/eip712.js";
+import type { TradeIntent, Trigger } from "../../../packages/shared/src/eip712.js";
 import type { Quote } from "../../../packages/shared/src/policy.js";
 import { ExpiryIndex } from "./bounded-state.js";
 
@@ -25,6 +25,11 @@ export class QuoteStore {
   readonly preparedIntents = new Map<string, TradeIntent>();
   /** Close quotes must settle reduce-only regardless of what the client asks for. */
   readonly forcedReduceOnly = new Set<string>();
+  /**
+   * Triggered orders bound to a quote: the intent hash is the `TriggeredTradeIntent` digest, the
+   * trade settles through `executeTriggeredTrade`, and the quote prices the (clamped) fill.
+   */
+  readonly triggers = new Map<string, Trigger>();
   private readonly expiries = new ExpiryIndex();
 
   get size() {
@@ -50,6 +55,7 @@ export class QuoteStore {
       this.bindings.delete(id);
       this.preparedIntents.delete(id);
       this.forcedReduceOnly.delete(id);
+      this.triggers.delete(id);
     }
   }
 }

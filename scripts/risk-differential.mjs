@@ -62,7 +62,7 @@ for(let start=0;start<vectors;start+=chunkSize){
     const oldSize=signed(25_000)*10n**15n,delta=signed(30_000)*10n**15n,entry=BigInt(1+random()%150_000)*1_000_000n,price=BigInt(1+random()%150_000)*1_000_000n;
     assert.deepEqual([...(await risk.positionTransition(oldSize,entry,delta,price))],positionTransition(oldSize,entry,delta,price));
     assert.equal(await risk.positionPnl(oldSize,entry,price),positionPnl(oldSize,entry,price));
-    const skew=signed(5_000_000)*1_000_000n,k=BigInt(1+random()%1_000_000),shock=BigInt(500+random()%9_501),scale=BigInt(10_000+random()%40_001),usdDelta=signed(1_000_000)*1_000_000n;
+    const skew=signed(5_000_000)*1_000_000n,k=BigInt(1+random()%1_000_000),shock=BigInt(500+random()%9_501),scale=BigInt(2_500+random()%47_501),usdDelta=signed(1_000_000)*1_000_000n;
     assert.equal(await risk.impactCost(k,skew,usdDelta),impactCost(k,skew,usdDelta));
     const spread=price/10_000n+1n,bid=price-spread,ask=price+spread,executionPrice=delta>0n?ask+BigInt(random()%100)*1_000_000n:bid-BigInt(random()%100)*1_000_000n;
     assert.deepEqual([...(await risk.tradeAssessment(k,skew,oldSize,delta,executionPrice,bid,ask))],tradeAssessment(k,skew,oldSize,delta,executionPrice,bid,ask));

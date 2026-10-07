@@ -23,6 +23,8 @@ export const approverPayloadSchema = z.object({
     deadline: unsigned,
     reduceOnly: z.boolean(),
   }),
+  /** Present for a triggered order: the intent hash is then the `TriggeredTradeIntent` digest. */
+  trigger: z.object({ triggerPrice: unsigned, triggerAbove: z.boolean() }).optional(),
   userSignature: z.string().regex(/^0x[0-9a-fA-F]+$/),
   approval: z.object({
     intentHash: hex32,

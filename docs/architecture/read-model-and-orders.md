@@ -1,6 +1,6 @@
 # Product read model and conditional orders
 
-Status: account and market read model plus all-or-none conditional orders implemented locally.
+Status: account and market read model, all-or-none limit orders and trigger orders (stop-loss, take-profit, stop entry) implemented locally.
 
 ## Prices shown to users
 
@@ -29,7 +29,7 @@ The public hostname should terminate at Cloudflare. A Cloudflare Tunnel gives th
 
 Funding shown before settlement is an estimate from the same formula the contract applies on the next qualifying oracle update. Whenever an account action crystallizes a non-zero payment, the contract emits `FundingSettled(account, market, payment)` and the indexer records it in account activity. The response also carries the contract's stored view values so integration tests can detect divergence. Ponder remains the durable chain-derived source for activity and historical state; it is not a second live risk engine.
 
-Cross margin has no meaningful user-selected leverage per position. The launch UI therefore shows effective account leverage and margin usage. Position tier limits imply maximum opening leverage of 5x up to $25,000, 4x up to $50,000 and approximately 3.03x up to $100,000. Adding a leverage selector would only change how much collateral the UI suggests, not the clearing rule.
+Cross margin has no meaningful user-selected leverage per position. The UI shows effective account leverage and margin usage; leverage presets only size the order against available margin. Each market's tiers are scaled by its on-chain `marginScaleBps` ([economic specification](economic-specification.md#margin-and-withdrawals)): at 10,000 the first tier allows 5x, at 2,500 it allows 20x. `GET /v1/config` returns `markets.{BTC,ETH}` with `marginScaleBps`, `maxLeverage`, `initialMarginBps` and `maintenanceMarginBps` (first tier, scaled) plus the base `marginTiers`; `GET /v1/markets` repeats the four fields per market, and `GET /v1/account/:address` returns `marginParameters` per market and per-position `initialMargin` / `maintenanceMargin`, with liquidation estimates using the scaled maintenance rates.
 
 ## Resting limit orders
 
@@ -41,7 +41,7 @@ The user signs a durable `TradeIntent` containing:
 - maximum total fee;
 - reduce-only flag;
 - order nonce and expiry;
-- optional trigger type for future TP/SL support;
+- for trigger orders, the trigger price and direction (a separate `TriggeredTradeIntent` type, below);
 - chain ID and clearing-contract address through EIP-712.
 
 The signature does not bind an API leader epoch. Leader, approver-set and policy versions belong in the short-lived maker approval produced at execution. This lets a valid user order survive routine API failover while ensuring execution uses the current policy and signer set. Cancellation consumes the order nonce on-chain. An API-only cancellation is insufficient because an escaped signed execution bundle may still exist.
@@ -57,7 +57,34 @@ At trigger time the active order worker:
 
 The contract consumes the intent nonce atomically with settlement. The approvers independently reconstruct the same intent digest and current quote policy. The order database is an operational journal of signed orders and attempts; on-chain nonces and settlement events remain authoritative.
 
-Partial fills should follow only after adding `filledBase` and `chargedFee` accounting keyed by the order digest. Each child fill must reduce remaining size, enforce the original aggregate fee ceiling and remain inside the limit. Splitting children cannot earn inventory credits or evade portfolio reservations. TP/SL can then reuse this cumulative order primitive, with reduce-only and automatic resizing bounded by the live position.
+Partial fills should follow only after adding `filledBase` and `chargedFee` accounting keyed by the order digest. Each child fill must reduce remaining size, enforce the original aggregate fee ceiling and remain inside the limit. Splitting children cannot earn inventory credits or evade portfolio reservations.
+
+## Trigger orders (stop-loss, take-profit, stop entry)
+
+A trigger order is a signed `TriggeredTradeIntent`: the `TradeIntent` fields plus `triggerPrice` and `triggerAbove`, a separate EIP-712 primary type in the same domain, so it can never fill as a plain trade. It settles only through `executeTriggeredTrade`, which reverts `TriggerNotReached` unless the settlement report's mid, `(bid + ask) / 2`, is at or above (`triggerAbove`) or at or below the trigger price. A reduce-only trigger larger than the opposite position fills exactly the position (the contract clamps it), so a TP/SL signed for a whole position still closes what is left after a partial close and never flips it.
+
+| Kind | Side | Fires when the mid is | Reduce-only |
+| --- | --- | --- | --- |
+| `stop-loss` | sell (closes a long) / buy (closes a short) | ≤ trigger / ≥ trigger | always |
+| `take-profit` | sell / buy | ≥ trigger / ≤ trigger | always |
+| `stop-entry` | buy / sell | ≥ trigger / ≤ trigger | optional (default off) |
+
+The signed limit price is the trigger moved `slippageBps` (1–500, default 100) against the trader: `trigger × (1 − s)` for sells (floored), `trigger × (1 + s)` for buys (ceiled). The fee cap is 2 bps of the notional at `trigger × (1 + s)`. The leader holds placed orders in `resting_orders` (`order_type`, `trigger_json`) and re-arms them on restart. When the oracle mid crosses a trigger it prices the fill (clamped for reduce-only), requires the firm quote's touch to still satisfy the trigger and its price to respect the limit, then runs the market-order approval path with the trigger in the approver envelope; otherwise the order re-arms. Approvers recompute the triggered digest, check the trigger on the report they sign against (the adapter's consensus in signed mode) and evaluate economics, exposure and impact on the clamped fill derived from their own position read.
+
+A TP/SL pair shares one nonce: the first leg to fill spends it and the other leg is marked `cancelled`; one nonce cancel cancels both. When a position closes (or flips), the leader marks that account's reduce-only trigger orders on that market `cancelled` and never fires them. They remain signed and executable on chain until their deadline or a nonce cancel.
+
+## Order and close API
+
+All amounts are decimal USDC strings in requests and integer strings (USDC 1e6, base 1e18, prices 1e6) in responses.
+
+- `POST /v1/quote` `{market, side, amount, slippageBps?}`: `slippageBps` (integer 1–500, default 8) sets the signed limit (`worstPrice`) beyond the expected price.
+- `POST /v1/close/quote` `{account, market, fraction?}`: `fraction` in bps of the position (1–10,000, default 10,000), rounded toward zero; the quote is forced reduce-only. `409` when the position is flat or the fraction rounds to zero.
+- `POST /v1/close/all/quote` `{account, fraction?}` → `{account, quotes: Quote[]}`: one reduce-only close quote per open position (empty when flat). Each is prepared (`/v1/prepare`) and signed separately; a session key can sign them without a wallet prompt.
+- `POST /v1/orders/trigger/prepare` `{account, market, kind, side?, sizing?: "amount" | "position", amount?, triggerPrice, triggerAbove?, slippageBps?, durationSeconds, nonce, reduceOnly?}` → `{orderId, type, domain, types: {TriggeredTradeIntent}, intent, trigger: {triggerPrice, triggerAbove}, summary}`. `intent` is the full message to sign (including `triggerPrice` and `triggerAbove`). `amount` sizing needs `side` and sizes at the trigger price; `position` sizing closes the whole current position and derives the side. `triggerAbove`, when given, must match the kind. A trigger already reached at the current mid is rejected (`409`).
+- `POST /v1/orders/tpsl/prepare` `{account, market, takeProfitPrice?, stopLossPrice?, slippageBps?, durationSeconds, nonce}` → `{pairId, nonce, orders: [takeProfit?, stopLoss?]}`, each shaped like a trigger prepare response, both reduce-only for the full position and sharing `nonce`.
+- `POST /v1/orders` `{orderId, userSignature}` places a prepared limit or trigger order.
+- `GET /v1/orders/:address` → `{items}`; each item has `orderId, type ("limit" | "stop-loss" | "take-profit" | "stop-entry"), market, side, amount, baseDelta, limitPrice, triggerPrice, triggerAbove, slippageBps, sizing, pairId, reduceOnly, maxFee, nonce, expiresAtMs, status, transactionHash, lastError` (trigger fields are `null` on limit orders).
+- `POST /v1/orders/:orderId/cancel/prepare` → `{domain, types, intent, orderIds}` and `POST /v1/orders/:orderId/cancel` → `{orderId, status, cancelledOrderIds, transaction}`: the on-chain nonce cancel closes every order sharing the nonce.
 
 ## Methods adopted from established venues
 

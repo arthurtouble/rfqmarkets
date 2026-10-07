@@ -1,17 +1,26 @@
 import { getAddress } from "ethers";
 import type { SessionState } from "../../../packages/shared/src/clearing-structs.js";
 import {
-  recoverIntentSigner,
+  recoverDigestSigner,
   type MakerApproval,
   type SigningDomain,
   type TradeIntent,
+  type Trigger,
 } from "../../../packages/shared/src/eip712.js";
 import { reject, type Rejection } from "./rejection.js";
 
-/** ECDSA signer of the intent, or undefined when the signature is not a recoverable ECDSA signature. */
-export function recoverSigner(domain: SigningDomain, intent: TradeIntent, signature: string) {
+/**
+ * ECDSA signer of the intent (in its triggered form when `trigger` is given), or undefined when the
+ * signature is not a recoverable ECDSA signature.
+ */
+export function recoverSigner(
+  domain: SigningDomain,
+  intent: TradeIntent,
+  signature: string,
+  trigger?: Trigger,
+) {
   try {
-    return recoverIntentSigner(domain, intent, signature);
+    return recoverDigestSigner(domain, intent, signature, trigger);
   } catch {
     return undefined;
   }

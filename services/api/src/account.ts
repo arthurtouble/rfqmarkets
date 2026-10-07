@@ -1,21 +1,28 @@
 import { getAddress } from "ethers";
 import type { FastifyInstance } from "fastify";
 import { openingPnl, positionPnl } from "../../../packages/shared/src/account-risk.js";
-import { BASE, marginRate } from "../../../packages/shared/src/policy.js";
+import {
+  BASE,
+  DEFAULT_MARGIN_SCALE_BPS,
+  legMargin,
+  marketMarginView,
+} from "../../../packages/shared/src/policy.js";
 import type { ApiContext } from "./context.js";
 import { abs, MARKETS, type Market } from "./markets.js";
 import { publicError } from "./public-error.js";
 import type { MarketView, QuoteEngine } from "./quoting.js";
 
 export type AccountPosition = { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
-type MarketPrices = Record<Market, Pick<MarketView, "bid" | "ask" | "mid" | "projectedFundingIndex">>;
+type MarketPrices = Record<
+  Market,
+  Pick<MarketView, "bid" | "ask" | "mid" | "projectedFundingIndex"> &
+    Partial<Pick<MarketView, "marginScaleBps">>
+>;
 
 /** Bisection steps for the liquidation-price estimate; 80 halvings exceed bigint price precision. */
 const LIQUIDATION_SEARCH_STEPS = 80;
 /** Short liquidation prices are searched up to this multiple of the current mid. */
 const SHORT_SEARCH_CEILING = 20n;
-
-const marginOf = (notional: bigint, initial: boolean) => (notional * marginRate(notional, initial)) / 10_000n;
 
 /**
  * Account equity, margin and per-position liquidation estimates at the snapshot prices. Longs are
@@ -33,6 +40,10 @@ export function accountView(
     maintenanceMargin = 0n;
   const views: Record<string, Record<string, string | null>> = {},
     pnls: bigint[] = [];
+  // Each leg's tiers are scaled by its market's multiplier, as `RFQRiskMath.accountMargin` does.
+  const scaleOf = (name: Market) => markets[name].marginScaleBps ?? DEFAULT_MARGIN_SCALE_BPS,
+    marginOf = (name: Market, notional: bigint, initial: boolean) =>
+      legMargin(notional, initial, scaleOf(name));
   for (const name of MARKETS) {
     const { size, entryPrice, lastFundingIndex } = positions[name],
       market = markets[name],
@@ -44,8 +55,8 @@ export function accountView(
     unrealizedPnl += pnl;
     accruedFunding += fundingPnl;
     grossNotional += notional;
-    initialMargin += marginOf(notional, true);
-    maintenanceMargin += marginOf(notional, false);
+    initialMargin += marginOf(name, notional, true);
+    maintenanceMargin += marginOf(name, notional, false);
     views[name] = {
       size: size.toString(),
       entryPrice: entryPrice.toString(),
@@ -54,6 +65,8 @@ export function accountView(
       unrealizedPnl: pnl.toString(),
       accruedFunding: fundingPnl.toString(),
       lastFundingIndex: lastFundingIndex.toString(),
+      initialMargin: marginOf(name, notional, true).toString(),
+      maintenanceMargin: marginOf(name, notional, false).toString(),
     };
   }
   const equity = collateral + unrealizedPnl + accruedFunding,
@@ -72,7 +85,7 @@ export function accountView(
         bid = scale(current.bid),
         ask = scale(current.ask);
       value += positionPnl(size, entryPrice, size > 0n ? bid : ask);
-      required += marginOf((abs(size) * ask) / BASE, false);
+      required += marginOf(name, (abs(size) * ask) / BASE, false);
     }
     return value - required;
   };
@@ -113,6 +126,8 @@ export function accountView(
     marginRatioBps: equity > 0n ? ((maintenanceMargin * 10_000n) / equity).toString() : null,
     effectiveLeverageBps: equity > 0n ? ((grossNotional * 10_000n) / equity).toString() : null,
     liquidatable: equity < maintenanceMargin,
+    /** Per-market margin multiplier and the leverage it allows, for leverage presets. */
+    marginParameters: Object.fromEntries(MARKETS.map((name) => [name, marketMarginView(scaleOf(name))])),
     positions: views,
   };
 }

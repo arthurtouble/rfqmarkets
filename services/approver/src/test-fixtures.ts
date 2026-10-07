@@ -6,11 +6,13 @@ import {
   DOMAIN_NAME,
   DOMAIN_VERSION,
   approvalToWire,
-  hashIntent,
+  intentDigest,
   intentToWire,
+  triggerToWire,
   type MakerApproval,
   type SigningDomain,
   type TradeIntent,
+  type Trigger,
 } from "../../../packages/shared/src/eip712.js";
 import { marketIndex, type Market } from "../../../packages/shared/src/markets.js";
 import { encodeLocalReport, oracleAdapterAbi } from "../../../packages/shared/src/oracle-report.js";
@@ -35,6 +37,11 @@ export interface PayloadOptions {
   spread?: boolean;
   /** Overrides for the local oracle report observation. */
   report?: Partial<{ bid: bigint; ask: bigint; observedAt: bigint; validUntil: bigint; market: number }>;
+  /** Sign a `TriggeredTradeIntent` with this trigger and send it in the payload. */
+  trigger?: Trigger;
+  /** The signed intent's size when it differs from the quoted fill (a clamped reduce-only trigger). */
+  signedBaseDelta?: bigint;
+  reduceOnly?: boolean;
 }
 
 export interface Fixture {
@@ -84,15 +91,16 @@ export function buildFixture(options: PayloadOptions = {}): Fixture {
   const intent: TradeIntent = {
     account: user.address,
     market: marketIndex(market),
-    baseDelta: quote.baseDelta,
+    baseDelta: options.signedBaseDelta ?? quote.baseDelta,
     limitPrice: quote.worstPrice,
-    maxFee: quote.fee,
+    maxFee: options.signedBaseDelta === undefined ? quote.fee : quote.fee * 4n,
     nonce: 7n,
     deadline: nowSeconds + 30n,
-    reduceOnly: false,
+    reduceOnly: options.reduceOnly ?? false,
   };
+  const intentHash = intentDigest(domain, intent, options.trigger);
   const approval: MakerApproval = {
-    intentHash: hashIntent(domain, intent),
+    intentHash,
     executionPrice: quote.expectedPrice,
     impactCharge: quote.impactCharge,
     fee: quote.fee,
@@ -102,10 +110,11 @@ export function buildFixture(options: PayloadOptions = {}): Fixture {
     signerSetVersion: 1n,
     policyVersion: 1n,
   };
-  const userSignature = user.signingKey.sign(hashIntent(domain, intent)).serialized;
+  const userSignature = user.signingKey.sign(intentHash).serialized;
   const payload: ApproverPayload = {
     domain: { ...domain, chainId: domain.chainId.toString() },
     intent: intentToWire(intent),
+    ...(options.trigger ? { trigger: triggerToWire(options.trigger) } : {}),
     userSignature,
     approval: approvalToWire(approval),
     quote: quoteToWire(quote),

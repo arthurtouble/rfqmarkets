@@ -5,11 +5,14 @@ import {
   DOMAIN_NAME,
   DOMAIN_VERSION,
   hashApproval,
-  hashIntent,
+  intentDigest,
+  triggerFromWire,
   type MakerApproval,
   type SigningDomain,
   type TradeIntent,
+  type Trigger,
 } from "../../../packages/shared/src/eip712.js";
+import { abs } from "../../../packages/shared/src/numeric.js";
 import type { Quote } from "../../../packages/shared/src/policy.js";
 import { marketIndex, type Market } from "./markets.js";
 
@@ -23,7 +26,24 @@ type CommitmentRow = {
   user_signature: string;
   approval_json: string | null;
 };
-export type RecoveredCommitment = { quote: Quote; intent: TradeIntent; userSignature: string };
+export type RecoveredCommitment = {
+  quote: Quote;
+  intent: TradeIntent;
+  userSignature: string;
+  trigger?: Trigger;
+};
+
+/** A triggered quote may price a reduce-only intent clamped to a smaller same-direction fill. */
+function consistentFill(intent: TradeIntent, fill: bigint, triggered: boolean) {
+  if (fill === intent.baseDelta) return true;
+  return (
+    triggered &&
+    intent.reduceOnly &&
+    fill !== 0n &&
+    fill > 0n === intent.baseDelta > 0n &&
+    abs(fill) < abs(intent.baseDelta)
+  );
+}
 
 const toIntent = (wire: ReturnType<typeof approverPayloadSchema.parse>["intent"]): TradeIntent => ({
   ...wire,
@@ -100,6 +120,8 @@ export function restoreApiCommitments(
     }
     if (!selected) throw new Error(`missing or inconsistent API approval artifact ${row.quote_id}`);
     const intent = toIntent(selected.intent),
+      trigger = selected.trigger ? triggerFromWire(selected.trigger) : undefined,
+      fill = BigInt(selected.quote.baseDelta),
       approval = toApproval(selected.approval),
       market = marketIndex(selected.quote.market),
       notional = BigInt(selected.quote.amount),
@@ -115,14 +137,14 @@ export function restoreApiCommitments(
       selected.userSignature !== row.user_signature ||
       selected.quote.quoteId !== row.quote_id ||
       selected.quote.market !== row.market ||
-      selected.quote.baseDelta !== selected.intent.baseDelta ||
+      !consistentFill(intent, fill, trigger !== undefined) ||
       expectedDelta.toString() !== row.delta ||
       intent.market !== market ||
-      approval.intentHash.toLowerCase() !== hashIntent(domain, intent).toLowerCase() ||
+      approval.intentHash.toLowerCase() !== intentDigest(domain, intent, trigger).toLowerCase() ||
       Number(intent.deadline) * 1000 !== row.expires_ms ||
       !gross ||
       gross.market !== intent.market ||
-      gross.base_delta !== intent.baseDelta.toString() ||
+      gross.base_delta !== fill.toString() ||
       gross.reduce_only !== Number(intent.reduceOnly) ||
       gross.deadline < Number(approval.deadline)
     )
@@ -157,7 +179,7 @@ export function restoreApiCommitments(
         observedAtMs: selected.quote.observedAtMs,
       },
     };
-    return { quote, intent, userSignature: row.user_signature };
+    return { quote, intent, userSignature: row.user_signature, trigger };
   });
 }
 

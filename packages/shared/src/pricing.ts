@@ -10,7 +10,16 @@ export type { Market } from "./markets.js";
  */
 export const IMPACT_K = { BTC: 10_000n, ETH: 12_000n } as const;
 export type Exposure = Record<Market, bigint>;
-export type QuoteRequest = { market: Market; side: "buy" | "sell"; amount: string };
+export type QuoteRequest = {
+  market: Market;
+  side: "buy" | "sell";
+  amount: string;
+  /** Price protection the intent's limit price allows beyond the expected price; defaults to `toleranceBps`. */
+  slippageBps?: number;
+};
+/** Bounds for a caller-chosen market-order slippage tolerance. */
+export const MIN_SLIPPAGE_BPS = 1;
+export const MAX_SLIPPAGE_BPS = 500;
 
 export function parseUsdc(value: string): bigint {
   const [whole, fraction = ""] = value.split(".");
@@ -165,6 +174,41 @@ export function marginRate(notional: bigint, initial: boolean) {
   // Matches RFQRiskMath.marginRate: the top tier also applies above 5M notional.
   return initial ? 10_000n : 6_000n;
 }
+/** Base tiers of `RFQRiskMath.marginRate`: notional ceiling (USDC units) and initial/maintenance bps. */
+export const MARGIN_TIERS = [
+  { maxNotional: 25_000n * USDC, initialBps: 2_000n, maintenanceBps: 1_200n },
+  { maxNotional: 100_000n * USDC, initialBps: 2_500n, maintenanceBps: 1_500n },
+  { maxNotional: 250_000n * USDC, initialBps: 3_300n, maintenanceBps: 2_000n },
+  { maxNotional: 1_000_000n * USDC, initialBps: 5_000n, maintenanceBps: 3_000n },
+  { maxNotional: 2_500_000n * USDC, initialBps: 6_700n, maintenanceBps: 4_000n },
+  { maxNotional: undefined, initialBps: 10_000n, maintenanceBps: 6_000n },
+] as const;
+/** Per-market margin multiplier of the base tiers (`marketParams(id).marginScaleBps`); 10_000 = 1x. */
+export const DEFAULT_MARGIN_SCALE_BPS = 10_000;
+export const MIN_MARGIN_SCALE_BPS = 2_500;
+export const MAX_MARGIN_SCALE_BPS = 50_000;
+/** Mirrors `RFQRiskMath.scaledMarginRate`: the base tier rate times the market multiplier, capped at 100%. */
+export function scaledMarginRate(notional: bigint, initial: boolean, scaleBps: bigint | number) {
+  const rate = (marginRate(notional, initial) * BigInt(scaleBps)) / 10_000n;
+  return rate < 10_000n ? rate : 10_000n;
+}
+/** Margin a leg of `notional` requires, as `RFQRiskMath.accountMargin` adds it per leg. */
+export function legMargin(notional: bigint, initial: boolean, scaleBps: bigint | number) {
+  return (notional * scaledMarginRate(notional, initial, scaleBps)) / 10_000n;
+}
+/** Leverage the first tier's scaled initial margin allows, rounded down to 0.01x (20 at 2_500). */
+export function maxLeverage(scaleBps: bigint | number) {
+  return Number(1_000_000n / scaledMarginRate(0n, true, scaleBps)) / 100;
+}
+/** The margin parameters a client needs to show leverage presets for one market. */
+export function marketMarginView(scaleBps: bigint | number) {
+  return {
+    marginScaleBps: Number(scaleBps),
+    maxLeverage: maxLeverage(scaleBps),
+    initialMarginBps: Number(scaledMarginRate(0n, true, scaleBps)),
+    maintenanceMarginBps: Number(scaledMarginRate(0n, false, scaleBps)),
+  };
+}
 export function constructQuote(
   request: QuoteRequest,
   snapshot: PriceSnapshot,
@@ -196,7 +240,8 @@ export function constructQuote(
     anchor = request.side === "buy" ? snapshot.ask : snapshot.bid,
     premium = ceilDiv(anchor * (baseSpread + impactCharge), notional),
     expectedPrice = request.side === "buy" ? anchor + premium : anchor - premium,
-    tolerance = ceilDiv(expectedPrice * parameters.toleranceBps, 10_000n),
+    toleranceBps = request.slippageBps === undefined ? parameters.toleranceBps : BigInt(request.slippageBps),
+    tolerance = ceilDiv(expectedPrice * toleranceBps, 10_000n),
     worstPrice = request.side === "buy" ? expectedPrice + tolerance : expectedPrice - tolerance;
   return {
     quoteId,

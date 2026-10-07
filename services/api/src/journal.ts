@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS flow_fills (
 export function openApiJournal(path: string, grossContext: string, grossReservations: GrossReservationBook) {
   const journal = new DatabaseSync(path);
   journal.exec(SCHEMA);
+  migrateRestingOrders(journal);
   initializeApiRecoveryJournal(journal);
   initializeGrossJournal(journal);
   bindGrossContext(journal, "api", grossContext);
@@ -56,6 +57,19 @@ export function openApiJournal(path: string, grossContext: string, grossReservat
   });
   restoreGross(journal, grossReservations);
   return journal;
+}
+
+/**
+ * Trigger orders (stop-loss, take-profit, stop entry) share `resting_orders` with limit orders:
+ * `order_type` names the kind and `trigger_json` holds the signed trigger and its order metadata.
+ * Journals written before trigger orders gain both columns; their rows are limit orders.
+ */
+function migrateRestingOrders(journal: DatabaseSync) {
+  const columns = journal.prepare("PRAGMA table_info(resting_orders)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "order_type"))
+    journal.exec("ALTER TABLE resting_orders ADD COLUMN order_type TEXT NOT NULL DEFAULT 'limit'");
+  if (!columns.some((column) => column.name === "trigger_json"))
+    journal.exec("ALTER TABLE resting_orders ADD COLUMN trigger_json TEXT");
 }
 
 export function restoreFlowFills(journal: DatabaseSync | undefined, now = Date.now()): FlowFill[] {

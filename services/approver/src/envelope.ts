@@ -6,11 +6,14 @@ import {
   approvalFromWire,
   domainFromWire,
   intentFromWire,
+  triggerFromWire,
   type MakerApproval,
   type SigningDomain,
   type TradeIntent,
+  type Trigger,
 } from "../../../packages/shared/src/eip712.js";
 import { marketIndex } from "../../../packages/shared/src/markets.js";
+import { abs } from "../../../packages/shared/src/numeric.js";
 import { reject, type Rejection } from "./rejection.js";
 
 /** Longest maker approval lifetime the approver will sign, before clock-skew allowance. */
@@ -18,17 +21,44 @@ export const APPROVAL_LIFETIME_SECONDS = 31;
 
 export interface Envelope {
   domain: SigningDomain;
+  /** The intent exactly as the user signed it. */
   intent: TradeIntent;
   approval: MakerApproval;
+  /** Present for a triggered order; the approval then binds the `TriggeredTradeIntent` digest. */
+  trigger?: Trigger;
+  /**
+   * The trade the approval prices: the signed intent, or for a reduce-only triggered intent the
+   * quote's smaller delta that the contract clamps to the open position. Economics, exposure and
+   * pricing are evaluated on this; the clamp itself is re-derived from the chain position.
+   */
+  fill: TradeIntent;
+}
+
+/** A triggered fill may only shrink a reduce-only intent in the same direction. */
+export function plausibleTriggeredFill(intent: TradeIntent, fillDelta: bigint) {
+  return (
+    fillDelta === intent.baseDelta ||
+    (intent.reduceOnly &&
+      fillDelta !== 0n &&
+      fillDelta > 0n === intent.baseDelta > 0n &&
+      abs(fillDelta) < abs(intent.baseDelta))
+  );
 }
 
 /** Typed-data view of the payload, or undefined when an integer or address is malformed. */
 export function decodeEnvelope(input: ApproverPayload): Envelope | undefined {
   try {
+    const intent = intentFromWire(input.intent),
+      trigger = input.trigger ? triggerFromWire(input.trigger) : undefined,
+      fill = trigger ? { ...intent, baseDelta: BigInt(input.quote.baseDelta) } : intent;
+    if (trigger && (trigger.triggerPrice <= 0n || !plausibleTriggeredFill(intent, fill.baseDelta)))
+      return undefined;
     return {
       domain: domainFromWire(input.domain),
-      intent: intentFromWire(input.intent),
+      intent,
       approval: approvalFromWire(input.approval),
+      ...(trigger ? { trigger } : {}),
+      fill,
     };
   } catch {
     return undefined;

@@ -12,6 +12,7 @@ import {
   BASE,
   constructQuote,
   launchPricing,
+  marketMarginView,
   parseUsdc,
   quoteRequestSchema,
   RATE,
@@ -29,7 +30,7 @@ import { abs, MARKETS, marketIndex, unixSeconds, type Market } from "./markets.j
 import type { OracleQuote } from "./oracle.js";
 import { publicError } from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
-import { closeQuoteSchema } from "./schemas.js";
+import { closeAllQuoteSchema, closeQuoteSchema } from "./schemas.js";
 import { ShadowModelTelemetry } from "./shadow-model.js";
 
 const YEAR_SECONDS = 365n * 24n * 60n * 60n;
@@ -80,6 +81,13 @@ export type MarketView = {
   operatingMaxTradeNotional: string;
   canBuy: boolean;
   canSell: boolean;
+  /** The market's margin multiplier on the base tiers (10_000 = 1x, 2_500 = 0.25x). */
+  marginScaleBps: number;
+  /** Leverage the first tier's scaled initial margin allows (20 at 2_500). */
+  maxLeverage: number;
+  /** First-tier scaled initial and maintenance margin rates, in bps of notional. */
+  initialMarginBps: number;
+  maintenanceMarginBps: number;
 };
 
 export type MarketsSnapshot = {
@@ -223,7 +231,8 @@ export class QuoteEngine {
           [null, null],
           [null, null],
         ];
-    const operational = await this.hedgeRisk();
+    const operational = await this.hedgeRisk(),
+      marginScales = await this.chain.marginScales(provider ? blockNumber : undefined);
     const markets = {} as Record<Market, MarketView>;
     for (const [index, name] of MARKETS.entries()) {
       const snapshot = prices[name],
@@ -280,6 +289,7 @@ export class QuoteEngine {
         operatingMaxTradeNotional: admission.maxTradeNotional.toString(),
         canBuy: admission.canBuy,
         canSell: admission.canSell,
+        ...marketMarginView(marginScales[name]),
       };
     }
     ctx.prune(now);
@@ -486,15 +496,54 @@ export class QuoteEngine {
           position = await ctx.clearing.positionOf(account, marketIndex(parsed.data.market)),
           size = BigInt(position.size);
         if (size === 0n) return reply.code(409).send({ error: "position is already closed" });
-        const { quote } = await this.createQuote(
-          { market: parsed.data.market, side: size > 0n ? "sell" : "buy", amount: "1" },
-          { exactBaseDelta: -size, reductionAccount: account },
-        );
-        ctx.quotes.forcedReduceOnly.add(quote.quoteId);
+        const quote = await this.closeQuote(account, parsed.data.market, size, parsed.data.fraction);
+        if (!quote) return reply.code(409).send({ error: "close fraction rounds to zero" });
         return quoteToWire(quote);
       } catch (error) {
         return reply.code(503).send({ error: publicError(error, "close quote rejected") });
       }
     });
+
+    // One reduce-only close quote per open position. Each is prepared and signed separately (a
+    // session key can sign them without a wallet prompt).
+    app.post("/v1/close/all/quote", async (request, reply) => {
+      if (!guards.admitQuoteWork(request, reply)) return;
+      const parsed = closeAllQuoteSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid close-all quote request" });
+      if (!ctx.clearing) return reply.code(503).send({ error: "chain unavailable" });
+      try {
+        const account = getAddress(parsed.data.account),
+          blockTag = { blockTag: await this.chain.blockNumber() },
+          sizes = await Promise.all(
+            MARKETS.map(async (market) =>
+              BigInt((await ctx.clearing!.positionOf(account, marketIndex(market), blockTag)).size),
+            ),
+          ),
+          quotes = [];
+        for (const [index, market] of MARKETS.entries()) {
+          if (sizes[index] === 0n) continue;
+          const quote = await this.closeQuote(account, market, sizes[index], parsed.data.fraction);
+          if (quote) quotes.push(quoteToWire(quote));
+        }
+        return { account, quotes };
+      } catch (error) {
+        return reply.code(503).send({ error: publicError(error, "close quote rejected") });
+      }
+    });
+  }
+
+  /**
+   * A firm reduce-only quote closing `fraction` bps of the position (rounded toward zero), or
+   * undefined when that rounds to nothing. Reductions may exceed the per-trade limit.
+   */
+  private async closeQuote(account: string, market: Market, size: bigint, fraction = 10_000) {
+    const closing = (size * BigInt(fraction)) / 10_000n;
+    if (closing === 0n) return undefined;
+    const { quote } = await this.createQuote(
+      { market, side: size > 0n ? "sell" : "buy", amount: "1" },
+      { exactBaseDelta: -closing, reductionAccount: account },
+    );
+    this.ctx.quotes.forcedReduceOnly.add(quote.quoteId);
+    return quote;
   }
 }

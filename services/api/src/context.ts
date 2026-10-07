@@ -104,6 +104,7 @@ export class ApiContext {
   /** Signed commitments restored from the journal; their protocol versions are read on ready. */
   readonly recoveredCommitments: RecoveredCommitment[] = [];
   private readonly pruners: Array<(now: number) => void> = [];
+  private readonly positionListeners: Array<(account: string, market: Market) => void> = [];
 
   constructor(readonly options: ApiOptions) {
     this.domain = {
@@ -154,9 +155,10 @@ export class ApiContext {
           })
         : undefined);
     if (this.journal) this.recoveredCommitments = restoreApiCommitments(this.journal, this.domain);
-    for (const { quote, intent } of this.recoveredCommitments) {
+    for (const { quote, intent, trigger } of this.recoveredCommitments) {
       this.quotes.add(quote);
       this.quotes.bind(quote.quoteId, intent);
+      if (trigger) this.quotes.triggers.set(quote.quoteId, trigger);
     }
     this.onPrune((now) => this.quotes.prune(now));
   }
@@ -171,6 +173,15 @@ export class ApiContext {
   /** The signing domain in its JSON form, as returned to wallets and approvers. */
   get wireDomain() {
     return { ...this.domain, chainId: this.domain.chainId.toString() };
+  }
+
+  /** Called after the leader settles a trade or close that changed an account's position. */
+  onPositionChange(listener: (account: string, market: Market) => void) {
+    this.positionListeners.push(listener);
+  }
+
+  notifyPositionChange(account: string, market: Market) {
+    for (const listener of this.positionListeners) listener(account, market);
   }
 
   onPrune(pruner: (now: number) => void) {

@@ -7,6 +7,14 @@ import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
 import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 import { RiskProjection, type AccountProjection } from "./risk-projection.js";
+import {
+  HISTORY_INTERVALS,
+  bucketPoints,
+  replayPortfolio,
+  type HistoryInterval,
+  type PortfolioEvent,
+  type PortfolioReplay,
+} from "./portfolio.js";
 
 export interface IndexerOptions {
   rpcUrl: string;
@@ -83,6 +91,28 @@ const activityQuery = z.object({
   finalized: isTrue,
 });
 const finalityQuery = z.object({ finalized: isTrue });
+const fillMarket = z.enum(["BTC", "ETH"], { message: "invalid market" }).optional();
+const portfolioHistoryQuery = z.object({
+  interval: z
+    .enum(Object.keys(HISTORY_INTERVALS) as [HistoryInterval, ...HistoryInterval[]], {
+      message: "invalid interval",
+    })
+    .default("event"),
+  limit: z.coerce
+    .number()
+    .int()
+    .catch(500)
+    .transform((value) => Math.min(2_000, Math.max(1, value))),
+  finalized: isTrue,
+});
+const portfolioPageQuery = z.object({
+  cursor: activityCursor,
+  limit: pageLimit(25),
+  market: fillMarket,
+  finalized: isTrue,
+});
+/** Replays kept per (account, finality, indexed block); each request after a new block replays again. */
+const PORTFOLIO_CACHE_SIZE = 256;
 const positionsQuery = z.object({
   limit: pageLimit(50),
   // Finalized unless explicitly asked for included state.
@@ -116,8 +146,9 @@ export function buildIndexer(options: IndexerOptions) {
   const iface = new Interface(clearingIndexerAbi);
   const db = new DatabaseSync(options.databasePath);
   db.exec(
-    "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS blocks(number INTEGER PRIMARY KEY,hash TEXT NOT NULL,parent_hash TEXT NOT NULL,timestamp INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS activity(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,block_number INTEGER NOT NULL,block_hash TEXT NOT NULL,timestamp INTEGER NOT NULL,kind TEXT NOT NULL,account TEXT,market INTEGER,payload TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index)); CREATE INDEX IF NOT EXISTS activity_account_block ON activity(account,block_number DESC,log_index DESC); CREATE TABLE IF NOT EXISTS accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,btc_size TEXT NOT NULL,btc_entry TEXT NOT NULL,eth_size TEXT NOT NULL,eth_entry TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS finalized_accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,btc_size TEXT NOT NULL,btc_entry TEXT NOT NULL,eth_size TEXT NOT NULL,eth_entry TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE INDEX IF NOT EXISTS accounts_open ON accounts(account) WHERE btc_size != '0' OR eth_size != '0'; CREATE INDEX IF NOT EXISTS finalized_accounts_open ON finalized_accounts(account) WHERE btc_size != '0' OR eth_size != '0'; CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
+    "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS blocks(number INTEGER PRIMARY KEY,hash TEXT NOT NULL,parent_hash TEXT NOT NULL,timestamp INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS activity(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,block_number INTEGER NOT NULL,block_hash TEXT NOT NULL,timestamp INTEGER NOT NULL,kind TEXT NOT NULL,account TEXT,market INTEGER,payload TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index)); CREATE INDEX IF NOT EXISTS activity_account_block ON activity(account,block_number DESC,log_index DESC); CREATE TABLE IF NOT EXISTS accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,btc_size TEXT NOT NULL,btc_entry TEXT NOT NULL,eth_size TEXT NOT NULL,eth_entry TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS finalized_accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,btc_size TEXT NOT NULL,btc_entry TEXT NOT NULL,eth_size TEXT NOT NULL,eth_entry TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE INDEX IF NOT EXISTS accounts_open ON accounts(account) WHERE btc_size != '0' OR eth_size != '0'; CREATE INDEX IF NOT EXISTS finalized_accounts_open ON finalized_accounts(account) WHERE btc_size != '0' OR eth_size != '0'; CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS liquidation_marks(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,bid TEXT NOT NULL,ask TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index))",
   );
+  const portfolioCache = new Map<string, PortfolioReplay>();
   const liveRisk = new RiskProjection(),
     finalizedRisk = new RiskProjection();
   for (const row of db
@@ -166,11 +197,12 @@ export function buildIndexer(options: IndexerOptions) {
   const reset = () => {
     atomic(() =>
       db.exec(
-        "DELETE FROM blocks; DELETE FROM activity; DELETE FROM accounts; DELETE FROM finalized_accounts; DELETE FROM metadata",
+        "DELETE FROM blocks; DELETE FROM activity; DELETE FROM accounts; DELETE FROM finalized_accounts; DELETE FROM metadata; DELETE FROM liquidation_marks",
       ),
     );
     liveRisk.clear();
     finalizedRisk.clear();
+    portfolioCache.clear();
   };
   async function readAccount(account: string, blockTag: number, txHash?: string) {
     const [collateral, btc, eth] = await Promise.all([
@@ -303,6 +335,21 @@ export function buildIndexer(options: IndexerOptions) {
     const included = await Promise.all(
       [...affected].map(([account, event]) => readAccount(account, event.block, event.tx)),
     );
+    // A partial liquidation emits no fill price. Keep the oracle side stored at the end of its block so the
+    // portfolio replay can price the closed size (exact when the block holds one price update for the market).
+    const marks = await Promise.all(
+      events
+        .filter((event) => event.kind === "Liquidated" && event.market !== null)
+        .map(async (event) => {
+          const state = await contract.markets(event.market!, { blockTag: event.log.blockNumber });
+          return {
+            tx: event.log.transactionHash,
+            index: event.log.index,
+            bid: state.lastBid.toString(),
+            ask: state.lastAsk.toString(),
+          };
+        }),
+    );
     const finalized = await stageFinalized(
       head,
       to,
@@ -332,6 +379,13 @@ export function buildIndexer(options: IndexerOptions) {
           account,
           market,
           payload,
+        );
+      for (const mark of marks)
+        db.prepare("INSERT OR REPLACE INTO liquidation_marks VALUES(?,?,?,?)").run(
+          mark.tx,
+          mark.index,
+          mark.bid,
+          mark.ask,
         );
       for (const item of included) writeAccount(item, "accounts");
       writeFinalized(finalized);
@@ -485,6 +539,158 @@ export function buildIndexer(options: IndexerOptions) {
       )
       .all(...params, query.limit) as Array<Record<string, string | number>>;
     return { ...activityPage(rows, query.limit, finalized), finalizedBlock: finalized };
+  });
+  /** The account's replayed portfolio up to `throughBlock`, cached per indexed block. */
+  function portfolio(account: string, throughBlock: number, finalized: boolean) {
+    const key = `${account}:${finalized ? "finalized" : "included"}:${throughBlock}`,
+      cached = portfolioCache.get(key);
+    if (cached) return cached;
+    const rows = db
+      .prepare(
+        "SELECT a.tx_hash,a.log_index,a.block_number,a.timestamp,a.kind,a.payload,m.bid,m.ask FROM activity a LEFT JOIN liquidation_marks m ON m.tx_hash=a.tx_hash AND m.log_index=a.log_index WHERE a.account=? AND a.block_number<=? ORDER BY a.block_number,a.log_index",
+      )
+      .all(account, throughBlock) as Array<{
+      tx_hash: string;
+      log_index: number;
+      block_number: number;
+      timestamp: number;
+      kind: string;
+      payload: string;
+      bid: string | null;
+      ask: string | null;
+    }>;
+    const events: PortfolioEvent[] = rows.map((row) => ({
+      txHash: row.tx_hash,
+      logIndex: row.log_index,
+      blockNumber: row.block_number,
+      timestamp: row.timestamp,
+      kind: row.kind,
+      payload: JSON.parse(row.payload) as Record<string, string>,
+      liquidationMark:
+        row.bid !== null && row.ask !== null ? { bid: BigInt(row.bid), ask: BigInt(row.ask) } : undefined,
+    }));
+    const replay = replayPortfolio(events);
+    if (portfolioCache.size >= PORTFOLIO_CACHE_SIZE)
+      portfolioCache.delete(portfolioCache.keys().next().value!);
+    portfolioCache.set(key, replay);
+    return replay;
+  }
+  /** Indexed and finalized heights, and the height a portfolio read covers. */
+  async function portfolioScope(finalized: boolean) {
+    const indexed = indexedBlock(),
+      finalizedBlock = Math.min(indexed, await finalityBlock());
+    return { finalizedBlock, through: finalized ? finalizedBlock : indexed };
+  }
+  /** Newest-first page of replayed items strictly before the "block:logIndex" cursor. */
+  function replayPage<T extends { blockNumber: number; logIndex: number }>(
+    items: readonly T[],
+    cursor: [number, number],
+    limit: number,
+    finalizedBlock: number,
+  ) {
+    const [cursorBlock, cursorLog] = cursor,
+      page: Array<T & { finality: "finalized" | "included" }> = [];
+    for (let index = items.length - 1; index >= 0 && page.length < limit; index--) {
+      const item = items[index];
+      if (item.blockNumber > cursorBlock || (item.blockNumber === cursorBlock && item.logIndex >= cursorLog))
+        continue;
+      page.push({ ...item, finality: item.blockNumber <= finalizedBlock ? "finalized" : "included" });
+    }
+    const last = page.at(-1);
+    return {
+      items: page,
+      nextCursor: page.length === limit && last ? `${last.blockNumber}:${last.logIndex}` : null,
+    };
+  }
+
+  app.get("/v1/portfolio/:address", async (request, reply) => {
+    await sync();
+    const params = parse(accountParams, request.params, reply),
+      query = params && parse(finalityQuery, request.query, reply);
+    if (!params || !query) return;
+    const scope = await portfolioScope(query.finalized),
+      replay = portfolio(params.address, scope.through, query.finalized),
+      totals = replay.totals,
+      netPnl = totals.realizedPnl - totals.fees + totals.funding - totals.liquidationPenalties,
+      netDeposits = totals.deposits - totals.withdrawals,
+      stored = db
+        .prepare(
+          `SELECT collateral FROM ${query.finalized ? "finalized_accounts" : "accounts"} WHERE account=?`,
+        )
+        .get(params.address) as { collateral: string } | undefined;
+    const position = (market: "BTC" | "ETH") => ({
+      size: replay.positions[market].size.toString(),
+      entryPrice: replay.positions[market].entryPrice.toString(),
+    });
+    return {
+      account: params.address,
+      finality: query.finalized ? "finalized" : "included",
+      indexedBlock: scope.through,
+      finalizedBlock: scope.finalizedBlock,
+      realizedPnl: totals.realizedPnl.toString(),
+      fees: totals.fees.toString(),
+      funding: totals.funding.toString(),
+      liquidationPenalties: totals.liquidationPenalties.toString(),
+      deficitCovered: totals.deficitCovered.toString(),
+      netPnl: netPnl.toString(),
+      deposits: totals.deposits.toString(),
+      withdrawals: totals.withdrawals.toString(),
+      netDeposits: netDeposits.toString(),
+      collateral: (netDeposits + netPnl + totals.deficitCovered).toString(),
+      indexedCollateral: stored?.collateral ?? null,
+      volume: totals.volume.toString(),
+      tradeCount: totals.tradeCount,
+      fundingCount: replay.funding.length,
+      positions: { BTC: position("BTC"), ETH: position("ETH") },
+      firstEventMs: replay.firstEventMs,
+      lastEventMs: replay.lastEventMs,
+      incomplete: replay.incomplete,
+    };
+  });
+  app.get("/v1/portfolio/:address/history", async (request, reply) => {
+    await sync();
+    const params = parse(accountParams, request.params, reply),
+      query = params && parse(portfolioHistoryQuery, request.query, reply);
+    if (!params || !query) return;
+    const scope = await portfolioScope(query.finalized),
+      replay = portfolio(params.address, scope.through, query.finalized),
+      points = bucketPoints(replay.points, query.interval);
+    return {
+      account: params.address,
+      interval: query.interval,
+      finality: query.finalized ? "finalized" : "included",
+      indexedBlock: scope.through,
+      truncated: points.length > query.limit,
+      points: points.slice(-query.limit),
+    };
+  });
+  app.get("/v1/portfolio/:address/trades", async (request, reply) => {
+    await sync();
+    const params = parse(accountParams, request.params, reply),
+      query = params && parse(portfolioPageQuery, request.query, reply);
+    if (!params || !query) return;
+    const scope = await portfolioScope(query.finalized),
+      replay = portfolio(params.address, scope.through, query.finalized),
+      fills = query.market ? replay.fills.filter((fill) => fill.market === query.market) : replay.fills;
+    return {
+      ...replayPage(fills, query.cursor, query.limit, scope.finalizedBlock),
+      realizedPnl: replay.totals.realizedPnl.toString(),
+      indexedBlock: scope.through,
+    };
+  });
+  app.get("/v1/funding/:address", async (request, reply) => {
+    await sync();
+    const params = parse(accountParams, request.params, reply),
+      query = params && parse(portfolioPageQuery, request.query, reply);
+    if (!params || !query) return;
+    const scope = await portfolioScope(query.finalized),
+      replay = portfolio(params.address, scope.through, query.finalized),
+      items = query.market ? replay.funding.filter((item) => item.market === query.market) : replay.funding;
+    return {
+      ...replayPage(items, query.cursor, query.limit, scope.finalizedBlock),
+      totalFunding: items.reduce((sum, item) => sum + BigInt(item.amount), 0n).toString(),
+      indexedBlock: scope.through,
+    };
   });
   // Reads contract state directly, so it does not wait on a log sync: a slow sync must not starve the
   // hedger's once-a-second exposure check.

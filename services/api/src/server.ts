@@ -34,7 +34,7 @@ export function buildApi(options: ApiOptions = {}) {
     orders = new LimitOrders(ctx, chain, quoting, execution),
     deposits = new DepositSimulator(ctx, dev);
 
-  registerOperationsRoutes(app, ctx, { quoting, stream, orders, metrics });
+  registerOperationsRoutes(app, ctx, { chain, quoting, stream, orders, metrics });
   registerDevRoutes(app, ctx);
   quoting.register(app, guards);
   stream.register(app);
