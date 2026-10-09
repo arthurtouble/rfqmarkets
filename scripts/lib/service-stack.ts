@@ -216,7 +216,11 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     const { chain: apiChain, ...apiOptions } = config.api ?? {};
     // Load the clearing registry before the API rebuilds journaled quotes for markets beyond BTC/ETH.
     {
-      const provider = new JsonRpcProvider(config.rpcUrl, undefined, { staticNetwork: true });
+      // One call per request: free RPC plans (drpc) reject batches, which stopped the dev runtime at start.
+      const provider = new JsonRpcProvider(config.rpcUrl, undefined, {
+        staticNetwork: true,
+        batchMaxCount: 1,
+      });
       try {
         await syncMarketRegistry(new Contract(config.clearingAddress, clearingStateAbi, provider));
       } finally {
