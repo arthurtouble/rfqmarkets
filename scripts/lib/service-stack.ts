@@ -147,6 +147,9 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
   };
   mkdirSync(config.stateDirectory, { recursive: true });
   const state = (name: string) => resolve(config.stateDirectory, name);
+  // One line per service, so a start-up that stalls shows in the logs where it stopped.
+  const started = Date.now(),
+    ready = (name: string) => console.log(`service stack: ${name} ready after ${Date.now() - started} ms`);
 
   try {
     const indexer = buildIndexer({
@@ -160,6 +163,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     });
     await indexer.listen({ host: bindHost, port: ports.indexer });
     servers.push(indexer);
+    ready("indexer");
 
     const hedger = buildHedger({
       indexerUrl: `http://127.0.0.1:${ports.indexer}`,
@@ -174,6 +178,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     });
     await hedger.listen({ host: config.exposeHedger ? bindHost : "127.0.0.1", port: ports.hedger });
     servers.push(hedger);
+    ready("hedger");
     const hedgeRiskUrl = `http://127.0.0.1:${ports.hedger}/internal/risk`;
 
     const approvers: Array<{ url: string; token: string }> = [];
@@ -206,6 +211,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
       // Outage scenarios (scripts/approver-outage-smoke.ts) stop approvers by PID.
       writeFileSync(state(`approver-${index}.pid`), String(child.pid));
       approvers.push({ url, token });
+      ready(`approver ${index}`);
       if (config.stopOnApproverExit)
         child.once("exit", (code) => {
           console.error(`approver ${index} exited with ${code}; stopping`);
@@ -248,10 +254,12 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     });
     await api.listen({ host: bindHost, port: ports.api });
     servers.push(api);
+    ready("api");
 
     const gateway = buildGateway({ ...config.gateway, upstreamUrl: `http://127.0.0.1:${ports.api}` });
     await gateway.listen({ host: bindHost, port: ports.gateway });
     servers.push(gateway);
+    ready("gateway");
 
     if (config.keeper) {
       if (new Wallet(config.keeper.sponsorKey).address === new Wallet(config.sponsorKey).address)

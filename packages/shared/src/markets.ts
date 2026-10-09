@@ -284,6 +284,7 @@ export async function syncMarketRegistry(
 }
 
 export const DEFAULT_MARKET_REFRESH_MS = 60_000;
+const INITIAL_LOAD_WAIT_MS = 5_000;
 
 export interface MarketRegistryWatch {
   /** Re-read the registry now (coalesced with a refresh already running). */
@@ -323,7 +324,12 @@ export async function watchMarketRegistry(
         running = undefined;
       }
     })());
-  if (options.requireInitial === false) await refresh().catch((error) => options.onError?.(error));
+  if (options.requireInitial === false)
+    // Don't hold a service's start-up on a slow or throttled RPC: the load carries on in the background.
+    await Promise.race([
+      refresh().catch((error) => options.onError?.(error)),
+      new Promise((done) => setTimeout(done, INITIAL_LOAD_WAIT_MS).unref?.()),
+    ]);
   else await refresh();
   registry.setRefresher(refresh);
   const timer = setInterval(() => refresh().catch((error) => options.onError?.(error)), intervalMs);
