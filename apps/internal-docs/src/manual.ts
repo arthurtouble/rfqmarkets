@@ -1,7 +1,7 @@
 // The internal manual's model: every Markdown file under docs/ is a page and its folder is its section.
 // Pure functions over { "docs/<path>.md": body } so they are unit-tested without Vite.
 
-export const REPOSITORY = "https://github.com/arturobellagio/rfq-markets";
+export const REPOSITORY = "https://github.com/arthurtouble/rfqmarkets";
 
 export type Page = {
   /** The file under docs/ without `.md`, e.g. `architecture/overview` or `README`. */
