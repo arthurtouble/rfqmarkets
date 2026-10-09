@@ -81,13 +81,13 @@ test("links: manual pages stay in the manual, other repository paths open on Git
   });
   assert.deepEqual(resolveLink("README", "history/", pages), {
     kind: "external",
-    href: "https://github.com/arturobellagio/rfq-markets/tree/main/docs/history",
+    href: "https://github.com/arthurtouble/rfqmarkets/tree/main/docs/history",
   });
   assert.deepEqual(
     resolveLink("operations/cloudflare", "../../deploy/cloudflare/DEV-ENVIRONMENT.md", pages),
     {
       kind: "external",
-      href: "https://github.com/arturobellagio/rfq-markets/blob/main/deploy/cloudflare/DEV-ENVIRONMENT.md",
+      href: "https://github.com/arthurtouble/rfqmarkets/blob/main/deploy/cloudflare/DEV-ENVIRONMENT.md",
     },
   );
   assert.deepEqual(resolveLink("README", "#history", pages), { kind: "anchor", hash: "history" });
