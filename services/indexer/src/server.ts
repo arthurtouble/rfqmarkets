@@ -1105,7 +1105,9 @@ export function buildIndexer(options: IndexerOptions) {
       onChange: () => portfolioCache.clear(),
       onError: (error) => logError("indexer market registry refresh failed:", error),
     });
-    await sync();
+    // Wait briefly for the first pass, but never hold start-up on it: a rate-limited RPC (mainnet.base.org
+    // answers 429 and ethers retries) would time out this hook and take the whole service stack down.
+    await Promise.race([sync(), new Promise((done) => setTimeout(done, 5_000).unref())]);
     timer = setInterval(() => void sync(), options.pollMs ?? 500);
     timer.unref();
     heartbeat = setInterval(() => updateClients.heartbeat(), 15_000);
