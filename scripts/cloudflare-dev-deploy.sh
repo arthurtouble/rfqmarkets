@@ -26,6 +26,8 @@ usdc=$(read_deployment contracts.usdc)
 # only for the pinned contract. Before the first contract deployment only the chain is pinned.
 VITE_CHAIN_ID=8453 VITE_CLEARING_ADDRESS="$clearing" VITE_TOKEN_ADDRESS="$usdc" npm run build:web
 DOCS_SITE_URL="https://docs.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev" npm run build:docs
+VITE_HEDGER_URL=/ops/hedger npm run build:admin
+npm run build:internal-docs
 npm run validate:cloudflare-static
 sha=$(git rev-parse --short=12 HEAD)
 generated=deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
@@ -60,8 +62,6 @@ deploy_private() { # worker config hostname-prefix label
   # shellcheck disable=SC2086
   wrangler deploy --config "$1" $flags
 }
-VITE_HEDGER_URL=/ops/hedger npm run build:admin
-npm run build:internal-docs
 deploy_private deploy/cloudflare/static/wrangler.admin.dev.jsonc admin "RFQ Markets hedge operations (dev)"
 deploy_private deploy/cloudflare/static/wrangler.internal-docs.jsonc internal-docs "RFQ Markets internal docs"
 

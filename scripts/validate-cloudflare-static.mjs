@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const requiredHeaders = [
@@ -38,7 +39,10 @@ for (const path of await filesBelow(join("dist", "web"))) {
 }
 
 // Every app's CSP allows only font-src 'self', so a font Vite inlined as a data: URL never loads.
+// The dev deploy validates before it builds the exit page, so an app not built yet is skipped;
+// `npm test` builds every app first and checks them all.
 for (const app of ["web", "docs", "admin", "internal-docs", "exit"]) {
+  if (!existsSync(join("dist", app))) continue;
   for (const path of await filesBelow(join("dist", app))) {
     if (!path.endsWith(".css")) continue;
     if ((await readFile(path, "utf8")).includes("data:font/")) {
