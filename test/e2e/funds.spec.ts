@@ -1,5 +1,5 @@
 // Deposits and withdrawals through the funds sheet, with the local dev wallet (which keeps
-// 50,000 USDC in its wallet and no standing allowance, so approve and deposit both run).
+// 50,000 USDC in its wallet). Deposits are gas-free: one signature, and the API pays the gas.
 import type { Locator, Page } from "@playwright/test";
 import { expect, expectNoHorizontalOverflow, test } from "./fixtures.js";
 
@@ -30,7 +30,7 @@ async function balance(page: Page, label: RegExp) {
   return money((await line.innerText()).replace(label, ""));
 }
 
-test("deposits from the wallet in two prompts and updates the wallet balance", async ({ page, isMobile }) => {
+test("deposits from the wallet gas-free and updates the wallet balance", async ({ page, isMobile }) => {
   const sheet = await openFunds(page, isMobile, "Deposit");
   const wallet = await balance(page, /In your wallet/);
   expect(wallet, "the dev wallet keeps USDC outside the venue").toBeGreaterThanOrEqual(100);
@@ -42,7 +42,10 @@ test("deposits from the wallet in two prompts and updates the wallet balance", a
   const amount = sheet.getByRole("textbox", { name: "Amount in USDC" });
   await amount.fill("100");
   await expect(submit).toHaveText("Deposit $100.00");
+  await expect(sheet.getByText(/we pay the gas/)).toBeVisible();
+  const executed = page.waitForResponse((response) => response.url().endsWith("/v1/deposit/execute"));
   await submit.click();
+  expect((await executed).status(), "the deposit was sponsored, not sent by the wallet").toBe(200);
   await expect(page.getByRole("status").getByText("Deposited $100.00")).toBeVisible({ timeout: 30_000 });
   await expect(sheet).toBeHidden();
 

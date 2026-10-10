@@ -8,6 +8,7 @@ import {
 import { registerAccountRoutes } from "./account.js";
 import { ChainReader } from "./chain.js";
 import { ApiContext, DEFAULT_CORS_ORIGIN, type ApiOptions } from "./context.js";
+import { registerSponsoredDeposits } from "./deposits.js";
 import { DevChain, registerDevRoutes } from "./dev-chain.js";
 import { ExecutionService } from "./execution.js";
 import { registerHttpGuards } from "./http.js";
@@ -45,6 +46,7 @@ export function buildApi(options: ApiOptions = {}) {
   stream.register(app);
   registerAccountRoutes(app, ctx, quoting);
   registerSignedActions(app, ctx, chain, dev, quoting);
+  registerSponsoredDeposits(app, ctx);
   orders.register(app, guards);
   execution.register(app);
 

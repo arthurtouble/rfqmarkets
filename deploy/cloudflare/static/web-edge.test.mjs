@@ -18,6 +18,9 @@ const limiter = { limit: async () => ({ success: true }) },
 test("routes public reads to the indexer and market streams to the gateway", () => {
   assert.equal(serviceForPath("/v1/risk"), "INDEXER");
   assert.equal(serviceForPath("/v1/positions"), "INDEXER");
+  assert.equal(serviceForPath("/v1/deposit/prepare", "POST"), "API");
+  assert.equal(serviceForPath("/v1/deposit/execute", "POST"), "API");
+  assert.equal(serviceForPath("/v1/deposit/quote", "POST"), null);
   assert.equal(serviceForPath("/v1/activity"), "INDEXER");
   assert.equal(serviceForPath("/v1/updates/stream"), "INDEXER");
   assert.equal(serviceForPath("/health"), "INDEXER");

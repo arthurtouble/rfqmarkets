@@ -1172,6 +1172,32 @@ test("the local faucet and dev wallet are not routed without development funding
   }
 });
 
+test("gas-free deposits validate the amount and need a chain", async () => {
+  for (const amount of ["0", "0.5", "-1", "1.1234567", "abc"]) {
+    const response = await api.inject({
+      method: "POST",
+      url: "/v1/deposit/prepare",
+      payload: { account: user.address, amount },
+    });
+    assert.equal(response.statusCode, 400, amount);
+  }
+  assert.equal(
+    (
+      await api.inject({
+        method: "POST",
+        url: "/v1/deposit/prepare",
+        payload: { account: user.address, amount: "25" },
+      })
+    ).statusCode,
+    503,
+  );
+  assert.equal(
+    (await api.inject({ method: "POST", url: "/v1/deposit/execute", payload: { authorization: {} } }))
+      .statusCode,
+    400,
+  );
+});
+
 test("withdrawal prepare accepts positive USDC amounts and binds the recipient", async () => {
   const nonce = BigInt(`0x${crypto.randomUUID().replaceAll("-", "")}`).toString();
   for (const amount of ["0", "0.000000", "-1", "1.1234567", "abc", ""]) {

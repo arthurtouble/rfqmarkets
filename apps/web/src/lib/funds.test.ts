@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { emptyAccount } from "./account.js";
-import { checkFunds, MIN_FIRST_DEPOSIT, presetAmount, withdrawable } from "./funds.js";
+import { checkFunds, MIN_FIRST_DEPOSIT, plainAccount, presetAmount, withdrawable } from "./funds.js";
 import type { AccountState } from "./types.js";
 
 const USDC = 1_000_000n;
@@ -36,6 +36,9 @@ test("an empty gas balance warns without blocking", () => {
   assert.match(check.warning ?? "", /no ETH/);
   assert.equal(checkFunds({ mode: "deposit", amount: 20n * USDC, walletUsdc: 50n * USDC, gasBalance: 1n }).warning, null);
   assert.equal(checkFunds({ mode: "deposit", amount: 20n * USDC, walletUsdc: 50n * USDC, gasBalance: null }).warning, null);
+  // Gas-free deposits need no ETH, except below the 1 USDC gas-free floor.
+  assert.equal(checkFunds({ mode: "deposit", amount: 20n * USDC, walletUsdc: 50n * USDC, gasBalance: 0n, gasFree: true }).warning, null);
+  assert.match(checkFunds({ mode: "deposit", amount: USDC / 2n, walletUsdc: 50n * USDC, gasBalance: 0n, gasFree: true }).warning ?? "", /no ETH/);
 });
 
 test("unknown balances leave the form usable but empty", () => {
@@ -66,4 +69,11 @@ test("preset chips round down to whole cents", () => {
   assert.equal(presetAmount(100_005_555n, 50), 50_000_000n);
   assert.equal(presetAmount(100_005_555n, 100), 100_005_555n);
   assert.equal(presetAmount(0n, 75), 0n);
+});
+
+test("plain-key accounts (and EIP-7702 delegations) can sign gas-free deposits; smart wallets cannot", () => {
+  assert.equal(plainAccount(undefined), true);
+  assert.equal(plainAccount("0x"), true);
+  assert.equal(plainAccount("0xef01001234567890123456789012345678901234567890"), true);
+  assert.equal(plainAccount("0x6080604052"), false);
 });

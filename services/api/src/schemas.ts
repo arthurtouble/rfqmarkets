@@ -153,3 +153,16 @@ export const tpslPrepareSchema = z
   .refine((value) => value.takeProfitPrice !== undefined || value.stopLossPrice !== undefined);
 
 export const orderPlaceSchema = z.object({ orderId: z.string().uuid(), userSignature: signature });
+
+/** Gas-free USDC deposit (EIP-3009 ReceiveWithAuthorization to the clearing contract). */
+export const depositPrepareSchema = z.object({ account: address, amount: usdcAmount });
+export const depositExecuteSchema = signedActionSchema.extend({
+  authorization: z.object({
+    from: address,
+    to: address,
+    value: integer,
+    validAfter: integer,
+    validBefore: integer,
+    nonce: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+  }),
+});
