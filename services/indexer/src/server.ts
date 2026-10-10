@@ -5,6 +5,7 @@ import { Contract, Interface, JsonRpcProvider, getAddress, type Log } from "ethe
 import { z } from "zod";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
+import { FallbackRpcProvider, readViews } from "../../../packages/shared/src/rpc.js";
 import {
   MAX_MARKETS,
   isKnownMarket,
@@ -49,6 +50,8 @@ export interface IndexerOptions {
   /** RPC for the direct contract reads behind /v1/exposure; defaults to rpcUrl. Lets the hedger's hot path
    * use a faster provider than the one with the wide eth_getLogs range. */
   readRpcUrl?: string;
+  /** RPCs that take a readRpcUrl request when it fails or is rate-limited, in order. */
+  readFallbackRpcUrls?: string[];
   pollMs?: number;
   corsOrigin?: string | string[];
   provider?: JsonRpcProvider;
@@ -197,11 +200,17 @@ export function buildIndexer(options: IndexerOptions) {
   // ten-second plugin default while retaining a finite failure boundary.
   const app = Fastify({ logger: false, pluginTimeout: 60_000 });
   app.register(cors, { origin: corsOrigins });
-  const provider = options.provider ?? new JsonRpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1 });
+  // staticNetwork: without it ethers sends eth_chainId ahead of every getBlock and getLogs.
+  const provider =
+    options.provider ??
+    new JsonRpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1, staticNetwork: true });
   const contract = new Contract(options.clearingAddress, clearingIndexerAbi, provider);
   const readProvider =
       options.readRpcUrl && !options.provider
-        ? new JsonRpcProvider(options.readRpcUrl, undefined, { batchMaxCount: 1 })
+        ? new FallbackRpcProvider([options.readRpcUrl, ...(options.readFallbackRpcUrls ?? [])], undefined, {
+            batchMaxCount: 1,
+            staticNetwork: true,
+          })
         : provider,
     readContract = new Contract(options.clearingAddress, clearingIndexerAbi, readProvider);
   const iface = new Interface(clearingIndexerAbi);
@@ -593,6 +602,28 @@ export function buildIndexer(options: IndexerOptions) {
         ? `${rows[rows.length - 1].block_number}:${rows[rows.length - 1].log_index}`
         : null,
   });
+
+  let exposureCache: { blockTag: number; response: ReturnType<typeof readExposure> } | undefined;
+  async function readExposure(blockTag: number) {
+    // Every market the chain has at this block. One the registry has not loaded yet is reported as
+    // `market #i`, which the hedger cannot map and so does not hedge.
+    const count = Number(await readContract.marketCount({ blockTag }));
+    if (count > marketRegistry.count) await marketRegistry.ensureCount(count).catch(() => {});
+    const states = (await readViews(
+      readContract,
+      Array.from({ length: count }, (_, index) => ["markets", index] as const),
+      blockTag,
+    )) as Array<{ aggregateBase: bigint; lastBid: bigint; lastAsk: bigint }>;
+    const market = (state: { aggregateBase: bigint; lastBid: bigint; lastAsk: bigint }) => ({
+      aggregateBase: state.aggregateBase.toString(),
+      bid: state.lastBid.toString(),
+      ask: state.lastAsk.toString(),
+    });
+    return {
+      blockNumber: blockTag,
+      markets: Object.fromEntries(states.map((state, index) => [marketLabel(index), market(state)])),
+    };
+  }
 
   app.get("/health", async () => {
     await sync();
@@ -1015,22 +1046,17 @@ export function buildIndexer(options: IndexerOptions) {
       blockTag = query.finalized
         ? Math.max(options.startBlock ?? 0, head - (options.confirmations ?? 2))
         : head;
-    // Every market the chain has at this block. One the registry has not loaded yet is reported as
-    // `market #i`, which the hedger cannot map and so does not hedge.
-    const count = Number(await readContract.marketCount({ blockTag }));
-    if (count > marketRegistry.count) await marketRegistry.ensureCount(count).catch(() => {});
-    const states = await Promise.all(
-      Array.from({ length: count }, (_, index) => readContract.markets(index, { blockTag })),
-    );
-    const market = (state: { aggregateBase: bigint; lastBid: bigint; lastAsk: bigint }) => ({
-      aggregateBase: state.aggregateBase.toString(),
-      bid: state.lastBid.toString(),
-      ask: state.lastAsk.toString(),
-    });
-    return {
-      blockNumber: blockTag,
-      markets: Object.fromEntries(states.map((state, index) => [marketLabel(index), market(state)])),
-    };
+    // The hedger polls faster than Base makes blocks; a finalized block's state cannot change, so a
+    // repeat read of the same block reuses the last answer.
+    if (query.finalized && exposureCache?.blockTag === blockTag) return exposureCache.response;
+    const response = readExposure(blockTag);
+    if (query.finalized) {
+      exposureCache = { blockTag, response };
+      response.catch(() => {
+        if (exposureCache?.response === response) exposureCache = undefined;
+      });
+    }
+    return response;
   });
   app.get("/v1/risk", async (request, reply) => {
     await sync();
