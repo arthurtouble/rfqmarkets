@@ -179,6 +179,44 @@ try {
     before = await token.balanceOf(user.address);
   await post("/v1/withdraw/execute", { intent: withdrawn.intent, userSignature: withdrawSignature });
   assert.equal(await token.balanceOf(user.address), before + 1_000_000n);
+  // Gas-free deposit: the wallet signs USDC's ReceiveWithAuthorization and the API pays the gas.
+  // MockUSDC does not check signatures, so the API's own check is what refuses a stranger's.
+  await (await token.mint(user.address, 2_500_000n)).wait();
+  const deposit = await post("/v1/deposit/prepare", { account: user.address, amount: "2.5" }),
+    collateralBefore = await clearing.collateralOf(user.address),
+    stranger = ethers.Wallet.createRandom(),
+    forged = await stranger.signTypedData(deposit.domain, deposit.types, deposit.authorization);
+  assert.equal(deposit.authorization.to, proxyAddress);
+  assert.equal(deposit.authorization.value, "2500000");
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/v1/deposit/execute",
+        payload: { authorization: deposit.authorization, userSignature: forged },
+      })
+    ).statusCode,
+    401,
+  );
+  const redirected = { ...deposit.authorization, to: user.address },
+    redirectSignature = await user.signTypedData(deposit.domain, deposit.types, redirected);
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/v1/deposit/execute",
+        payload: { authorization: redirected, userSignature: redirectSignature },
+      })
+    ).statusCode,
+    400,
+  );
+  const depositSignature = await user.signTypedData(deposit.domain, deposit.types, deposit.authorization),
+    deposited = await post("/v1/deposit/execute", {
+      authorization: deposit.authorization,
+      userSignature: depositSignature,
+    });
+  assert.equal(BigInt(deposited.collateral), collateralBefore + 2_500_000n);
+  assert.equal(await clearing.collateralOf(user.address), collateralBefore + 2_500_000n);
   await (await clearing.unpause()).wait();
   await new Promise((resolve) => setTimeout(resolve, 250));
   const incidentQuote = await post("/v1/quote", { market: "BTC", side: "buy", amount: "10000" }),

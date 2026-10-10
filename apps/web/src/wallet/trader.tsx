@@ -20,7 +20,9 @@ import { walletLabel } from "./wallets.js";
 import { verifyPrepared, type Expectation } from "./verify-intent.js";
 
 type DevWallet = { account: Address; privateKey: Hex };
-type Call = { to: Address; data: Hex };
+type Call = { to: Address; data: Hex; value?: bigint };
+/** EIP-712 typed data already checked by the caller (verify-intent.ts, verify-deposit.ts). */
+type TypedPayload = { domain: Record<string, unknown>; types: Record<string, readonly unknown[]>; primaryType: string; message: Record<string, unknown> };
 
 export type Trader = {
   address: Address | null;
@@ -40,7 +42,11 @@ export type Trader = {
   signIntent(prepared: Prepared, primaryType: string, expected: Expectation): Promise<Hex>;
   /** The typed data to sign for `prepared`, or a thrown IntentMismatchError. For the one-click key. */
   verified(prepared: Prepared, primaryType: string, expected: Expectation): ReturnType<typeof verifyPrepared>;
+  /** Signs typed data on the settlement chain; the caller has verified it. */
+  signTyped(payload: TypedPayload): Promise<Hex>;
   send(call: Call): Promise<{ hash: Hex; blockNumber: bigint }>;
+  /** Sends from the browser wallet on another network (a deposit's source chain) and waits for it. */
+  sendOn(chainId: number, call: Call): Promise<{ hash: Hex; blockNumber: bigint }>;
 };
 
 const TraderContext = createContext<Trader | null>(null);
@@ -128,6 +134,28 @@ export function TraderProvider({
     [verified, usingDev, devClient, walletAddress, ensureChain, config],
   );
 
+  const signTyped = useCallback(
+    async (payload: TypedPayload) => {
+      if (usingDev && devClient) return devClient.signTypedData(payload as never);
+      if (!walletAddress) throw new Error("Connect a wallet first");
+      await ensureChain();
+      return signTypedData(config, { account: walletAddress, ...payload } as never);
+    },
+    [usingDev, devClient, walletAddress, ensureChain, config],
+  );
+
+  const sendOn = useCallback(
+    async (chainId: number, call: Call) => {
+      if (!walletAddress) throw new Error("Connect a browser wallet to deposit from another network");
+      if (getConnection(config).chainId !== chainId) await switchChain(config, { chainId });
+      const hash = await sendTransaction(config, { account: walletAddress, chainId, ...call });
+      const receipt = await waitForTransactionReceipt(config, { hash, chainId });
+      if (receipt.status !== "success") throw new Error("Transaction reverted");
+      return { hash, blockNumber: receipt.blockNumber };
+    },
+    [walletAddress, config],
+  );
+
   const send = useCallback(
     async (call: Call) => {
       let hash: Hex;
@@ -168,7 +196,9 @@ export function TraderProvider({
     },
     signIntent,
     verified,
+    signTyped,
     send,
+    sendOn,
   };
   return <TraderContext.Provider value={value}>{children}</TraderContext.Provider>;
 }

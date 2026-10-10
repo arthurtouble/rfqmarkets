@@ -32,6 +32,7 @@ export const clearingStateAbi = [
 export const clearingApiAbi = [
   ...clearingStateAbi,
   "function isApprover(address) view returns(bool)",
+  "event Deposited(address indexed account,uint256 amount)",
   "event Withdrawn(address indexed account,uint256 amount)",
   "event TradeExecuted(bytes32 indexed intentHash,address indexed account,uint8 market,int256 baseDelta,uint256 price,uint256 fee)",
   "event PositionClosed(address indexed account,uint8 indexed market,int256 baseDelta,uint256 price)",

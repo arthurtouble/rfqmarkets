@@ -4,6 +4,8 @@
 import { createConfig, http, type CreateConnectorFn } from "wagmi";
 import { baseAccount, injected, walletConnect } from "wagmi/connectors";
 import type { Chain } from "viem";
+import { arbitrum, avalanche, bsc, mainnet, optimism, polygon } from "viem/chains";
+import { BASE_CHAIN_ID } from "../lib/bridge.js";
 import { API, WALLETCONNECT_PROJECT_ID } from "../lib/env.js";
 import { getJson } from "../lib/http.js";
 import type { ChainConfig } from "../lib/types.js";
@@ -53,10 +55,14 @@ export function walletConnectors(chain: Chain) {
   return connectors;
 }
 
+/** Networks a deposit can be bridged from (lib/bridge.ts SOURCE_CHAINS); offered only when settling on Base. */
+const SOURCE_NETWORKS: Chain[] = [mainnet, arbitrum, optimism, polygon, bsc, avalanche];
+
 export function createWagmiConfig(chain: Chain) {
+  const chains: [Chain, ...Chain[]] = chain.id === BASE_CHAIN_ID ? [chain, ...SOURCE_NETWORKS] : [chain];
   return createConfig({
-    chains: [chain],
+    chains,
     connectors: walletConnectors(chain),
-    transports: { [chain.id]: http() },
+    transports: Object.fromEntries(chains.map(item => [item.id, http()])),
   });
 }

@@ -10,6 +10,8 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
 import { friendlyError } from "../lib/errors.js";
 import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
+import { checkRoute, formatDuration, lifiGet, quoteUrl, sourceChain, type LifiQuote, type Route, type SourceToken } from "../lib/bridge.js";
+import { MIN_GAS_FREE_DEPOSIT, plainAccount } from "../lib/funds.js";
 import { abs, baseAmount, microToInput, parseUsdcInput, shortHash, usdc } from "../lib/format.js";
 import {
   LIMIT_ORDER_DURATION_SECONDS,
@@ -39,6 +41,7 @@ import {
   type QuickSession,
 } from "../wallet/quick-session.js";
 import { useTrader } from "../wallet/trader.js";
+import { verifyDeposit, type PreparedDeposit } from "../wallet/verify-deposit.js";
 import { IntentMismatchError, quoteTerms, verifyTpslPair } from "../wallet/verify-intent.js";
 import { useToasts } from "../ui/toasts.js";
 import { useMarketList } from "./markets.js";
@@ -82,7 +85,10 @@ type Trading = {
   /** Closes `fractionBps` of every open position, one quote each. Quick trading signs within its limits without prompts. */
   closeAll(fractionBps?: number): Promise<CloseAllResult | undefined>;
   emergencyClose(market: Market): Promise<void>;
+  /** Deposits Base USDC from the wallet: gas-free (one signature) when the wallet can, else approve and deposit. */
   deposit(amountMicro: bigint): Promise<boolean>;
+  /** Sends a LI.FI route from its source network; resolves to the source transaction once it is included. */
+  bridge(route: Route, source: SourceToken): Promise<{ hash: Hex; route: Route } | undefined>;
   withdraw(amountMicro: bigint): Promise<boolean>;
   enableQuickTrading(): Promise<boolean>;
   revokeQuickTrading(): Promise<void>;
@@ -492,6 +498,40 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         if (!token || !clearing) throw new Error("Settlement contract is not configured");
         const reader = getPublicClient(config, { chainId: trader.chain.id });
         if (!reader) throw new Error("No RPC for the settlement chain");
+        // Gas-free first: sign USDC's receive authorization and the API pays the gas. Smart wallets
+        // cannot produce the plain signature USDC's authorization takes, so they deposit directly.
+        if (amount >= MIN_GAS_FREE_DEPOSIT && plainAccount(await reader.getCode({ address: account() }))) {
+          const prepared = await api<PreparedDeposit>("/v1/deposit/prepare", {
+            account: account(),
+            amount: microToInput(amount),
+          }).catch((error: unknown) => {
+            // An API without gas-free deposits (or with its chain down) leaves the direct path.
+            if (error instanceof ApiError && (error.status === 404 || error.status === 503)) return null;
+            throw error;
+          });
+          if (prepared) {
+            const payload = verifyDeposit(prepared, {
+              account: account(),
+              chainId: trader.chain.id,
+              token,
+              clearing,
+              amount,
+            });
+            progress("Sign the deposit in your wallet. No gas needed");
+            const userSignature = await trader.signTyped(payload);
+            progress("Submitting gas-free deposit");
+            const result = await api<Settled>("/v1/deposit/execute", {
+              authorization: prepared.authorization,
+              userSignature,
+            });
+            return {
+              title: `Deposited ${usdc(amount)}`,
+              detail: blockLine(result.transaction),
+              txHash: result.transaction?.hash,
+              value: true,
+            };
+          }
+        }
         const allowance = await reader.readContract({
           address: token,
           abi: erc20Abi,
@@ -517,6 +557,52 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           value: true,
         };
       })) ?? false,
+
+    bridge: (route, source) =>
+      run("Deposit", `Deposit ${source.symbol} from ${sourceChain(route.request.fromChain)?.name ?? "another network"}`, async (progress) => {
+        const network = sourceChain(route.request.fromChain)?.name ?? "the source network";
+        // Quotes age quickly: fetch a fresh one, check it the same way, and stop if it now delivers less.
+        progress("Refreshing the route");
+        const fresh = checkRoute(await lifiGet<LifiQuote>(quoteUrl(route.request)), route.request, source.decimals);
+        if (fresh.toAmountMin * 100n < route.toAmountMin * 99n)
+          throw new Error("The rate moved. Review the new quote and try again");
+        if (fresh.approval) {
+          const reader = getPublicClient(config, { chainId: route.request.fromChain });
+          if (!reader) throw new Error(`No RPC for ${network}`);
+          const allowance = await reader.readContract({
+            address: route.request.fromToken,
+            abi: erc20Abi,
+            functionName: "allowance",
+            args: [account(), fresh.approval],
+          });
+          if (allowance < route.request.fromAmount) {
+            // USDT on Ethereum refuses to change a nonzero allowance without resetting it first.
+            if (allowance > 0n) {
+              progress(`Reset the ${source.symbol} approval in your wallet`);
+              await trader.sendOn(route.request.fromChain, {
+                to: route.request.fromToken,
+                data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [fresh.approval, 0n] }),
+              });
+            }
+            progress(`Approve ${source.symbol} on ${network} in your wallet`);
+            await trader.sendOn(route.request.fromChain, {
+              to: route.request.fromToken,
+              data: encodeFunctionData({
+                abi: erc20Abi,
+                functionName: "approve",
+                args: [fresh.approval, route.request.fromAmount],
+              }),
+            });
+          }
+        }
+        progress(`Confirm the transfer on ${network} in your wallet`);
+        const sent = await trader.sendOn(route.request.fromChain, fresh.transaction);
+        return {
+          title: `Sent from ${network}`,
+          detail: `About ${usdc(fresh.toAmount)} arrives on Base in ${formatDuration(fresh.durationSeconds).replace("about ", "")}`,
+          value: { hash: sent.hash, route: fresh },
+        };
+      }),
 
     withdraw: async (amount) =>
       (await run("Withdrawal", `Withdraw ${usdc(amount)}`, async (progress) => {
