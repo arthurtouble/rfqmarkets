@@ -58,6 +58,14 @@ export interface ServiceStackConfig {
   indexerRpcUrl?: string;
   /** Most blocks per indexer eth_getLogs call. */
   maxLogRange?: number;
+  /**
+   * RPC for the indexer's contract reads (the hedger's exposure poll, the indexer's registry refresh)
+   * when they should stay off rpcUrl, for example a free RPC in front of a metered one. rpcUrl then
+   * only takes the requests it fails.
+   */
+  indexerReadRpcUrl?: string;
+  /** Market registry refresh interval for every service (default 60 s). */
+  marketRefreshMs?: number;
   sponsorKey: string;
   oracleSource: OracleSource;
   approvers: {
@@ -73,6 +81,8 @@ export interface ServiceStackConfig {
     token: string;
     riskMaxAgeMs?: number;
     venue?: HedgeVenue;
+    /** Exposure poll interval (default 1 s). */
+    pollMs?: number;
     bandUsdc?: bigint;
     maxOrderUsdc?: bigint;
     minOrderUsdc?: bigint;
@@ -154,12 +164,14 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
   try {
     const indexer = buildIndexer({
       rpcUrl: config.indexerRpcUrl ?? config.rpcUrl,
-      readRpcUrl: config.rpcUrl,
+      readRpcUrl: config.indexerReadRpcUrl ?? config.rpcUrl,
+      readFallbackRpcUrls: config.indexerReadRpcUrl ? [config.rpcUrl] : undefined,
       clearingAddress: config.clearingAddress,
       databasePath: state("indexer.sqlite"),
       startBlock: config.startBlock,
       confirmations: 2,
       maxLogRange: config.maxLogRange,
+      marketRefreshMs: config.marketRefreshMs,
     });
     await indexer.listen({ host: bindHost, port: ports.indexer });
     servers.push(indexer);
@@ -175,6 +187,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
       minOrderUsdc: config.hedge.minOrderUsdc,
       maxPositionUsdc: config.hedge.maxPositionUsdc,
       riskStaleMs: config.hedge.riskMaxAgeMs,
+      pollMs: config.hedge.pollMs,
     });
     await hedger.listen({ host: config.exposeHedger ? bindHost : "127.0.0.1", port: ports.hedger });
     servers.push(hedger);
@@ -204,6 +217,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
           RFQ_HEDGE_RISK_URL: hedgeRiskUrl,
           RFQ_HEDGE_RISK_TOKEN: config.hedge.token,
           RFQ_HEDGE_RISK_MAX_AGE_MS: config.hedge.riskMaxAgeMs?.toString(),
+          RFQ_MARKET_REFRESH_MS: config.marketRefreshMs?.toString(),
         }),
       });
       approverProcesses.push(child);
@@ -234,6 +248,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
       }
     }
     const api = buildApi({
+      marketRefreshMs: config.marketRefreshMs,
       ...apiOptions,
       approvers,
       chainId: config.chainId,

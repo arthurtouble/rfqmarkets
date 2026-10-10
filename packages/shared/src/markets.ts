@@ -1,4 +1,5 @@
-import { decodeBytes32String, encodeBytes32String, type BaseContract } from "ethers";
+import { BaseContract, decodeBytes32String, encodeBytes32String } from "ethers";
+import { readViews, type ViewCall } from "./rpc.js";
 
 /**
  * The market registry. Markets live on chain (`RFQClearing.addMarket`, up to 128); a market is
@@ -251,6 +252,28 @@ export async function readMarketsFromChain(
   const count = Number(await clearing.marketCount(overrides));
   if (!Number.isInteger(count) || count < 0 || count > MAX_MARKETS) throw new Error("invalid market count");
   const defaultSpread = await readDefaultSpread(clearing, overrides);
+  if (reader instanceof BaseContract && reader.runner?.provider) {
+    // One aggregated eth_call for every market instead of three per market.
+    const withSpread = defaultSpread !== undefined,
+      perMarket = withSpread ? 3 : 2,
+      values = await readViews(
+        reader,
+        Array.from({ length: count }, (_, index): ViewCall[] => [
+          ["marketParams", index],
+          ["markets", index],
+          ...(withSpread ? [["marketSpread", index] as ViewCall] : []),
+        ]).flat(),
+        blockTag,
+      );
+    return Array.from({ length: count }, (_, index) => {
+      const [params, state, ownSpread] = values.slice(index * perMarket, (index + 1) * perMarket) as [
+        Awaited<ReturnType<MarketRegistryReader["marketParams"]>>,
+        { enabled: unknown },
+        unknown,
+      ];
+      return marketDefinition(index, params, state, ownSpread, defaultSpread);
+    });
+  }
   return Promise.all(
     Array.from({ length: count }, async (_, index) => {
       const [params, state, ownSpread] = await Promise.all([
@@ -258,18 +281,28 @@ export async function readMarketsFromChain(
         clearing.markets(index, overrides),
         defaultSpread === undefined ? undefined : clearing.marketSpread!(index, overrides),
       ]);
-      const spread = Number(ownSpread ?? 0) || defaultSpread || 0;
-      return {
-        index,
-        symbol: decodeMarketSymbol(params.symbol),
-        impactK: BigInt(params.impactK as bigint),
-        shockBps: BigInt(params.shockBps as bigint),
-        marginScaleBps: Number(params.marginScaleBps),
-        enabled: Boolean(state.enabled),
-        ...(spread ? { baseSpreadBps: spread } : {}),
-      };
+      return marketDefinition(index, params, state, ownSpread, defaultSpread);
     }),
   );
+}
+
+function marketDefinition(
+  index: number,
+  params: Awaited<ReturnType<MarketRegistryReader["marketParams"]>>,
+  state: { enabled: unknown },
+  ownSpread: unknown,
+  defaultSpread: number | undefined,
+): MarketDefinition {
+  const spread = Number(ownSpread ?? 0) || defaultSpread || 0;
+  return {
+    index,
+    symbol: decodeMarketSymbol(params.symbol),
+    impactK: BigInt(params.impactK as bigint),
+    shockBps: BigInt(params.shockBps as bigint),
+    marginScaleBps: Number(params.marginScaleBps),
+    enabled: Boolean(state.enabled),
+    ...(spread ? { baseSpreadBps: spread } : {}),
+  };
 }
 
 /** Load the registry from chain once. Markets are append-only, so a shrinking read is rejected. */

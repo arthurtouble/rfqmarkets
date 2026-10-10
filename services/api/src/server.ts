@@ -77,8 +77,9 @@ export function buildApi(options: ApiOptions = {}) {
     await sender?.reconcile();
     senderReconcileTimer = setInterval(() => {
       if (sender && !senderReconciliation)
+        // Nothing in flight means nothing to read: the nonce read alone would hit the RPC every tick.
         senderReconciliation = sender
-          .reconcile()
+          .reconcile({ idle: "skip" })
           .catch(() => {})
           .finally(() => {
             senderReconciliation = undefined;

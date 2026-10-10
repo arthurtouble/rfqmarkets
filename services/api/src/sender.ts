@@ -106,8 +106,13 @@ export class DurableSender {
    * (the only rows a reorg can still change). Operations at or below the finalized block are
    * terminal and are never read again, so the cost is bounded by the finality window, not history.
    */
-  reconcile() {
-    return this.serialize(() => this.reconcileLocked());
+  /** With `idle: "skip"`, returns without any RPC read when no transaction awaits reconciliation. */
+  reconcile(options: { idle?: "skip" } = {}) {
+    return this.serialize(() =>
+      options.idle === "skip" && this.database && !this.reconcileCandidates().length
+        ? Promise.resolve()
+        : this.reconcileLocked(),
+    );
   }
 
   status() {
