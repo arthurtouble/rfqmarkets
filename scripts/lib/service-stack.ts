@@ -59,11 +59,11 @@ export interface ServiceStackConfig {
   /** Most blocks per indexer eth_getLogs call. */
   maxLogRange?: number;
   /**
-   * RPC for the indexer's contract reads (the hedger's exposure poll, the indexer's registry refresh)
-   * when they should stay off rpcUrl, for example a free RPC in front of a metered one. rpcUrl then
-   * only takes the requests it fails.
+   * RPCs, in order, for the polling reads (the hedger's exposure poll, the indexer's registry refresh,
+   * the API's public market snapshot) when they should stay off rpcUrl, for example free RPCs in front
+   * of a metered one. rpcUrl then only takes the requests they all fail.
    */
-  indexerReadRpcUrl?: string;
+  readRpcUrls?: string[];
   /** Market registry refresh interval for every service (default 60 s). */
   marketRefreshMs?: number;
   sponsorKey: string;
@@ -164,8 +164,10 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
   try {
     const indexer = buildIndexer({
       rpcUrl: config.indexerRpcUrl ?? config.rpcUrl,
-      readRpcUrl: config.indexerReadRpcUrl ?? config.rpcUrl,
-      readFallbackRpcUrls: config.indexerReadRpcUrl ? [config.rpcUrl] : undefined,
+      readRpcUrl: config.readRpcUrls?.[0] ?? config.rpcUrl,
+      readFallbackRpcUrls: config.readRpcUrls?.length
+        ? [...config.readRpcUrls.slice(1), config.rpcUrl]
+        : undefined,
       clearingAddress: config.clearingAddress,
       databasePath: state("indexer.sqlite"),
       startBlock: config.startBlock,
@@ -262,6 +264,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
       chain: {
         ...apiChain,
         rpcUrl: config.rpcUrl,
+        readRpcUrls: config.readRpcUrls,
         sponsorPrivateKey: config.sponsorKey,
         clearingAddress: config.clearingAddress,
         tokenAddress: config.tokenAddress,

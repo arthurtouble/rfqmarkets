@@ -23,6 +23,7 @@ import {
   type QuoteRequest,
 } from "../../../packages/shared/src/policy.js";
 import { baseSpreadOf } from "../../../packages/shared/src/markets.js";
+import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import { discountedFee } from "../../../packages/shared/src/fee-tiers.js";
 import { decodeLimits, encodeLocalReport, type ChainMarketState, type ChainReader } from "./chain.js";
@@ -162,6 +163,8 @@ const midOf = (snapshot: PriceSnapshot) => (snapshot.bid + snapshot.ask) / 2n;
 export class QuoteEngine {
   readonly shadowTelemetry = new ShadowModelTelemetry();
   private marketReadCache: { at: number; promise: Promise<MarketsSnapshot> } | undefined;
+  private marketStateCache:
+    { at: number; count: number; promise: ReturnType<QuoteEngine["loadMarketState"]> } | undefined;
 
   constructor(
     private readonly ctx: ApiContext,
@@ -171,6 +174,60 @@ export class QuoteEngine {
 
   invalidateMarkets() {
     this.marketReadCache = undefined;
+    this.marketStateCache = undefined;
+  }
+
+  /**
+   * The chain half of the market snapshot: block, market states, limits and margin scales, in one
+   * aggregated read. The snapshot is rebuilt on every price update, so `marketStateMaxAgeMs` lets it
+   * reuse these reads (prices still update every time); quotes never use them.
+   */
+  private marketState(now: number) {
+    const maxAge = this.ctx.options.marketStateMaxAgeMs ?? 0;
+    const count = marketRegistry.count;
+    if (
+      this.marketStateCache &&
+      this.marketStateCache.count === count &&
+      now - this.marketStateCache.at < maxAge
+    )
+      return this.marketStateCache.promise;
+    const promise = this.loadMarketState();
+    this.marketStateCache = { at: now, count, promise };
+    promise.catch(() => {
+      if (this.marketStateCache?.promise === promise) this.marketStateCache = undefined;
+    });
+    return promise;
+  }
+
+  private async loadMarketState() {
+    const clearing = this.ctx.readClearing,
+      registered = marketRegistry.all();
+    if (!clearing) return undefined;
+    const provider = clearing.runner!.provider!,
+      blockNumber = await provider.getBlockNumber(),
+      block = await provider.getBlock(blockNumber),
+      values = await readViews(
+        clearing,
+        registered.flatMap(({ index }): ViewCall[] => [
+          ["markets", index],
+          ["marketLimitWord", index],
+          ["marketParams", index],
+        ]),
+        blockNumber,
+      );
+    const at = (index: number, field: number) => values[index * 3 + field];
+    return {
+      blockNumber,
+      block,
+      chainMarkets: registered.map((_, index) => at(index, 0) as ChainMarketState),
+      limitWords: registered.map((_, index) => at(index, 1)),
+      marginScales: Object.fromEntries(
+        registered.map(({ symbol }, index) => [
+          symbol,
+          Number((at(index, 2) as { marginScaleBps: unknown }).marginScaleBps),
+        ]),
+      ) as Record<Market, number>,
+    };
   }
 
   /** The latest price for `market`; throws when there is none (e.g. no oracle price yet). */
@@ -252,17 +309,13 @@ export class QuoteEngine {
         throw failure?.reason ?? new Error("market data unavailable");
       }
     } else for (const { symbol } of registered) if (!prices[symbol]) unpriced.add(symbol);
-    const blockNumber = provider ? await this.chain.blockNumber() : 0;
-    const block = provider ? await provider.getBlock(blockNumber) : null;
-    const blockTag = { blockTag: blockNumber };
-    const [chainMarkets, limitWords]: [Array<ChainMarketState | null>, Array<unknown>] = clearing
-      ? await Promise.all([
-          Promise.all(registered.map(({ index }) => clearing.markets(index, blockTag))),
-          Promise.all(registered.map(({ index }) => clearing.marketLimitWord(index, blockTag))),
-        ])
-      : [registered.map(() => null), registered.map(() => null)];
+    const state = provider && clearing ? await this.marketState(now) : undefined,
+      blockNumber = state?.blockNumber ?? 0,
+      block = state?.block ?? null,
+      chainMarkets: Array<ChainMarketState | null> = state?.chainMarkets ?? registered.map(() => null),
+      limitWords: Array<unknown> = state?.limitWords ?? registered.map(() => null);
     const operational = await this.hedgeRisk(),
-      marginScales = await this.chain.marginScales(provider ? blockNumber : undefined);
+      marginScales = state?.marginScales ?? (await this.chain.marginScales());
     const markets = {} as Record<Market, MarketView>;
     for (const { index, symbol: name } of registered) {
       const snapshot = prices[name];

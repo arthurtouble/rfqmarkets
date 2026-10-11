@@ -91,6 +91,11 @@ const isRevert = (error: JsonRpcError["error"]) =>
  */
 export class FallbackRpcProvider extends JsonRpcProvider {
   readonly #fallbacks: JsonRpcProvider[];
+  readonly #hosts: string[];
+  /** Since the last log line: requests per RPC that answered them, and the latest failure. */
+  #served: number[];
+  #lastFailure = "";
+  #loggedAt = Date.now();
 
   constructor(
     urls: readonly string[],
@@ -108,6 +113,9 @@ export class FallbackRpcProvider extends JsonRpcProvider {
       return fetch;
     };
     super(request(urls[0], urls.length === 1), network, providerOptions);
+    // Only hosts: a metered RPC URL carries its API key in the path.
+    this.#hosts = urls.map((url) => new URL(url).host);
+    this.#served = urls.map(() => 0);
     this.#fallbacks = urls
       .slice(1)
       .map(
@@ -129,12 +137,33 @@ export class FallbackRpcProvider extends JsonRpcProvider {
           failed = (results as Array<JsonRpcResult | JsonRpcError>).some(
             (result) => "error" in result && !isRevert(result.error),
           );
-        if (last || !failed) return results;
+        if (last || !failed) {
+          this.#record(index);
+          return results;
+        }
+        this.#lastFailure = `${this.#hosts[index]}: ${JSON.stringify(results.find((result) => "error" in result))}`;
       } catch (error) {
         if (last) throw error;
+        this.#lastFailure = `${this.#hosts[index]}: ${String(error)}`;
       }
     }
     throw new Error("unreachable");
+  }
+
+  /**
+   * At most one log line a minute, and only when a request had to leave the first RPC, so traffic that
+   * reaches the metered RPC shows in the logs with its cause.
+   */
+  #record(index: number) {
+    this.#served[index]++;
+    const now = Date.now();
+    if (now - this.#loggedAt < 60_000) return;
+    if (this.#served.slice(1).some(Boolean))
+      console.warn(
+        `rpc fallback in the last minute: ${this.#hosts.map((host, i) => `${host}=${this.#served[i]}`).join(" ")}; latest failure ${this.#lastFailure.slice(0, 200)}`,
+      );
+    this.#served.fill(0);
+    this.#loggedAt = now;
   }
 
   override destroy() {
