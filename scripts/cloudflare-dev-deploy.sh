@@ -44,7 +44,6 @@ wrangler containers push "$image"
 sed -e "s/REPLACED_AT_DEPLOY/$kv/" \
     -e "s#\"image\": \"[^\"]*\"#\"image\": \"registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/$image\"#" \
     deploy/cloudflare/runtime/wrangler.dev.jsonc > "$generated"
-wrangler deploy --config "$generated"
 
 # The runtime runs on free public RPCs: publicnode for calls, transactions and the indexer's logs, drpc as
 # the second RPC for the approver quorum, and Tenderly's public gateway as the fallback for the reads that run
@@ -55,6 +54,8 @@ wrangler deploy --config "$generated"
 # (RFQ_BASE_MAINNET_READ_RPC_URLS and RFQ_BASE_MAINNET_INDEXER_FALLBACK_RPC_URLS are comma-separated).
 node -e 'const env=process.env,sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN,publicnode="https://base-rpc.publicnode.com",tenderly="https://base.gateway.tenderly.co",list=(text)=>text.split(",").map(url=>url.trim()).filter(Boolean);process.stdout.write(JSON.stringify({rpcUrl:env.RFQ_BASE_MAINNET_RPC_URL||publicnode,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||"https://base.drpc.org",indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||publicnode,indexerFallbackRpcUrls:list(env.RFQ_BASE_MAINNET_INDEXER_FALLBACK_RPC_URLS||tenderly),readRpcUrls:list(env.RFQ_BASE_MAINNET_READ_RPC_URLS||`${publicnode},${tenderly}`),maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||1000),oracleNodes:[1,2,3].map(n=>`https://oracle-${n}.${sub}.workers.dev`)}))' \
   | wrangler secret put RFQ_DEV_RUNTIME_SECRETS --name rfq-markets-runtime-dev
+# After the secret: the new version restarts the running stack, which reads the secret only when it starts.
+wrangler deploy --config "$generated"
 wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
 wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
 
