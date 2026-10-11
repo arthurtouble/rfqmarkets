@@ -3,8 +3,8 @@
 # (scripts/cloudflare-oracle-deploy.sh), the dev runtime container, the trading UI and the docs
 # (deploy/cloudflare/DEV-ENVIRONMENT.md). Used by deploy-cloudflare-dev.yml and for redeploys from any
 # machine with Docker.
-# Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; ALCHEMY_API_KEY, RFQ_BASE_MAINNET_RPC_URL,
-# RFQ_BASE_MAINNET_SECONDARY_RPC_URL, RFQ_BASE_MAINNET_INDEXER_RPC_URL, RFQ_BASE_MAINNET_MAX_LOG_RANGE and
+# Needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; RFQ_BASE_MAINNET_RPC_URL, RFQ_BASE_MAINNET_SECONDARY_RPC_URL,
+# RFQ_BASE_MAINNET_INDEXER_RPC_URL, RFQ_BASE_MAINNET_READ_RPC_URLS, RFQ_BASE_MAINNET_MAX_LOG_RANGE and
 # CLOUDFLARE_WORKERS_SUBDOMAIN (default rfq-markets) are optional. Behind a TLS-intercepting proxy, set
 # RFQ_DOCKER_BUILD_CA to a CA bundle; it is mounted only while npm installs and stays out of the image.
 # RFQ_DOCKER_NODE_IMAGE swaps the Node base image for a mirror (for example
@@ -46,14 +46,13 @@ sed -e "s/REPLACED_AT_DEPLOY/$kv/" \
     deploy/cloudflare/runtime/wrangler.dev.jsonc > "$generated"
 wrangler deploy --config "$generated"
 
-# With ALCHEMY_API_KEY set, the runtime sends calls to Alchemy and keeps drpc as the second RPC for the
-# approver quorum. Without it, drpc is primary and mainnet.base.org secondary. Either way the indexer reads
-# logs from mainnet.base.org in 500-block steps (its cap): Alchemy's free tier and drpc cap eth_getLogs at
-# 10 blocks. The reads that run continuously (the hedger's exposure poll, the API's market snapshot) go to
-# publicnode, then Tenderly's public gateway, so they don't drain Alchemy's compute units; Alchemy only takes
-# what both fail. drpc's public endpoint rate-limits bursts too hard to front them. Override with the
-# RFQ_BASE_MAINNET_* variables (RFQ_BASE_MAINNET_READ_RPC_URLS is comma-separated).
-node -e 'const env=process.env,key=env.ALCHEMY_API_KEY,sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN;const rpc=env.RFQ_BASE_MAINNET_RPC_URL||(key?`https://base-mainnet.g.alchemy.com/v2/${key}`:"https://base.drpc.org");process.stdout.write(JSON.stringify({rpcUrl:rpc,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||(key?"https://base.drpc.org":"https://mainnet.base.org"),indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||"https://mainnet.base.org",readRpcUrls:(env.RFQ_BASE_MAINNET_READ_RPC_URLS||"https://base-rpc.publicnode.com,https://base.gateway.tenderly.co").split(",").map(url=>url.trim()).filter(Boolean),maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||500),oracleNodes:[1,2,3].map(n=>`https://oracle-${n}.${sub}.workers.dev`)}))' \
+# The runtime runs on free public RPCs: publicnode for calls, transactions and the indexer's logs (it serves
+# 10,000-block eth_getLogs ranges; the indexer asks for 2,000), drpc as the second RPC for the approver
+# quorum, and Tenderly's public gateway as the fallback for the reads that run continuously (the hedger's
+# exposure poll, the API's market snapshot). Alchemy is no longer a default: its compute units ran out
+# under this load, so ALCHEMY_API_KEY is not read here; set the RFQ_BASE_MAINNET_* variables to use any
+# other RPC (RFQ_BASE_MAINNET_READ_RPC_URLS is comma-separated).
+node -e 'const env=process.env,sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN,publicnode="https://base-rpc.publicnode.com";process.stdout.write(JSON.stringify({rpcUrl:env.RFQ_BASE_MAINNET_RPC_URL||publicnode,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||"https://base.drpc.org",indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||publicnode,readRpcUrls:(env.RFQ_BASE_MAINNET_READ_RPC_URLS||`${publicnode},https://base.gateway.tenderly.co`).split(",").map(url=>url.trim()).filter(Boolean),maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||2000),oracleNodes:[1,2,3].map(n=>`https://oracle-${n}.${sub}.workers.dev`)}))' \
   | wrangler secret put RFQ_DEV_RUNTIME_SECRETS --name rfq-markets-runtime-dev
 wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
 wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
