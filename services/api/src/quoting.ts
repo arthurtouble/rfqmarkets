@@ -1,4 +1,4 @@
-import { getAddress, keccak256 } from "ethers";
+import { getAddress, keccak256, type JsonRpcProvider } from "ethers";
 import type { FastifyInstance } from "fastify";
 import { isPositionReduction } from "../../../packages/shared/src/exposure-admission.js";
 import {
@@ -203,8 +203,10 @@ export class QuoteEngine {
     const clearing = this.ctx.readClearing,
       registered = marketRegistry.all();
     if (!clearing) return undefined;
-    const provider = clearing.runner!.provider!,
-      blockNumber = await provider.getBlockNumber(),
+    const provider = clearing.runner!.provider! as JsonRpcProvider,
+      // Not getBlockNumber(): ethers serves that from a short cache, and account reads at this block
+      // must include a trade that has just settled.
+      blockNumber = Number(BigInt(await provider.send("eth_blockNumber", []))),
       block = await provider.getBlock(blockNumber),
       values = await readViews(
         clearing,
