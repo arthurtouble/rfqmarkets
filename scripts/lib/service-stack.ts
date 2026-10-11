@@ -56,6 +56,8 @@ export interface ServiceStackConfig {
   rpcUrl: string;
   /** Indexer RPC when it must differ from rpcUrl (for example one with a wider eth_getLogs range). */
   indexerRpcUrl?: string;
+  /** RPCs that take an indexerRpcUrl request when it fails, in order (an archive RPC for catching up). */
+  indexerFallbackRpcUrls?: string[];
   /** Most blocks per indexer eth_getLogs call. */
   maxLogRange?: number;
   /**
@@ -164,6 +166,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
   try {
     const indexer = buildIndexer({
       rpcUrl: config.indexerRpcUrl ?? config.rpcUrl,
+      fallbackRpcUrls: config.indexerFallbackRpcUrls,
       readRpcUrl: config.readRpcUrls?.[0] ?? config.rpcUrl,
       readFallbackRpcUrls: config.readRpcUrls?.length
         ? [...config.readRpcUrls.slice(1), config.rpcUrl]

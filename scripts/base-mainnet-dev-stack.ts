@@ -5,7 +5,7 @@ import { startServiceStack, stopOnSignals } from "./lib/service-stack.js";
 
 // All RFQ services for the Base mainnet dev deployment in one process tree (Cloudflare dev container).
 // Inputs: RFQ_DEV_DEPLOYMENT_JSON (the dev deployment record) and RFQ_DEV_RUNTIME_SECRETS_JSON
-// ({rpcUrl, secondaryRpcUrl, indexerRpcUrl?, readRpcUrls?, maxLogRange?, oracleNodes[], sponsorKey,
+// ({rpcUrl, secondaryRpcUrl, indexerRpcUrl?, indexerFallbackRpcUrls?, readRpcUrls?, maxLogRange?, oracleNodes[], sponsorKey,
 // approverKeys[3], hedgeToken?}). Prices come from our own oracle nodes, checked against the signer set
 // recorded at deployment. Hedging uses the local simulator.
 // Approvers stay on loopback; RFQ_BIND_HOST exposes the API, indexer and gateway, and the hedger too when
@@ -22,6 +22,8 @@ type Secrets = {
   secondaryRpcUrl: string;
   /** Indexer RPC and its eth_getLogs block cap; mainnet.base.org allows 500 blocks per call. */
   indexerRpcUrl?: string;
+  /** Archive RPCs for the indexer's catch-up, when indexerRpcUrl only serves recent blocks. */
+  indexerFallbackRpcUrls?: string[];
   maxLogRange?: number;
   /**
    * Free RPCs, in order, for the reads that run continuously (the hedger's exposure poll, the API's market
@@ -49,6 +51,7 @@ for (const url of [
   secrets.rpcUrl,
   secrets.secondaryRpcUrl,
   ...(secrets.indexerRpcUrl ? [secrets.indexerRpcUrl] : []),
+  ...(secrets.indexerFallbackRpcUrls ?? []),
   ...(secrets.readRpcUrls ?? []),
 ])
   if (!url.startsWith("https://")) throw new Error("RPC URLs must use HTTPS");
@@ -64,6 +67,7 @@ const stack = await startServiceStack({
   startBlock: record.deploymentBlock,
   rpcUrl: secrets.rpcUrl,
   indexerRpcUrl: secrets.indexerRpcUrl,
+  indexerFallbackRpcUrls: secrets.indexerFallbackRpcUrls,
   maxLogRange: secrets.maxLogRange,
   readRpcUrls: secrets.readRpcUrls,
   // Every refresh is an RPC read per service; markets change rarely, and a request naming a market the

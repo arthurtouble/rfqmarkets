@@ -46,13 +46,14 @@ sed -e "s/REPLACED_AT_DEPLOY/$kv/" \
     deploy/cloudflare/runtime/wrangler.dev.jsonc > "$generated"
 wrangler deploy --config "$generated"
 
-# The runtime runs on free public RPCs: publicnode for calls, transactions and the indexer's logs (it serves
-# 10,000-block eth_getLogs ranges; the indexer asks for 2,000), drpc as the second RPC for the approver
-# quorum, and Tenderly's public gateway as the fallback for the reads that run continuously (the hedger's
-# exposure poll, the API's market snapshot). Alchemy is no longer a default: its compute units ran out
-# under this load, so ALCHEMY_API_KEY is not read here; set the RFQ_BASE_MAINNET_* variables to use any
-# other RPC (RFQ_BASE_MAINNET_READ_RPC_URLS is comma-separated).
-node -e 'const env=process.env,sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN,publicnode="https://base-rpc.publicnode.com";process.stdout.write(JSON.stringify({rpcUrl:env.RFQ_BASE_MAINNET_RPC_URL||publicnode,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||"https://base.drpc.org",indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||publicnode,readRpcUrls:(env.RFQ_BASE_MAINNET_READ_RPC_URLS||`${publicnode},https://base.gateway.tenderly.co`).split(",").map(url=>url.trim()).filter(Boolean),maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||2000),oracleNodes:[1,2,3].map(n=>`https://oracle-${n}.${sub}.workers.dev`)}))' \
+# The runtime runs on free public RPCs: publicnode for calls, transactions and the indexer's logs, drpc as
+# the second RPC for the approver quorum, and Tenderly's public gateway as the fallback for the reads that run
+# continuously (the hedger's exposure poll, the API's market snapshot). publicnode only serves recent blocks,
+# so the indexer's catch-up from the deployment block falls back to Tenderly, which serves archive logs in
+# 1,000-block ranges. Alchemy is no longer a default: its compute units ran out under this load, so
+# ALCHEMY_API_KEY is not read here; set the RFQ_BASE_MAINNET_* variables to use any other RPC
+# (RFQ_BASE_MAINNET_READ_RPC_URLS and RFQ_BASE_MAINNET_INDEXER_FALLBACK_RPC_URLS are comma-separated).
+node -e 'const env=process.env,sub=env.CLOUDFLARE_WORKERS_SUBDOMAIN,publicnode="https://base-rpc.publicnode.com",tenderly="https://base.gateway.tenderly.co",list=(text)=>text.split(",").map(url=>url.trim()).filter(Boolean);process.stdout.write(JSON.stringify({rpcUrl:env.RFQ_BASE_MAINNET_RPC_URL||publicnode,secondaryRpcUrl:env.RFQ_BASE_MAINNET_SECONDARY_RPC_URL||"https://base.drpc.org",indexerRpcUrl:env.RFQ_BASE_MAINNET_INDEXER_RPC_URL||publicnode,indexerFallbackRpcUrls:list(env.RFQ_BASE_MAINNET_INDEXER_FALLBACK_RPC_URLS||tenderly),readRpcUrls:list(env.RFQ_BASE_MAINNET_READ_RPC_URLS||`${publicnode},${tenderly}`),maxLogRange:Number(env.RFQ_BASE_MAINNET_MAX_LOG_RANGE||1000),oracleNodes:[1,2,3].map(n=>`https://oracle-${n}.${sub}.workers.dev`)}))' \
   | wrangler secret put RFQ_DEV_RUNTIME_SECRETS --name rfq-markets-runtime-dev
 wrangler deploy --config deploy/cloudflare/static/wrangler.web.dev.jsonc
 wrangler deploy --config deploy/cloudflare/static/wrangler.docs.jsonc
