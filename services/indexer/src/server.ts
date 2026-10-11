@@ -47,6 +47,9 @@ export interface IndexerOptions {
   confirmations?: number;
   /** Most blocks one eth_getLogs call may span; public Base RPCs cap this well below the default 10,000. */
   maxLogRange?: number;
+  /** RPCs that take an rpcUrl request (log sync, blocks) when it fails, in order; for example an archive
+   * RPC behind one that only serves recent blocks. */
+  fallbackRpcUrls?: string[];
   /** RPC for the direct contract reads behind /v1/exposure; defaults to rpcUrl. Lets the hedger's hot path
    * use a faster provider than the one with the wide eth_getLogs range. */
   readRpcUrl?: string;
@@ -203,7 +206,13 @@ export function buildIndexer(options: IndexerOptions) {
   // staticNetwork: without it ethers sends eth_chainId ahead of every getBlock and getLogs.
   const provider =
     options.provider ??
-    new JsonRpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1, staticNetwork: true });
+    (options.fallbackRpcUrls?.length
+      ? new FallbackRpcProvider([options.rpcUrl, ...options.fallbackRpcUrls], undefined, {
+          batchMaxCount: 1,
+          staticNetwork: true,
+          timeoutMs: 10_000,
+        })
+      : new JsonRpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1, staticNetwork: true }));
   const contract = new Contract(options.clearingAddress, clearingIndexerAbi, provider);
   const readProvider =
       options.readRpcUrl && !options.provider
