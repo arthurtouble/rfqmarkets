@@ -5,7 +5,7 @@ import { startServiceStack, stopOnSignals } from "./lib/service-stack.js";
 
 // All RFQ services for the Base mainnet dev deployment in one process tree (Cloudflare dev container).
 // Inputs: RFQ_DEV_DEPLOYMENT_JSON (the dev deployment record) and RFQ_DEV_RUNTIME_SECRETS_JSON
-// ({rpcUrl, secondaryRpcUrl, indexerRpcUrl?, readRpcUrl?, maxLogRange?, oracleNodes[], sponsorKey,
+// ({rpcUrl, secondaryRpcUrl, indexerRpcUrl?, readRpcUrls?, maxLogRange?, oracleNodes[], sponsorKey,
 // approverKeys[3], hedgeToken?}). Prices come from our own oracle nodes, checked against the signer set
 // recorded at deployment. Hedging uses the local simulator.
 // Approvers stay on loopback; RFQ_BIND_HOST exposes the API, indexer and gateway, and the hedger too when
@@ -24,10 +24,10 @@ type Secrets = {
   indexerRpcUrl?: string;
   maxLogRange?: number;
   /**
-   * Free RPC for the indexer's contract reads, which the hedger polls continuously; rpcUrl (Alchemy, metered
-   * per call) only takes what it fails.
+   * Free RPCs, in order, for the reads that run continuously (the hedger's exposure poll, the API's market
+   * snapshot); rpcUrl (Alchemy, metered per call) only takes what they all fail.
    */
-  readRpcUrl?: string;
+  readRpcUrls?: string[];
   /** Oracle node base URLs, one per region. */
   oracleNodes: string[];
   sponsorKey: string;
@@ -49,7 +49,7 @@ for (const url of [
   secrets.rpcUrl,
   secrets.secondaryRpcUrl,
   ...(secrets.indexerRpcUrl ? [secrets.indexerRpcUrl] : []),
-  ...(secrets.readRpcUrl ? [secrets.readRpcUrl] : []),
+  ...(secrets.readRpcUrls ?? []),
 ])
   if (!url.startsWith("https://")) throw new Error("RPC URLs must use HTTPS");
 
@@ -65,7 +65,7 @@ const stack = await startServiceStack({
   rpcUrl: secrets.rpcUrl,
   indexerRpcUrl: secrets.indexerRpcUrl,
   maxLogRange: secrets.maxLogRange,
-  indexerReadRpcUrl: secrets.readRpcUrl,
+  readRpcUrls: secrets.readRpcUrls,
   // Every refresh is an RPC read per service; markets change rarely, and a request naming a market the
   // registry has not loaded yet refreshes it at once.
   marketRefreshMs: 300_000,
@@ -96,7 +96,9 @@ const stack = await startServiceStack({
     maxOrderUsdc: parseUnits("25000", 6),
     minOrderUsdc: 0n,
   },
-  api: { publicRpcUrl: "https://mainnet.base.org" },
+  // The market snapshot is rebuilt on every oracle price; its chain half (funding, limits, open interest)
+  // can lag a few blocks without harm, and quotes always read the chain themselves.
+  api: { publicRpcUrl: "https://mainnet.base.org", marketStateMaxAgeMs: 10_000 },
   // The oracle node workers keep one-minute candles in Durable Object SQLite, so charts survive restarts here.
   gateway: {
     candleBackfill: {

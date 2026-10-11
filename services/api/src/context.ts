@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { Contract, JsonRpcProvider, Wallet, getAddress } from "ethers";
 import { clearingApiAbi } from "../../../packages/shared/src/abi.js";
+import { FallbackRpcProvider } from "../../../packages/shared/src/rpc.js";
 import { DOMAIN_NAME, DOMAIN_VERSION, type SigningDomain } from "../../../packages/shared/src/eip712.js";
 import type { ClientIpHeader } from "../../../packages/shared/src/client-identity.js";
 import { bindGrossContext } from "../../../packages/shared/src/gross-reservation-journal.js";
@@ -33,6 +34,11 @@ export interface ApiOptions {
   verifyingContract?: string;
   chain?: {
     rpcUrl: string;
+    /**
+     * RPCs, in order, for the public market snapshot's reads, which run on every price update; rpcUrl
+     * (which sends and reconciles transactions) then only takes the requests they all fail.
+     */
+    readRpcUrls?: string[];
     sponsorPrivateKey: string;
     clearingAddress: string;
     tokenAddress: string;
@@ -56,6 +62,8 @@ export interface ApiOptions {
   approverTimeoutMs?: number;
   minSettlementInclusionSeconds?: number;
   publicRpcUrl?: string;
+  /** How long the market snapshot reuses its chain reads (default 0: every snapshot reads the chain). */
+  marketStateMaxAgeMs?: number;
   firmQuoteRatePerSecond?: number;
   firmQuoteBurst?: number;
   maxQuoteAdmissionClients?: number;
@@ -106,6 +114,8 @@ export class ApiContext {
   readonly sponsor?: Wallet;
   readonly sender?: ApiSender;
   readonly clearing?: Contract;
+  /** The clearing contract on the read RPC (`chain.readRpcUrls`), for the public market snapshot. */
+  readonly readClearing?: Contract;
   readonly token?: Contract;
   readonly fetchImpl: typeof fetch;
   /** Local Hardhat profile: mint, autofund and clock advance are allowed. */
@@ -167,6 +177,17 @@ export class ApiContext {
       this.sponsor = new Wallet(options.chain.sponsorPrivateKey, this.provider);
       if (this.journal) bindGrossContext(this.journal, "api-sponsor", this.sponsor.address.toLowerCase());
       this.clearing = new Contract(options.chain.clearingAddress, clearingApiAbi, this.provider);
+      this.readClearing =
+        options.chain.readRpcUrls?.length && !options.provider
+          ? new Contract(
+              options.chain.clearingAddress,
+              clearingApiAbi,
+              new FallbackRpcProvider([...options.chain.readRpcUrls, options.chain.rpcUrl], undefined, {
+                batchMaxCount: 1,
+                staticNetwork: true,
+              }),
+            )
+          : this.clearing;
       this.token = new Contract(
         options.chain.tokenAddress,
         ["function mint(address,uint256)", "function balanceOf(address) view returns (uint256)"],
