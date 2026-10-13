@@ -105,9 +105,9 @@ test("confirmation strings match what base-mainnet-cli expects", () => {
   );
 });
 
-test("the RPC is RFQ_BASE_MAINNET_RPC_URL, else Alchemy when ALCHEMY_API_KEY is set, else the public Base RPC", () => {
+test("the RPC is RFQ_BASE_MAINNET_RPC_URL, else the public Base RPC, never Alchemy", () => {
   assert.equal(rpcUrl({}), "https://mainnet.base.org");
-  assert.equal(rpcUrl({ ALCHEMY_API_KEY: "k" }), "https://base-mainnet.g.alchemy.com/v2/k");
+  assert.equal(rpcUrl({ ALCHEMY_API_KEY: "k" }), "https://mainnet.base.org");
   assert.equal(
     rpcUrl({ ALCHEMY_API_KEY: "k", RFQ_BASE_MAINNET_RPC_URL: "https://rpc.example" }),
     "https://rpc.example",

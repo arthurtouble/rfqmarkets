@@ -91,12 +91,9 @@ const writePrivate = (path: string, value: unknown) => {
   writeFileSync(path, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
   chmodSync(path, 0o600);
 };
-/** RFQ_BASE_MAINNET_RPC_URL, else Alchemy when ALCHEMY_API_KEY is set, else the public Base RPC. */
+/** RFQ_BASE_MAINNET_RPC_URL, else the public Base RPC. Alchemy is not used: the dev runtime spent its monthly units. */
 export const rpcUrl = (env: NodeJS.ProcessEnv = process.env) =>
-  env.RFQ_BASE_MAINNET_RPC_URL ||
-  (env.ALCHEMY_API_KEY
-    ? `https://base-mainnet.g.alchemy.com/v2/${env.ALCHEMY_API_KEY}`
-    : "https://mainnet.base.org");
+  env.RFQ_BASE_MAINNET_RPC_URL || "https://mainnet.base.org";
 const ownerKey = () => env("RFQ_DEV_OWNER_KEY");
 async function ownerWallet() {
   const provider = new JsonRpcProvider(rpcUrl());
