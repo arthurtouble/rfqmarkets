@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { ContractFactory, JsonRpcProvider, Wallet, formatEther, getAddress } from "ethers";
+import { MainnetRpcProvider } from "./mainnet-rpc.js";
 import {
   appointRiskOperatorDev,
   configureDev,
@@ -58,7 +59,7 @@ const env = (name: string) => {
 const rpc = (name = "RFQ_BASE_MAINNET_RPC_URL") => {
   const url = env(name);
   if (!url.startsWith("https://")) throw new Error(`${name} must use HTTPS`);
-  return new JsonRpcProvider(url, undefined, { staticNetwork: false });
+  return new MainnetRpcProvider(url);
 };
 const writePrivate = (path: string, value: unknown) => {
   mkdirSync(dirname(path), { recursive: true });
