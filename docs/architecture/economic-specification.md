@@ -23,7 +23,7 @@ Assume $1,000,000 is the total initial operator risk/operations budget:
 
 If the intended $1M is maker backing alone, preserve these safety ratios and fund insurance, hedging and operations additionally; do not silently carve them from user deposits.
 
-Normal admission requires worst modeled portfolio loss no greater than 25% of Base maker backing (initially 150,000 USDC). Severe stress plus already recognized deficit must remain below 75% of Base maker backing (450,000 USDC). Insurance is excluded from both admission thresholds. It is a last-resort realized-loss layer.
+Normal admission requires worst modeled portfolio loss no greater than Base maker backing (initially 600,000 USDC), with a default stress shock of 10% for BTC and ETH. Maker backing pays traders' net winnings, not their full notional: offsetting longs and shorts use no capacity, and the net imbalance beyond the hedge band is hedged. A shock larger than the modeled one against a fully used book can exhaust backing and trigger a maker incident, so the hedge on the net carries the tail risk. Insurance is excluded from both admission thresholds. It is a last-resort realized-loss layer.
 
 Initial operating caps, all wallet-independent and inclusive of executable reservations:
 

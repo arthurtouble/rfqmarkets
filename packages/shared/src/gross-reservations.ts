@@ -192,7 +192,7 @@ export class GrossReservationBook {
           highStress = marketStress(high[market], market);
         stress += lowStress > highStress ? lowStress : highStress;
       }
-      if (stress > available / 4n) return false;
+      if (stress > available) return false;
     }
     return true;
   }

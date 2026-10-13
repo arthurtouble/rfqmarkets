@@ -38,7 +38,7 @@ shock, margin multiplier). A change that tightens is always allowed, even when t
 the envelope; a change that loosens must land inside it. All zero lets the operator tighten and nothing else.
 
 Suggested production envelope, to be confirmed with the risk review: max trade 250,000 USDC, net cap
-1,000,000 USDC, gross cap 2,000,000 USDC, margin multiplier at least 5,000 (10x), stress shock at least 30%,
+1,000,000 USDC, gross cap 2,000,000 USDC, margin multiplier at least 5,000 (10x), stress shock at least 10%,
 impact K at least the BTC value (10,000).
 
 ## Spreads

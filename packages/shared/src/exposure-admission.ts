@@ -163,6 +163,6 @@ export function exposureAdmission(input: {
       return reject("gross_or_side_cap");
     if (!within(abs(newNet[i]), high128(netLimits[i]), abs(oldNet[i]))) return reject("net_cap");
   }
-  if (!within(makerStress(...newNet), backing / 4n, makerStress(...oldNet))) return reject("maker_stress");
+  if (!within(makerStress(...newNet), backing, makerStress(...oldNet))) return reject("maker_stress");
   return { allowed: true, reason: "allowed", reduction };
 }

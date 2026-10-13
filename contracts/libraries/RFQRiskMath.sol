@@ -27,7 +27,7 @@ library RFQRiskMath {
     // =======================================================================
 
     /// @notice Canonical on-chain exposure admission for a trade at `price`.
-    /// @dev Checks the capital floor, gross/side/net caps per market and stress loss <= backing / 4.
+    /// @dev Checks the capital floor, gross/side/net caps per market and stress loss <= backing.
     /// A reduction may proceed above a cap as long as it does not make that metric worse.
     function checkExposureTrade(TradeIntent memory intent, uint256 price) public view {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
@@ -79,7 +79,7 @@ library RFQRiskMath {
             enforceLimit(shorts * ask / BASE_UNIT, book.sideLimit, shortBefore, reduction);
             enforceLimit(abs(skewAfter), $.limits[i].maxMarketNotional, abs(skewBefore), reduction);
         }
-        enforceLimit(stressAfter, backing / 4, stressBefore, reduction);
+        enforceLimit(stressAfter, backing, stressBefore, reduction);
     }
 
     /// @notice Checks per-trade and session limits and the on-chain inventory-impact price floor.
@@ -184,7 +184,7 @@ library RFQRiskMath {
     }
 
     /// @notice True when customers hold open exposure and maker backing is below the opening floor or
-    /// cannot cover four times the stress loss.
+    /// cannot cover the stress loss.
     function makerIncident() public view returns (bool) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         uint256 gross;
@@ -193,7 +193,7 @@ library RFQRiskMath {
             gross += $.exposure[i].longBase + $.exposure[i].shortBase;
         }
         if (gross == 0) return false;
-        return $.makerBacking < $.baseRiskCapitalTarget || portfolioStress() > $.makerBacking / 4;
+        return $.makerBacking < $.baseRiskCapitalTarget || portfolioStress() > $.makerBacking;
     }
 
     // =======================================================================

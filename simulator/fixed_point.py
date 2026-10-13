@@ -31,7 +31,7 @@ class FixedRiskModel:
     impact: Mapping[tuple[str, str], int]
     # Signed scenario returns scaled by RATE.
     stress_returns: tuple[Mapping[str, int], ...]
-    max_stress_fraction: int = RATE // 4
+    max_stress_fraction: int = RATE
 
     def potential(self, exposure: Mapping[str, int]) -> int:
         numerator = 0

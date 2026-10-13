@@ -201,7 +201,7 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
     }
 
     /// @notice Releases maker capital. What remains, after setting aside customers' unrealized gains, must
-    /// cover both the opening floor and four times the live stress loss.
+    /// cover both the opening floor and the live stress loss.
     function withdrawMakerExcess(address recipient, uint256 amount) external onlyGovernance nonReentrant {
         RFQClearingNamespace.Layout storage $ = _s();
         if ($.resolutionRequired || recipient == address(0) || amount == 0 || amount > $.makerBacking) {
@@ -210,7 +210,7 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         uint256 remaining = $.makerBacking - amount;
         uint256 owed = RFQRiskMath.customerUnrealizedGain();
         if (remaining < $.baseRiskCapitalTarget + owed) revert Margin();
-        if (RFQRiskMath.portfolioStress() > (remaining - owed) / 4) revert Margin();
+        if (RFQRiskMath.portfolioStress() > remaining - owed) revert Margin();
         $.makerBacking = remaining;
         $.usdc.safeTransfer(recipient, amount);
         emit MakerWithdrawn(recipient, amount);
