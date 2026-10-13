@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { Contract, JsonRpcProvider, Wallet, formatEther, getAddress, parseEther, parseUnits } from "ethers";
+import { Contract, Wallet, formatEther, getAddress, parseEther, parseUnits } from "ethers";
 import { generateDevIdentities } from "./base-mainnet-dev.js";
 import { artifact, type DeploymentRecord } from "./base-mainnet.js";
 import { identifyCandidate } from "./candidate-identity.js";
 import { validateDevManifest } from "./mainnet-manifest.js";
+import { MainnetRpcProvider } from "./mainnet-rpc.js";
 
 // GitHub Actions driver for the Base mainnet dev profile (.github/workflows/dev-contracts.yml).
 // The owner key is the RFQ_DEV_OWNER_KEY environment secret: a dedicated key used for nothing else.
@@ -96,7 +97,7 @@ export const rpcUrl = (env: NodeJS.ProcessEnv = process.env) =>
   env.RFQ_BASE_MAINNET_RPC_URL || "https://mainnet.base.org";
 const ownerKey = () => env("RFQ_DEV_OWNER_KEY");
 async function ownerWallet() {
-  const provider = new JsonRpcProvider(rpcUrl());
+  const provider = new MainnetRpcProvider(rpcUrl());
   const chainId = (await provider.getNetwork()).chainId;
   if (chainId !== 8453n) throw new Error(`expected Base mainnet 8453, RPC reports ${chainId}`);
   return new Wallet(ownerKey(), provider);
