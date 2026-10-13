@@ -16,8 +16,8 @@ const address = z
 const int = (min: number, max: number) => z.number().int().min(min).max(max);
 // Launch risk parameters (see ECONOMIC-SPECIFICATION.md); bounds match RFQClearing._validateRisk.
 export const LAUNCH_RISK = {
-  BTC: { impactK: 10_000, shockBps: 4_000, marginScaleBps: 10_000 },
-  ETH: { impactK: 12_000, shockBps: 5_000, marginScaleBps: 10_000 },
+  BTC: { impactK: 10_000, shockBps: 1_000, marginScaleBps: 10_000 },
+  ETH: { impactK: 12_000, shockBps: 1_000, marginScaleBps: 10_000 },
 } as const;
 const risk = (defaults: { impactK: number; shockBps: number; marginScaleBps: number }) => ({
   impactK: int(1, 1_000_000).default(defaults.impactK),

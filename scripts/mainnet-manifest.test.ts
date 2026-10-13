@@ -55,7 +55,7 @@ test("mainnet manifest fills oracle consensus and launch risk defaults", () => {
       value.policy.markets.BTC.shockBps,
       value.policy.markets.BTC.marginScaleBps,
     ],
-    [10000, 4000, 10000],
+    [10000, 1000, 10000],
   );
   assert.deepEqual(
     [
@@ -63,7 +63,7 @@ test("mainnet manifest fills oracle consensus and launch risk defaults", () => {
       value.policy.markets.ETH.shockBps,
       value.policy.markets.ETH.marginScaleBps,
     ],
-    [12000, 5000, 10000],
+    [12000, 1000, 10000],
   );
   const custom: any = valid();
   custom.oracle = { maxDeviationBps: 100, maxSkew: 3, maxJumpBps: 500, jumpWindow: 60 };

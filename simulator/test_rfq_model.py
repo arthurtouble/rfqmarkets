@@ -82,9 +82,9 @@ class EconomicInvariantTests(unittest.TestCase):
 
     def test_stress_cap_applies_across_pending_wallets(self):
         book = ReservationBook(self.model)
-        book.admit({"BTC": 300_000}, 1_000_000)
+        book.admit({"BTC": 300_000}, 300_000)
         with self.assertRaises(ValueError):
-            book.admit({"ETH": 500_000}, 1_000_000)
+            book.admit({"ETH": 500_000}, 300_000)
 
 
 if __name__ == "__main__":

@@ -14,11 +14,11 @@ contract MakerIncidentTest is ClearingFixture {
         super.setUp();
         fundMaker(101_000e6);
         openVenue();
-        alice = newTrader("alice", 20_000e6);
+        alice = newTrader("alice", 100_000e6);
         refreshAll();
-        // 0.6 BTC at 100k: stress loss (40% shock) is 24k, just under backing / 4 = 25.25k.
-        trade(alice, 0, 6e17, false);
-        // A rally pushes stress above backing / 4 without any realized loss: an objective incident.
+        // 2.5 BTC at 100k: stress loss (40% shock) is 100k, just under backing = 101k.
+        trade(alice, 0, 25e17, false);
+        // A rally pushes stress above backing without any realized loss: an objective incident.
         vm.warp(block.timestamp + 1);
         setPrice(0, 110_000e6);
         refresh(1);

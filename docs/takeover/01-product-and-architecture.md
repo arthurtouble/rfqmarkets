@@ -65,7 +65,7 @@ Account and funds
 - Cross margin across BTC and ETH. Tiered margin from 20% IM / 12% MM (~5x) up to 100% / 60% at $5M.
 
 Risk and solvency
-- On-chain inventory-impact floor, per-trade and per-market caps, gross and per-side caps, stress-loss ≤ 25% of maker backing, capital floor.
+- On-chain inventory-impact floor, per-trade and per-market caps, gross and per-side caps, stress-loss ≤ maker backing, capital floor.
 - Off-chain pending-exposure reservations (four-corner envelope) at the API and every approver, journaled before any signature leaves.
 - Continuous skew-based funding capped at ±100% APR.
 - Partial liquidation toward 22% equity, 50 bps penalty, keeper reward; portfolio bankruptcy netting.

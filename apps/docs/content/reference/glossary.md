@@ -84,6 +84,6 @@
 
 **Stop loss, take profit, stop entry.** Orders that wait for the oracle mid to cross a trigger price and then trade within a signed band. See [Stop loss and take profit](../trading/stop-orders.md).
 
-**Stress loss.** The maker's estimated loss if every market moved sharply against it at once. Kept below a quarter of its capital.
+**Stress loss.** The maker's estimated loss if every market moved sharply against it at once. Kept below its capital.
 
 **USDC.** The dollar stablecoin used for all collateral and settlement; specifically Circle's native USDC on Base.

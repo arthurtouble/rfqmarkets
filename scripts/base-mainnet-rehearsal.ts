@@ -169,8 +169,8 @@ assert.ok(
 assert.deepEqual(
   initial.state.markets.map((item) => [item.symbol, item.impactK, item.shockBps, item.marginScaleBps]),
   [
-    ["BTC", 10000, 4000, 10000],
-    ["ETH", 12000, 5000, 10000],
+    ["BTC", 10000, 1000, 10000],
+    ["ETH", 12000, 1000, 10000],
   ],
   "initialize applies the launch risk parameters",
 );

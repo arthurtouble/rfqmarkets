@@ -32,7 +32,7 @@ The maker is the counterparty to every trade, so the venue caps how much risk it
 
 There are also venue-wide checks:
 
-- **Stress.** The contract estimates the maker's loss if every market moved sharply against it at once (40% for BTC and 50% for ETH today) and refuses new risk if that loss would exceed a quarter of the maker's capital.
+- **Stress.** The contract estimates the maker's loss if every market moved sharply against it at once (10% for BTC and ETH by default) and refuses new risk if that loss would exceed the maker's capital.
 - **Capital floor.** New risk is refused if the maker's capital is below its target.
 
 There is no per-account position limit beyond these. Your own size is limited by your margin.

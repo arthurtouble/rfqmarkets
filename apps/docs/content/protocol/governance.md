@@ -16,7 +16,7 @@ Governance can:
 - replace the oracle contract, and change the oracle's signers and consensus settings;
 - rotate the three approvers;
 - set the emergency council and the maker-incident grace period;
-- withdraw maker capital, but only while the remaining capital still covers the capital target, the traders' unrealized gains and four times the current stress loss;
+- withdraw maker capital, but only while the remaining capital still covers the capital target, the traders' unrealized gains and the current stress loss;
 - withdraw the surplus left after a resolution is fully paid.
 
 Governance cannot spend your collateral or change your positions through any of these functions. It could, however, upgrade the contract to code that does. That is the trust you are placing in whoever holds governance.

@@ -58,7 +58,7 @@ A market without a mapping is never sent to the venue. The hedger logs it once a
 
 ## 4. Caps and enablement
 
-1. Size `maxTradeNotional`, `maxMarketNotional`, `grossLimit` and `sideLimit` against maker backing. Stress capital (`portfolioStress ≤ makerBacking / 4`) now includes the new market's `shockBps`.
+1. Size `maxTradeNotional`, `maxMarketNotional`, `grossLimit` and `sideLimit` against maker backing. Stress capital (`portfolioStress ≤ makerBacking`) now includes the new market's `shockBps`.
 2. Size the hedger's `hedgeBandUsdc`, `hedgeMaxOrderUsdc` and `hedgeMinOrderUsdc` for the new venue's depth.
 3. Fund hedge margin, then enable with `setMarketPolicy(market, true, …)` and minimal caps. After that, follow the staged limit procedure in [Market lifecycle](market-lifecycle.md).
 4. Session keys: a session's `marketMask` has one bit per index. Existing sessions don't cover the new market until the user signs a new grant (the web app's quick session still requests `marketMask: 3`).

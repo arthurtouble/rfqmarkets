@@ -93,8 +93,8 @@ test("escaped approvals reserve every net/stress execution subset and maker floo
     wide = {
       ...risk,
       netLimits: [word(1_000_000_000n), word(1_000_000_000n)] as [bigint, bigint],
-      backing: 20_000_000n,
-      floor: 10_000_000n,
+      backing: 6_000_000n,
+      floor: 1_000_000n,
     };
   assert(stressBook.admit("one", item(BASE / 10n), baseBooks, asks, 1, wide));
   stressBook.reserve("one", item(BASE / 10n));
@@ -106,7 +106,7 @@ test("escaped approvals reserve every net/stress execution subset and maker floo
   assert.equal(
     new GrossReservationBook().admit("floor", item(BASE / 100n), baseBooks, asks, 1, {
       ...wide,
-      backing: 9_999_999n,
+      backing: 999_999n,
     }),
     false,
   );

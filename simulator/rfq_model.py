@@ -22,7 +22,7 @@ class RiskModel:
     markets: Tuple[str, ...]
     impact_matrix: Mapping[Tuple[str, str], float]
     stress_returns: Tuple[Mapping[str, float], ...]
-    max_stress_fraction: float = 0.25
+    max_stress_fraction: float = 1.0
 
     def potential(self, exposure: Mapping[str, float]) -> float:
         total = 0.0

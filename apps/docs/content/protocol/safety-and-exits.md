@@ -42,8 +42,8 @@ The emergency council can pause, but only governance can unpause.
 
 The maker's capital backs every trader's profit. Two safeguards watch it:
 
-- **Admission.** New risk is refused unless the maker's capital is at its target and its estimated stress loss is within a quarter of its capital.
-- **Incidents.** If, with positions open, the maker's capital falls below its target or the stress loss exceeds a quarter of its capital, anyone can report a **maker incident** on chain. That starts a grace period, 72 hours by default, for the maker to recapitalize. If the incident is cleared in time, nothing else happens.
+- **Admission.** New risk is refused unless the maker's capital is at its target and its estimated stress loss is within its capital.
+- **Incidents.** If, with positions open, the maker's capital falls below its target or the stress loss exceeds its capital, anyone can report a **maker incident** on chain. That starts a grace period, 72 hours by default, for the maker to recapitalize. If the incident is cleared in time, nothing else happens.
 
 If the grace period passes and the incident still holds, anyone can declare resolution.
 
