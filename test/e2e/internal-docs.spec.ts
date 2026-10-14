@@ -17,7 +17,7 @@ test.describe("internal manual", () => {
     await expect(page.getByRole("heading", { level: 1, name: "Documentation" })).toBeVisible();
     await expectNoHorizontalOverflow(page);
 
-    await page.getByRole("article").getByRole("link", { name: "Overview" }).click();
+    await page.getByRole("article").getByRole("link", { name: "Overview", exact: true }).click();
     await expect(page).toHaveURL(/\/architecture\/overview$/);
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Architecture overview");
     await expectNoHorizontalOverflow(page);
