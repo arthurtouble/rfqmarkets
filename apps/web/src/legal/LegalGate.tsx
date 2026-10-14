@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GEO_URL, LEGAL_LINKS } from "../lib/env.js";
 import { TERMS_KEY, hasAccepted, parseLocation, withAcceptance, type LocationStatus } from "../lib/legal.js";
+import { load, store } from "../lib/storage.js";
 import { Banner, EmptyState } from "../ui/primitives.js";
 import { useTrader } from "../wallet/trader.js";
 
-const readTerms = () => {
-  try {
-    return localStorage.getItem(TERMS_KEY);
-  } catch {
-    return null;
-  }
-};
+const readTerms = () => load(TERMS_KEY);
 
 /** The edge's view of where this visitor is. "unknown" until it answers, and if it never does. */
 export function useLocationStatus() {
@@ -97,11 +92,7 @@ export function TermsDialog() {
   const accept = useCallback(() => {
     if (!account) return;
     const next = withAcceptance(readTerms(), account, Date.now());
-    try {
-      localStorage.setItem(TERMS_KEY, next);
-    } catch {
-      /* private mode: ask again next visit */
-    }
+    store(TERMS_KEY, next); // In a private window this asks again next visit.
     setStored(next);
   }, [account]);
 

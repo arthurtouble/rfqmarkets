@@ -3,7 +3,7 @@ import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { useMarketLeverage } from "../data/markets.js";
 import { emptyAccount, estimateLiquidationPrice, initialMarginAfter } from "../lib/account.js";
-import { abs, baseAmount, feeLabel, microToInput, parseUsdcInput, usdc, usdcCompact } from "../lib/format.js";
+import { abs, baseAmount, microToInput, parseUsdcInput, usdc, usdcCompact } from "../lib/format.js";
 import { DEFAULT_MARGIN_SCALE_BPS, leveragePresets } from "../lib/leverage.js";
 import { triggerProblem } from "../lib/orders.js";
 import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
@@ -23,7 +23,6 @@ import {
 } from "../lib/ticket.js";
 import type { AccountState, Market, Quote, Side } from "../lib/types.js";
 import { Banner, Down, Rows, Segmented, Up } from "../ui/primitives.js";
-import { useAdvanced } from "../ui/prefs.js";
 import { useTrader } from "../wallet/trader.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
 import { useFunds } from "./FundsDialog.js";
@@ -53,8 +52,7 @@ export function OrderTicket({
   const { snapshot, status } = useMarketFeed();
   const trader = useTrader(),
     trading = useTrading(),
-    funds = useFunds(),
-    advanced = useAdvanced();
+    funds = useFunds();
   const now = useNow(500);
   const leverageInfo = useMarketLeverage(market);
   const memory = useTicketMemory(market);
@@ -73,13 +71,6 @@ export function OrderTicket({
     setLimitPrice("");
     setStopPrice("");
   }, [market]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (!advanced) {
-      setOrderType("market");
-      setReduceOnly(false);
-      setOptionsOpen(false);
-    }
-  }, [advanced]);
 
   const live = snapshot?.markets[market];
   const marketMax = leverageInfo?.maxLeverage ?? live?.maxLeverage ?? 20;
@@ -88,7 +79,7 @@ export function OrderTicket({
   const lev = Math.min(leverage, marketMax);
   const isLimit = orderType === "limit";
   const isStop = orderType === "stop";
-  const effectiveSlippage = advanced ? slippageBps : undefined;
+  const effectiveSlippage = slippageBps;
 
   const payMicro = parseUsdcInput(pay);
   const notional = payMicro ? positionNotional(payMicro, lev) : 0n;
@@ -256,21 +247,19 @@ export function OrderTicket({
         </button>
       </div>
 
-      {advanced && (
-        <Segmented
-          label="Order type"
-          value={orderType}
-          onChange={(next) => {
-            setOrderType(next);
-            if (next === "limit" && !limitPrice && live) setLimitPrice(midDollars(live.mid));
-          }}
-          options={[
-            { id: "market", label: "Market" },
-            { id: "limit", label: "Limit" },
-            { id: "stop", label: "Stop" },
-          ]}
-        />
-      )}
+      <Segmented
+        label="Order type"
+        value={orderType}
+        onChange={(next) => {
+          setOrderType(next);
+          if (next === "limit" && !limitPrice && live) setLimitPrice(midDollars(live.mid));
+        }}
+        options={[
+          { id: "market", label: "Market" },
+          { id: "limit", label: "Limit" },
+          { id: "stop", label: "Stop" },
+        ]}
+      />
 
       <div className="rfq-amount">
         <label className={`rfq-amount__field${overCap ? " is-error" : ""}`}>
@@ -362,61 +351,59 @@ export function OrderTicket({
         />
       )}
 
-      {advanced && (
-        <div className="ticket-options">
-          <button
-            type="button"
-            className="rfq-linkrow"
-            aria-expanded={optionsOpen}
-            onClick={() => setOptionsOpen((open) => !open)}
-          >
-            Options{" "}
-            <span>
-              {[
-                reduceOnly ? "Reduce only" : null,
-                orderType === "market" ? `Slippage ${slippageToPercent(slippageBps)}%` : null,
-              ]
-                .filter(Boolean)
-                .join(" · ") || "None"}
-            </span>
-          </button>
-          {optionsOpen && (
-            <div className="ticket-options__body">
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={reduceOnly}
-                  onChange={(event) => setReduceOnly(event.target.checked)}
+      <div className="ticket-options">
+        <button
+          type="button"
+          className="rfq-linkrow"
+          aria-expanded={optionsOpen}
+          onClick={() => setOptionsOpen((open) => !open)}
+        >
+          Options{" "}
+          <span>
+            {[
+              reduceOnly ? "Close only" : null,
+              orderType === "market" ? `Slippage ${slippageToPercent(slippageBps)}%` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "None"}
+          </span>
+        </button>
+        {optionsOpen && (
+          <div className="ticket-options__body">
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={reduceOnly}
+                onChange={(event) => setReduceOnly(event.target.checked)}
+              />
+              <span>
+                Close only
+                <span className="footnote rfq-faint"> · only shrinks a position, never opens one</span>
+              </span>
+            </label>
+            {orderType === "market" && (
+              <div className="ticket-options__slippage">
+                <span className="callout rfq-muted">Max slippage</span>
+                <Segmented
+                  label="Max slippage"
+                  value={String(slippageBps)}
+                  onChange={(next) => setSlippageBps(Number(next))}
+                  options={SLIPPAGE_PRESETS_BPS.map((bps) => ({
+                    id: String(bps),
+                    label: `${slippageToPercent(bps)}%`,
+                  }))}
                 />
-                <span>
-                  Reduce only<span className="footnote rfq-faint"> · never opens or grows a position</span>
-                </span>
-              </label>
-              {orderType === "market" && (
-                <div className="ticket-options__slippage">
-                  <span className="callout rfq-muted">Max slippage</span>
-                  <Segmented
-                    label="Max slippage"
-                    value={String(slippageBps)}
-                    onChange={(next) => setSlippageBps(Number(next))}
-                    options={SLIPPAGE_PRESETS_BPS.map((bps) => ({
-                      id: String(bps),
-                      label: `${slippageToPercent(bps)}%`,
-                    }))}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <Rows
         rows={[
           [orderType === "market" ? "Entry price" : "Current price", usdc(quote?.expectedPrice)],
           ["Liquidation price", liquidation === null ? "—" : usdc(liquidation)],
-          ["Fee", feeLabel(quote?.fee)],
-          ...(advanced && orderType === "market"
+          ...(orderType === "market"
             ? ([
                 [
                   side === "buy" ? "Price protection (max)" : "Price protection (min)",
@@ -471,7 +458,7 @@ export function OrderTicket({
         </button>
       )}
       {oneClick && !problem && (
-        <p className="footnote rfq-faint ticket-note">One-click trading is on. No wallet prompt.</p>
+        <p className="footnote rfq-faint ticket-note">One-tap trading is on. No wallet prompt.</p>
       )}
 
       {review && (

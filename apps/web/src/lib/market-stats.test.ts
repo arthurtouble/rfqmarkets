@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  CHART_RANGES,
   STALE_PRICE_MS,
   dayChange,
   dayRange,
@@ -84,11 +83,4 @@ test("price status tells live, delayed, paused and missing prices apart", () => 
     "server kept an old oracle price",
   );
   assert.equal(priceStatus(live, { ...fresh, receivedAtMs: null, serverTimeMs: undefined }), "live");
-});
-
-test("every chart range fits the gateway's candle limit", () => {
-  for (const [id, range] of Object.entries(CHART_RANGES)) {
-    assert(range.limit >= 2 && range.limit <= 1_000, id);
-    assert(CANDLE_INTERVALS[range.interval], id);
-  }
 });

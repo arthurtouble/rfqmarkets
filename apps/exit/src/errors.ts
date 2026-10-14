@@ -42,7 +42,7 @@ const REFUSED: Record<ExitAction, string> = {
 const BY_NAME: Record<string, (action: ExitAction) => string> = {
   Unauthorized: (action) =>
     action === "revoke"
-      ? "That key is not an active one-click trading key of this wallet."
+      ? "That key is not an active one-tap trading key of this wallet."
       : "This wallet is not allowed to do that.",
   InvalidTrade: (action) => REFUSED[action],
   Stale: () =>

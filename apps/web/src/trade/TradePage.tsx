@@ -5,8 +5,9 @@ import { useMarketFeed } from "../data/market-feed.js";
 import { useMarketList } from "../data/markets.js";
 import { fundingApr, usdc } from "../lib/format.js";
 import type { Market, Side } from "../lib/types.js";
-import { Banner, Down, EmptyState, NavIcons, Rows, Sheet, Up } from "../ui/primitives.js";
-import { useAdvanced, useDesktop } from "../ui/prefs.js";
+import { Banner, Down, Rows, Sheet, Up } from "../ui/primitives.js";
+import { UnknownMarket } from "../markets/UnknownMarket.js";
+import { useDesktop } from "../ui/prefs.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
 import { Positions } from "../positions/Positions.js";
 import { AccountCard, ActivityTabs } from "./AccountPanel.js";
@@ -16,7 +17,6 @@ import { OrderTicket } from "./OrderTicket.js";
 
 function MarketDetails({ market }: { market: Market }) {
   const { snapshot } = useMarketFeed();
-  const advanced = useAdvanced();
   const live = snapshot?.markets[market];
   return (
     <Rows
@@ -24,36 +24,12 @@ function MarketDetails({ market }: { market: Market }) {
       rows={[
         ["Funding (yearly)", fundingApr(live?.fundingApr)],
         ["Max per trade", usdc(live?.operatingMaxTradeNotional)],
-        ...(advanced
-          ? ([
-              ["Bid", usdc(live?.bid)],
-              ["Ask", usdc(live?.ask)],
-              ["Spread", live ? `${live.spread?.totalBps ?? live.baseSpreadBps} bps` : "—"],
-              ["Max open per market", usdc(live?.maxMarketNotional)],
-            ] as Array<[string, string]>)
-          : []),
+        ["Bid", usdc(live?.bid)],
+        ["Ask", usdc(live?.ask)],
+        ["Spread", live ? `${live.spread?.totalBps ?? live.baseSpreadBps} bps` : "—"],
+        ["Max open per market", usdc(live?.maxMarketNotional)],
       ]}
     />
-  );
-}
-
-/** A symbol-shaped URL for a market that is not listed. */
-function UnknownMarket({ market }: { market: Market }) {
-  return (
-    <div className="page">
-      <section className="rfq-card">
-        <EmptyState
-          icon={NavIcons.markets}
-          action={
-            <Link className="rfq-btn rfq-btn--primary" to="/markets">
-              See all markets
-            </Link>
-          }
-        >
-          <b>{market}</b> isn't listed on RFQ Markets.
-        </EmptyState>
-      </section>
-    </div>
   );
 }
 

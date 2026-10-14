@@ -8,7 +8,7 @@ import { useMarketList } from "../data/markets.js";
 import { dayChange, dayRange, searchMarkets, type DayStats } from "../lib/market-stats.js";
 import type { Market, RiskMarket } from "../lib/types.js";
 import { AssetIcon, Banner, Change, EmptyState, NavIcons, Rows, marketName } from "../ui/primitives.js";
-import { useAdvanced } from "../ui/prefs.js";
+import { useDesktop } from "../ui/prefs.js";
 import { SearchField } from "../ui/SearchField.js";
 import { Sparkline } from "../ui/Sparkline.js";
 import { PriceStatusBadge, pct } from "../trade/MarketHeader.js";
@@ -39,7 +39,7 @@ function MarketRow({
   const price = live?.mid ?? last?.mid;
   return (
     <Link
-      to="/trade/$market"
+      to="/updown/$market"
       params={{ market }}
       className="market-row"
       data-market={market}
@@ -85,7 +85,7 @@ function MarketRow({
 }
 
 function MarketList() {
-  const advanced = useAdvanced();
+  const advanced = useDesktop(); // Phones get the short list; wider screens add the detail columns.
   const [query, setQuery] = useState("");
   const { markets, symbols, get } = useMarketList();
   const stats = useMarketStats();
@@ -175,7 +175,7 @@ function Sentiment({ market, risk }: { market: Market; risk?: RiskMarket }) {
 }
 
 export function MarketsPage() {
-  const advanced = useAdvanced();
+  const advanced = useDesktop();
   const risk = useRisk(),
     positions = usePublicPositions(),
     trades = useRecentTrades(),
@@ -236,12 +236,7 @@ export function MarketsPage() {
                   <th>Side</th>
                   <th>Size</th>
                   <th>Price</th>
-                  {advanced && (
-                    <>
-                      <th>Fee</th>
-                      <th>Wallet</th>
-                    </>
-                  )}
+                  {advanced && <th>Wallet</th>}
                   <th>Time</th>
                 </tr>
               </thead>
@@ -269,7 +264,6 @@ export function MarketsPage() {
                       <td>{usdc(trade.payload.price)}</td>
                       {advanced && (
                         <>
-                          <td>{usdc(trade.payload.fee)}</td>
                           <td className="mono" title={trade.account}>
                             {shortAddress(trade.account)}
                           </td>

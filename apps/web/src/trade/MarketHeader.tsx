@@ -176,7 +176,7 @@ export function MarketBanners({ market }: { market: Market }) {
   if (!live)
     return snapshot ? (
       <Banner tone="warning">
-        <b>{marketName(market)} has no price right now.</b> Trading resumes when the oracle prices it again.
+        <b>{marketName(market)} has no price yet.</b> Trading starts again when prices catch up.
       </Banner>
     ) : null;
   if (status === "paused")
@@ -186,11 +186,11 @@ export function MarketBanners({ market }: { market: Market }) {
       </Banner>
     );
   if (live.riskMode === "guarded")
-    return <Banner tone="warning">Trade sizes are smaller than usual while our hedge catches up.</Banner>;
+    return <Banner tone="warning">Bigger trades are limited for a moment.</Banner>;
   if (live.riskMode === "reduce_only")
     return (
       <Banner tone="warning">
-        <b>Only closing trades right now.</b> Opening new positions is paused while our hedge is unavailable.
+        <b>Closing only for a moment.</b> New trades are paused; you can still close.
       </Banner>
     );
   return null;

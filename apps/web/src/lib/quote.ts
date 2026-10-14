@@ -7,7 +7,7 @@ import {
   type SpreadBreakdown,
 } from "../../../../packages/shared/src/pricing.js";
 import { quoteToWire } from "../../../../packages/shared/src/wire.js";
-import { microToInput } from "./format.js";
+import { microToInput, usdcCompact } from "./format.js";
 import { clampSlippageBps } from "./slippage.js";
 import type { Market, MarketSnapshot, MarketState, Quote, Side } from "./types.js";
 
@@ -81,7 +81,7 @@ export function indicativeQuote(
   if (!(side === "buy" ? live.canBuy : live.canSell))
     return { error: `Only exposure-reducing ${side === "buy" ? "buys" : "sells"} are available` };
   const maxNotional = BigInt(live.operatingMaxTradeNotional);
-  if (amountMicro > maxNotional) return { error: `Maximum per trade is ${Number(maxNotional) / 1e6} USDC` };
+  if (amountMicro > maxNotional) return { error: `Max per trade is ${usdcCompact(maxNotional)}` };
   try {
     const { pricing } = snapshot,
       spread = spreadOf(live);

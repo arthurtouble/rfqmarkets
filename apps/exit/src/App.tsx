@@ -307,11 +307,11 @@ export function App({ config }: { config: ExitConfig }) {
 
   const revoke = (session: string) =>
     run(`revoke:${session}`, async () => {
-      const result = await send("Turn off one-click trading", "revoke", (clearing) =>
+      const result = await send("Turn off one-tap trading", "revoke", (clearing) =>
         clearing.revokeSession(session),
       );
       if (result.ok) {
-        succeed("One-click trading key revoked", "It can no longer sign trades for you.", result.href);
+        succeed("One-tap trading key revoked", "It can no longer sign trades for you.", result.href);
         setSessions((current) =>
           Array.isArray(current) ? current.filter((item) => item.address !== session) : current,
         );
@@ -906,8 +906,8 @@ function SessionsCard({
   return (
     <Card
       id="sessions"
-      title="Turn off one-click trading"
-      intro="One-click trading uses a key the app holds for you. Revoke it to make sure nothing can trade for you."
+      title="Turn off one-tap trading"
+      intro="One-tap trading uses a key the app holds for you. Revoke it to make sure nothing can trade for you."
     >
       {sessions === "loading" ? (
         <p className="rfq-muted footnote">Looking for your keys…</p>
@@ -920,7 +920,7 @@ function SessionsCard({
           .
         </p>
       ) : sessions.length === 0 ? (
-        <p className="rfq-muted footnote">No active one-click trading keys found.</p>
+        <p className="rfq-muted footnote">No active one-tap trading keys found.</p>
       ) : (
         <ul className="session-list">
           {sessions.map((session) => (

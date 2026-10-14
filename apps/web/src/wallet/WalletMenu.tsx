@@ -127,7 +127,7 @@ export function WalletMenu({
             </a>
           )}
           <Link role="menuitem" to="/account" onClick={() => setOpen(false)}>
-            Account settings{quickSession?.privateKey && <span className="wallet-badge">One-click on</span>}
+            Account settings{quickSession?.privateKey && <span className="wallet-badge">One tap on</span>}
           </Link>
           {trader.source === "dev" &&
             switchable.map((connector) => (

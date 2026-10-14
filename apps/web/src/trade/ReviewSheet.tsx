@@ -3,7 +3,7 @@ import { useTrading, type MarketOrder } from "../data/actions.js";
 import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { emptyAccount, estimateLiquidationPrice } from "../lib/account.js";
 import { useAccount } from "../account/useAccount.js";
-import { abs, baseAmount, feeLabel, usdc, usdcCompact } from "../lib/format.js";
+import { abs, baseAmount, usdc, usdcCompact } from "../lib/format.js";
 import { friendlyError } from "../lib/errors.js";
 import { errorMessage } from "../lib/http.js";
 import { leverageLabel, quoteSecondsLeft, quoteUsable, SIDE_WORD } from "../lib/ticket.js";
@@ -83,15 +83,14 @@ export function ReviewSheet({
         <p className="body review-sentence">
           {word} <b className="tnum">{base}</b> on {marketName(market)} at{" "}
           <b className="tnum">{leverageLabel(leverage)}</b>, paying{" "}
-          <b className="tnum">{usdcCompact(payMicro)}</b>. It fills at the price protection or better, or not
-          at all.
+          <b className="tnum">{usdcCompact(payMicro)}</b>. If the price moves past your protection, nothing
+          happens.
         </p>
         <Rows
           rows={[
             ["Entry price", loading && !quote ? "Getting a firm price…" : usdc(quote?.expectedPrice)],
             [side === "buy" ? "Price protection (max)" : "Price protection (min)", usdc(quote?.worstPrice)],
             ["Liquidation price", liquidation === null ? "—" : usdc(liquidation)],
-            ["Fee", feeLabel(quote?.fee)],
             ["Margin", usdc(payMicro)],
             ["Position size", usdc(amountMicro), "is-total"],
           ]}

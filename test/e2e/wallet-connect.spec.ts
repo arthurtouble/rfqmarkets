@@ -1,5 +1,5 @@
 // Wallet connect and the account page: the connect sheet, refusals, the wrong
-// network, account switches, one-click trading and disconnect.
+// network, account switches, one-tap trading and disconnect.
 //
 // A mock extension wallet (mock-wallet.js) stands in for Rabby or MetaMask and
 // signs through the local Hardhat node. WalletConnect and Base Account open
@@ -40,7 +40,8 @@ const setWallet = (page: Page, state: WalletState) =>
   );
 const connectButton = (page: Page) => page.getByRole("button", { name: "Connect", exact: true }).first();
 const sheet = (page: Page) => page.getByRole("dialog", { name: "Connect a wallet" });
-const toast = (page: Page, text: string) => page.getByRole("status").getByText(text);
+const toast = (page: Page, text: string) =>
+  page.getByRole("status", { name: "Notifications" }).getByText(text);
 
 async function connect(page: Page) {
   await connectButton(page).click();
@@ -51,7 +52,7 @@ async function connect(page: Page) {
 }
 
 test.describe("wallet connect", () => {
-  // Sponsored actions such as a one-click session grant need collateral on the account.
+  // Sponsored actions such as a one-tap session grant need collateral on the account.
   test.beforeAll(async () => {
     for (const account of [ACCOUNT, OTHER_ACCOUNT]) await ensureCollateral(account);
   });
@@ -153,7 +154,7 @@ test.describe("wallet connect", () => {
     await page.goto("/account");
     await connect(page);
     await setWallet(page, { chainId: "0x1", failSwitch: true });
-    const banner = page.getByRole("alert").filter({ hasText: "Your wallet is on another network" });
+    const banner = page.getByRole("status").filter({ hasText: "Your wallet is on another network" });
     await expect(banner).toBeVisible();
     await expect(page.getByText("Mock Wallet · wrong network")).toBeVisible();
     await banner.getByRole("button", { name: "Switch" }).click();
@@ -167,7 +168,7 @@ test.describe("wallet connect", () => {
     await setWallet(page, { chainId: "0x1" });
     await expect(banner).toBeVisible();
     await page.getByRole("button", { name: "Turn on" }).click();
-    await expect(toast(page, "One-click trading on")).toBeVisible();
+    await expect(toast(page, "One-tap trading on")).toBeVisible();
     await expect(banner).toBeHidden();
 
     // The trade page's header keeps the account menu beside the switch button, so a stuck wallet can still disconnect.
@@ -193,21 +194,21 @@ test.describe("wallet connect", () => {
     await expect(page.getByText("0x14dC…9955")).toBeVisible();
   });
 
-  test("one-click trading turns on, pauses after a reload, and revokes", async ({ page }) => {
+  test("one-tap trading turns on, pauses after a reload, and revokes", async ({ page }) => {
     await page.goto("/account");
     await connect(page);
     await page.getByRole("button", { name: "Turn on" }).click();
-    await expect(toast(page, "One-click trading on")).toBeVisible();
+    await expect(toast(page, "One-tap trading on")).toBeVisible();
     await expect(
       page.getByText(/^On until .+\. Trades up to \$2,500 fill without a wallet prompt\.$/),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "Turn on" })).toHaveCount(0);
 
     await page.reload();
-    await expect(page.getByText(/^Paused: reloading the page cleared this tab's key/)).toBeVisible();
+    await expect(page.getByText(/^Off since you reloaded the page/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Turn on again" })).toBeVisible();
     await page.getByRole("button", { name: "Revoke" }).click();
-    await expect(toast(page, "One-click trading off")).toBeVisible();
+    await expect(toast(page, "One-tap trading off")).toBeVisible();
     await expect(page.getByRole("button", { name: "Turn on", exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });

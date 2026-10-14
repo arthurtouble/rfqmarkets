@@ -5,10 +5,14 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Hex } from "viem";
 
+/**
+ * What a one-tap key may do. Trades carry no fee (the spread is in the price), so the fee cap is the
+ * smallest the contract accepts. A trade past these limits, closes included, falls back to the wallet.
+ */
 export const QUICK_LIMITS = {
   maxTradeAmount: "2500",
   maxCumulativeAmount: "10000",
-  maxFee: "5",
+  maxFee: "0.000001",
   durationSeconds: 8 * 60 * 60,
 } as const;
 

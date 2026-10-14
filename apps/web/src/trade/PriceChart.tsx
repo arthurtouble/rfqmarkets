@@ -10,8 +10,9 @@ const usd = new Intl.NumberFormat("en-US", {
 });
 
 /**
- * Price line for the Simple view. Points are mids in dollars, oldest first.
- * Hovering or dragging scrubs: `onScrub` gets the point under the pointer, or
+ * Price line for Home and the Pro line view. Points are mids in dollars, oldest
+ * first, placed by time so a sparse seed and dense live ticks keep their real
+ * spacing. Hovering or dragging scrubs: `onScrub` gets the point under the pointer, or
  * null when the pointer leaves.
  */
 export function PriceChart({
@@ -59,25 +60,29 @@ export function PriceChart({
     mid = (high + low) / 2;
   const top = mid + range / 2,
     bottom = mid - range / 2;
-  const x = (index: number) => (index * width) / (values.length - 1);
+  const startMs = points[0].time,
+    spanMs = points.at(-1)!.time - startMs;
+  const x = (index: number) =>
+    spanMs > 0 ? ((points[index].time - startMs) * width) / spanMs : (index * width) / (values.length - 1);
   const y = (value: number) => pad + ((top - value) * (height - pad * 2)) / (top - bottom);
   const path = values.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`);
   const trend = last > first ? "up" : last < first ? "down" : "flat";
-  const spanMs = points.at(-1)!.time - points[0].time;
   const at = scrub ?? values.length - 1;
   const left = (index: number) => `${(x(index) / width) * 100}%`;
   // Edge labels hang inward so they never leave the chart.
   const align = (index: number) => {
-    const at = index / (values.length - 1);
+    const at = x(index) / width;
     return at < 0.15 ? "is-start" : at > 0.85 ? "is-end" : "";
   };
 
   const pick = (event: PointerEvent<HTMLElement>) => {
     const box = frame.current?.getBoundingClientRect();
     if (!box?.width) return;
-    const index = Math.round(
-      Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)) * (values.length - 1),
-    );
+    const target = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)) * width;
+    // The point nearest the pointer in time.
+    let index = 0;
+    for (let next = 1; next < points.length; next++)
+      if (Math.abs(x(next) - target) < Math.abs(x(index) - target)) index = next;
     setScrub(index);
     onScrub?.(points[index]);
   };

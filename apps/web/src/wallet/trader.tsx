@@ -45,7 +45,7 @@ export type Trader = {
   disconnect(): void;
   /** Verifies `prepared` against the trusted settlement and `expected` (verify-intent.ts), then signs it. */
   signIntent(prepared: Prepared, primaryType: string, expected: Expectation): Promise<Hex>;
-  /** The typed data to sign for `prepared`, or a thrown IntentMismatchError. For the one-click key. */
+  /** The typed data to sign for `prepared`, or a thrown IntentMismatchError. For the one-tap key. */
   verified(prepared: Prepared, primaryType: string, expected: Expectation): ReturnType<typeof verifyPrepared>;
   /** Signs typed data on the settlement chain; the caller has verified it. */
   signTyped(payload: TypedPayload): Promise<Hex>;
@@ -193,7 +193,7 @@ export function TraderProvider({
       if (walletAddress) disconnectWallet();
       setDevOptOut(false);
     },
-    // Disconnecting also drops this tab's one-click keys, so a shared computer keeps no signing key behind.
+    // Disconnecting also drops this tab's one-tap keys, so a shared computer keeps no signing key behind.
     disconnect: () => {
       forgetSessionKeys();
       if (walletAddress) disconnectWallet();

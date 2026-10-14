@@ -51,7 +51,7 @@ export interface ExitConfig {
   chain: ChainInfo;
   clearing: string;
   oracleNodes: string[];
-  /** First block worth scanning for one-click trading keys; 0 when unknown. */
+  /** First block worth scanning for one-tap trading keys; 0 when unknown. */
   deploymentBlock: number;
   appUrl: string;
   docsUrl: string;

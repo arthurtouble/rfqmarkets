@@ -42,11 +42,13 @@ test("deposits from the wallet gas-free and updates the wallet balance", async (
   const amount = sheet.getByRole("textbox", { name: "Amount in USDC" });
   await amount.fill("100");
   await expect(submit).toHaveText("Deposit $100.00");
-  await expect(sheet.getByText(/we pay the gas/)).toBeVisible();
+  await expect(sheet.getByText(/One signature, no gas/)).toBeVisible();
   const executed = page.waitForResponse((response) => response.url().endsWith("/v1/deposit/execute"));
   await submit.click();
   expect((await executed).status(), "the deposit was sponsored, not sent by the wallet").toBe(200);
-  await expect(page.getByRole("status").getByText("Deposited $100.00")).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByRole("status", { name: "Notifications" }).getByText("Deposited $100.00"),
+  ).toBeVisible({ timeout: 30_000 });
   await expect(sheet).toBeHidden();
 
   await openFunds(page, isMobile, "Deposit");
@@ -86,7 +88,9 @@ test("withdraws with one signature and the venue paying gas", async ({ page, isM
   await expectNoHorizontalOverflow(page);
   await sheet.getByRole("textbox", { name: "Amount in USDC" }).fill("40");
   await sheet.getByRole("button", { name: "Withdraw $40.00" }).click();
-  await expect(page.getByRole("status").getByText("Withdrew $40.00")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("status", { name: "Notifications" }).getByText("Withdrew $40.00")).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(sheet).toBeHidden();
 });
 
@@ -157,9 +161,9 @@ test("keeps the sheet open with an error toast when a withdrawal fails", async (
   const sheet = await openFunds(page, isMobile, "Withdraw");
   await sheet.getByRole("textbox", { name: "Amount in USDC" }).fill("5");
   await submitButton(sheet).click();
-  const toast = page.getByRole("status").getByText("Withdrawal failed");
+  const toast = page.getByRole("status", { name: "Notifications" }).getByText("Withdrawal failed");
   await expect(toast).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("status")).toContainText("Insufficient margin");
+  await expect(page.getByRole("status", { name: "Notifications" })).toContainText("Insufficient margin");
   await expect(sheet, "a failure leaves the sheet open to retry").toBeVisible();
   await expect(submitButton(sheet)).toHaveText("Withdraw $5.00");
 });
@@ -173,8 +177,11 @@ test("shows dashes and fails clearly without a settlement contract", async ({ pa
     await expect(sheet.getByRole("button", { name: preset })).toBeDisabled();
   await sheet.getByRole("textbox", { name: "Amount in USDC" }).fill("20");
   await submitButton(sheet).click();
-  await expect(page.getByRole("status")).toContainText("Settlement contract is not configured", {
-    timeout: 30_000,
-  });
+  await expect(page.getByRole("status", { name: "Notifications" })).toContainText(
+    "Settlement contract is not configured",
+    {
+      timeout: 30_000,
+    },
+  );
   await expect(sheet).toBeVisible();
 });

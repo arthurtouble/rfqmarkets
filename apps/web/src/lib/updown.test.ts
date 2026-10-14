@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { appendTick, betNotional, multiplierChoices, onePercentGain, pickMultiplier } from "./updown.js";
+import {
+  appendTick,
+  betNotional,
+  lossAt,
+  multiplierChoices,
+  onePercentGain,
+  pickMultiplier,
+} from "./updown.js";
 
 const USDC = 1_000_000n;
 
@@ -39,4 +46,11 @@ test("the tick line keeps a moving window and ignores repeated snapshots", () =>
     points.map((point) => point.time),
     [4_000, 13_500],
   );
+});
+
+test("the loss at the auto-close price follows the move, either way", () => {
+  // A $1,000 position entered at $2,000: a 10% drop to $1,800 loses $100, as does a rise to $2,200.
+  assert.equal(lossAt(1_000n * USDC, 2_000n * USDC, 1_800n * USDC), 100n * USDC);
+  assert.equal(lossAt(1_000n * USDC, 2_000n * USDC, 2_200n * USDC), 100n * USDC);
+  assert.equal(lossAt(1_000n * USDC, 0n, 1_800n * USDC), 0n);
 });

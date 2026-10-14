@@ -253,7 +253,8 @@ export function Banner({
   return (
     <div
       className={`rfq-banner${tone === "info" ? "" : ` rfq-banner--${tone}`}`}
-      role={tone === "info" ? undefined : "alert"}
+      // Warnings are announced politely; only danger interrupts.
+      role={tone === "danger" ? "alert" : tone === "warning" ? "status" : undefined}
     >
       <span className="rfq-banner__icon">{tone === "info" ? <Info /> : <Warn />}</span>
       <span className="banner-body">{children}</span>

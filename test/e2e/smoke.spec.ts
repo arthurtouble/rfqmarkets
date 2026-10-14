@@ -10,7 +10,7 @@ test.describe("trading app", () => {
     await expect(
       page
         .getByRole("button", { name: "Up", exact: true })
-        .or(page.getByRole("region", { name: "Your bet" })),
+        .or(page.getByRole("region", { name: "Your trade" })),
     ).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
@@ -42,8 +42,6 @@ test.describe("trading app", () => {
       await nav.getByRole("link", { name: "Account" }).click();
       await expect(page).toHaveURL(/\/account$/);
     }
-    await nav.getByRole("link", { name: "Trade" }).click();
-    await expect(page).toHaveURL(/\/trade\//);
     await nav.getByRole("link", { name: "Home" }).click();
     await expect(page).toHaveURL(/\/updown\//);
   });

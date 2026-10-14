@@ -102,7 +102,6 @@ export function TradeHistory({ address }: { address: string }) {
                 <th>Trade</th>
                 <th>Size</th>
                 <th>Price</th>
-                <th>Fee</th>
                 <th>Realized PnL</th>
               </tr>
             </thead>
@@ -120,7 +119,6 @@ export function TradeHistory({ address }: { address: string }) {
                     <div className="caption rfq-faint">{usdc(fill.notional)}</div>
                   </td>
                   <td>{usdc(fill.price)}</td>
-                  <td>{usdc(fill.fee)}</td>
                   <td>{pnl(fill)}</td>
                 </tr>
               ))}
@@ -216,8 +214,8 @@ export function FundingHistory({ address }: { address: string }) {
 const EVENT_NAMES: Record<string, string> = {
   Deposited: "Deposit",
   Withdrawn: "Withdrawal",
-  SessionGranted: "One-click trading on",
-  SessionRevoked: "One-click trading off",
+  SessionGranted: "One-tap trading on",
+  SessionRevoked: "One-tap trading off",
   Liquidated: "Liquidation",
   NonceCancelled: "Order cancelled",
   PositionClosed: "Closed at oracle price",
@@ -225,7 +223,7 @@ const EVENT_NAMES: Record<string, string> = {
 /** Trades and funding have their own tabs. */
 const SEPARATE = ["TradeExecuted", "FundingSettled"];
 
-/** Deposits, withdrawals, one-click trading and other account events. */
+/** Deposits, withdrawals, one-tap trading and other account events. */
 export function AccountHistory({ address }: { address: string }) {
   const desktop = useDesktop();
   const { marketFromIndex } = useMarketList();

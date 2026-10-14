@@ -50,12 +50,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) => void }) {
   const { chain } = useTrader();
   return (
-    <div className="toasts" role="status" aria-live="polite">
+    <div className="toasts" role="status" aria-live="polite" aria-label="Notifications">
       {toasts.map((toast) => {
         const link = toast.txHash ? txUrl(chain.id, toast.txHash) : undefined;
         const kind = toast.kind === "pending" ? "pending" : toast.kind === "success" ? "success" : "error";
         return (
-          <div key={toast.id} className={`rfq-toast rfq-toast--${kind}`}>
+          <div
+            key={toast.id}
+            className={`rfq-toast rfq-toast--${kind}`}
+            role={kind === "error" ? "alert" : undefined}
+          >
             <span className="rfq-toast__icon" aria-hidden="true">
               {toast.kind === "pending" ? (
                 <span className="rfq-spinner" />

@@ -85,7 +85,7 @@ function PerformanceCard({ account }: { account: AccountState }) {
         <PnlChart series={series} />
       )}
       <p className="caption rfq-faint">
-        Realized PnL after fees and funding, plus open positions at live prices.
+        Closed trades including funding, plus open positions at live prices.
       </p>
       <dl className="stat-grid">
         <div>
@@ -94,10 +94,13 @@ function PerformanceCard({ account }: { account: AccountState }) {
             {data ? <Change value={BigInt(data.realizedPnl)}>{signedUsdc(data.realizedPnl)}</Change> : "—"}
           </dd>
         </div>
-        <div>
-          <dt>Fees paid</dt>
-          <dd>{usdc(data?.fees)}</dd>
-        </div>
+        {data && BigInt(data.fees) > 0n && (
+          // Trades carry no fee now; this only shows for accounts that paid one before.
+          <div>
+            <dt>Fees paid</dt>
+            <dd>{usdc(data.fees)}</dd>
+          </div>
+        )}
         <div>
           <dt>Funding</dt>
           <dd>{data ? signedUsdc(data.funding) : "—"}</dd>

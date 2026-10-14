@@ -1,5 +1,5 @@
 // Checks every EIP-712 payload the API prepares before a wallet or the
-// one-click key signs it. The API (or anything between it and the browser)
+// one-tap key signs it. The API (or anything between it and the browser)
 // is not trusted to choose what the user authorizes: the domain must be the
 // settlement contract this build trusts, the types must be the protocol's own,
 // the signer must be the connected account and the fields must match what the

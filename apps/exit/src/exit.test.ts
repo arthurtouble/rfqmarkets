@@ -155,7 +155,7 @@ test("explains wallet and contract failures in plain words", () => {
   // Revert data nested the way wallets and ethers wrap it.
   assert.equal(revertName({ info: { error: { data: "0x82b42900" } } }), "Unauthorized");
   assert.match(explain({ error: { data: { data: "0xd7815800" } } }, "close"), /price expired/);
-  assert.match(explain({ data: "0x82b42900" }, "revoke"), /not an active one-click trading key/);
+  assert.match(explain({ data: "0x82b42900" }, "revoke"), /not an active one-tap trading key/);
   assert.match(explain({ revert: { name: "Margin" } }, "withdraw"), /margin requirement/);
   assert.match(explain({ revert: { name: "Replay" } }, "cancel"), /already used or cancelled/);
   assert.match(explain({ code: "CALL_EXCEPTION" }, "claim"), /nothing to claim/);

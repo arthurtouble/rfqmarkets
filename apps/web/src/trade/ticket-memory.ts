@@ -1,25 +1,14 @@
 // What the order ticket remembers on this device: the last amount and
 // leverage per market, and the slippage tolerance. Storage can be missing
-// (private windows), so every read and write is guarded.
+// (private windows), so lib/storage guards every read and write.
 import { useCallback, useMemo, useState } from "react";
 import { DEFAULT_SLIPPAGE_BPS, isValidSlippageBps } from "../lib/slippage.js";
 import { parseTicketMemory, type TicketMemory } from "../lib/ticket.js";
 import type { Market } from "../lib/types.js";
+import { load, store } from "../lib/storage.js";
 
-const read = (key: string) => {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-};
-const write = (key: string, value: string) => {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    /* storage unavailable */
-  }
-};
+const read = load,
+  write = store;
 
 export function useTicketMemory(market: Market) {
   const key = `rfq.ticket.${market}`;

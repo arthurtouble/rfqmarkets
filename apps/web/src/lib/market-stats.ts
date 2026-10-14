@@ -106,17 +106,7 @@ export function priceStatus(
   return "live";
 }
 
-/** Simple-view chart ranges: each is a candle interval and how many buckets cover it. */
-export const CHART_RANGES = {
-  "1H": { interval: "1m", limit: 60, label: "Past hour" },
-  "1D": { interval: "5m", limit: 288, label: "Past day" },
-  "1W": { interval: "1h", limit: 168, label: "Past week" },
-  "1M": { interval: "4h", limit: 180, label: "Past month" },
-} as const satisfies Record<string, { interval: CandleInterval; limit: number; label: string }>;
-export type ChartRange = keyof typeof CHART_RANGES;
-export const CHART_RANGE_IDS = Object.keys(CHART_RANGES) as ChartRange[];
-export const DEFAULT_CHART_RANGE: ChartRange = "1D";
-/** Advanced-view candle intervals, in the order the picker shows them. */
+/** Pro candle intervals, in the order the picker shows them. */
 export const CANDLE_PICKER: readonly CandleInterval[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 export const DEFAULT_CANDLE_INTERVAL: CandleInterval = "15m";
 

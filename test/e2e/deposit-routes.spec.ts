@@ -158,7 +158,7 @@ test("deposits from another network show the route's rate, fees and arrival befo
     .click();
   await page.getByRole("button", { name: "Deposit", exact: true }).first().click();
   const sheet = page.getByRole("dialog", { name: "Add funds" });
-  await expect(sheet.getByText(/we pay the gas/), "Base USDC deposits are gas-free").toBeVisible();
+  await expect(sheet.getByText(/One signature, no gas/), "Base USDC deposits are gas-free").toBeVisible();
 
   await sheet.getByRole("button", { name: /Deposit from USDC on Base/ }).click();
   await expect(sheet.getByRole("list", { name: "Your assets" })).toContainText("on Arbitrum");

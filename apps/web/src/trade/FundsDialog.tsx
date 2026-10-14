@@ -495,10 +495,10 @@ function UsdcForm({
       )}
       <p className="footnote rfq-muted sheet-note">
         {mode === "withdraw"
-          ? "Sends free funds back to your wallet. You sign once and we pay the gas. Funds backing open positions stay put."
+          ? "Sends your money back to your wallet. One signature, no gas. Money in open trades stays in."
           : gasFree
-            ? "Moves USDC on Base from your wallet into your trading balance. You sign once and we pay the gas, so you need no ETH."
-            : "Moves USDC on Base from your wallet into your trading balance. The first time, your wallet asks you to approve USDC, then to confirm the deposit."}
+            ? "Moves USDC on Base from your wallet into your trading balance. One signature, no gas, no ETH needed."
+            : "Moves USDC on Base from your wallet into your trading balance. The first time, your wallet asks you to approve USDC, then to confirm."}
       </p>
       <button
         type="button"

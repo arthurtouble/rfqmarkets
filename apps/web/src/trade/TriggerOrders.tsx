@@ -264,8 +264,8 @@ export function TpslSheet({
           </div>
         )}
         <p className="footnote rfq-faint">
-          Triggers on the oracle mid price and fills within {Number(slippage) / 100}% of your trigger. If the
-          price jumps past that, the order waits for it to come back. Whichever fills first cancels the other.
+          Fills within {Number(slippage) / 100}% of your price. If the price jumps past that, the order waits
+          for it to come back. When one fills, the other is cancelled.
         </p>
         {pastLiquidation && (
           <Banner tone="warning">

@@ -1,8 +1,13 @@
-// The Up / Down screen's sizing and its live tick line. A bet is a market
-// order: the stake is the margin, the multiplier is the leverage, and the bet
-// stays open until the player cashes out (or is liquidated), like any perp.
+// The Up / Down screen's sizing, wording and live tick line. A trade there is
+// a market order: the amount is the margin, the multiplier is the leverage, and
+// it stays open until the trader cashes out (or it auto-closes), like any perp.
 import type { ChartPoint } from "./candles.js";
-import { positionNotional } from "./ticket.js";
+import { usdcCompact } from "./format.js";
+import { MARGIN_PROBLEM, leverageLabel, positionNotional } from "./ticket.js";
+import type { Side } from "./types.js";
+
+/** The words Home uses for the two sides. */
+export const UP_DOWN: Record<Side, string> = { buy: "Up", sell: "Down" };
 
 /** Stake presets in whole dollars. */
 export const STAKE_PRESETS = [10, 25, 50, 100] as const;
@@ -52,3 +57,73 @@ export function appendTick(
   kept.push(tick);
   return kept.length > max ? kept.slice(kept.length - max) : kept;
 }
+
+/** What Home remembers about the trade it opened in a market, so the return reads against the amount put in. */
+export type BetRecord = { stake: bigint; multiplier: number; notional: bigint };
+
+export const betRecordText = (record: BetRecord) =>
+  JSON.stringify({
+    stake: record.stake.toString(),
+    multiplier: record.multiplier,
+    notional: record.notional.toString(),
+  });
+
+/** A stored record, or null when it is missing, malformed or from an older version without a size. */
+export function parseBetRecord(raw: string | null): BetRecord | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as { stake?: unknown; multiplier?: unknown; notional?: unknown };
+    if (typeof value.stake !== "string" || typeof value.notional !== "string") return null;
+    if (!/^\d{1,20}$/.test(value.stake) || !/^\d{1,24}$/.test(value.notional)) return null;
+    const multiplier = Number(value.multiplier);
+    if (!Number.isFinite(multiplier) || multiplier <= 0) return null;
+    const stake = BigInt(value.stake),
+      notional = BigInt(value.notional);
+    return stake > 0n && notional > 0n ? { stake, multiplier, notional } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether `record` describes an open position whose size at entry was
+ * `entryNotional` (USDC 1e6): within 10%, which allows for the fill price. A
+ * position opened elsewhere, or grown since, does not match.
+ */
+export const recordMatches = (record: BetRecord, entryNotional: bigint) => {
+  const gap =
+    record.notional > entryNotional ? record.notional - entryNotional : entryNotional - record.notional;
+  return gap * 10n <= record.notional;
+};
+
+/**
+ * The ticket's reason a trade can't go yet, in Home's words: Up and Down
+ * rather than Long and Short, and limits as money.
+ */
+export function homeProblem(
+  problem: string | null,
+  side: Side,
+  { multiplier, tradeCapMicro }: { multiplier: number; tradeCapMicro: bigint },
+): string | null {
+  if (problem === null || problem === MARGIN_PROBLEM) return problem;
+  const word = UP_DOWN[side];
+  if (problem.startsWith("Paused")) return "This market is paused for now";
+  if (/is closed right now$/.test(problem) || problem.startsWith("Only exposure-reducing"))
+    return `${word} is paused for now`;
+  if (problem.startsWith("Waiting for")) return "Prices are catching up";
+  if (problem === "Over the per-trade limit" || problem.startsWith("Max per trade")) {
+    const hundredths = BigInt(Math.round(multiplier * 100));
+    return tradeCapMicro > 0n && hundredths > 0n
+      ? `Max at ${leverageLabel(multiplier)} is ${usdcCompact((tradeCapMicro * 100n) / hundredths)}`
+      : "That's more than one trade allows";
+  }
+  if (problem.endsWith("at this size")) return problem.replace("at this size", "at this amount");
+  return problem;
+}
+
+/**
+ * What a position of `notional` loses if the price goes from `entry` to `exit`. The whole balance backs a
+ * trade, so at the auto-close price this can be more than the amount put in.
+ */
+export const lossAt = (notional: bigint, entry: bigint, exit: bigint) =>
+  entry > 0n ? (notional * (entry > exit ? entry - exit : exit - entry)) / entry : 0n;

@@ -22,11 +22,11 @@ function OneClickRow() {
     ? `Approve once, then trades up to ${limit} fill without a wallet prompt for 8 hours.`
     : session.privateKey
       ? `On until ${until}. Trades up to ${limit} fill without a wallet prompt.`
-      : `Paused: reloading the page cleared this tab's key. Turn it on again, or revoke the old permission (it ends at ${until} anyway).`;
+      : `Off since you reloaded the page. Turn it on again, or revoke the old key (it ends at ${until} anyway).`;
   return (
     <div className="setting-row">
       <div>
-        <div className="headline">One-click trading</div>
+        <div className="headline">One-tap trading</div>
         <div className="footnote rfq-muted">{detail}</div>
       </div>
       <div className="setting-actions">
@@ -57,7 +57,7 @@ function OneClickRow() {
 
 export function AccountPage() {
   const trader = useTrader();
-  const { mode, setMode, theme, setTheme } = usePrefs();
+  const { theme, setTheme } = usePrefs();
   const explorer = trader.address ? addressUrl(trader.chain.id, trader.address) : undefined;
   return (
     <div className="page narrow account-page">
@@ -114,24 +114,6 @@ export function AccountPage() {
       <section className="rfq-card" aria-label="Preferences">
         <div className="setting-row">
           <div>
-            <div className="headline">View</div>
-            <div className="footnote rfq-muted">
-              Advanced adds limit orders, reduce only, slippage and price details.
-            </div>
-          </div>
-          <Segmented
-            variant="switch"
-            label="View"
-            value={mode}
-            onChange={setMode}
-            options={[
-              { id: "simple", label: "Simple" },
-              { id: "advanced", label: "Advanced" },
-            ]}
-          />
-        </div>
-        <div className="setting-row">
-          <div>
             <div className="headline">Appearance</div>
           </div>
           <Segmented
@@ -151,7 +133,7 @@ export function AccountPage() {
         <a className="setting-row link-row" href={DOCS_URL} target="_blank" rel="noreferrer">
           <div>
             <div className="headline">Help and docs</div>
-            <div className="footnote rfq-muted">How trading, margin and fees work.</div>
+            <div className="footnote rfq-muted">How trading, margin and closing work.</div>
           </div>
           <span aria-hidden="true">↗</span>
         </a>
