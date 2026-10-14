@@ -1,6 +1,6 @@
 // The Up / Down home screen: a bet is a market order at the chosen stake and
-// multiplier, it shows its live result, and Cash out closes it. Runs in the
-// desktop and mobile projects.
+// multiplier, it shows its live result, Cash out closes it, and either can be
+// shared as an image card. Runs in the desktop and mobile projects.
 import type { Page } from "@playwright/test";
 import { expect, expectNoHorizontalOverflow, test } from "./fixtures.js";
 
@@ -13,6 +13,7 @@ async function startFlat(page: Page) {
   await expect(bet.or(newBet)).toBeVisible();
   if (await bet.isVisible()) {
     await bet.getByRole("button", { name: /^Cash out/ }).click();
+    await page.getByRole("region", { name: "Cashed out" }).getByRole("button", { name: "New bet" }).click();
     await expect(newBet).toBeVisible();
   }
 }
@@ -50,8 +51,33 @@ test.describe("Up / Down", () => {
     const bet = page.getByRole("region", { name: "Your bet" });
     await expect(bet).toContainText("You're Up on Ethereum with $20");
     await expectNoHorizontalOverflow(page);
+
+    // The open bet shares as a card that says what it is, and the image saves as a PNG.
+    await bet.getByRole("button", { name: "Share", exact: true }).click();
+    const share = page.getByRole("dialog", { name: "Share your bet" });
+    await expect(
+      share.getByRole("img", {
+        name: /^Share card: Up 2× on Ethereum: [+-]?\$[\d.]+ \([+-]?[\d.]+%\) so far\.$/,
+      }),
+    ).toBeVisible();
+    const download = page.waitForEvent("download");
+    await share.getByRole("button", { name: "Save image" }).click();
+    expect((await download).suggestedFilename()).toBe("rfq-eth-up.png");
+    await expectNoHorizontalOverflow(page);
+    await share.getByRole("button", { name: "Close" }).click();
+    await expect(share).toBeHidden();
+
     await bet.getByRole("button", { name: /^Cash out/ }).click();
     await expect(page.getByRole("status")).toContainText("ETH position closed");
+    // The result stays up with its own card until the next bet.
+    const result = page.getByRole("region", { name: "Cashed out" });
+    await expect(result).toContainText("You cashed out of Up on Ethereum");
+    await result.getByRole("button", { name: "Share", exact: true }).click();
+    await expect(
+      share.getByRole("img", { name: /^Share card: Cashed out .* going Up 2× on Ethereum\.$/ }),
+    ).toBeVisible();
+    await share.getByRole("button", { name: "Close" }).click();
+    await result.getByRole("button", { name: "New bet" }).click();
     await expect(page.getByRole("region", { name: "New bet" })).toBeVisible();
 
     // One-click is on now: Down fills from the button with no review.
@@ -60,7 +86,9 @@ test.describe("Up / Down", () => {
     await expect(review).toBeHidden();
     await expect(bet).toContainText("You're Down on Ethereum");
     await bet.getByRole("button", { name: /^Cash out/ }).click();
-    await expect(page.getByRole("region", { name: "New bet" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Cashed out" })).toContainText(
+      "You cashed out of Down on Ethereum",
+    );
   });
 
   test("picking another market stays on the Up / Down screen", async ({ page }) => {

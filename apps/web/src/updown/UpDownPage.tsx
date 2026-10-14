@@ -1,20 +1,29 @@
 // The home screen: one centred column with the market, a live tick chart and
 // two buttons. Up opens a long, Down a short, at the chosen stake and
 // multiplier; the bet stays open until the player cashes out. The order
-// ticket and everything else live behind "Pro" (the /trade terminal).
+// ticket and everything else live behind "Pro" (the /trade terminal). Any
+// bet, open or cashed out, can be shared as an image card.
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useAccount } from "../account/useAccount.js";
-import { useTrading } from "../data/actions.js";
+import { useTrading, type ClosedAt } from "../data/actions.js";
 import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { useMarketLeverage, useMarketList } from "../data/markets.js";
 import { useTicks } from "../data/ticks.js";
 import { initialMarginAfter } from "../lib/account.js";
 import { parseUsdcInput, signedUsdc, usdc, usdcCompact } from "../lib/format.js";
 import { DEFAULT_MARGIN_SCALE_BPS } from "../lib/leverage.js";
-import { positionView, type PositionView } from "../lib/positions.js";
+import { closePreview, positionView, type PositionView } from "../lib/positions.js";
 import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
-import { isDecimalDraft, leverageCeiling, leverageLabel, MARGIN_PROBLEM, ticketProblem } from "../lib/ticket.js";
+import type { ChartPoint } from "../lib/candles.js";
+import { returnLabel, type ShareBet } from "../lib/share.js";
+import {
+  isDecimalDraft,
+  leverageCeiling,
+  leverageLabel,
+  MARGIN_PROBLEM,
+  ticketProblem,
+} from "../lib/ticket.js";
 import type { AccountState, Market, Side } from "../lib/types.js";
 import {
   DEFAULT_MULTIPLIER,
@@ -32,11 +41,12 @@ import { useFunds } from "../trade/FundsDialog.js";
 import { MarketSwitcher, PriceHeader } from "../trade/MarketHeader.js";
 import { PriceChart } from "../trade/PriceChart.js";
 import { ReviewSheet, type ReviewOrder } from "../trade/ReviewSheet.js";
+import { ShareSheet } from "./ShareCard.js";
 
 const STAKE_KEY = "rfq.updown.stake",
   MULTIPLIER_KEY = "rfq.updown.multiplier",
-  /** The stake behind the open bet in a market, so its return reads against what the player put in. */
-  betStakeKey = (market: Market) => `rfq.updown.bet.${market}`;
+  /** The stake and multiplier behind the open bet in a market, so its return reads against what the player put in. */
+  betKey = (market: Market) => `rfq.updown.bet.${market}`;
 const load = (key: string) => {
   try {
     return localStorage.getItem(key);
@@ -51,8 +61,38 @@ const store = (key: string, value: string) => {
     /* private mode */
   }
 };
-const percent = (fraction: number | null) =>
-  fraction === null ? "" : `${fraction > 0 ? "+" : ""}${(fraction * 100).toFixed(2)}%`;
+type BetRecord = { stake: bigint | null; multiplier: number | null };
+/** The stored bet; older tabs stored the stake text alone. */
+function loadBet(market: Market): BetRecord {
+  const raw = load(betKey(market)) ?? "";
+  try {
+    const parsed = JSON.parse(raw) as { stake?: string; multiplier?: number };
+    if (parsed && typeof parsed === "object")
+      return { stake: parseUsdcInput(parsed.stake ?? ""), multiplier: Number(parsed.multiplier) || null };
+  } catch {
+    /* plain stake text */
+  }
+  return { stake: parseUsdcInput(raw), multiplier: null };
+}
+/** A bet as its share card shows it, from the position and (when closed) the fill it closed at. */
+function shareBet(view: PositionView, closed: ClosedAt | null): ShareBet {
+  const { stake, multiplier } = loadBet(view.market);
+  const pnl = closed ? closePreview(view, 10_000, null, closed.price).realizedPnl - closed.fee : view.pnl;
+  // Against the stake when this browser placed the bet; else against the margin the position uses.
+  const ret = stake ? Number((pnl * 1_000_000n) / stake) / 1_000_000 : closed ? null : view.roe;
+  return {
+    market: view.market,
+    name: marketName(view.market),
+    long: view.long,
+    multiplier,
+    pnl,
+    ret,
+    entryPrice: view.entryPrice,
+    price: closed ? closed.price : view.markPrice,
+    closed: !!closed,
+  };
+}
+type CashedOut = { bet: ShareBet; points: ChartPoint[] };
 
 export function UpDownPage({ market }: { market: Market }) {
   const list = useMarketList();
@@ -81,6 +121,8 @@ function UpDown({ market }: { market: Market }) {
   const ticks = useTicks(market);
   const open = account ? positionView(account, market) : null;
   const reference = ticks.points[0] ? BigInt(Math.round(ticks.points[0].value * 1e6)).toString() : null;
+  const [cashedOut, setCashedOut] = useState<CashedOut | null>(null);
+  const done = cashedOut?.bet.market === market ? cashedOut : null;
   return (
     <div className="page updown">
       <div className="updown__top">
@@ -97,19 +139,43 @@ function UpDown({ market }: { market: Market }) {
         state={ticks.error ? "error" : ticks.loading ? "loading" : "ready"}
       />
       {error && <Banner tone="warning">We can't load your account right now. {error.message}</Banner>}
-      {open ? <OpenBet view={open} /> : <NewBet market={market} account={account} />}
+      {open ? (
+        <OpenBet
+          view={open}
+          points={ticks.points}
+          onCashedOut={(bet) => setCashedOut({ bet, points: ticks.points })}
+        />
+      ) : done ? (
+        <CashOutResult result={done} onNext={() => setCashedOut(null)} />
+      ) : (
+        <NewBet market={market} account={account} />
+      )}
     </div>
   );
 }
 
-/** The bet in this market: live result and one button to cash out. */
-function OpenBet({ view }: { view: PositionView }) {
+const toneOf = (pnl: bigint) => (pnl > 0n ? "rfq-up" : pnl < 0n ? "rfq-down" : "rfq-faint");
+
+/** The bet in this market: live result, one button to cash out and one to share. */
+function OpenBet({
+  view,
+  points,
+  onCashedOut,
+}: {
+  view: PositionView;
+  points: ChartPoint[];
+  onCashedOut: (bet: ShareBet) => void;
+}) {
   const trading = useTrading();
   const busy = trading.busy !== null;
-  const tone = view.pnl > 0n ? "rfq-up" : view.pnl < 0n ? "rfq-down" : "rfq-faint";
-  const stake = parseUsdcInput(load(betStakeKey(view.market)) ?? "");
-  // Against the stake when this tab placed the bet; else against the margin the position uses.
-  const ret = stake ? Number((view.pnl * 1_000_000n) / stake) / 1_000_000 : view.roe;
+  const [sharing, setSharing] = useState<ShareBet | null>(null);
+  const tone = toneOf(view.pnl);
+  const bet = shareBet(view, null);
+  const cashOut = async () => {
+    // The position is gone once this resolves, so the result is worked out from the view captured here.
+    const closed = await trading.closePosition(view.market);
+    if (closed) onCashedOut(shareBet(view, closed));
+  };
   return (
     <section className="updown-bet" aria-label="Your bet">
       <p className="updown-bet__what">
@@ -118,7 +184,7 @@ function OpenBet({ view }: { view: PositionView }) {
       </p>
       <div className={`updown-bet__pnl tnum ${tone}`} aria-live="polite">
         <span>{signedUsdc(view.pnl)}</span>
-        <span className="updown-bet__roe">{percent(ret)}</span>
+        <span className="updown-bet__roe">{returnLabel(bet.ret)}</span>
       </div>
       <p className="footnote rfq-faint">
         Entry {usdc(view.entryPrice)}
@@ -129,7 +195,7 @@ function OpenBet({ view }: { view: PositionView }) {
         className="rfq-btn rfq-btn--lg rfq-btn--block rfq-btn--primary"
         disabled={busy}
         aria-busy={busy}
-        onClick={() => void trading.closePosition(view.market)}
+        onClick={() => void cashOut()}
       >
         {busy ? (
           <>
@@ -140,6 +206,42 @@ function OpenBet({ view }: { view: PositionView }) {
           `Cash out ${signedUsdc(view.pnl)}`
         )}
       </button>
+      <button type="button" className="rfq-btn rfq-btn--ghost rfq-btn--block" onClick={() => setSharing(bet)}>
+        Share
+      </button>
+      {sharing && <ShareSheet bet={sharing} points={points} onClose={() => setSharing(null)} />}
+    </section>
+  );
+}
+
+/** What the last bet made, with a share button, until the player starts the next one. */
+function CashOutResult({ result, onNext }: { result: CashedOut; onNext: () => void }) {
+  const [sharing, setSharing] = useState(false);
+  const { bet } = result;
+  return (
+    <section className="updown-bet" aria-label="Cashed out">
+      <p className="updown-bet__what">
+        You cashed out of <b className={bet.long ? "rfq-up" : "rfq-down"}>{bet.long ? "Up" : "Down"}</b> on{" "}
+        {bet.name}
+      </p>
+      <div className={`updown-bet__pnl tnum ${toneOf(bet.pnl)}`}>
+        <span>{signedUsdc(bet.pnl)}</span>
+        <span className="updown-bet__roe">{returnLabel(bet.ret)}</span>
+      </div>
+      <p className="footnote rfq-faint">
+        Entry {usdc(bet.entryPrice)} · Out at {usdc(bet.price)}
+      </p>
+      <button
+        type="button"
+        className="rfq-btn rfq-btn--lg rfq-btn--block rfq-btn--primary"
+        onClick={() => setSharing(true)}
+      >
+        Share
+      </button>
+      <button type="button" className="rfq-btn rfq-btn--ghost rfq-btn--block" onClick={onNext}>
+        New bet
+      </button>
+      {sharing && <ShareSheet bet={bet} points={result.points} onClose={() => setSharing(false)} />}
     </section>
   );
 }
@@ -171,7 +273,8 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
 
   const problems = useMemo(() => {
     const check = (side: Side) => {
-      const result = snapshot && notional > 0n ? indicativeQuote(snapshot, market, side, notional, now) : null;
+      const result =
+        snapshot && notional > 0n ? indicativeQuote(snapshot, market, side, notional, now) : null;
       const quote = result && "quote" in result ? result.quote : null;
       const signed = side === "buy" ? notional : -notional;
       const marginAfter =
@@ -197,7 +300,21 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
       });
     };
     return { buy: check("buy"), sell: check("sell") };
-  }, [snapshot, market, notional, now, account, fresh, live, stake, stakeMicro, tradeCap, multiplier, marketMax, scaleBps]);
+  }, [
+    snapshot,
+    market,
+    notional,
+    now,
+    account,
+    fresh,
+    live,
+    stake,
+    stakeMicro,
+    tradeCap,
+    multiplier,
+    marketMax,
+    scaleBps,
+  ]);
 
   const chooseStake = (text: string) => {
     if (!isDecimalDraft(text)) return;
@@ -218,7 +335,7 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
       leverage: multiplier,
       reduceOnly: false,
     };
-    store(betStakeKey(market), stake);
+    store(betKey(market), JSON.stringify({ stake, multiplier }));
     // One click once quick trading covers the size; otherwise the review sheet signs (and offers one-click).
     if (trading.quickCovers(market, notional)) await trading.marketOrder(order);
     else setReview(order);
@@ -311,7 +428,8 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
       )}
       {stakeMicro !== null && tradeCap > 0n && notional > tradeCap && (
         <p className="footnote rfq-faint center">
-          Up to {usdc((tradeCap * 100n) / BigInt(Math.round(multiplier * 100)))} at {leverageLabel(multiplier)} per bet
+          Up to {usdc((tradeCap * 100n) / BigInt(Math.round(multiplier * 100)))} at{" "}
+          {leverageLabel(multiplier)} per bet
         </p>
       )}
 
