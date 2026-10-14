@@ -1,10 +1,10 @@
 # Using the app
 
-The app at [dev.rfq-markets.workers.dev](https://dev.rfq-markets.workers.dev) has four places: **Trade**, **Markets**, **Portfolio** and **Account**. This page covers connecting a wallet, the two views, how the layout changes on a phone, and the settings you can change.
+The app at [dev.rfq-markets.workers.dev](https://dev.rfq-markets.workers.dev) has four places: **Home**, **Markets**, **Portfolio** and **Account**. Home is the Up / Down screen, the quickest way to trade. **Pro** is the full trading screen, one tap away. This page covers both, connecting a wallet, the layout on a phone and the settings you can change.
 
 ## Connecting a wallet
 
-Click **Connect** in the top right, or **Connect to trade** on the ticket. The **Connect a wallet** dialog (a sheet from the bottom of the screen on a phone) groups your options:
+Click **Connect** in the top right, or **Connect to trade** on Home or the Pro ticket. The **Connect a wallet** dialog (a sheet from the bottom of the screen on a phone) groups your options:
 
 | Section | Option | When to use it |
 | --- | --- | --- |
@@ -28,29 +28,56 @@ Base Account, and other smart-contract wallets, work the same way as an ordinary
 
 ### The wallet menu
 
-Once you are connected, the wallet button shows your account value. Click it to see which wallet is connected, its address and network, copy the address, open it on the block explorer, go to **Account settings** (marked "One-click on" while [one-click trading](../trading/one-click-trading.md) is on) or **Disconnect**. If you switch accounts inside your wallet, the app follows.
+Once you are connected, the wallet button shows your account value. Click it to see which wallet is connected, its address and network, copy the address, open it on the block explorer, go to **Account settings** (marked "One tap on" while [one-tap trading](../trading/one-tap-trading.md) is on) or **Disconnect**. If you switch accounts inside your wallet, the app follows.
 
-## Simple and Advanced
+## Home: Up / Down
 
-The app has two views, and you can switch between them at any time.
+Home opens on one market, at `/updown/BTC` for example, with its price and a chart of the last few minutes. Switch markets from the name at the top. The app remembers the last market you opened.
 
-- **Simple**, the default, shows what most trades need: direction, amount, the expected entry price, the fee and your leverage after the trade. Every order is a market order.
-- **Advanced** adds [limit orders](../trading/limit-orders.md) and [stop orders](../trading/stop-orders.md#placing-a-stop-order), **Reduce only**, the slippage choice for take profit and stop loss, the price protection, spread and inventory adjustment on the ticket, the bid, ask and limits for each market, funding on each position, and more detail on the Markets page.
+1. Pick an **amount**: type one, or tap **$10**, **$25**, **$50** or **$100**.
+2. Pick a **multiplier**: **2×**, **3×**, **5×** or **10×**, up to the market's maximum. Your trade is a position of amount × multiplier, so $10 at 5× moves like $50 of ETH. The line under the buttons shows the position size and what a 1% move your way would earn.
+3. Tap **Up** if you think the price will rise, or **Down** if you think it will fall.
 
-Switch with **View** in the top bar on a computer, or under **Account** on a phone. The choice is saved in this browser. Switching back to Simple resets the ticket to a market order with Reduce only off.
+A trade has no timer. It stays open until you tap **Cash out**. If the price moves far enough against you, it closes on its own at the auto-close price (the liquidation price) and you lose the amount. While a trade is open, Home shows its result live, the entry price and the auto-close price. After you cash out, Home shows what you made or lost, with **New trade** to start again. [Up / Down](../trading/up-down.md) has the details.
+
+### Your first trade
+
+The first time, a small sheet titled **Up on Ethereum** (or **Down on Bitcoin**, and so on) opens. It shows the price and the price the trade auto-closes at. Tap **Confirm Up** (or **Confirm Down**) and sign in your wallet.
+
+The sheet has a **Skip this next time** box, ticked by default. Leave it ticked to turn on [one-tap trading](../trading/one-tap-trading.md): your wallet asks for one more signature, and after that trades within the one-tap limits fill on a tap, with no sheet and no wallet prompt. Home then shows "One tap, no wallet prompt." under the buttons.
+
+### Sharing a trade
+
+An open trade and a cashed-out result each have a **Share** button. It draws an image card with the market, direction, multiplier and result, which you can share or save.
+
+### Money on a phone
+
+On a phone, Home shows your balance at the top. Tap it for **Add money** and **Withdraw**. On a computer, **Deposit** sits in the top bar.
+
+## Pro
+
+Tap **Pro** on Home to open the full trading screen for the same market, at `/trade/BTC` for example. Pro shows everything at once:
+
+- the order ticket with **Market**, **Limit** and **Stop** orders ([Placing a trade](../trading/placing-a-trade.md), [Limit orders](../trading/limit-orders.md), [Stop loss and take profit](../trading/stop-orders.md));
+- **Options** on the ticket: **Close only** and **Max slippage**, plus the price protection you sign;
+- a candlestick chart, from one minute to one day per candle, with the 24-hour high and low;
+- the market's bid, ask, spread and maximum open per market;
+- your positions, orders and trades underneath, with funding on each position.
+
+Up / Down trades and Pro trades are the same positions. A trade opened on Home shows in Pro and on Portfolio, and a position opened in Pro shows on Home with its **Cash out** button.
 
 ## On a phone
 
-Below 900 pixels wide, the top bar gives way to a tab bar at the bottom of the screen with **Trade**, **Markets**, **Portfolio** and **Account**.
+Below 900 pixels wide, the top bar gives way to a tab bar at the bottom of the screen with **Home**, **Markets**, **Portfolio** and **Account**.
 
-On the trade page, the chart and your position in that market sit at the top, and two buttons, **Long** and **Short**, stay at the bottom of the screen. Tapping either opens the order ticket as a sheet. Your other markets' positions, your orders and your history are under **Portfolio**.
+In Pro on a phone, the chart and your position in that market sit at the top, and two buttons, **Long** and **Short**, stay at the bottom of the screen. Tapping either opens the order ticket as a sheet. Your other positions, your orders and your history are under **Portfolio**.
 
 ## The pages
 
-- **Trade** shows one market: the price and a chart, the market's funding rate and maximum trade, the order ticket, your account value and, underneath, your positions, orders and trades. Switch markets from the market name above the chart. The app remembers the last market you opened. In Simple view the chart is a price line over the past hour, day, week or month, and the change under the price covers the same period; drag across the chart (or hover on a computer) to read the price at any moment. Advanced view shows candlesticks instead, from one minute to one day each, with the 24-hour high and low.
-- **Markets** lists every market with its price, 24-hour change and funding rate, with a search box, plus venue-wide open interest and recent trades. See [Positions and your account](../trading/positions.md#the-markets-page).
-- **Portfolio** is your account in full: account value, margin in use and leverage, a chart of your profit or loss with realized PnL, fees, funding and volume, then every position (with **Close all**), order, trade, funding payment and transfer. See [Positions and your account](../trading/positions.md).
-- **Account** holds your wallet, [one-click trading](../trading/one-click-trading.md), the view and appearance settings, a link to these docs and a link to the [emergency exit page](../protocol/safety-and-exits.md#the-exit-page).
+- **Home** is the Up / Down screen for one market, described above.
+- **Markets** lists every market with its price, 24-hour change and funding rate, with a search box, plus venue-wide open interest and recent trades. Tap a market to open it on Home. Wider screens add more columns. See [Positions and your account](../trading/positions.md#the-markets-page).
+- **Portfolio** is your account in full: account value, margin in use and leverage, a chart of your profit or loss with realized PnL, funding and volume, then every position (with **Close all**), order, trade, funding payment and transfer. See [Positions and your account](../trading/positions.md).
+- **Account** holds your wallet, [one-tap trading](../trading/one-tap-trading.md), the appearance setting, a link to these docs and a link to the [emergency exit page](../protocol/safety-and-exits.md#the-exit-page).
 
 ## Appearance
 
@@ -58,9 +85,9 @@ Under **Account**, **Appearance** offers **System**, **Light** and **Dark**. Sys
 
 ## Notices
 
-Every action you take, from a trade to a withdrawal, shows a notice at the edge of the screen. It follows the action through its steps, ends with the result and a link to the transaction, and disappears after a few seconds. An error stays a little longer and says what went wrong, for example "Trade failed" followed by the reason. [Placing a trade](../trading/placing-a-trade.md#when-a-trade-is-refused) lists the common reasons.
+Every action you take, from a trade to a withdrawal, shows a notice at the edge of the screen. It follows the action through its steps, ends with the result and a link to the transaction, and disappears after a few seconds. A trade from Home ends with a line such as "You're Up on Ethereum with $10". An error stays a little longer and says what went wrong in a short sentence, for example "The price moved. Nothing was traded. Try again." [Placing a trade](../trading/placing-a-trade.md#when-a-trade-is-refused) lists the common reasons.
 
-The app also shows banners above the ticket when a market is not trading normally:
+In Pro, banners above the ticket show when a market is not trading normally:
 
 | Banner | Meaning |
 | --- | --- |

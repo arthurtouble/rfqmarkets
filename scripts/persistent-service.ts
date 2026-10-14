@@ -9,7 +9,6 @@ import { buildGateway } from "../services/gateway/src/server.js";
 import { buildHedger } from "../services/hedger/src/server.js";
 import { HyperliquidVenue } from "../services/hedger/src/hyperliquid.js";
 import { PythHermesSource } from "../services/api/src/oracle.js";
-import { HttpFeeTierSource } from "../services/api/src/fee-tiers.js";
 import { HttpHedgeRiskSource } from "../services/api/src/hedge-risk.js";
 import { QUOTE_MODEL_VERSION } from "../packages/shared/src/pricing.js";
 import { buildKeeper } from "../services/keeper/src/server.js";
@@ -201,7 +200,6 @@ switch (role) {
         feedIds: feedIdsByMarket(config.feedIds),
       }),
       hedgeRiskSource: new HttpHedgeRiskSource(config.hedgeRiskUrl, secrets.operationsToken),
-      ...(config.feeTiers ? { feeTierSource: new HttpFeeTierSource(config.indexerUrl) } : {}),
       operationsToken: secrets.operationsToken,
       publicRpcUrl: config.publicRpcUrl,
       clientIpHeader: config.clientIpHeader,

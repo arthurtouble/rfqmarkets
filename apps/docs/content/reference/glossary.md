@@ -4,13 +4,19 @@
 
 **Approver.** One of three keys that independently check and co-sign every trade. Two signatures are required. See [Approvers](../protocol/approvers.md).
 
+**Auto-close price.** The price at which a trade on Home closes on its own because the account has reached its liquidation level. It is the estimated liquidation price. See [Up / Down](../trading/up-down.md).
+
 **Available to trade.** Opening equity minus initial margin. How much more margin you can commit, and how much you can withdraw. Sometimes called available margin.
 
 **Base.** The Ethereum layer-2 network the venue settles on. Chain id 8453.
 
 **Basis point (bp).** One hundredth of a percent. 8 bps is 0.08%.
 
+**Cash out.** The button on Home that closes your whole position in that market at the current price.
+
 **Clearing contract.** The smart contract that holds all collateral and positions and enforces every rule.
+
+**Close only.** An option on the Pro ticket that lets a trade only shrink a position, never grow or flip it. The signed intent calls it reduce-only.
 
 **Collateral.** The USDC credited to your account.
 
@@ -54,11 +60,13 @@
 
 **Mark.** The price a position is valued at: the oracle bid for longs, the ask for shorts.
 
+**Multiplier.** On Home, how many times your amount the position is worth: $10 at 5× is a $50 position. It is the leverage of the trade.
+
 **Nonce.** A number that makes each signed message usable once.
 
 **Notional.** The size of a position in USDC: size times price.
 
-**One-click trading.** A session key that signs market orders and closes for you within contract-enforced limits. Formerly called quick trading. See [One-click trading](../trading/one-click-trading.md).
+**One-tap trading.** A session key that signs market orders, cash-outs and closes for you within contract-enforced limits. Formerly called quick trading. See [One-tap trading](../trading/one-tap-trading.md).
 
 **Oracle.** Three nodes that sign aggregated exchange prices, and the contract that accepts a report from at least two of them. See [Price oracle](../markets/price-oracle.md).
 
@@ -66,24 +74,24 @@
 
 **Price protection.** The worst price you sign. The app uses 8 bps beyond the firm quote; the API accepts 1 to 500 bps.
 
-**Reduce only.** A flag that lets a trade only shrink a position, never grow or flip it.
+**Pro.** The full trading screen, with the order ticket, limit and stop orders and candlestick charts. Open it from **Pro** on Home.
 
 **Resolution.** The venue's wind-down if the maker cannot cover its obligations: fixed prices, then pro-rata payouts. See [Safety and exits](../protocol/safety-and-exits.md#resolution).
 
 **RFQ.** Request for quote: asking a market maker for a firm price for a specific size.
 
-**Session key.** See *One-click trading*.
-
-**Simple and Advanced.** The app's two views. Advanced adds limit orders, reduce only and price details.
+**Session key.** See *One-tap trading*.
 
 **Skew.** Traders' net position in a market, long minus short.
 
 **Slippage.** How far the fill price may move past the quote before a trade is refused. Set by the price protection.
 
-**Spread.** The maker's margin over the oracle price, in basis points. Adaptive; 2 bps at its base.
+**Spread.** The maker's margin over the oracle price, in basis points. Adaptive; 4 bps at its base today, including the 2 bps platform markup.
 
 **Stop loss, take profit, stop entry.** Orders that wait for the oracle mid to cross a trigger price and then trade within a signed band. See [Stop loss and take profit](../trading/stop-orders.md).
 
 **Stress loss.** The maker's estimated loss if every market moved sharply against it at once. Kept below its capital.
+
+**Up / Down.** The Home screen. **Up** opens a long and **Down** a short, sized as amount × multiplier. See [Up / Down](../trading/up-down.md).
 
 **USDC.** The dollar stablecoin used for all collateral and settlement; specifically Circle's native USDC on Base.

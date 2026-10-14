@@ -26,7 +26,7 @@ RFQ Markets is a development deployment that runs on Base mainnet with real USDC
 ## Pricing and counterparty
 
 - **The market maker is your only counterparty.** Every trade is against the Protocol's market maker, which is operated by or on behalf of RFQ Markets and trades for its own account. Its interests are opposed to yours.
-- **Prices include a spread and an inventory charge** that widen in volatile or one-sided markets, and a trading fee is charged on top. The price you can trade at may differ from prices on other venues. See [Pricing and fees](../risk/pricing-and-fees.md).
+- **Prices include a spread and an inventory charge** that widen in volatile or one-sided markets. No separate trading fee is charged; the platform is paid through a markup included in the spread. The price you can trade at may differ from prices on other venues. See [Pricing and fees](../risk/pricing-and-fees.md).
 - **The maker can refuse to trade.** When its risk limits or capital limits are reached, the maker may refuse new trades in one or both directions, possibly when you most want to trade. Trades that reduce your risk are favored but not guaranteed.
 - **Your profit depends on the maker's capital.** Profits are paid from the collateral the contract holds, which includes the maker's capital and the insurance fund. If losses exceed them, the Protocol can enter resolution and pay out claims pro rata, so you may receive less than the full value of your account, possibly much less. See [Safety and exits](../protocol/safety-and-exits.md).
 
@@ -44,7 +44,7 @@ Trades, margin, funding and liquidations rely on prices reported by an oracle of
 - **Upgrades can change the rules.** Upgradeable contracts can be replaced with new code. Today there is no timelock to give you time to react.
 - **The Interface and our services can fail.** Our servers, the approvers, the API or Cloudflare can be unavailable, slow, attacked or misconfigured. While they are down you cannot open trades, and some actions may only be possible directly on the contract, at your own gas cost.
 - **Blockchain network risk.** The Base network can halt, reorganize, be congested or censor transactions. Its sequencer is operated by a single company. Network fees can rise sharply.
-- **Wallet and key risk.** If you lose your keys, seed phrase or passkey, or if they are stolen, your funds may be lost permanently. Anyone with access to your open browser can use an active one-click trading key to trade (but not withdraw) within its limits. Phishing sites and malicious signature requests are common; always check the address of the site and what you are signing.
+- **Wallet and key risk.** If you lose your keys, seed phrase or passkey, or if they are stolen, your funds may be lost permanently. Anyone with access to your open browser can use an active one-tap trading key to trade (but not withdraw) within its limits. Phishing sites and malicious signature requests are common; always check the address of the site and what you are signing.
 - **Cyberattacks.** The Interface, its providers and your own devices can be targeted by hackers, malware, DNS hijacking and other attacks.
 
 ## Collateral risk

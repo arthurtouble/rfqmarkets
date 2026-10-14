@@ -21,17 +21,20 @@ function useRoute() {
       history.pushState(null, "", target);
       setRoute(normalize(path));
     } else history.replaceState(null, "", target);
-    requestAnimationFrame(() => (hash ? document.getElementById(hash)?.scrollIntoView() : window.scrollTo(0, 0)));
+    requestAnimationFrame(() =>
+      hash ? document.getElementById(hash)?.scrollIntoView() : window.scrollTo(0, 0),
+    );
   };
   return [route, go] as const;
 }
 
 /** A click handler that keeps in-manual navigation in the page but leaves modified clicks to the browser. */
-const navigate = (go: (target: string) => void, target: string) => (event: React.MouseEvent<HTMLAnchorElement>) => {
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-  event.preventDefault();
-  go(target);
-};
+const navigate =
+  (go: (target: string) => void, target: string) => (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+    event.preventDefault();
+    go(target);
+  };
 
 export function App() {
   const [route, go] = useRoute();
@@ -70,7 +73,12 @@ export function App() {
           onClick={() => setMenuOpen(!menuOpen)}
         >
           <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <path d={menuOpen ? "M4 4l10 10M14 4L4 14" : "M2 5h14M2 9h14M2 13h14"} stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            <path
+              d={menuOpen ? "M4 4l10 10M14 4L4 14" : "M2 5h14M2 9h14M2 13h14"}
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
           </svg>
         </button>
         <a className="rfq-logo" href="/" onClick={navigate(open, "/")}>
@@ -79,7 +87,10 @@ export function App() {
         </a>
         <span className="manual-tag">Internal manual</span>
         <div className="rfq-topbar__end">
-          <span className="rfq-badge rfq-badge--warning" title="Behind Cloudflare Access. Contains architecture and operating details, never secrets.">
+          <span
+            className="rfq-badge rfq-badge--warning"
+            title="Behind Cloudflare Access. Contains architecture and operating details, never secrets."
+          >
             Restricted
           </span>
         </div>
@@ -93,7 +104,13 @@ export function App() {
               <circle cx="7" cy="7" r="4.8" fill="none" stroke="currentColor" strokeWidth="1.5" />
               <path d="M10.6 10.6L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
-            <input type="search" aria-label="Search the manual" placeholder="Search the manual" value={query} onChange={(event) => setQuery(event.target.value)} />
+            <input
+              type="search"
+              aria-label="Search the manual"
+              placeholder="Search the manual"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
           </div>
           {query.trim().length > 1 ? (
             <nav className="manual-results" aria-label="Search results">
@@ -120,7 +137,12 @@ export function App() {
                   {pages
                     .filter((item) => item.section === section)
                     .map((item) => (
-                      <a key={item.id} href={item.route} aria-current={item.route === route ? "page" : undefined} onClick={navigate(open, item.route)}>
+                      <a
+                        key={item.id}
+                        href={item.route}
+                        aria-current={item.route === route ? "page" : undefined}
+                        onClick={navigate(open, item.route)}
+                      >
                         {item.title}
                       </a>
                     ))}
@@ -146,7 +168,8 @@ export function Article({ page, open }: { page: Page; open: (target: string) => 
   const link = (href: string): LinkProps => {
     const target = resolveLink(page.id, href, pages);
     if (target.kind === "external") return { href: target.href, external: true };
-    const destination = target.kind === "anchor" ? `#${target.hash}` : `${target.route}${target.hash ? `#${target.hash}` : ""}`;
+    const destination =
+      target.kind === "anchor" ? `#${target.hash}` : `${target.route}${target.hash ? `#${target.hash}` : ""}`;
     return { href: destination, onClick: navigate(open, destination) };
   };
   return (
@@ -182,7 +205,12 @@ export function Article({ page, open }: { page: Page; open: (target: string) => 
         <nav className="manual-toc" aria-label="On this page">
           <h2>On this page</h2>
           {page.headings.map((heading) => (
-            <a key={heading.slug} href={`#${heading.slug}`} className={heading.level === 3 ? "is-sub" : undefined} onClick={navigate(open, `#${heading.slug}`)}>
+            <a
+              key={heading.slug}
+              href={`#${heading.slug}`}
+              className={heading.level === 3 ? "is-sub" : undefined}
+              onClick={navigate(open, `#${heading.slug}`)}
+            >
               {heading.text}
             </a>
           ))}
@@ -198,8 +226,8 @@ function NotFound({ route, open }: { route: string; open: (target: string) => vo
       <article className="manual-article">
         <h1>Page not found</h1>
         <p>
-          Nothing in the manual lives at <code>{route}</code>. The page may have moved when the docs were reorganised;
-          try the search.
+          Nothing in the manual lives at <code>{route}</code>. The page may have moved when the docs were
+          reorganised; try the search.
         </p>
         <p>
           <a href="/" onClick={navigate(open, "/")}>

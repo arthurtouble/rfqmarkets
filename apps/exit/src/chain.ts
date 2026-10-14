@@ -1,5 +1,12 @@
 // Reads and writes on the clearing contract through the connected wallet's own provider.
-import { BrowserProvider, Contract, Interface, decodeBytes32String, getAddress, type ContractTransactionResponse } from "ethers";
+import {
+  BrowserProvider,
+  Contract,
+  Interface,
+  decodeBytes32String,
+  getAddress,
+  type ContractTransactionResponse,
+} from "ethers";
 import { SignedOracleClient } from "../../../packages/shared/src/signed-oracle.js";
 import type { ExitConfig } from "./config.js";
 import type { AccountState, MarketPrice, Position, Resolution } from "./model.js";
@@ -68,7 +75,10 @@ export class ExitChain {
   readonly clearing: Contract;
   private oracleSetup?: Promise<OracleSetup | null>;
 
-  constructor(readonly config: ExitConfig, wallet: Eip1193) {
+  constructor(
+    readonly config: ExitConfig,
+    wallet: Eip1193,
+  ) {
     this.provider = new BrowserProvider(wallet, "any");
     this.clearing = new Contract(config.clearing, CLEARING_ABI, this.provider);
   }
@@ -83,7 +93,17 @@ export class ExitChain {
     const block = await this.latestBlock();
     const at = { blockTag: block.number };
     const c = this.clearing;
-    const [paused, count, collateral, openMask, openingEquity, initialMargin, required, usdcAddress, walletEth] = await Promise.all([
+    const [
+      paused,
+      count,
+      collateral,
+      openMask,
+      openingEquity,
+      initialMargin,
+      required,
+      usdcAddress,
+      walletEth,
+    ] = await Promise.all([
       c.paused(at) as Promise<boolean>,
       c.marketCount(at) as Promise<bigint>,
       c.collateralOf(account, at) as Promise<bigint>,
@@ -95,20 +115,40 @@ export class ExitChain {
       this.provider.getBalance(account, block.number),
     ]);
     const markets = Array.from({ length: Number(count) }, (_, market) => market);
-    const open = markets.filter(market => (openMask >> BigInt(market)) & 1n);
-    const symbols = await Promise.all(markets.map(async market => {
-      const params = await c.marketParams(market, at);
-      try { return decodeBytes32String(params.symbol); } catch { return `#${market}`; }
-    }));
+    const open = markets.filter((market) => (openMask >> BigInt(market)) & 1n);
+    const symbols = await Promise.all(
+      markets.map(async (market) => {
+        const params = await c.marketParams(market, at);
+        try {
+          return decodeBytes32String(params.symbol);
+        } catch {
+          return `#${market}`;
+        }
+      }),
+    );
     const prices = new Map<number, MarketPrice>();
     const positions: Position[] = [];
-    await Promise.all(open.map(async market => {
-      const [position, state] = await Promise.all([c.positionOf(account, market, at), c.markets(market, at)]);
-      prices.set(market, { bid: state.lastBid, ask: state.lastAsk, time: Number(state.lastPriceTime) });
-      if (position.size !== 0n) positions.push({ market, symbol: symbols[market], size: position.size, entryPrice: position.entryPrice });
-    }));
+    await Promise.all(
+      open.map(async (market) => {
+        const [position, state] = await Promise.all([
+          c.positionOf(account, market, at),
+          c.markets(market, at),
+        ]);
+        prices.set(market, { bid: state.lastBid, ask: state.lastAsk, time: Number(state.lastPriceTime) });
+        if (position.size !== 0n)
+          positions.push({
+            market,
+            symbol: symbols[market],
+            size: position.size,
+            entryPrice: position.entryPrice,
+          });
+      }),
+    );
     positions.sort((a, b) => a.market - b.market);
-    const walletUsdc = await new Contract(usdcAddress, ERC20_ABI, this.provider).balanceOf(account, at) as bigint;
+    const walletUsdc = (await new Contract(usdcAddress, ERC20_ABI, this.provider).balanceOf(
+      account,
+      at,
+    )) as bigint;
     return {
       account: getAddress(account),
       now: block.timestamp,
@@ -124,20 +164,36 @@ export class ExitChain {
     };
   }
 
-  private async readResolution(account: string, markets: number[], at: { blockTag: number }): Promise<Resolution> {
+  private async readResolution(
+    account: string,
+    markets: number[],
+    at: { blockTag: number },
+  ): Promise<Resolution> {
     const c = this.clearing;
-    const [pricesReady, finalized, cursor, accounts, claim, paid, totalClaims, assets, samples] = await Promise.all([
-      c.resolutionPricesReady(at) as Promise<boolean>,
-      c.resolutionFinalized(at) as Promise<boolean>,
-      c.resolutionCursor(at) as Promise<bigint>,
-      c.accountCount(at) as Promise<bigint>,
-      c.resolutionClaim(account, at) as Promise<bigint>,
-      c.resolutionPaid(account, at) as Promise<bigint>,
-      c.totalResolutionClaims(at) as Promise<bigint>,
-      c.resolutionAssets(at) as Promise<bigint>,
-      Promise.all(markets.map(market => c.resolutionSampleCount(market, at) as Promise<bigint>)),
-    ]);
-    return { required: true, pricesReady, finalized, cursor, accounts, claim, paid, totalClaims, assets, samples: Math.max(0, ...samples.map(Number)) };
+    const [pricesReady, finalized, cursor, accounts, claim, paid, totalClaims, assets, samples] =
+      await Promise.all([
+        c.resolutionPricesReady(at) as Promise<boolean>,
+        c.resolutionFinalized(at) as Promise<boolean>,
+        c.resolutionCursor(at) as Promise<bigint>,
+        c.accountCount(at) as Promise<bigint>,
+        c.resolutionClaim(account, at) as Promise<bigint>,
+        c.resolutionPaid(account, at) as Promise<bigint>,
+        c.totalResolutionClaims(at) as Promise<bigint>,
+        c.resolutionAssets(at) as Promise<bigint>,
+        Promise.all(markets.map((market) => c.resolutionSampleCount(market, at) as Promise<bigint>)),
+      ]);
+    return {
+      required: true,
+      pricesReady,
+      finalized,
+      cursor,
+      accounts,
+      claim,
+      paid,
+      totalClaims,
+      assets,
+      samples: Math.max(0, ...samples.map(Number)),
+    };
   }
 
   /** The signed oracle's rules, read from the chain; null when the deployment uses another oracle. */
@@ -146,8 +202,19 @@ export class ExitChain {
       const address = getAddress(await this.clearing.oracle());
       const oracle = new Contract(address, ORACLE_ABI, this.provider);
       try {
-        const [signers, threshold, maxDeviationBps, maxSkew] = await Promise.all([oracle.signers(), oracle.threshold(), oracle.maxDeviationBps(), oracle.maxSkew()]);
-        return { address, signers: [...signers], threshold: Number(threshold), maxDeviationBps: Number(maxDeviationBps), maxSkewSeconds: Number(maxSkew) };
+        const [signers, threshold, maxDeviationBps, maxSkew] = await Promise.all([
+          oracle.signers(),
+          oracle.threshold(),
+          oracle.maxDeviationBps(),
+          oracle.maxSkew(),
+        ]);
+        return {
+          address,
+          signers: [...signers],
+          threshold: Number(threshold),
+          maxDeviationBps: Number(maxDeviationBps),
+          maxSkewSeconds: Number(maxSkew),
+        };
       } catch {
         return null;
       }
@@ -159,10 +226,15 @@ export class ExitChain {
    * Fetches the newest batch from every oracle node and combines them into a report the contract accepts,
    * checked against the signer set on chain. Throws when the nodes cannot produce one covering `markets`.
    */
-  async fetchReport(markets: number[], fetchImpl: typeof fetch = fetch.bind(globalThis)): Promise<{ report: string; validUntil: number }> {
+  async fetchReport(
+    markets: number[],
+    fetchImpl: typeof fetch = fetch.bind(globalThis),
+  ): Promise<{ report: string; validUntil: number }> {
     const setup = await this.oracle();
-    if (!setup) throw new Error("This deployment does not use the signed price oracle. Paste a report under Advanced.");
-    if (!this.config.oracleNodes.length) throw new Error("This build lists no oracle nodes. Paste a report under Advanced.");
+    if (!setup)
+      throw new Error("This deployment does not use the signed price oracle. Paste a report under Advanced.");
+    if (!this.config.oracleNodes.length)
+      throw new Error("This build lists no oracle nodes. Paste a report under Advanced.");
     const client = new SignedOracleClient({
       domain: { chainId: this.config.chainId, verifyingContract: setup.address },
       nodes: this.config.oracleNodes,
@@ -175,14 +247,16 @@ export class ExitChain {
     });
     await client.poll();
     const snapshot = client.latest();
-    const priced = new Set(snapshot?.prices.map(price => price.market));
-    if (!snapshot || markets.some(market => !priced.has(market)))
-      throw new Error("Not enough oracle nodes answered with a current price. Try again in a few seconds, or paste a report under Advanced.");
+    const priced = new Set(snapshot?.prices.map((price) => price.market));
+    if (!snapshot || markets.some((market) => !priced.has(market)))
+      throw new Error(
+        "Not enough oracle nodes answered with a current price. Try again in a few seconds, or paste a report under Advanced.",
+      );
     return { report: snapshot.report, validUntil: snapshot.validUntil };
   }
 
   /**
-   * Active one-click trading keys this account granted, from SessionGranted logs. Wallet RPCs limit log
+   * Active one-tap trading keys this account granted, from SessionGranted logs. Wallet RPCs limit log
    * ranges, so the scan walks back in chunks and gives up quietly; the page also takes a key by hand.
    */
   async sessions(account: string, maxChunks = 40, chunk = 9_000): Promise<Session[] | null> {
@@ -203,10 +277,14 @@ export class ExitChain {
       if (!keys.size) return null;
     }
     const now = (await this.latestBlock()).timestamp;
-    const sessions = await Promise.all([...keys].map(async address => {
-      const session = await this.clearing.sessions(address);
-      return getAddress(session.account) === getAddress(account) && Number(session.validUntil) > now ? { address, validUntil: Number(session.validUntil) } : null;
-    }));
+    const sessions = await Promise.all(
+      [...keys].map(async (address) => {
+        const session = await this.clearing.sessions(address);
+        return getAddress(session.account) === getAddress(account) && Number(session.validUntil) > now
+          ? { address, validUntil: Number(session.validUntil) }
+          : null;
+      }),
+    );
     return sessions.filter((session): session is Session => session !== null);
   }
 
@@ -215,7 +293,10 @@ export class ExitChain {
    * would make an out-of-date price look fresh.
    */
   async latestBlock(): Promise<{ number: number; timestamp: number }> {
-    const block = await this.provider.send("eth_getBlockByNumber", ["latest", false]) as { number?: string; timestamp?: string } | null;
+    const block = (await this.provider.send("eth_getBlockByNumber", ["latest", false])) as {
+      number?: string;
+      timestamp?: string;
+    } | null;
     if (!block?.number || !block.timestamp) throw new Error("Your wallet did not return the latest block.");
     return { number: Number(block.number), timestamp: Number(block.timestamp) };
   }
@@ -235,4 +316,15 @@ export class ExitChain {
 
 export const clearingInterface = new Interface(CLEARING_ABI);
 
-const emptyResolution = (): Resolution => ({ required: false, pricesReady: false, finalized: false, samples: 0, cursor: 0n, accounts: 0n, claim: 0n, paid: 0n, totalClaims: 0n, assets: 0n });
+const emptyResolution = (): Resolution => ({
+  required: false,
+  pricesReady: false,
+  finalized: false,
+  samples: 0,
+  cursor: 0n,
+  accounts: 0n,
+  claim: 0n,
+  paid: 0n,
+  totalClaims: 0n,
+  assets: 0n,
+});

@@ -36,7 +36,7 @@ We may, at our sole discretion and without notice, refuse, restrict, suspend or 
 
 ### 2.1 The Protocol
 
-The Protocol is a set of smart contracts on Base that hold traders' USDC collateral, record positions in perpetual futures, and settle trades. A trade settles only when your signed intent, a signed oracle price report, and the co-signatures of two of three independent approvers are all verified by the contract. The [Introduction](../start/introduction.md) and [How a trade settles](../protocol/settlement.md) describe this in detail.
+The Protocol is a set of smart contracts on Base that hold traders' USDC collateral, record positions in perpetual futures, and settle trades. A trade settles only when your signed intent, a signed oracle price report, and the co-signatures of two of three approvers are all verified by the contract. The [Introduction](../start/introduction.md) and [How a trade settles](../protocol/settlement.md) describe this in detail.
 
 ### 2.2 The Interface
 
@@ -50,9 +50,9 @@ RFQ Markets operates on a request-for-quote model. Your counterparty for every t
 
 We do not take custody of your digital assets or your private keys. Collateral you deposit is held by the Protocol's smart contracts, under the rules those contracts enforce. We cannot access, recover, reverse or freeze transactions in your wallet. You are solely responsible for safeguarding your wallet, keys, seed phrase, passkeys and devices. If you lose access to them, we cannot help you recover your assets.
 
-### 2.5 One-click trading
+### 2.5 One-tap trading
 
-If you enable one-click trading, your browser creates a session key that can sign trades on your behalf within the limits and the time window you approve, and that the contract will not allow to withdraw. The session key is held by your browser. Anyone with access to your browser or device while it is active may be able to trade with it. You are responsible for every trade it signs, and you can revoke it at any time.
+If you enable one-tap trading, your browser creates a session key that can sign trades on your behalf within the limits and the time window you approve, and that the contract will not allow to withdraw. The session key is held by your browser. Anyone with access to your browser or device while it is active may be able to trade with it. You are responsible for every trade it signs, and you can revoke it at any time.
 
 ### 2.6 Development status
 
@@ -74,7 +74,7 @@ Positions require margin and accrue funding as described in [Margin](../risk/mar
 
 ### 3.4 Fees
 
-You agree to pay the trading fees, spreads and other charges displayed in the Interface and described in [Pricing and fees](../risk/pricing-and-fees.md), as they apply at the time you sign. The maximum fee is part of every signed intent. We may change fees and pricing parameters for future trades at any time. You are responsible for the network fees of any transaction you submit yourself.
+No trading fee is charged on any trade. RFQ Markets is compensated through a markup included in the quoted price and spread, as described in [Pricing and fees](../risk/pricing-and-fees.md). The price you sign already includes that markup, and you agree to trade at the prices and spreads displayed in the Interface as they apply at the time you sign. The maximum fee is part of every signed intent, and the Protocol will not charge a fee above it. We may change pricing parameters, or introduce fees, for future trades at any time; any fee will be displayed in the Interface before you sign. You are responsible for the network fees of any transaction you submit yourself and for any fees charged by third-party services you use, such as bridges and wallet providers.
 
 ### 3.5 Pauses, wind-down and resolution
 

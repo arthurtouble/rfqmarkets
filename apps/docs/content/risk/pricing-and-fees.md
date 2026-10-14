@@ -14,7 +14,7 @@ buy price        = oracle ask + premium
 sell price       = oracle bid − premium
 ```
 
-The ticket shows the estimated price, which includes everything you pay, and **Fee** reads **None**. **Price details** splits out the spread and the inventory adjustment.
+The app shows the estimated price, which includes everything you pay. There is no fee line because there is no fee. In Pro, the market details show the current spread.
 
 ## The spread
 
@@ -29,7 +29,7 @@ The maker's spread is adaptive. It starts from a base and widens when trading is
 | Basis | A gap between the hedging venue and the oracle | 25 bps |
 | Uncertainty | Disagreement between oracle sources | 20 bps |
 
-The total is capped at 100 bps. In calm markets it is close to the 4 bps base. The current total is shown as **Quote spread** in the market header.
+The total is capped at 100 bps. In calm markets it is close to the 4 bps base. The current total is shown as **Spread** in the market details in Pro.
 
 The flow-toxicity component reacts to how the market moves after the maker's fills in aggregate, decaying with a 30-second half-life. It does not look at who you are; the same price applies to every trader at the same moment and size.
 
@@ -48,13 +48,15 @@ Trades that are still in flight count too. If another trade in the same directio
 
 ## No fees
 
-There is no trading fee on any trade, market or limit, open or close. The platform earns a 2 basis point (0.02%) markup that is part of the spread's base component, so it is already in the price you see. The message you sign still includes a maximum fee, which is zero, and the contract refuses any trade that charges one.
+There is no trading fee on any trade: market, limit or stop, open or close. There are no volume fee tiers either. The platform earns a 2 basis point (0.02%) markup that is part of the spread's base component, so it is already in the price you see.
+
+The message you sign still includes a maximum fee, and the contract refuses any trade that charges more. For a market order it is zero. Limit and stop orders sign a ceiling of 2 bps, but the fee charged is zero.
 
 Approvers enforce the markup: they refuse a fill whose price is not at least the market's base spread plus 2 bps (plus the inventory charge) away from the oracle.
 
-The insurance fund still gets its share. On every fill the contract moves part of the markup from the maker's capital to insurance: 20% of it until the insurance fund reaches a quarter of the maker's capital target, 10% after that. This comes out of the maker's side, not your balance, and only from maker capital above its required floor.
+The insurance fund still gets its share. On every fill the contract moves part of the markup from the maker's capital to insurance: 20% of it while the insurance fund is below a quarter of the maker's capital target, 10% after that. Liquidation penalties, after the liquidator's reward, also go to the fund. This comes out of the maker's side, not your balance, and only from maker capital above its required floor.
 
-There are no deposit, withdrawal or gas fees. Liquidation has its own penalty, described in [Liquidation](liquidation.md).
+The venue charges no deposit or withdrawal fees, and it pays the gas for trades and withdrawals. A deposit is an ordinary transaction from your wallet, so it costs a little ETH for gas. Liquidation has its own penalty, described in [Liquidation](liquidation.md).
 
 ## Price protection
 

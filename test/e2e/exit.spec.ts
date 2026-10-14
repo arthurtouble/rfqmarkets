@@ -439,19 +439,19 @@ test.describe.serial("emergency exit page", () => {
     await expect(page.getByText("Enter an amount like 25 or 25.50.")).toBeVisible();
   });
 
-  test("finds and revokes the one-click trading key, and refuses someone else's", async ({ page }) => {
+  test("finds and revokes the one-tap trading key, and refuses someone else's", async ({ page }) => {
     await venue.open(page, venue.signers.trader.address);
     await connect(page);
-    const card = page.getByRole("region", { name: "Turn off one-click trading" });
+    const card = page.getByRole("region", { name: "Turn off one-tap trading" });
     await card.getByRole("button", { name: "Revoke", exact: true }).click();
-    await expectToast(page, "success", /One-click trading key revoked/);
+    await expectToast(page, "success", /One-tap trading key revoked/);
     expect((await venue.clearing.sessions(venue.sessionKeys.trader)).account).toBe(ZeroAddress);
-    await expect(card.getByText("No active one-click trading keys found.")).toBeVisible();
+    await expect(card.getByText("No active one-tap trading keys found.")).toBeVisible();
 
     await card.getByText("Revoke a key by its address").click();
     await card.getByLabel("Key address").fill(venue.sessionKeys.other);
     await card.getByRole("button", { name: "Revoke", exact: true }).click();
-    await expectToast(page, "error", /not an active one-click trading key of this wallet/);
+    await expectToast(page, "error", /not an active one-tap trading key of this wallet/);
     expect((await venue.clearing.sessions(venue.sessionKeys.other)).account).toBe(
       venue.signers.other.address,
     );

@@ -4,7 +4,7 @@ A limit order waits until the maker's executable price for your size reaches you
 
 ## Placing one
 
-Limit orders are part of the Advanced view. If the ticket shows no order types, switch **View** to **Advanced** in the top bar, or under **Account** on a phone.
+Limit orders are placed from the ticket in **Pro**. Tap **Pro** on Home to open it.
 
 1. On the ticket, switch the order type to **Limit**. The **Limit price** field is pre-filled with the current mid.
 2. Choose **Long** or **Short**, enter what you pay in USDC and pick a leverage.
@@ -12,7 +12,7 @@ Limit orders are part of the Advanced view. If the ticket shows no order types, 
 4. Read the hint under the price. "Fills now at the current price" means your limit is already at or through the executable price, so the order will fill as soon as it is placed. "Fills when the price reaches your limit" means it will wait.
 5. Click **Place limit · Long BTC · $20.00** (or the equivalent) and sign the *TradeIntent* in your wallet.
 
-Limit orders always use your wallet, even when one-click trading is on. The app places them **good for 24 hours**, after which they expire.
+Limit orders always use your wallet, even when one-tap trading is on. The app places them **good for 24 hours**, after which they expire.
 
 ## How it triggers
 
@@ -22,16 +22,16 @@ This matters because the trigger is the price you can actually trade at, not the
 
 When it fills, you get the maker's executable price at that moment, which may be better than your limit but is never worse.
 
-## Size, fee and protection
+## Size, fees and protection
 
 - **Size is fixed in BTC or ETH.** When you place the order, the app converts your USDC amount to a base size at the current mid. That base size is what you sign, so the USDC value of the fill moves with the price.
 - **All or none.** A limit order fills completely in one trade or not at all. There are no partial fills.
-- **Fee.** You sign a maximum fee of 2 basis points of the order's notional at your limit price. That is the same 2 basis points a market order pays.
+- **No fee.** A limit order pays no trading fee. The message you sign still carries a maximum fee of 2 basis points of the order's notional at your limit price, as a ceiling the contract enforces. The fee actually charged is zero.
 - **Margin is checked at fill time.** Placing an order does not reserve your margin. If you do not have enough margin when the price reaches your limit, the attempt fails and the order stays open.
 
 ## Order status
 
-The **Orders** tab, under the chart on the trade page and on the Portfolio page, lists your orders with their direction, amount, limit, expiry and status:
+The **Orders** tab, under the chart in Pro and on the Portfolio page, lists your orders with their direction, amount, limit, expiry and status:
 
 | Status | Meaning |
 | --- | --- |

@@ -1,5 +1,5 @@
 // Placing market trades from the order ticket: sizing with pay and leverage,
-// the review sheet at a firm quote, one-click trading, blocked states and a
+// the review sheet at a firm quote, one-tap trading, blocked states and a
 // paused market. Runs in the desktop and mobile projects.
 import { readFileSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
@@ -56,7 +56,7 @@ async function setMarketEnabled(market: number, enabled: boolean) {
 }
 
 test.describe("placing trades", () => {
-  test("a first Long goes through the review sheet at a firm quote and turns on one-click trading", async ({
+  test("a first Long goes through the review sheet at a firm quote and turns on one-tap trading", async ({
     page,
     isMobile,
   }) => {
@@ -75,20 +75,24 @@ test.describe("placing trades", () => {
     await expectNoHorizontalOverflow(page);
     await review.getByRole("button", { name: "Confirm and sign" }).click();
 
-    await expect(page.getByRole("status")).toContainText("Long BTC $100.00 filled");
-    await expect(page.getByRole("status")).toContainText("One-click trading on");
+    await expect(page.getByRole("status", { name: "Notifications" })).toContainText(
+      "Long BTC $100.00 filled",
+    );
+    await expect(page.getByRole("status", { name: "Notifications" })).toContainText("One-tap trading on");
     await expect(review).toBeHidden();
     // The mobile sheet closes after a fill so the position shows; desktop clears the amount.
     if (isMobile) await expect(page.getByRole("dialog", { name: "Trade BTC" })).toBeHidden();
     else await expect(ticket.getByLabel("Amount to pay in USDC")).toHaveValue("");
 
-    // Within the one-click limits the next trade fills from the ticket, with no review.
+    // Within the one-tap limits the next trade fills from the ticket, with no review.
     const again = await openTicket(page, isMobile);
     await again.getByRole("group", { name: "Direction" }).getByRole("button", { name: "Short" }).click();
     await size(again, "10", "2×");
-    await expect(again.getByText("One-click trading is on. No wallet prompt.")).toBeVisible();
+    await expect(again.getByText("One-tap trading is on. No wallet prompt.")).toBeVisible();
     await submit(again).click();
-    await expect(page.getByRole("status")).toContainText("Short BTC $20.00 filled");
+    await expect(page.getByRole("status", { name: "Notifications" })).toContainText(
+      "Short BTC $20.00 filled",
+    );
     await expect(page.getByRole("dialog", { name: "Review order" })).toBeHidden();
   });
 
@@ -126,20 +130,11 @@ test.describe("placing trades", () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test("Advanced adds slippage and reduce only, and the summary shows price protection", async ({
+  test("Pro has slippage and close only, and the summary shows price protection", async ({
     page,
     isMobile,
   }) => {
     await page.goto("/trade/ETH");
-    if (isMobile) {
-      await page
-        .getByRole("navigation", { name: "Main" })
-        .filter({ visible: true })
-        .getByRole("link", { name: "Account" })
-        .click();
-      await page.getByRole("button", { name: "Advanced" }).click();
-      await page.goto("/trade/ETH");
-    } else await page.getByRole("button", { name: "Advanced" }).click();
     const ticket = await openTicket(page, isMobile, "ETH");
     await expect(ticket.getByRole("group", { name: "Order type" })).toBeVisible();
     await size(ticket, "10", "10×");
@@ -147,8 +142,8 @@ test.describe("placing trades", () => {
     await ticket.getByRole("group", { name: "Max slippage" }).getByRole("button", { name: "0.5%" }).click();
     await expect(ticket.getByRole("button", { name: /^Options/ })).toContainText("Slippage 0.5%");
     await expect(ticket.getByText("Price protection (max)")).toBeVisible();
-    await ticket.getByRole("checkbox", { name: /Reduce only/ }).check();
-    await expect(ticket.getByRole("button", { name: /^Options/ })).toContainText("Reduce only");
+    await ticket.getByRole("checkbox", { name: /Close only/ }).check();
+    await expect(ticket.getByRole("button", { name: /^Options/ })).toContainText("Close only");
     await expectNoHorizontalOverflow(page);
 
     // The slippage choice is remembered on this device.
@@ -171,7 +166,7 @@ test.describe("placing trades", () => {
       .getByRole("dialog", { name: "Review order" })
       .getByRole("button", { name: "Confirm and sign" })
       .click();
-    await expect(page.getByRole("status")).toContainText("Long ETH $50.00 filled");
+    await expect(page.getByRole("status", { name: "Notifications" })).toContainText("Long ETH $50.00 filled");
 
     await setMarketEnabled(1, false);
     try {
@@ -186,7 +181,9 @@ test.describe("placing trades", () => {
       const review = page.getByRole("dialog", { name: "Review order" });
       await review.getByRole("checkbox").uncheck();
       await review.getByRole("button", { name: "Confirm and sign" }).click();
-      await expect(page.getByRole("status")).toContainText("Short ETH $10.00 filled");
+      await expect(page.getByRole("status", { name: "Notifications" })).toContainText(
+        "Short ETH $10.00 filled",
+      );
     } finally {
       await setMarketEnabled(1, true);
     }

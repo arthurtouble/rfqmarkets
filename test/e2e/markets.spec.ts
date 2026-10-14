@@ -113,7 +113,7 @@ test.describe("markets list", () => {
     await search.press("Escape");
     await expect(search).toHaveValue("");
     await row(page, /Ethereum/).click();
-    await expect(page).toHaveURL(/\/trade\/ETH$/);
+    await expect(page).toHaveURL(/\/updown\/ETH$/);
     await expectNoHorizontalOverflow(page);
   });
 
@@ -130,8 +130,8 @@ test.describe("markets list", () => {
     await expect(avax).toBeVisible();
     await expect(avax).toContainText("No price");
     await avax.click();
-    await expect(page).toHaveURL(/\/trade\/AVAX$/);
-    await expect(page.getByText("Avalanche has no price right now.")).toBeVisible();
+    await expect(page).toHaveURL(/\/updown\/AVAX$/);
+    await expect(page.getByText("Avalanche has no price yet.")).toBeVisible();
   });
 
   test("a dropped price stream keeps the last prices, marked as delayed", async ({ page }) => {
@@ -154,31 +154,31 @@ test.describe("markets list", () => {
 });
 
 test.describe("market activity", () => {
-  test("shows open interest, recent trades and positions, with more in Advanced", async ({ page }) => {
+  test("shows open interest, recent trades and positions, with more on wider screens", async ({
+    page,
+    isMobile,
+  }) => {
     await busyIndexer(page);
     await page.goto("/markets");
     const interest = page.getByRole("region", { name: "Open interest" });
     await expect(interest.getByRole("img", { name: "75% long, 25% short" })).toBeVisible();
     await expect(interest).toContainText("2 traders");
-    await expect(interest).toContainText("No open positions");
     await expect(interest).toContainText("$1,500.00");
-    await expect(interest).not.toContainText("Finalized block");
     const trades = page.getByRole("region", { name: "Recent trades" });
     await expect(trades.getByRole("cell", { name: "Short" })).toBeVisible();
     await expect(trades).toContainText("$100,000.00");
-    await expect(trades).not.toContainText("$1.50");
-    await expect(page.getByRole("region", { name: "Open positions" })).toHaveCount(0);
-
-    await page.evaluate(() => localStorage.setItem("rfq.mode", "advanced"));
-    await page.reload();
-    await expect(interest).toContainText("Finalized block");
-    await expect(interest).toContainText("1,234");
-    await expect(interest).toContainText(/Caught up|blocks behind/);
-    await expect(trades).toContainText("$1.50");
-    await expect(trades).toContainText("0x1111…1111");
-    const positions = page.getByRole("region", { name: "Open positions" });
-    await expect(positions).toContainText("+1 BTC");
-    await expect(positions).toContainText("$99,000.00");
+    if (isMobile) {
+      await expect(interest).not.toContainText("Finalized block");
+      await expect(page.getByRole("region", { name: "Open positions" })).toHaveCount(0);
+    } else {
+      await expect(interest).toContainText("Finalized block");
+      await expect(interest).toContainText("1,234");
+      await expect(interest).toContainText(/Caught up|blocks behind/);
+      await expect(trades).toContainText("0x1111…1111");
+      const positions = page.getByRole("region", { name: "Open positions" });
+      await expect(positions).toContainText("+1 BTC");
+      await expect(positions).toContainText("$99,000.00");
+    }
     await expectNoHorizontalOverflow(page);
   });
 
@@ -197,33 +197,22 @@ test.describe("market activity", () => {
 });
 
 test.describe("price chart", () => {
-  test("switches range, keeps the choice and scrubs to a point", async ({ page, isMobile }) => {
-    await page.goto("/trade/BTC");
-    const ranges = page.getByRole("group", { name: "Chart range" });
-    await expect(ranges.getByRole("button", { name: "1D" })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByText("Past day")).toBeVisible();
-    await ranges.getByRole("button", { name: "1H" }).click();
-    await expect(page.getByText("Past hour")).toBeVisible();
-    const chart = page.getByRole("img", { name: /^Price chart/ });
-    await expect(chart).toBeVisible();
-    await page.reload();
-    await expect(
-      page.getByRole("group", { name: "Chart range" }).getByRole("button", { name: "1H" }),
-    ).toHaveAttribute("aria-pressed", "true");
-
+  test("the Home tick line scrubs to a point", async ({ page, isMobile }) => {
+    await page.goto("/updown/BTC");
+    await expect(page.getByRole("img", { name: /^Price chart/ })).toBeVisible();
+    await expect(page.getByText("5 min", { exact: true })).toBeVisible();
     if (!isMobile) {
       const box = (await page.locator("figure.price-chart").boundingBox())!;
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       // While scrubbing, the change line shows the point's time instead of the period.
-      await expect(page.getByText("Past hour")).toHaveCount(0);
+      await expect(page.getByText("5 min", { exact: true })).toHaveCount(0);
       await page.mouse.move(box.x + box.width / 2, box.y - 80);
-      await expect(page.getByText("Past hour")).toBeVisible();
+      await expect(page.getByText("5 min", { exact: true })).toBeVisible();
     }
     await expectNoHorizontalOverflow(page);
   });
 
-  test("Advanced view shows candles at a chosen interval with the 24h range", async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem("rfq.mode", "advanced"));
+  test("Pro shows candles at a chosen interval with the 24h range", async ({ page }) => {
     await page.goto("/trade/ETH");
     await expect(page.getByRole("img", { name: "Ethereum 15m candles" })).toBeVisible();
     await expect(page.getByText("24h high")).toBeVisible();
@@ -241,12 +230,12 @@ test.describe("market state", () => {
     [
       "guarded",
       (market: Record<string, unknown>) => (market.riskMode = "guarded"),
-      "Trade sizes are smaller than usual",
+      "Bigger trades are limited for a moment.",
     ],
     [
       "reduce-only",
       (market: Record<string, unknown>) => (market.riskMode = "reduce_only"),
-      "Only closing trades right now.",
+      "Closing only for a moment.",
     ],
   ] as const)
     test(`a ${state} market says so on its trade page`, async ({ page }) => {
@@ -255,15 +244,10 @@ test.describe("market state", () => {
       await expect(page.getByText(message)).toBeVisible();
     });
 
-  test("market details grow in Advanced", async ({ page }) => {
+  test("Pro lists the market details", async ({ page }) => {
     await page.goto("/trade/BTC");
     const details = page.locator(".market-details");
-    await expect(details).toContainText("Funding (yearly)");
-    await expect(details).toContainText("Max per trade");
-    await expect(details).not.toContainText("Spread");
-    await page.evaluate(() => localStorage.setItem("rfq.mode", "advanced"));
-    await page.reload();
-    for (const label of ["Bid", "Ask", "Spread", "Max open per market"])
+    for (const label of ["Funding (yearly)", "Max per trade", "Bid", "Ask", "Spread", "Max open per market"])
       await expect(details).toContainText(label);
   });
 
@@ -304,10 +288,9 @@ test.describe("themes", () => {
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await expect(row(page, /Bitcoin/)).toContainText(/\$\d/);
       await expectNoHorizontalOverflow(page);
-      await page.goto("/trade/BTC");
+      await page.goto("/updown/BTC");
       await expect(page.getByRole("img", { name: /^Price chart/ })).toBeVisible();
-      await page.evaluate(() => localStorage.setItem("rfq.mode", "advanced"));
-      await page.reload();
+      await page.goto("/trade/BTC");
       await expect(page.getByRole("img", { name: "Bitcoin 15m candles" })).toBeVisible();
       await expectNoHorizontalOverflow(page);
     });

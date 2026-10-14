@@ -1,6 +1,6 @@
 # Hedging
 
-The maker takes the other side of every trade. If traders are net long 1 BTC, the maker is short 1 BTC. Hedging is how the maker avoids holding that bet: it buys or sells the same amount on an external venue, so that its profit or loss on RFQ Markets is offset there.
+The maker takes the other side of every trade. If traders are net long 1 BTC, the maker is short 1 BTC. Hedging is how the maker avoids holding that risk: it buys or sells the same amount on an external venue, so that its profit or loss on RFQ Markets is offset there.
 
 > **Note.** On the current development deployment the hedger is simulated. It runs the full control loop, but its fills are recorded internally and no orders are sent to any exchange. At development sizes there is nothing worth hedging. Live hedging on Hyperliquid is planned for production.
 

@@ -17,8 +17,8 @@ import { PortfolioPage } from "./portfolio/PortfolioPage.js";
 import { FundsProvider, useFunds } from "./trade/FundsDialog.js";
 import { TradePage } from "./trade/TradePage.js";
 import { UpDownPage } from "./updown/UpDownPage.js";
-import { NavIcons, Segmented } from "./ui/primitives.js";
-import { usePrefs } from "./ui/prefs.js";
+import { NavIcons } from "./ui/primitives.js";
+import { load, store } from "./lib/storage.js";
 import { useTrader } from "./wallet/trader.js";
 import { WalletMenu } from "./wallet/WalletMenu.js";
 
@@ -26,13 +26,21 @@ import { WalletMenu } from "./wallet/WalletMenu.js";
 const isMarket = (value: string): value is Market => /^[A-Z0-9]{2,12}$/.test(value);
 const LAST_MARKET = "rfq.market";
 const lastMarket = (): Market => {
-  try {
-    const value = localStorage.getItem(LAST_MARKET) ?? "";
-    return isMarket(value) ? value : "BTC";
-  } catch {
-    return "BTC";
-  }
+  const value = load(LAST_MARKET) ?? "";
+  return isMarket(value) ? value : "BTC";
 };
+
+/** Market paths read in upper case: /trade/eth and /updown/eth become .../ETH. */
+const marketParams = {
+  parse: ({ market }: { market: string }) => ({ market: market.toUpperCase() }),
+  stringify: ({ market }: { market: string }) => ({ market }),
+};
+/** One address per market, and the last one visited becomes the default. */
+function guardMarket(to: "/trade/$market" | "/updown/$market", market: string, pathname: string) {
+  if (!isMarket(market)) throw redirect({ to, params: { market: "BTC" } });
+  if (pathname !== to.replace("$market", market)) throw redirect({ to, params: { market }, replace: true });
+  store(LAST_MARKET, market);
+}
 
 function Shell() {
   return (
@@ -46,7 +54,6 @@ function ShellLayout() {
   useIndexerSync();
   useOrderFillAlerts();
   const funds = useFunds();
-  const { mode, setMode } = usePrefs();
   const trader = useTrader();
   const location = useLocationStatus();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -56,9 +63,7 @@ function ShellLayout() {
       ? "portfolio"
       : pathname.startsWith("/account")
         ? "account"
-        : pathname.startsWith("/trade")
-          ? "trade"
-          : "home";
+        : "home";
   const current = (name: string) => (section === name ? ("page" as const) : undefined);
   return (
     <div className="app">
@@ -75,9 +80,6 @@ function ShellLayout() {
           <Link to="/updown/$market" params={{ market: lastMarket() }} aria-current={current("home")}>
             Home
           </Link>
-          <Link to="/trade/$market" params={{ market: lastMarket() }} aria-current={current("trade")}>
-            Trade
-          </Link>
           <Link to="/markets" aria-current={current("markets")}>
             Markets
           </Link>
@@ -86,17 +88,6 @@ function ShellLayout() {
           </Link>
         </nav>
         <div className="rfq-topbar__end">
-          <Segmented
-            variant="switch"
-            className="mode-switch"
-            label="View"
-            value={mode}
-            onChange={setMode}
-            options={[
-              { id: "simple", label: "Simple" },
-              { id: "advanced", label: "Advanced" },
-            ]}
-          />
           {trader.address && !trader.wrongChain && (
             <button
               type="button"
@@ -123,10 +114,6 @@ function ShellLayout() {
         <Link to="/updown/$market" params={{ market: lastMarket() }} aria-current={current("home")}>
           {NavIcons.home}
           <span>Home</span>
-        </Link>
-        <Link to="/trade/$market" params={{ market: lastMarket() }} aria-current={current("trade")}>
-          {NavIcons.trade}
-          <span>Trade</span>
         </Link>
         <Link to="/markets" aria-current={current("markets")}>
           {NavIcons.markets}
@@ -162,21 +149,8 @@ const indexRoute = createRoute({
 const tradeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/trade/$market",
-  params: {
-    parse: ({ market }) => ({ market: market.toUpperCase() }),
-    stringify: ({ market }) => ({ market }),
-  },
-  beforeLoad: ({ params, location }) => {
-    if (!isMarket(params.market)) throw redirect({ to: "/trade/$market", params: { market: "BTC" } });
-    // One address per market: /trade/eth becomes /trade/ETH.
-    if (location.pathname !== `/trade/${params.market}`)
-      throw redirect({ to: "/trade/$market", params: { market: params.market }, replace: true });
-    try {
-      localStorage.setItem(LAST_MARKET, params.market);
-    } catch {
-      /* private mode */
-    }
-  },
+  params: marketParams,
+  beforeLoad: ({ params, location }) => guardMarket("/trade/$market", params.market, location.pathname),
   component: function Trade() {
     const { market } = tradeRoute.useParams();
     return <TradePage market={market as Market} />;
@@ -187,20 +161,8 @@ const tradeRoute = createRoute({
 const upDownRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/updown/$market",
-  params: {
-    parse: ({ market }) => ({ market: market.toUpperCase() }),
-    stringify: ({ market }) => ({ market }),
-  },
-  beforeLoad: ({ params, location }) => {
-    if (!isMarket(params.market)) throw redirect({ to: "/updown/$market", params: { market: "BTC" } });
-    if (location.pathname !== `/updown/${params.market}`)
-      throw redirect({ to: "/updown/$market", params: { market: params.market }, replace: true });
-    try {
-      localStorage.setItem(LAST_MARKET, params.market);
-    } catch {
-      /* private mode */
-    }
-  },
+  params: marketParams,
+  beforeLoad: ({ params, location }) => guardMarket("/updown/$market", params.market, location.pathname),
   component: function Home() {
     const { market } = upDownRoute.useParams();
     return <UpDownPage market={market as Market} />;
@@ -224,7 +186,14 @@ const accountRoute = createRoute({
 });
 
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([indexRoute, upDownRoute, tradeRoute, marketsRoute, portfolioRoute, accountRoute]),
+  routeTree: rootRoute.addChildren([
+    indexRoute,
+    upDownRoute,
+    tradeRoute,
+    marketsRoute,
+    portfolioRoute,
+    accountRoute,
+  ]),
   defaultNotFoundComponent: () => (
     <div className="page">
       <div className="rfq-card">

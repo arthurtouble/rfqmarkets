@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { useProtocol } from "../data/queries.js";
-import { baseAmount, feeLabel, signedUsdc, usdc } from "../lib/format.js";
+import { baseAmount, signedUsdc, usdc } from "../lib/format.js";
 import {
   CLOSE_PRESETS,
   closeAllPreview,
@@ -17,7 +17,7 @@ import {
 import { indicativeQuote } from "../lib/quote.js";
 import type { AccountState, Market } from "../lib/types.js";
 import { AssetIcon, Banner, Change, Rows, Segmented, Sheet } from "../ui/primitives.js";
-import { useAdvanced, useDesktop } from "../ui/prefs.js";
+import { useDesktop } from "../ui/prefs.js";
 import { ProtectionSummary, TpslSheet } from "../trade/TriggerOrders.js";
 
 const percent = (fraction: number | null) =>
@@ -126,7 +126,6 @@ function PositionsTable({
   onTpsl,
   onCloseAll,
 }: { positions: PositionView[]; onCloseAll?: () => void } & PositionActions) {
-  const advanced = useAdvanced();
   return (
     <div className="rfq-table-wrap">
       <table className="rfq-table positions-table">
@@ -137,7 +136,7 @@ function PositionsTable({
             <th>Entry / mark</th>
             <th>Liq. price</th>
             <th>Margin</th>
-            {advanced && <th>Funding</th>}
+            <th>Funding</th>
             <th>PnL</th>
             <th>TP/SL</th>
             <th>
@@ -175,7 +174,7 @@ function PositionsTable({
                 <LiquidationPrice view={view} />
               </td>
               <td>{usdc(view.margin)}</td>
-              {advanced && <td>{signedUsdc(view.funding)}</td>}
+              <td>{signedUsdc(view.funding)}</td>
               <td>
                 <Pnl view={view} />
               </td>
@@ -326,7 +325,6 @@ export function ClosePositionSheet({ view, onClose }: { view: PositionView; onCl
               `${baseAmount(preview.closingSize)} ${view.market} · ${usdc(preview.closingNotional)}`,
             ],
             ["Estimated price", usdc(preview.price)],
-            ...(fee !== null ? [["Fee", feeLabel(fee)] as [string, string]] : []),
             [
               "Left open",
               preview.remainingSize > 0n ? `${baseAmount(preview.remainingSize)} ${view.market}` : "Nothing",
@@ -408,7 +406,7 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
         />
         {!paused && (
           <p className="footnote rfq-muted">
-            Each position gets its own quote. With one-click trading on, they close without wallet prompts.
+            Each position gets its own quote. With one-tap trading on, they close without wallet prompts.
           </p>
         )}
         <button

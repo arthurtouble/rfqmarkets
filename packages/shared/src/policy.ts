@@ -9,7 +9,7 @@ export const quoteRequestSchema = z.object({
   amount: z.string().regex(/^\d+(\.\d{1,6})?$/),
   /** Optional price protection in bps; the default is the launch tolerance (8 bps). */
   slippageBps: z.number().int().min(MIN_SLIPPAGE_BPS).max(MAX_SLIPPAGE_BPS).optional(),
-  /** The trading account, to price the fee at its volume tier (the tier is re-applied at settlement). */
+  /** The trading account. Accepted for older clients; quotes are the same for every account. */
   account: z
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/)

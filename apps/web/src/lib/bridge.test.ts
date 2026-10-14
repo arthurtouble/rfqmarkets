@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  BASE_CHAIN_ID, LIFI_DIAMOND, NATIVE, bridgeStatus, checkRoute, formatDuration, formatRate, formatTokenAmount,
-  holdingsFrom, parseTokenInput, quoteUrl, routeProblem, type LifiQuote, type RouteRequest,
+  BASE_CHAIN_ID,
+  LIFI_DIAMOND,
+  NATIVE,
+  bridgeStatus,
+  checkRoute,
+  formatDuration,
+  formatRate,
+  formatTokenAmount,
+  holdingsFrom,
+  parseTokenInput,
+  quoteUrl,
+  routeProblem,
+  type LifiQuote,
+  type RouteRequest,
 } from "./bridge.js";
 
 const ACCOUNT = "0x1111111111111111111111111111111111111111";
@@ -10,14 +22,34 @@ const OTHER = "0x2222222222222222222222222222222222222222";
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const USDC_ARB = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
 
-const request: RouteRequest = { fromChain: 42161, fromToken: USDC_ARB, fromAmount: 50_000_000n, account: ACCOUNT, toToken: USDC_BASE };
+const request: RouteRequest = {
+  fromChain: 42161,
+  fromToken: USDC_ARB,
+  fromAmount: 50_000_000n,
+  account: ACCOUNT,
+  toToken: USDC_BASE,
+};
 const quote = (): LifiQuote => ({
   tool: "across",
   toolDetails: { name: "Across" },
-  action: { fromChainId: 42161, toChainId: BASE_CHAIN_ID, fromToken: { address: USDC_ARB }, toToken: { address: USDC_BASE }, fromAmount: "50000000", fromAddress: ACCOUNT, toAddress: ACCOUNT },
+  action: {
+    fromChainId: 42161,
+    toChainId: BASE_CHAIN_ID,
+    fromToken: { address: USDC_ARB },
+    toToken: { address: USDC_BASE },
+    fromAmount: "50000000",
+    fromAddress: ACCOUNT,
+    toAddress: ACCOUNT,
+  },
   estimate: {
-    approvalAddress: LIFI_DIAMOND, toAmount: "49875000", toAmountMin: "49625000", fromAmountUSD: "50.00", toAmountUSD: "49.87",
-    executionDuration: 4, feeCosts: [{ name: "LIFI Fixed Fee", amountUSD: "0.125", included: true }], gasCosts: [{ amountUSD: "0.01" }],
+    approvalAddress: LIFI_DIAMOND,
+    toAmount: "49875000",
+    toAmountMin: "49625000",
+    fromAmountUSD: "50.00",
+    toAmountUSD: "49.87",
+    executionDuration: 4,
+    feeCosts: [{ name: "LIFI Fixed Fee", amountUSD: "0.125", included: true }],
+    gasCosts: [{ amountUSD: "0.01" }],
   },
   transactionRequest: { to: LIFI_DIAMOND, data: "0xabcdef", value: "0x0", chainId: 42161 },
 });
@@ -47,15 +79,60 @@ test("a matching quote becomes a route with fees, gas, rate and arrival time", (
 
 test("refuses a quote that sends funds elsewhere or spends more", () => {
   const cases: Array<[string, (value: LifiQuote) => void]> = [
-    ["recipient", value => { value.action!.toAddress = OTHER; }],
-    ["destination asset", value => { value.action!.toToken = { address: OTHER }; }],
-    ["destination network", value => { value.action!.toChainId = 1; }],
-    ["source network", value => { value.transactionRequest!.chainId = 1; }],
-    ["amount", value => { value.action!.fromAmount = "50000001"; }],
-    ["router", value => { value.transactionRequest!.to = OTHER; }],
-    ["approval", value => { value.estimate!.approvalAddress = OTHER; }],
-    ["value", value => { value.transactionRequest!.value = "0x1"; }],
-    ["output", value => { value.estimate!.toAmountMin = "49875001"; }],
+    [
+      "recipient",
+      (value) => {
+        value.action!.toAddress = OTHER;
+      },
+    ],
+    [
+      "destination asset",
+      (value) => {
+        value.action!.toToken = { address: OTHER };
+      },
+    ],
+    [
+      "destination network",
+      (value) => {
+        value.action!.toChainId = 1;
+      },
+    ],
+    [
+      "source network",
+      (value) => {
+        value.transactionRequest!.chainId = 1;
+      },
+    ],
+    [
+      "amount",
+      (value) => {
+        value.action!.fromAmount = "50000001";
+      },
+    ],
+    [
+      "router",
+      (value) => {
+        value.transactionRequest!.to = OTHER;
+      },
+    ],
+    [
+      "approval",
+      (value) => {
+        value.estimate!.approvalAddress = OTHER;
+      },
+    ],
+    [
+      "value",
+      (value) => {
+        value.transactionRequest!.value = "0x1";
+      },
+    ],
+    [
+      "output",
+      (value) => {
+        value.estimate!.toAmountMin = "49875001";
+      },
+    ],
   ];
   for (const [why, change] of cases) {
     const value = quote();
@@ -87,31 +164,89 @@ test("routes that lose too much or miss the first-deposit floor are refused", ()
 });
 
 test("holdings keep verified assets on supported networks, most valuable first, without Base USDC", () => {
-  const holdings = holdingsFrom({
-    balances: {
-      "42161": [
-        { address: NATIVE, symbol: "ETH", decimals: 18, amount: String(10n ** 17n), priceUSD: "2500", verificationStatus: "verified" },
-        { address: USDC_ARB, symbol: "USDC", decimals: 6, amount: "20000000", priceUSD: "1", verificationStatus: "verified" },
-        { address: OTHER, symbol: "SCAM", decimals: 18, amount: String(10n ** 24n), priceUSD: "1", verificationStatus: "unverified" },
-      ],
-      "8453": [
-        { address: USDC_BASE, symbol: "USDC", decimals: 6, amount: "5000000", priceUSD: "1", verificationStatus: "verified" },
-        { address: NATIVE, symbol: "ETH", decimals: 18, amount: "1000", priceUSD: "2500", verificationStatus: "verified" },
-      ],
-      "250": [{ address: NATIVE, symbol: "FTM", decimals: 18, amount: String(10n ** 21n), priceUSD: "1" }],
+  const holdings = holdingsFrom(
+    {
+      balances: {
+        "42161": [
+          {
+            address: NATIVE,
+            symbol: "ETH",
+            decimals: 18,
+            amount: String(10n ** 17n),
+            priceUSD: "2500",
+            verificationStatus: "verified",
+          },
+          {
+            address: USDC_ARB,
+            symbol: "USDC",
+            decimals: 6,
+            amount: "20000000",
+            priceUSD: "1",
+            verificationStatus: "verified",
+          },
+          {
+            address: OTHER,
+            symbol: "SCAM",
+            decimals: 18,
+            amount: String(10n ** 24n),
+            priceUSD: "1",
+            verificationStatus: "unverified",
+          },
+        ],
+        "8453": [
+          {
+            address: USDC_BASE,
+            symbol: "USDC",
+            decimals: 6,
+            amount: "5000000",
+            priceUSD: "1",
+            verificationStatus: "verified",
+          },
+          {
+            address: NATIVE,
+            symbol: "ETH",
+            decimals: 18,
+            amount: "1000",
+            priceUSD: "2500",
+            verificationStatus: "verified",
+          },
+        ],
+        "250": [{ address: NATIVE, symbol: "FTM", decimals: 18, amount: String(10n ** 21n), priceUSD: "1" }],
+      },
     },
-  }, USDC_BASE);
-  assert.deepEqual(holdings.map(holding => `${holding.chainId}:${holding.symbol}`), ["42161:ETH", "42161:USDC"]);
+    USDC_BASE,
+  );
+  assert.deepEqual(
+    holdings.map((holding) => `${holding.chainId}:${holding.symbol}`),
+    ["42161:ETH", "42161:USDC"],
+  );
   assert.deepEqual(holdingsFrom(null, USDC_BASE), []);
 });
 
 test("bridge status reports delivery of Base USDC, other outcomes and failure", () => {
   assert.deepEqual(bridgeStatus({ status: "PENDING" }, USDC_BASE), { state: "pending", detail: undefined });
   assert.deepEqual(
-    bridgeStatus({ status: "DONE", substatus: "COMPLETED", receiving: { amount: "49900000", chainId: 8453, token: { address: USDC_BASE, chainId: 8453 } } }, USDC_BASE),
+    bridgeStatus(
+      {
+        status: "DONE",
+        substatus: "COMPLETED",
+        receiving: { amount: "49900000", chainId: 8453, token: { address: USDC_BASE, chainId: 8453 } },
+      },
+      USDC_BASE,
+    ),
     { state: "done", received: 49_900_000n },
   );
-  assert.equal(bridgeStatus({ status: "DONE", substatus: "PARTIAL", receiving: { token: { address: OTHER, symbol: "USDbC", chainId: 8453 } } }, USDC_BASE).state, "other");
+  assert.equal(
+    bridgeStatus(
+      {
+        status: "DONE",
+        substatus: "PARTIAL",
+        receiving: { token: { address: OTHER, symbol: "USDbC", chainId: 8453 } },
+      },
+      USDC_BASE,
+    ).state,
+    "other",
+  );
   assert.equal(bridgeStatus({ status: "DONE", substatus: "REFUNDED" }, USDC_BASE).state, "other");
   assert.equal(bridgeStatus({ status: "FAILED" }, USDC_BASE).state, "failed");
 });

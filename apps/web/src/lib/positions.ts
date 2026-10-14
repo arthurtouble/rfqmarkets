@@ -36,16 +36,27 @@ export function positionView(account: AccountState, market: Market): PositionVie
   const position = account.positions[market];
   const signed = BigInt(position?.size ?? "0");
   if (signed === 0n) return null;
-  const pnl = BigInt(position.unrealizedPnl), margin = BigInt(position.initialMargin ?? "0");
+  const pnl = BigInt(position.unrealizedPnl),
+    margin = BigInt(position.initialMargin ?? "0");
   const markPrice = BigInt(position.markPrice);
-  const liquidationPrice = position.estimatedLiquidationPrice === null ? null : BigInt(position.estimatedLiquidationPrice);
+  const liquidationPrice =
+    position.estimatedLiquidationPrice === null ? null : BigInt(position.estimatedLiquidationPrice);
   return {
-    market, long: signed > 0n, size: abs(signed), notional: abs(BigInt(position.notional)),
-    entryPrice: BigInt(position.entryPrice), markPrice, pnl, margin,
-    roe: margin > 0n ? Number(pnl * 1_000_000n / margin) / 1_000_000 : null,
+    market,
+    long: signed > 0n,
+    size: abs(signed),
+    notional: abs(BigInt(position.notional)),
+    entryPrice: BigInt(position.entryPrice),
+    markPrice,
+    pnl,
+    margin,
+    roe: margin > 0n ? Number((pnl * 1_000_000n) / margin) / 1_000_000 : null,
     funding: BigInt(position.accruedFunding),
     liquidationPrice,
-    liquidationDistance: liquidationPrice !== null && markPrice > 0n ? Number(abs(markPrice - liquidationPrice) * 1_000_000n / markPrice) / 1_000_000 : null,
+    liquidationDistance:
+      liquidationPrice !== null && markPrice > 0n
+        ? Number((abs(markPrice - liquidationPrice) * 1_000_000n) / markPrice) / 1_000_000
+        : null,
   };
 }
 
@@ -53,12 +64,15 @@ export function positionView(account: AccountState, market: Market): PositionVie
 export function openPositions(account: AccountState | null | undefined): PositionView[] {
   if (!account) return [];
   return Object.keys(account.positions)
-    .map(market => positionView(account, market))
+    .map((market) => positionView(account, market))
     .filter((view): view is PositionView => view !== null)
-    .sort((a, b) => (a.notional === b.notional ? a.market.localeCompare(b.market) : a.notional > b.notional ? -1 : 1));
+    .sort((a, b) =>
+      a.notional === b.notional ? a.market.localeCompare(b.market) : a.notional > b.notional ? -1 : 1,
+    );
 }
 
-export const isNearLiquidation = (view: PositionView) => view.liquidationDistance !== null && view.liquidationDistance < NEAR_LIQUIDATION;
+export const isNearLiquidation = (view: PositionView) =>
+  view.liquidationDistance !== null && view.liquidationDistance < NEAR_LIQUIDATION;
 
 export type ClosePreview = {
   /** Base units the close sells (long) or buys back (short). */
@@ -78,20 +92,38 @@ export type ClosePreview = {
  * for a long, ask for a short when omitted). The size rounds toward zero, as
  * the API's close quote does.
  */
-export function closePreview(view: PositionView, fractionBps: number, live?: Pick<MarketState, "bid" | "ask"> | null, price?: bigint): ClosePreview {
+export function closePreview(
+  view: PositionView,
+  fractionBps: number,
+  live?: Pick<MarketState, "bid" | "ask"> | null,
+  price?: bigint,
+): ClosePreview {
   const fill = price ?? (live ? BigInt(view.long ? live.bid : live.ask) : view.markPrice);
-  const closingSize = view.size * BigInt(fractionBps) / 10_000n;
+  const closingSize = (view.size * BigInt(fractionBps)) / 10_000n;
   const signed = view.long ? view.size : -view.size;
-  const { realizedPnl } = positionTransition(signed, view.entryPrice, view.long ? -closingSize : closingSize, fill);
+  const { realizedPnl } = positionTransition(
+    signed,
+    view.entryPrice,
+    view.long ? -closingSize : closingSize,
+    fill,
+  );
   return {
-    closingSize, remainingSize: view.size - closingSize,
-    closingNotional: closingSize * fill / 10n ** 18n, price: fill, realizedPnl,
+    closingSize,
+    remainingSize: view.size - closingSize,
+    closingNotional: (closingSize * fill) / 10n ** 18n,
+    price: fill,
+    realizedPnl,
   };
 }
 
 /** Totals for closing every position at the live prices. */
-export function closeAllPreview(positions: readonly PositionView[], markets: Record<Market, Pick<MarketState, "bid" | "ask"> | undefined>, fractionBps = 10_000) {
-  let notional = 0n, realizedPnl = 0n;
+export function closeAllPreview(
+  positions: readonly PositionView[],
+  markets: Record<Market, Pick<MarketState, "bid" | "ask"> | undefined>,
+  fractionBps = 10_000,
+) {
+  let notional = 0n,
+    realizedPnl = 0n;
   for (const view of positions) {
     const preview = closePreview(view, fractionBps, markets[view.market]);
     notional += preview.closingNotional;
@@ -100,17 +132,36 @@ export function closeAllPreview(positions: readonly PositionView[], markets: Rec
   return { count: positions.length, notional, realizedPnl };
 }
 
-export type FillAction = "Open long" | "Open short" | "Add to long" | "Add to short" | "Reduce long" | "Reduce short" | "Close long" | "Close short" | "Flip to long" | "Flip to short" | "Liquidated";
+export type FillAction =
+  | "Open long"
+  | "Open short"
+  | "Add to long"
+  | "Add to short"
+  | "Reduce long"
+  | "Reduce short"
+  | "Close long"
+  | "Close short"
+  | "Flip to long"
+  | "Flip to short"
+  | "Liquidated";
 
 /** What a fill did to the position, from its size before and after. */
 export function fillAction(fill: Pick<Fill, "kind" | "sizeBefore" | "sizeAfter">): FillAction {
   if (fill.kind === "liquidation") return "Liquidated";
-  const before = BigInt(fill.sizeBefore), after = BigInt(fill.sizeAfter);
-  const wasLong = before > 0n, isLong = after > 0n;
+  const before = BigInt(fill.sizeBefore),
+    after = BigInt(fill.sizeAfter);
+  const wasLong = before > 0n,
+    isLong = after > 0n;
   if (before === 0n) return isLong ? "Open long" : "Open short";
   if (after === 0n) return wasLong ? "Close long" : "Close short";
   if (wasLong !== isLong) return isLong ? "Flip to long" : "Flip to short";
-  return abs(after) > abs(before) ? (isLong ? "Add to long" : "Add to short") : (isLong ? "Reduce long" : "Reduce short");
+  return abs(after) > abs(before)
+    ? isLong
+      ? "Add to long"
+      : "Add to short"
+    : isLong
+      ? "Reduce long"
+      : "Reduce short";
 }
 
 /** Whether a fill realized PnL (it reduced, closed, flipped or was liquidated). */

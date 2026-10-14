@@ -22,7 +22,12 @@ import { verifyPrepared, type Expectation } from "./verify-intent.js";
 type DevWallet = { account: Address; privateKey: Hex };
 type Call = { to: Address; data: Hex; value?: bigint };
 /** EIP-712 typed data already checked by the caller (verify-intent.ts, verify-deposit.ts). */
-type TypedPayload = { domain: Record<string, unknown>; types: Record<string, readonly unknown[]>; primaryType: string; message: Record<string, unknown> };
+type TypedPayload = {
+  domain: Record<string, unknown>;
+  types: Record<string, readonly unknown[]>;
+  primaryType: string;
+  message: Record<string, unknown>;
+};
 
 export type Trader = {
   address: Address | null;
@@ -40,7 +45,7 @@ export type Trader = {
   disconnect(): void;
   /** Verifies `prepared` against the trusted settlement and `expected` (verify-intent.ts), then signs it. */
   signIntent(prepared: Prepared, primaryType: string, expected: Expectation): Promise<Hex>;
-  /** The typed data to sign for `prepared`, or a thrown IntentMismatchError. For the one-click key. */
+  /** The typed data to sign for `prepared`, or a thrown IntentMismatchError. For the one-tap key. */
   verified(prepared: Prepared, primaryType: string, expected: Expectation): ReturnType<typeof verifyPrepared>;
   /** Signs typed data on the settlement chain; the caller has verified it. */
   signTyped(payload: TypedPayload): Promise<Hex>;
@@ -188,7 +193,7 @@ export function TraderProvider({
       if (walletAddress) disconnectWallet();
       setDevOptOut(false);
     },
-    // Disconnecting also drops this tab's one-click keys, so a shared computer keeps no signing key behind.
+    // Disconnecting also drops this tab's one-tap keys, so a shared computer keeps no signing key behind.
     disconnect: () => {
       forgetSessionKeys();
       if (walletAddress) disconnectWallet();

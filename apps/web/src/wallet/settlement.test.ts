@@ -7,12 +7,23 @@ const CLEARING = "0x3333333333333333333333333333333333333333";
 const TOKEN = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const ATTACKER = "0x9999999999999999999999999999999999999999";
 const config = (overrides: Partial<ChainConfig> = {}): ChainConfig => ({
-  chainId: "0x2105", chainName: "Base", rpcUrl: "https://evil.example/rpc", clearingAddress: CLEARING, tokenAddress: TOKEN, ...overrides,
+  chainId: "0x2105",
+  chainName: "Base",
+  rpcUrl: "https://evil.example/rpc",
+  clearingAddress: CLEARING,
+  tokenAddress: TOKEN,
+  ...overrides,
 });
-const pinned = { VITE_CHAIN_ID: "8453", VITE_CLEARING_ADDRESS: CLEARING.toLowerCase(), VITE_TOKEN_ADDRESS: TOKEN };
+const pinned = {
+  VITE_CHAIN_ID: "8453",
+  VITE_CLEARING_ADDRESS: CLEARING.toLowerCase(),
+  VITE_TOKEN_ADDRESS: TOKEN,
+};
 
 test("an unpinned (local dev) build takes the API's config and its RPC on unknown chains", async () => {
-  const local = await resolveSettlement({}, async () => config({ chainId: "0x7a69", chainName: "Local", rpcUrl: "http://127.0.0.1:8545" }));
+  const local = await resolveSettlement({}, async () =>
+    config({ chainId: "0x7a69", chainName: "Local", rpcUrl: "http://127.0.0.1:8545" }),
+  );
   assert.equal(local.error, undefined);
   assert.equal(local.chain.id, 31337);
   assert.deepEqual(local.chain.rpcUrls.default.http, ["http://127.0.0.1:8545"]);
@@ -28,7 +39,9 @@ test("known chains ignore the API's RPC", async () => {
 });
 
 test("a pinned build accepts a matching config", async () => {
-  const settlement = await resolveSettlement(pinned, async () => config({ clearingAddress: CLEARING.toUpperCase().replace("0X", "0x") as `0x${string}` }));
+  const settlement = await resolveSettlement(pinned, async () =>
+    config({ clearingAddress: CLEARING.toUpperCase().replace("0X", "0x") as `0x${string}` }),
+  );
   assert.equal(settlement.error, undefined);
   assert.equal(settlement.config?.clearingAddress, CLEARING);
   assert.equal(settlement.config?.tokenAddress, TOKEN);
@@ -51,7 +64,9 @@ test("a pinned build refuses a config naming another chain, contract or token", 
 });
 
 test("an unreachable API leaves the app read-only on the pinned chain", async () => {
-  const settlement = await resolveSettlement({ VITE_CHAIN_ID: "84532" }, async () => { throw new Error("offline"); });
+  const settlement = await resolveSettlement({ VITE_CHAIN_ID: "84532" }, async () => {
+    throw new Error("offline");
+  });
   assert.equal(settlement.config, null);
   assert.equal(settlement.error, undefined);
   assert.equal(settlement.chain.id, 84532);

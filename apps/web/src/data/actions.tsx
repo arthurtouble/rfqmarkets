@@ -10,9 +10,18 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
 import { friendlyError } from "../lib/errors.js";
 import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
-import { checkRoute, formatDuration, lifiGet, quoteUrl, sourceChain, type LifiQuote, type Route, type SourceToken } from "../lib/bridge.js";
+import {
+  checkRoute,
+  formatDuration,
+  lifiGet,
+  quoteUrl,
+  sourceChain,
+  type LifiQuote,
+  type Route,
+  type SourceToken,
+} from "../lib/bridge.js";
 import { MIN_GAS_FREE_DEPOSIT, plainAccount } from "../lib/funds.js";
-import { abs, baseAmount, microToInput, parseUsdcInput, shortHash, usdc } from "../lib/format.js";
+import { abs, baseAmount, microToInput, parseUsdcInput, usdc } from "../lib/format.js";
 import {
   LIMIT_ORDER_DURATION_SECONDS,
   tpslPrepareBody,
@@ -57,6 +66,8 @@ export type MarketOrder = {
   amountMicro: bigint;
   reduceOnly: boolean;
   slippageBps?: number;
+  /** The success toast's title, when the screen has its own words for the trade. */
+  title?: string;
 };
 export type LimitOrder = MarketOrder & { limitPrice: string };
 export type { TpslInput, TriggerOrderInput };
@@ -99,7 +110,6 @@ export type ClosedAt = { price: bigint; fee: bigint };
 
 const TradingContext = createContext<Trading | null>(null);
 const sideLabel = (side: Side) => (side === "buy" ? "Long" : "Short");
-const blockLine = (tx?: Transaction) => (tx ? `Block ${tx.blockNumber} · ${shortHash(tx.hash)}` : undefined);
 const TRIGGER_LABELS = {
   "stop-loss": "Stop-loss",
   "take-profit": "Take-profit",
@@ -114,6 +124,10 @@ const fractionLabel = (fractionBps: number, market: Market) =>
 /** The API refused the signed price because the market moved past it before settlement. */
 const priceMoved = (error: unknown) =>
   error instanceof ApiError && error.status === 409 && error.message.startsWith("price moved");
+
+/** The approvers refused a one-tap signature: the session's limits don't cover this trade. */
+const sessionRefused = (error: unknown) =>
+  error instanceof ApiError && /user authorization rejected|invalid user signature/i.test(error.message);
 
 export function TradingProvider({ children }: { children: ReactNode }) {
   const trader = useTrader(),
@@ -216,14 +230,27 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       sessionAllowed && quick.session?.privateKey
         ? (quick.session as QuickSession & { privateKey: Hex })
         : null;
-    progress(session ? "Signing with one-click trading" : "Confirm in your wallet");
-    const userSignature: Hex = session
-      ? await privateKeyToAccount(session.privateKey).signTypedData(
-          trader.verified(prepared, "TradeIntent", expected) as never,
-        )
-      : await trader.signIntent(prepared, "TradeIntent", expected);
-    progress("Collecting approver signatures");
-    return api<Settled>("/v1/approve", { quoteId: quote.quoteId, account: account(), nonce, userSignature });
+    const submit = (userSignature: Hex) =>
+      api<Settled>("/v1/approve", { quoteId: quote.quoteId, account: account(), nonce, userSignature });
+    if (session) {
+      progress("Signing with one tap");
+      try {
+        return await submit(
+          await privateKeyToAccount(session.privateKey).signTypedData(
+            trader.verified(prepared, "TradeIntent", expected) as never,
+          ),
+        );
+      } catch (error) {
+        // Past the session's limits (its total, or a winning exit above the per-trade cap) the approvers
+        // refuse the session's signature. Nothing was traded, so the wallet signs the same intent instead:
+        // getting out must never depend on the one-tap allowance.
+        if (!sessionRefused(error) || !quoteUsable(quote.expiresAtMs, Date.now())) throw error;
+      }
+    }
+    progress("Confirm in your wallet");
+    const userSignature = await trader.signIntent(prepared, "TradeIntent", expected);
+    progress("Placing your trade");
+    return submit(userSignature);
   }
 
   /** Settles a reduce-only close. If the price moves past the signed limit first, re-quotes and signs once more: getting out should not fail on a tick. */
@@ -240,7 +267,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       };
     } catch (error) {
       if (!priceMoved(error)) throw error;
-      progress("Price moved, getting a new quote");
+      progress("Price moved, getting a new price");
       const fresh = await api<Quote>("/v1/close/quote", {
         account: account(),
         market,
@@ -266,7 +293,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         async (progress) => {
           if (reviewed && !quoteUsable(reviewed.expiresAtMs, Date.now()))
             throw new Error("The quote expired. Review the new price");
-          if (!reviewed) progress("Getting a firm quote");
+          if (!reviewed) progress("Getting a price");
           const slippageBps =
             order.slippageBps === undefined ? undefined : clampSlippageBps(order.slippageBps);
           const quote = reviewed ?? (await requestQuote(order));
@@ -278,12 +305,12 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             { market: order.market, side: order.side, amountMicro: order.amountMicro, slippageBps },
           );
           return {
-            title: order.reduceOnly
-              ? `Reduced ${order.market} by ${usdc(order.amountMicro)}`
-              : `${sideLabel(order.side)} ${order.market} ${usdc(order.amountMicro)} ${result.transaction ? "filled" : "approved"}`,
-            detail: [`at ${usdc(quote.expectedPrice)}`, blockLine(result.transaction)]
-              .filter(Boolean)
-              .join(" · "),
+            title: order.title
+              ? order.title
+              : order.reduceOnly
+                ? `Reduced ${order.market} by ${usdc(order.amountMicro)}`
+                : `${sideLabel(order.side)} ${order.market} ${usdc(order.amountMicro)} ${result.transaction ? "filled" : "approved"}`,
+            detail: `at ${usdc(quote.expectedPrice)}`,
             txHash: result.transaction?.hash,
             value: true,
           };
@@ -405,7 +432,6 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         const count = result.cancelledOrderIds?.length ?? 1;
         return {
           title: count > 1 ? `${count} orders cancelled` : "Order cancelled",
-          detail: blockLine(result.transaction),
           txHash: result.transaction?.hash,
           value: undefined,
         };
@@ -413,7 +439,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     closePosition: (market, fractionBps = 10_000) =>
       run("Close", `Close ${fractionLabel(fractionBps, market)}`, async (progress) => {
-        progress("Getting an exact close quote");
+        progress("Getting a price");
         const { quote, result } = await settleClose(
           market,
           fractionBps,
@@ -422,9 +448,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         );
         return {
           title: `${fractionLabel(fractionBps, market)} closed`,
-          detail: [`at ${usdc(quote.expectedPrice)}`, blockLine(result.transaction)]
-            .filter(Boolean)
-            .join(" · "),
+          detail: `at ${usdc(quote.expectedPrice)}`,
           txHash: result.transaction?.hash,
           value: { price: BigInt(quote.expectedPrice), fee: BigInt(quote.fee) },
         };
@@ -435,7 +459,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         "Close all",
         fractionBps < 10_000 ? `Close ${fractionBps / 100}% of every position` : "Close all positions",
         async (progress) => {
-          progress("Getting close quotes");
+          progress("Getting prices");
           const { quotes } = await api<{ quotes: Quote[] }>("/v1/close/all/quote", {
             account: account(),
             fraction: fractionBps,
@@ -465,8 +489,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             title: outcome.failed.length
               ? `Closed ${outcome.closed.join(", ")}; ${outcome.failed.map((item) => item.market).join(", ")} still open`
               : `Closed ${outcome.closed.join(", ")}`,
-            detail:
-              outcome.failed.map((item) => `${item.market}: ${item.error}`).join(" · ") || blockLine(lastTx),
+            detail: outcome.failed.map((item) => `${item.market}: ${item.error}`).join(" · ") || undefined,
             txHash: lastTx?.hash,
             value: outcome,
           };
@@ -484,11 +507,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           market: index,
           nonce,
         });
-        progress("Submitting conservative close");
+        progress("Closing");
         const result = await api<Settled>("/v1/close/execute", { intent: prepared.intent, userSignature });
         return {
           title: `${market} position closed`,
-          detail: blockLine(result.transaction),
           txHash: result.transaction?.hash,
           value: undefined,
         };
@@ -522,14 +544,13 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             });
             progress("Sign the deposit in your wallet. No gas needed");
             const userSignature = await trader.signTyped(payload);
-            progress("Submitting gas-free deposit");
+            progress("Depositing");
             const result = await api<Settled>("/v1/deposit/execute", {
               authorization: prepared.authorization,
               userSignature,
             });
             return {
               title: `Deposited ${usdc(amount)}`,
-              detail: blockLine(result.transaction),
               txHash: result.transaction?.hash,
               value: true,
             };
@@ -555,57 +576,68 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         });
         return {
           title: `Deposited ${usdc(amount)}`,
-          detail: `Block ${receipt.blockNumber} · ${shortHash(receipt.hash)}`,
           txHash: receipt.hash,
           value: true,
         };
       })) ?? false,
 
     bridge: (route, source) =>
-      run("Deposit", `Deposit ${source.symbol} from ${sourceChain(route.request.fromChain)?.name ?? "another network"}`, async (progress) => {
-        const network = sourceChain(route.request.fromChain)?.name ?? "the source network";
-        // Quotes age quickly: fetch a fresh one, check it the same way, and stop if it now delivers less.
-        progress("Refreshing the route");
-        const fresh = checkRoute(await lifiGet<LifiQuote>(quoteUrl(route.request)), route.request, source.decimals);
-        if (fresh.toAmountMin * 100n < route.toAmountMin * 99n)
-          throw new Error("The rate moved. Review the new quote and try again");
-        if (fresh.approval) {
-          const reader = getPublicClient(config, { chainId: route.request.fromChain });
-          if (!reader) throw new Error(`No RPC for ${network}`);
-          const allowance = await reader.readContract({
-            address: route.request.fromToken,
-            abi: erc20Abi,
-            functionName: "allowance",
-            args: [account(), fresh.approval],
-          });
-          if (allowance < route.request.fromAmount) {
-            // USDT on Ethereum refuses to change a nonzero allowance without resetting it first.
-            if (allowance > 0n) {
-              progress(`Reset the ${source.symbol} approval in your wallet`);
+      run(
+        "Deposit",
+        `Deposit ${source.symbol} from ${sourceChain(route.request.fromChain)?.name ?? "another network"}`,
+        async (progress) => {
+          const network = sourceChain(route.request.fromChain)?.name ?? "the source network";
+          // Quotes age quickly: fetch a fresh one, check it the same way, and stop if it now delivers less.
+          progress("Refreshing the route");
+          const fresh = checkRoute(
+            await lifiGet<LifiQuote>(quoteUrl(route.request)),
+            route.request,
+            source.decimals,
+          );
+          if (fresh.toAmountMin * 100n < route.toAmountMin * 99n)
+            throw new Error("The rate moved. Review the new quote and try again");
+          if (fresh.approval) {
+            const reader = getPublicClient(config, { chainId: route.request.fromChain });
+            if (!reader) throw new Error(`No RPC for ${network}`);
+            const allowance = await reader.readContract({
+              address: route.request.fromToken,
+              abi: erc20Abi,
+              functionName: "allowance",
+              args: [account(), fresh.approval],
+            });
+            if (allowance < route.request.fromAmount) {
+              // USDT on Ethereum refuses to change a nonzero allowance without resetting it first.
+              if (allowance > 0n) {
+                progress(`Reset the ${source.symbol} approval in your wallet`);
+                await trader.sendOn(route.request.fromChain, {
+                  to: route.request.fromToken,
+                  data: encodeFunctionData({
+                    abi: erc20Abi,
+                    functionName: "approve",
+                    args: [fresh.approval, 0n],
+                  }),
+                });
+              }
+              progress(`Approve ${source.symbol} on ${network} in your wallet`);
               await trader.sendOn(route.request.fromChain, {
                 to: route.request.fromToken,
-                data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [fresh.approval, 0n] }),
+                data: encodeFunctionData({
+                  abi: erc20Abi,
+                  functionName: "approve",
+                  args: [fresh.approval, route.request.fromAmount],
+                }),
               });
             }
-            progress(`Approve ${source.symbol} on ${network} in your wallet`);
-            await trader.sendOn(route.request.fromChain, {
-              to: route.request.fromToken,
-              data: encodeFunctionData({
-                abi: erc20Abi,
-                functionName: "approve",
-                args: [fresh.approval, route.request.fromAmount],
-              }),
-            });
           }
-        }
-        progress(`Confirm the transfer on ${network} in your wallet`);
-        const sent = await trader.sendOn(route.request.fromChain, fresh.transaction);
-        return {
-          title: `Sent from ${network}`,
-          detail: `About ${usdc(fresh.toAmount)} arrives on Base in ${formatDuration(fresh.durationSeconds).replace("about ", "")}`,
-          value: { hash: sent.hash, route: fresh },
-        };
-      }),
+          progress(`Confirm the transfer on ${network} in your wallet`);
+          const sent = await trader.sendOn(route.request.fromChain, fresh.transaction);
+          return {
+            title: `Sent from ${network}`,
+            detail: `About ${usdc(fresh.toAmount)} arrives on Base in ${formatDuration(fresh.durationSeconds).replace("about ", "")}`,
+            value: { hash: sent.hash, route: fresh },
+          };
+        },
+      ),
 
     withdraw: async (amount) =>
       (await run("Withdrawal", `Withdraw ${usdc(amount)}`, async (progress) => {
@@ -622,18 +654,17 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           amountMicro: amount,
           nonce,
         });
-        progress("Submitting sponsored withdrawal");
+        progress("Sending");
         const result = await api<Settled>("/v1/withdraw/execute", { intent: prepared.intent, userSignature });
         return {
           title: `Withdrew ${usdc(amount)}`,
-          detail: blockLine(result.transaction),
           txHash: result.transaction?.hash,
           value: true,
         };
       })) ?? false,
 
     enableQuickTrading: async () =>
-      (await run("One-click trading", "Turn on one-click trading", async (progress) => {
+      (await run("One-tap trading", "Turn on one-tap trading", async (progress) => {
         const privateKey = generatePrivateKey(),
           sessionAddress = privateKeyToAccount(privateKey).address;
         // Covers every registered market; one added later needs a new session (sessionCovers checks the mask).
@@ -648,7 +679,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             nonce,
           },
         );
-        progress("Confirm the session in your wallet");
+        progress("Confirm one tap in your wallet");
         // Only the key generated above, with exactly the quick-trading limits, may be authorized.
         const userSignature = await trader.signIntent(
           { ...prepared, intent: prepared.grant },
@@ -664,7 +695,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             durationSeconds: QUICK_LIMITS.durationSeconds,
           },
         );
-        progress("Activating sponsored session");
+        progress("Turning on one tap");
         const result = await api<{ validUntil: string; transaction?: Transaction }>("/v1/session/execute", {
           grant: prepared.grant,
           userSignature,
@@ -677,7 +708,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           marketMask: String(request.marketMask),
         });
         return {
-          title: "One-click trading on",
+          title: "One-tap trading on",
           detail: `Trades up to ${QUICK_LIMITS.maxTradeAmount} USDC sign instantly in this tab for 8 hours`,
           txHash: result.transaction?.hash,
           value: true,
@@ -685,7 +716,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       })) ?? false,
 
     revokeQuickTrading: () =>
-      run("Revoke", "Turn off one-click trading", async (progress) => {
+      run("Revoke", "Turn off one-tap trading", async (progress) => {
         const session = quick.session,
           clearing = trader.settlement?.clearingAddress;
         if (!session || !clearing) throw new Error("No active session");
@@ -700,7 +731,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         });
         quick.clear();
         return {
-          title: "One-click trading off",
+          title: "One-tap trading off",
           detail: `Block ${receipt.blockNumber}`,
           txHash: receipt.hash,
           value: undefined,

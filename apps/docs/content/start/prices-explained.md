@@ -1,32 +1,32 @@
 # Prices explained
 
-The trade screen shows several prices at once, and they mean different things. This page explains each one and where it comes from. If you only remember one thing: the big number at the top is a reference, the **Entry price** on the ticket is what you will probably pay, and the **Price protection** is the worst you can pay.
+The app shows several prices, and they mean different things. This page explains each one and where it comes from. If you only remember one thing: the big number at the top is a reference, the **Price** on the Home confirm sheet (the **Entry price** on the Pro ticket) is what you will probably pay, and the **Price protection** is the worst you can pay.
 
 ## Oracle bid, ask and mid
 
-The venue runs its own price oracle: three independent nodes that each watch seven exchanges and sign a price every second. Their combined report gives a **bid** and an **ask** for each market, and the **mid** halfway between them. The mid is the large price at the top of the trade page, the price in the market list and the line on the chart. In Advanced view, the market details also show the **Bid** and **Ask**.
+The venue runs its own price oracle: three nodes in different regions that each watch seven exchanges and sign a price every second. Their combined report gives a **bid** and an **ask** for each market, and the **mid** halfway between them. The mid is the large price at the top of Home and Pro, the price in the market list and the line on the Home chart. In Pro, the market details also show the **Bid** and **Ask**.
 
 The oracle's bid and ask are not anyone's resting orders. They describe where the market is trading across those exchanges, and how much those exchanges disagree with each other. [Price oracle](../markets/price-oracle.md) explains how they are built.
 
-The chart plots the mid across the most recent price updates, with the high and low of that window. The change shown beside the price is the change across the same window, not over a day.
+On Home, the chart plots the mid over the last few minutes, and the change beside the price covers the same window, not a day. In Pro, the chart shows candles at the interval you pick, from one minute to one day, with the 24-hour high and low.
 
 ## Entry price
 
-The **Entry price** on the ticket is an indicative quote for the exact amount you have typed. Your browser computes it on every price update from the oracle price and the maker's published pricing parameters:
+The **Entry price** on the Pro ticket is an indicative quote for the exact amount you have typed. Your browser computes it on every price update from the oracle price and the maker's published pricing parameters:
 
 - a long starts from the oracle **ask**, a short from the oracle **bid**;
 - the maker's **spread** is added on top;
 - an **inventory adjustment** is added if your trade increases the maker's existing exposure, or subtracted if it reduces it.
 
-There is no trading fee: the platform's markup is already in this price. Typing an amount does not send anything to the venue or reserve anything. Advanced view shows the spread and inventory adjustment as separate rows. [Pricing and fees](../risk/pricing-and-fees.md) gives the formula.
+There is no trading fee: the platform's markup is already in this price. Typing an amount does not send anything to the venue or reserve anything. Pro's market details show the current spread. [Pricing and fees](../risk/pricing-and-fees.md) gives the formula.
 
 ## Firm quote
 
-When you place the order, the app asks the venue for a firm quote at that moment for that exact size. The firm quote is what the review sheet shows, what the approvers check and what the contract executes. It normally matches the estimate closely, but it is computed fresh, so it can differ by a few basis points if the market moved between your last screen update and your click.
+When you place the order, the app asks the venue for a firm quote at that moment for that exact size. The firm quote is what the Home confirm sheet and the Pro review sheet show, what the approvers check and what the contract executes. It normally matches the estimate closely, but it is computed fresh, so it can differ by a few basis points if the market moved between your last screen update and your click.
 
 ## Price protection
 
-This is the worst price you accept: a maximum for a long, a minimum for a short. By default the app sets it 8 basis points (0.08%) worse than the firm quote (you can change this under **Options** in Advanced view), and it goes into the message you sign as your limit price. The contract refuses to execute your trade at any price worse than this. If the market moves further than that before your trade is included, the trade fails and nothing happens; you are never filled at a worse price than you signed. The review sheet always shows it; the ticket shows it in Advanced view.
+This is the worst price you accept: a maximum for a long, a minimum for a short. By default the app sets it 8 basis points (0.08%) worse than the firm quote (you can change this under **Options** on the Pro ticket), and it goes into the message you sign as your limit price. The contract refuses to execute your trade at any price worse than this. If the market moves further than that before your trade is included, the trade fails and nothing happens; you are never filled at a worse price than you signed. The Pro ticket and review sheet show it.
 
 ## Mark
 
@@ -38,7 +38,7 @@ This is the worst price you accept: a maximum for a long, a minimum for a short.
 
 ## Liquidation price
 
-**Liq. price** is the mid price at which your account would fall below its maintenance margin, assuming your other positions and your collateral stay where they are. It is an estimate refreshed with your account data, not continuously. Because liquidation actually uses the bid for longs and the ask for shorts, the real trigger can come slightly before the mid reaches this number. See [Liquidation](../risk/liquidation.md).
+**Liq. price** is the mid price at which your account would fall below its maintenance margin, assuming your other positions and your collateral stay where they are. It is an estimate refreshed with your account data, not continuously. Because liquidation actually uses the bid for longs and the ask for shorts, the real trigger can come slightly before the mid reaches this number. On Home it is called the **auto-close price**. See [Liquidation](../risk/liquidation.md).
 
 ## Limit order prices
 

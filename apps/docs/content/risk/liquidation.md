@@ -31,7 +31,7 @@ Liquidation can only make your positions smaller. It never flips one.
 If an account's equity is zero or negative, there is nothing left to protect, so every one of its positions is closed at once at the oracle price. Any remaining loss is a deficit, which is covered in this order:
 
 1. what is left of the account's collateral and the liquidation penalty;
-2. the **insurance fund**, built from a share of trading fees and liquidation penalties;
+2. the **insurance fund**, built from a share of the platform's markup on every fill and from liquidation penalties;
 3. the **maker's capital**.
 
 If all of that were exhausted, the venue would stop and wind down through [resolution](../protocol/safety-and-exits.md#resolution), so that every trader shares the shortfall in proportion rather than the first to withdraw getting paid in full.

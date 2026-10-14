@@ -25,20 +25,27 @@ export async function discoverWallets(target: Window = window, waitMs = 250): Pr
   const listener = (event: Event) => {
     const detail = (event as CustomEvent<Announcement>).detail;
     if (!detail?.provider || !detail.info?.rdns) return;
-    found.set(detail.info.rdns, { id: detail.info.rdns, name: detail.info.name, icon: safeIcon(detail.info.icon), provider: detail.provider });
+    found.set(detail.info.rdns, {
+      id: detail.info.rdns,
+      name: detail.info.name,
+      icon: safeIcon(detail.info.icon),
+      provider: detail.provider,
+    });
   };
   target.addEventListener("eip6963:announceProvider", listener);
   target.dispatchEvent(new Event("eip6963:requestProvider"));
-  await new Promise(done => setTimeout(done, waitMs));
+  await new Promise((done) => setTimeout(done, waitMs));
   target.removeEventListener("eip6963:announceProvider", listener);
   const injected = (target as unknown as { ethereum?: Eip1193 }).ethereum;
   const wallets = [...found.values()];
-  if (injected && !wallets.some(wallet => wallet.provider === injected)) wallets.push({ id: "injected", name: "Browser wallet", provider: injected });
+  if (injected && !wallets.some((wallet) => wallet.provider === injected))
+    wallets.push({ id: "injected", name: "Browser wallet", provider: injected });
   return wallets;
 }
 
 /** Only inline images: the page's CSP blocks remote ones, and an icon must not run script. */
-const safeIcon = (icon: string | undefined) => (icon && /^data:image\/(png|svg\+xml|webp|jpeg|gif)[;,]/.test(icon) ? icon : undefined);
+const safeIcon = (icon: string | undefined) =>
+  icon && /^data:image\/(png|svg\+xml|webp|jpeg|gif)[;,]/.test(icon) ? icon : undefined;
 
 export async function requestAccount(provider: Eip1193): Promise<string> {
   const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
@@ -56,7 +63,9 @@ export async function switchChain(provider: Eip1193, chainId: bigint, chain: Cha
   try {
     await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hex }] });
   } catch (error) {
-    const code = (error as { code?: number; data?: { originalError?: { code?: number } } }).code ?? (error as { data?: { originalError?: { code?: number } } }).data?.originalError?.code;
+    const code =
+      (error as { code?: number; data?: { originalError?: { code?: number } } }).code ??
+      (error as { data?: { originalError?: { code?: number } } }).data?.originalError?.code;
     if (code !== 4902 || !chain.add) throw error;
     await provider.request({ method: "wallet_addEthereumChain", params: [{ chainId: hex, ...chain.add }] });
   }

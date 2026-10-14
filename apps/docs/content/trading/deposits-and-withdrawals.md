@@ -10,7 +10,7 @@ If your USDC is on another chain, bridge or withdraw it to Base first. The venue
 
 ## Depositing
 
-1. Click **Deposit**. It is in the top bar on a computer, on the **Account value** card beside the ticket, and on the Portfolio page. With nothing deposited yet, the ticket's button reads **Add funds to trade** and does the same.
+1. Click **Deposit**. It is in the top bar on a computer, on the **Account value** card in Pro, and on the Portfolio page. On a phone, tap your balance at the top of Home, then **Add money**. With nothing deposited yet, Home shows **Add money** in place of Up and Down, and the Pro ticket's button reads **Add funds to trade**. Both do the same.
 2. The **Add funds** sheet opens. Enter an amount, or use **25%**, **50%**, **75%** or **Max** of the balance shown as "In your wallet".
 3. Click **Deposit $20.00** (or your amount) and confirm the two wallet prompts:
    - **Approve USDC** for exactly the amount you are depositing. The app never asks for an unlimited approval. If your existing allowance already covers the amount, this prompt is skipped.
@@ -26,7 +26,7 @@ Deposits stay open while trading is paused, so you can always add margin to a po
 
 ## Withdrawing
 
-1. Click **Withdraw** on the **Account value** card or the Portfolio page. The same sheet opens on its **Withdraw** side; you can also switch sides at the top of the sheet.
+1. Click **Withdraw** on the **Account value** card in Pro or on the Portfolio page. On a phone, you can also tap your balance on Home, then **Withdraw**. The same sheet opens on its **Withdraw** side; you can also switch sides at the top of the sheet.
 2. Enter an amount up to the "Available to withdraw" figure, or use the percentage shortcuts. While positions are open, **Max** leaves 1% of that figure behind so a small price move between signing and inclusion cannot fail the withdrawal.
 3. Click **Withdraw $20.00** (or your amount) and sign the *WithdrawalIntent* in your wallet.
 
@@ -56,6 +56,6 @@ You do not need the venue's servers to move your money. The [exit page](../proto
 | Trades, closes, limit order fills | The venue |
 | Withdrawals | The venue |
 | Cancelling a limit order | The venue |
-| Turning on one-click trading | The venue |
-| Turning off one-click trading | You |
+| Turning on one-tap trading | The venue |
+| Turning off one-tap trading | You |
 | Anything on the exit page | You |

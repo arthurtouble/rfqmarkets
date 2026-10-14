@@ -22,36 +22,72 @@ const MAX_LIFETIME_SECONDS = 3_600;
 export type PreparedDeposit = {
   domain: { name: string; version: string; chainId: string; verifyingContract: string };
   types: Record<string, Array<{ name: string; type: string }>>;
-  authorization: { from: string; to: string; value: string; validAfter: string; validBefore: string; nonce: string };
+  authorization: {
+    from: string;
+    to: string;
+    value: string;
+    validAfter: string;
+    validBefore: string;
+    nonce: string;
+  };
 };
 
-export type DepositExpectation = { account: Address; chainId: number; token: Address; clearing: Address; amount: bigint };
+export type DepositExpectation = {
+  account: Address;
+  chainId: number;
+  token: Address;
+  clearing: Address;
+  amount: bigint;
+};
 
 const same = (value: unknown, expected: string) =>
-  typeof value === "string" && isAddress(value, { strict: false }) && getAddress(value) === getAddress(expected);
+  typeof value === "string" &&
+  isAddress(value, { strict: false }) &&
+  getAddress(value) === getAddress(expected);
 const integer = (value: unknown) => {
   if (typeof value !== "string" || !/^\d+$/.test(value)) throw new IntentMismatchError("a malformed number");
   return BigInt(value);
 };
 
 /** The typed data to sign, or a thrown IntentMismatchError. */
-export function verifyDeposit(prepared: PreparedDeposit, expected: DepositExpectation, nowSeconds = Math.floor(Date.now() / 1_000)) {
+export function verifyDeposit(
+  prepared: PreparedDeposit,
+  expected: DepositExpectation,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+) {
   const { domain, types, authorization } = prepared ?? ({} as PreparedDeposit);
   if (!domain || !types || !authorization) throw new IntentMismatchError("an incomplete deposit");
-  if (typeof domain.name !== "string" || typeof domain.version !== "string") throw new IntentMismatchError("a malformed domain");
+  if (typeof domain.name !== "string" || typeof domain.version !== "string")
+    throw new IntentMismatchError("a malformed domain");
   if (integer(domain.chainId) !== BigInt(expected.chainId)) throw new IntentMismatchError("another chain");
-  if (!same(domain.verifyingContract, expected.token)) throw new IntentMismatchError("another token contract");
-  if (Object.keys(types).join() !== "ReceiveWithAuthorization" || JSON.stringify(types.ReceiveWithAuthorization) !== JSON.stringify(RECEIVE_WITH_AUTHORIZATION))
+  if (!same(domain.verifyingContract, expected.token))
+    throw new IntentMismatchError("another token contract");
+  if (
+    Object.keys(types).join() !== "ReceiveWithAuthorization" ||
+    JSON.stringify(types.ReceiveWithAuthorization) !== JSON.stringify(RECEIVE_WITH_AUTHORIZATION)
+  )
     throw new IntentMismatchError("an unexpected type");
   if (!same(authorization.from, expected.account)) throw new IntentMismatchError("another account");
   if (!same(authorization.to, expected.clearing)) throw new IntentMismatchError("another recipient");
-  const value = integer(authorization.value), validAfter = integer(authorization.validAfter), validBefore = integer(authorization.validBefore);
+  const value = integer(authorization.value),
+    validAfter = integer(authorization.validAfter),
+    validBefore = integer(authorization.validBefore);
   if (value !== expected.amount) throw new IntentMismatchError("another amount");
-  if (validAfter > BigInt(nowSeconds) || validBefore <= BigInt(nowSeconds) || validBefore > BigInt(nowSeconds + MAX_LIFETIME_SECONDS))
+  if (
+    validAfter > BigInt(nowSeconds) ||
+    validBefore <= BigInt(nowSeconds) ||
+    validBefore > BigInt(nowSeconds + MAX_LIFETIME_SECONDS)
+  )
     throw new IntentMismatchError("an unexpected validity window");
-  if (typeof authorization.nonce !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(authorization.nonce)) throw new IntentMismatchError("a malformed nonce");
+  if (typeof authorization.nonce !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(authorization.nonce))
+    throw new IntentMismatchError("a malformed nonce");
   return {
-    domain: { name: domain.name, version: domain.version, chainId: expected.chainId, verifyingContract: getAddress(expected.token) },
+    domain: {
+      name: domain.name,
+      version: domain.version,
+      chainId: expected.chainId,
+      verifyingContract: getAddress(expected.token),
+    },
     types: { ReceiveWithAuthorization: RECEIVE_WITH_AUTHORIZATION },
     primaryType: "ReceiveWithAuthorization" as const,
     message: {

@@ -1,8 +1,8 @@
 // The home screen: one centred column with the market, a live tick chart and
-// two buttons. Up opens a long, Down a short, at the chosen stake and
-// multiplier; the bet stays open until the player cashes out. The order
+// two buttons. Up opens a long, Down a short, at the chosen amount and
+// multiplier; the trade stays open until the trader cashes out. The order
 // ticket and everything else live behind "Pro" (the /trade terminal). Any
-// bet, open or cashed out, can be shared as an image card.
+// trade, open or cashed out, can be shared as an image card.
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useAccount } from "../account/useAccount.js";
@@ -16,6 +16,7 @@ import { DEFAULT_MARGIN_SCALE_BPS } from "../lib/leverage.js";
 import { closePreview, positionView, type PositionView } from "../lib/positions.js";
 import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
 import type { ChartPoint } from "../lib/candles.js";
+import { chartTime } from "../lib/market-stats.js";
 import { returnLabel, type ShareBet } from "../lib/share.js";
 import {
   isDecimalDraft,
@@ -29,62 +30,53 @@ import {
   DEFAULT_MULTIPLIER,
   DEFAULT_STAKE,
   STAKE_PRESETS,
+  UP_DOWN,
   betNotional,
+  betRecordText,
+  homeProblem,
   multiplierChoices,
   onePercentGain,
+  parseBetRecord,
   pickMultiplier,
+  recordMatches,
+  type BetRecord,
+  lossAt,
 } from "../lib/updown.js";
-import { Banner, Down, EmptyState, NavIcons, Segmented, Up, marketName } from "../ui/primitives.js";
+import { load, store, forget } from "../lib/storage.js";
+import { Banner, Down, Segmented, Up, marketName } from "../ui/primitives.js";
+import { UnknownMarket } from "../markets/UnknownMarket.js";
 import { useTrader } from "../wallet/trader.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
 import { useFunds } from "../trade/FundsDialog.js";
 import { MarketSwitcher, PriceHeader } from "../trade/MarketHeader.js";
 import { PriceChart } from "../trade/PriceChart.js";
-import { ReviewSheet, type ReviewOrder } from "../trade/ReviewSheet.js";
+import type { ReviewOrder } from "../trade/ReviewSheet.js";
+import { ConfirmSheet } from "./ConfirmSheet.js";
 import { ShareSheet } from "./ShareCard.js";
 
 const STAKE_KEY = "rfq.updown.stake",
   MULTIPLIER_KEY = "rfq.updown.multiplier",
-  /** The stake and multiplier behind the open bet in a market, so its return reads against what the player put in. */
+  /** The amount and multiplier behind the open trade in a market, so its return reads against what went in. */
   betKey = (market: Market) => `rfq.updown.bet.${market}`;
-const load = (key: string) => {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-};
-const store = (key: string, value: string) => {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    /* private mode */
-  }
-};
-type BetRecord = { stake: bigint | null; multiplier: number | null };
-/** The stored bet; older tabs stored the stake text alone. */
-function loadBet(market: Market): BetRecord {
-  const raw = load(betKey(market)) ?? "";
-  try {
-    const parsed = JSON.parse(raw) as { stake?: string; multiplier?: number };
-    if (parsed && typeof parsed === "object")
-      return { stake: parseUsdcInput(parsed.stake ?? ""), multiplier: Number(parsed.multiplier) || null };
-  } catch {
-    /* plain stake text */
-  }
-  return { stake: parseUsdcInput(raw), multiplier: null };
+
+/** Entry notional of a position, USDC 1e6. */
+const entryNotional = (view: PositionView) => (view.size * view.entryPrice) / 10n ** 18n;
+/** The stored record for the open position in a market, when this browser opened it. */
+function recordFor(view: PositionView): BetRecord | null {
+  const record = parseBetRecord(load(betKey(view.market)));
+  return record && recordMatches(record, entryNotional(view)) ? record : null;
 }
-/** A bet as its share card shows it, from the position and (when closed) the fill it closed at. */
-function shareBet(view: PositionView, closed: ClosedAt | null): ShareBet {
-  const { stake, multiplier } = loadBet(view.market);
+/** A trade as its share card shows it, from the position and (when closed) the fill it closed at. */
+function shareBet(view: PositionView, record: BetRecord | null, closed: ClosedAt | null): ShareBet {
   const pnl = closed ? closePreview(view, 10_000, null, closed.price).realizedPnl - closed.fee : view.pnl;
-  // Against the stake when this browser placed the bet; else against the margin the position uses.
+  // Against the amount when this browser placed the trade; else against the margin the position uses.
+  const stake = record?.stake;
   const ret = stake ? Number((pnl * 1_000_000n) / stake) / 1_000_000 : closed ? null : view.roe;
   return {
     market: view.market,
     name: marketName(view.market),
     long: view.long,
-    multiplier,
+    multiplier: record?.multiplier ?? null,
     pnl,
     ret,
     entryPrice: view.entryPrice,
@@ -96,49 +88,44 @@ type CashedOut = { bet: ShareBet; points: ChartPoint[] };
 
 export function UpDownPage({ market }: { market: Market }) {
   const list = useMarketList();
-  if (!list.isLoading && !list.get(market))
-    return (
-      <div className="page">
-        <section className="rfq-card">
-          <EmptyState
-            icon={NavIcons.markets}
-            action={
-              <Link className="rfq-btn rfq-btn--primary" to="/markets">
-                See all markets
-              </Link>
-            }
-          >
-            <b>{market}</b> isn't listed on RFQ Markets.
-          </EmptyState>
-        </section>
-      </div>
-    );
+  if (!list.isLoading && !list.get(market)) return <UnknownMarket market={market} />;
   return <UpDown market={market} />;
 }
 
 function UpDown({ market }: { market: Market }) {
-  const { account, error } = useAccount();
+  const { account, loading, error } = useAccount();
   const ticks = useTicks(market);
   const open = account ? positionView(account, market) : null;
   const reference = ticks.points[0] ? BigInt(Math.round(ticks.points[0].value * 1e6)).toString() : null;
   const [cashedOut, setCashedOut] = useState<CashedOut | null>(null);
+  const [scrub, setScrub] = useState<ChartPoint | null>(null);
   const done = cashedOut?.bet.market === market ? cashedOut : null;
+  const spanMs = ticks.points.length > 1 ? ticks.points.at(-1)!.time - ticks.points[0].time : 0;
   return (
     <div className="page updown">
       <div className="updown__top">
         <MarketSwitcher market={market} to="/updown/$market" />
-        <Link className="rfq-btn rfq-btn--ghost rfq-btn--sm" to="/trade/$market" params={{ market }}>
-          Pro
-        </Link>
+        <div className="updown__end">
+          <Balance account={account} loading={loading} />
+          <Link className="rfq-btn rfq-btn--ghost rfq-btn--sm" to="/trade/$market" params={{ market }}>
+            Pro
+          </Link>
+        </div>
       </div>
-      <PriceHeader market={market} reference={reference} period="5 min" />
+      <PriceHeader
+        market={market}
+        reference={reference}
+        period="5 min"
+        scrub={scrub && { value: scrub.value, label: chartTime(scrub.time, spanMs) }}
+      />
       <PriceChart
         key={market}
         points={ticks.points}
         height={200}
+        onScrub={setScrub}
         state={ticks.error ? "error" : ticks.loading ? "loading" : "ready"}
       />
-      {error && <Banner tone="warning">We can't load your account right now. {error.message}</Banner>}
+      {error && <Banner tone="warning">We can't load your account. {error.message}</Banner>}
       {open ? (
         <OpenBet
           view={open}
@@ -148,7 +135,50 @@ function UpDown({ market }: { market: Market }) {
       ) : done ? (
         <CashOutResult result={done} onNext={() => setCashedOut(null)} />
       ) : (
-        <NewBet market={market} account={account} />
+        <NewBet market={market} account={account} accountLoading={loading} />
+      )}
+    </div>
+  );
+}
+
+/** Money available to trade, with Add money and Withdraw one tap away. Phones have no top bar, so this is the way in. */
+function Balance({ account, loading }: { account: AccountState | null; loading: boolean }) {
+  const funds = useFunds();
+  const trader = useTrader();
+  const [open, setOpen] = useState(false);
+  if (!account || trader.wrongChain) return null;
+  const pick = (mode: "deposit" | "withdraw") => {
+    setOpen(false);
+    funds.open(mode);
+  };
+  return (
+    <div className="updown-balance">
+      <button
+        type="button"
+        className="rfq-btn rfq-btn--ghost rfq-btn--sm tnum"
+        aria-expanded={open}
+        aria-label="Balance"
+        onClick={() => setOpen((value) => !value)}
+      >
+        {loading ? "…" : usdc(account.equity)}
+      </button>
+      {open && (
+        <div className="updown-balance__menu rfq-card">
+          <button
+            type="button"
+            className="rfq-btn rfq-btn--primary rfq-btn--sm"
+            onClick={() => pick("deposit")}
+          >
+            Add money
+          </button>
+          <button
+            type="button"
+            className="rfq-btn rfq-btn--ghost rfq-btn--sm"
+            onClick={() => pick("withdraw")}
+          >
+            Withdraw
+          </button>
+        </div>
       )}
     </div>
   );
@@ -156,7 +186,7 @@ function UpDown({ market }: { market: Market }) {
 
 const toneOf = (pnl: bigint) => (pnl > 0n ? "rfq-up" : pnl < 0n ? "rfq-down" : "rfq-faint");
 
-/** The bet in this market: live result, one button to cash out and one to share. */
+/** The trade in this market: live result, one button to cash out and one to share. */
 function OpenBet({
   view,
   points,
@@ -170,25 +200,32 @@ function OpenBet({
   const busy = trading.busy !== null;
   const [sharing, setSharing] = useState<ShareBet | null>(null);
   const tone = toneOf(view.pnl);
-  const bet = shareBet(view, null);
+  const record = recordFor(view);
+  const bet = shareBet(view, record, null);
   const cashOut = async () => {
     // The position is gone once this resolves, so the result is worked out from the view captured here.
     const closed = await trading.closePosition(view.market);
-    if (closed) onCashedOut(shareBet(view, closed));
+    if (!closed) return;
+    forget(betKey(view.market));
+    onCashedOut(shareBet(view, record, closed));
   };
   return (
-    <section className="updown-bet" aria-label="Your bet">
+    <section className="updown-bet" aria-label="Your trade">
       <p className="updown-bet__what">
         You're <b className={view.long ? "rfq-up" : "rfq-down"}>{view.long ? "Up" : "Down"}</b> on{" "}
-        {marketName(view.market)} with {usdcCompact(view.notional)}
+        {marketName(view.market)}{" "}
+        {record
+          ? `with ${usdcCompact(record.stake)} at ${leverageLabel(record.multiplier)}`
+          : `with a ${usdcCompact(view.notional)} position`}
       </p>
-      <div className={`updown-bet__pnl tnum ${tone}`} aria-live="polite">
+      <div className={`updown-bet__pnl tnum ${tone}`}>
         <span>{signedUsdc(view.pnl)}</span>
         <span className="updown-bet__roe">{returnLabel(bet.ret)}</span>
       </div>
       <p className="footnote rfq-faint">
         Entry {usdc(view.entryPrice)}
-        {view.liquidationPrice !== null && ` · Closes automatically at ${usdc(view.liquidationPrice)}`}
+        {view.liquidationPrice !== null &&
+          ` · Auto-closes at ${usdc(view.liquidationPrice)}, losing about ${usdcCompact(lossAt((view.size * view.entryPrice) / 10n ** 18n, view.entryPrice, view.liquidationPrice))}`}
       </p>
       <button
         type="button"
@@ -214,7 +251,7 @@ function OpenBet({
   );
 }
 
-/** What the last bet made, with a share button, until the player starts the next one. */
+/** What the last trade made, with a share button, until the trader starts the next one. */
 function CashOutResult({ result, onNext }: { result: CashedOut; onNext: () => void }) {
   const [sharing, setSharing] = useState(false);
   const { bet } = result;
@@ -239,20 +276,28 @@ function CashOutResult({ result, onNext }: { result: CashedOut; onNext: () => vo
         Share
       </button>
       <button type="button" className="rfq-btn rfq-btn--ghost rfq-btn--block" onClick={onNext}>
-        New bet
+        New trade
       </button>
       {sharing && <ShareSheet bet={bet} points={result.points} onClose={() => setSharing(false)} />}
     </section>
   );
 }
 
-/** Stake, multiplier and the two buttons. */
-function NewBet({ market, account }: { market: Market; account: AccountState | null }) {
+/** Amount, multiplier and the two buttons. */
+function NewBet({
+  market,
+  account,
+  accountLoading,
+}: {
+  market: Market;
+  account: AccountState | null;
+  accountLoading: boolean;
+}) {
   const { snapshot, status } = useMarketFeed();
   const trader = useTrader(),
     trading = useTrading(),
     funds = useFunds();
-  const now = useNow(500);
+  const now = useNow(1_000);
   const leverageInfo = useMarketLeverage(market);
   const live = snapshot?.markets[market];
   const marketMax = leverageInfo?.maxLeverage ?? live?.maxLeverage ?? 20;
@@ -268,7 +313,9 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
   const notional = stakeMicro ? betNotional(stakeMicro, multiplier) : 0n;
   const tradeCap = live ? BigInt(live.operatingMaxTradeNotional) : 0n;
   const fresh = status === "live" && !!live && now - live.observedAtMs <= STALE_AFTER_MS;
-  const noFunds = !!account && BigInt(account.collateral) === 0n;
+  // Until the account has loaded its balance reads as zero; that is not "no money".
+  const ready = !!account && !accountLoading;
+  const noFunds = ready && BigInt(account.collateral) === 0n;
   const busy = trading.busy !== null;
 
   const problems = useMemo(() => {
@@ -278,9 +325,8 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
       const quote = result && "quote" in result ? result.quote : null;
       const signed = side === "buy" ? notional : -notional;
       const marginAfter =
-        account && snapshot && notional > 0n ? initialMarginAfter(account, snapshot, market, signed) : null;
-      const fee = quote ? BigInt(quote.fee) : 0n;
-      return ticketProblem({
+        ready && snapshot && notional > 0n ? initialMarginAfter(account, snapshot, market, signed) : null;
+      const problem = ticketProblem({
         side,
         priceLive: fresh,
         enabled: live?.enabled ?? true,
@@ -296,8 +342,9 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
         limitMicro: null,
         quoteError: result && "error" in result ? result.error : null,
         hasQuote: !!quote,
-        marginShort: !!account && marginAfter !== null && marginAfter + fee > BigInt(account.openingEquity),
+        marginShort: ready && marginAfter !== null && marginAfter > BigInt(account.openingEquity),
       });
+      return homeProblem(problem, side, { multiplier, tradeCapMicro: tradeCap });
     };
     return { buy: check("buy"), sell: check("sell") };
   }, [
@@ -306,6 +353,7 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
     notional,
     now,
     account,
+    ready,
     fresh,
     live,
     stake,
@@ -325,8 +373,15 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
     setChosen(next);
     store(MULTIPLIER_KEY, String(next));
   };
-  const bet = async (side: Side) => {
+  // Remembered only once the trade fills, so a cancelled one leaves nothing behind.
+  const remember = (order: ReviewOrder) =>
+    store(
+      betKey(order.market),
+      betRecordText({ stake: order.payMicro, multiplier: order.leverage, notional: order.amountMicro }),
+    );
+  const trade = async (side: Side) => {
     if (!stakeMicro || problems[side]) return;
+    const word = UP_DOWN[side];
     const order: ReviewOrder = {
       market,
       side,
@@ -334,17 +389,19 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
       payMicro: stakeMicro,
       leverage: multiplier,
       reduceOnly: false,
+      title: `You're ${word} on ${marketName(market)} with ${usdcCompact(stakeMicro)}`,
     };
-    store(betKey(market), JSON.stringify({ stake, multiplier }));
-    // One click once quick trading covers the size; otherwise the review sheet signs (and offers one-click).
-    if (trading.quickCovers(market, notional)) await trading.marketOrder(order);
-    else setReview(order);
+    // One tap once quick trading covers the size; otherwise the confirm step signs (and offers one tap).
+    if (trading.quickCovers(market, notional)) {
+      if (await trading.marketOrder(order)) remember(order);
+    } else setReview(order);
   };
 
   // Why a button is off, once under both (no amount, no price) or for the one side that is closed.
   const reason = problems.buy ?? problems.sell;
+  const waiting = !!trader.address && !ready;
   return (
-    <section className="updown-new" aria-label="New bet">
+    <section className="updown-new" aria-label="New trade">
       <div className="rfq-amount updown-stake">
         <label className="rfq-amount__field updown-stake__field">
           <span className="rfq-amount__prefix">$</span>
@@ -352,13 +409,13 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
             inputMode="decimal"
             placeholder="0"
             autoComplete="off"
-            aria-label="Stake in USDC"
+            aria-label="Amount in USDC"
             style={{ width: `${Math.max(1, stake.length) + 0.5}ch` }}
             value={stake}
             onChange={(event) => chooseStake(event.target.value)}
           />
         </label>
-        <div className="rfq-chips" aria-label="Stake presets">
+        <div className="rfq-chips" aria-label="Amount presets">
           {STAKE_PRESETS.map((step) => (
             <button
               key={step}
@@ -378,14 +435,14 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
         onChange={(next) => chooseMultiplier(Number(next))}
         options={choices.map((step) => ({ id: String(step), label: leverageLabel(step) }))}
       />
-      <p className="footnote rfq-muted center tnum" aria-live="polite">
+      <p className="footnote rfq-muted center tnum">
         {notional > 0n
           ? `${usdcCompact(notional)} position, no fees. A 1% move your way: +${usdc(onePercentGain(notional))}`
-          : "Pick a stake to see what a move is worth"}
+          : "Pick an amount to see what a move is worth"}
       </p>
 
       {!trader.address ? (
-        <WalletMenu className="rfq-btn--lg rfq-btn--block" connectLabel="Connect to play" />
+        <WalletMenu className="rfq-btn--lg rfq-btn--block" connectLabel="Connect to trade" />
       ) : noFunds || problems.buy === MARGIN_PROBLEM ? (
         <button
           type="button"
@@ -396,45 +453,39 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
         </button>
       ) : (
         <div className="updown-buttons">
-          <button
-            type="button"
-            className="rfq-btn rfq-btn--lg rfq-btn--long updown-button"
-            disabled={!!problems.buy || busy}
-            aria-busy={busy}
-            title={problems.buy ?? undefined}
-            onClick={() => void bet("buy")}
-          >
-            <Up /> Up
-          </button>
-          <button
-            type="button"
-            className="rfq-btn rfq-btn--lg rfq-btn--short updown-button"
-            disabled={!!problems.sell || busy}
-            aria-busy={busy}
-            title={problems.sell ?? undefined}
-            onClick={() => void bet("sell")}
-          >
-            <Down /> Down
-          </button>
+          {(["buy", "sell"] as const).map((side) => (
+            <button
+              key={side}
+              type="button"
+              className={`rfq-btn rfq-btn--lg rfq-btn--${side === "buy" ? "long" : "short"} updown-button`}
+              disabled={waiting || !!problems[side] || busy}
+              aria-busy={busy}
+              aria-describedby={reason ? "updown-reason" : undefined}
+              onClick={() => void trade(side)}
+            >
+              {side === "buy" ? <Up /> : <Down />} {UP_DOWN[side]}
+            </button>
+          ))}
         </div>
       )}
-      {trader.address && !noFunds && reason && (
-        <p className="footnote rfq-faint center" role="status">
-          {reason}
+      {trader.address && !noFunds && (waiting || reason) && (
+        <p id="updown-reason" className="footnote rfq-muted center" role="status">
+          {waiting ? "Loading your balance" : reason}
         </p>
       )}
-      {trader.address && !noFunds && !reason && trading.quickCovers(market, notional) && (
+      {ready && !noFunds && !reason && trading.quickCovers(market, notional) && (
         <p className="footnote rfq-faint center">One tap, no wallet prompt.</p>
-      )}
-      {stakeMicro !== null && tradeCap > 0n && notional > tradeCap && (
-        <p className="footnote rfq-faint center">
-          Up to {usdc((tradeCap * 100n) / BigInt(Math.round(multiplier * 100)))} at{" "}
-          {leverageLabel(multiplier)} per bet
-        </p>
       )}
 
       {review && (
-        <ReviewSheet order={review} onClose={() => setReview(null)} onDone={() => setReview(null)} />
+        <ConfirmSheet
+          order={review}
+          onClose={() => setReview(null)}
+          onFilled={() => {
+            remember(review);
+            setReview(null);
+          }}
+        />
       )}
     </section>
   );

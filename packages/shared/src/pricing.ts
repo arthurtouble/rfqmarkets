@@ -17,7 +17,7 @@ export type QuoteRequest = {
   amount: string;
   /** Price protection the intent's limit price allows beyond the expected price; defaults to `toleranceBps`. */
   slippageBps?: number;
-  /** The trading account, when known, so the fee reflects its volume tier. */
+  /** The trading account, when known. Quotes are the same for every account. */
   account?: string;
 };
 /** Bounds for a caller-chosen market-order slippage tolerance. */

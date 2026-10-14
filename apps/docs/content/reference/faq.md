@@ -10,7 +10,7 @@ The venue's market maker, always. There is no order book and no other trader is 
 
 ## Can the venue take my collateral?
 
-Not through any normal function. Your collateral can only leave the contract through a withdrawal you signed, a trade you signed (as losses and fees), funding, or a liquidation the contract's rules allow. The honest caveat is upgrades: today a single operator key can upgrade the contract, and upgraded code could in principle do anything. Production plans to put upgrades behind a multisig and a 72-hour delay. See [Governance](../protocol/governance.md).
+Not through any normal function. Your collateral can only leave the contract through a withdrawal you signed, a trade you signed (as losses), funding, or a liquidation the contract's rules allow. The honest caveat is upgrades: today a single operator key can upgrade the contract, and upgraded code could in principle do anything. Production plans to put upgrades behind a multisig and a 72-hour delay. See [Governance](../protocol/governance.md).
 
 ## Can I be filled at a worse price than I saw?
 
@@ -26,11 +26,19 @@ Because the venue is in development and its maker has about 100 USDC of capital.
 
 ## What leverage can I use?
 
-Up to 20x on BTC and ETH for positions up to 25,000 USDC, less for larger ones. Governance sets the margin rates per market, so a newly listed market may allow less. There is no leverage setting on a position; your leverage is your position size relative to your account value, and the ticket shows it before you trade. See [Margin](../risk/margin.md).
+On Home, the multiplier goes up to 10×. In Pro, up to 20× on BTC and ETH for positions up to 25,000 USDC, less for larger ones. Governance sets the margin rates per market, so a newly listed market may allow less. There is no leverage setting on a position; your leverage is your position size relative to your account value, and the ticket shows it before you trade. See [Margin](../risk/margin.md).
+
+## Are there trading fees?
+
+No. No trade pays a fee, whether it opens or closes, market, limit or stop. The platform earns a 2 basis point markup inside the quoted price. See [Pricing and fees](../risk/pricing-and-fees.md).
+
+## How long does an Up / Down trade last?
+
+As long as you like. There is no timer. It stays open until you tap **Cash out**, or until the price reaches the auto-close price. See [Up / Down](../trading/up-down.md).
 
 ## Do I pay gas?
 
-Only to deposit, and to turn off one-click trading. Trades, closes, withdrawals, order cancellations and turning one-click trading on are paid by the venue.
+Only to deposit, and to turn off one-tap trading. Trades, closes, withdrawals, order cancellations and turning one-tap trading on are paid by the venue.
 
 ## What wallets work?
 
@@ -38,7 +46,7 @@ Browser extensions such as Rabby, MetaMask and Coinbase Wallet; phone wallets th
 
 ## Can I set a stop loss or take profit?
 
-Yes. Click **TP/SL** on the position, enter a take-profit price, a stop-loss price or both, and sign. Whichever fills first cancels the other. A stop protects your price, not your exit: if the price gaps past the slippage band, it waits for the price to come back. See [Stop loss and take profit](../trading/stop-orders.md).
+Yes, in Pro. Click **TP/SL** on the position, enter a take-profit price, a stop-loss price or both, and sign. Whichever fills first cancels the other. A stop protects your price, not your exit: if the price gaps past the slippage band, it waits for the price to come back. See [Stop loss and take profit](../trading/stop-orders.md).
 
 ## Can I close part of a position?
 

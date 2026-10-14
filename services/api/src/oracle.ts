@@ -1,6 +1,4 @@
-import { createClient, type DataStreamsClient, type Report } from "@chainlink/data-streams-sdk";
 import { AbiCoder, parseUnits } from "ethers";
-import { decodeStreamsV3Envelope } from "../../../packages/shared/src/streams.js";
 import type { PriceSnapshot } from "../../../packages/shared/src/policy.js";
 import { readSseEvents } from "../../lib/src/sse.js";
 import { encodeLocalReport } from "../../../packages/shared/src/oracle-report.js";
@@ -245,106 +243,6 @@ export class CoinbaseMarketDataSource extends BaseOracleSource {
       if (!body.bid || !body.ask) throw new Error(`Coinbase ${market} ticker was incomplete`);
       this.store(market, body.bid, body.ask);
       return this.cached[market]!;
-    });
-  }
-}
-
-interface ReportStream {
-  on(event: "report", listener: (report: Report) => void): this;
-  connect(): Promise<void>;
-  close(): Promise<void>;
-}
-interface LatestReportClient {
-  getLatestReport(feedId: string): Promise<Report>;
-  createStream?(feedIds: string[]): ReportStream;
-}
-export interface ChainlinkSourceOptions {
-  apiKey: string;
-  userSecret: string;
-  endpoint: string;
-  wsEndpoint: string;
-  /** Feed per market symbol; a registered market without a feed has no price. */
-  feedIds: Record<OracleMarket, string>;
-  feedDecimals: Record<OracleMarket, number>;
-  timeoutMs?: number;
-  client?: LatestReportClient;
-}
-
-/** Chainlink Data Streams v3 reports, streamed when the client supports it, otherwise fetched. */
-export class ChainlinkDataStreamsSource extends BaseOracleSource {
-  private client: LatestReportClient;
-  private stream?: ReportStream;
-  constructor(private options: ChainlinkSourceOptions) {
-    super("chainlink-data-streams");
-    if (!options.endpoint.startsWith("https://") || !options.wsEndpoint.startsWith("wss://"))
-      throw new Error("Data Streams endpoints must use TLS");
-    if (!options.apiKey || !options.userSecret) throw new Error("Data Streams credentials are required");
-    this.client =
-      options.client ??
-      (createClient({
-        apiKey: options.apiKey,
-        userSecret: options.userSecret,
-        endpoint: options.endpoint,
-        wsEndpoint: options.wsEndpoint,
-        timeout: options.timeoutMs ?? 2_000,
-        retryAttempts: 1,
-      }) as DataStreamsClient);
-  }
-  protected transport() {
-    return this.stream ? "websocket" : "rest";
-  }
-  private feedId(market: OracleMarket) {
-    const feed = this.options.feedIds[market];
-    if (!feed) throw new Error(`no Data Streams feed for ${market}`);
-    return feed;
-  }
-  private normalize(market: OracleMarket, report: Report): OracleQuote {
-    const feedId = this.feedId(market),
-      decoded = decodeStreamsV3Envelope(report.fullReport, feedId, this.options.feedDecimals[market]);
-    if (
-      report.feedID.toLowerCase() !== feedId.toLowerCase() ||
-      report.observationsTimestamp !== decoded.observedAt
-    )
-      throw new Error("Data Streams metadata mismatch");
-    return {
-      snapshot: this.snapshot(market, decoded.bid, decoded.ask, decoded.observedAt * 1_000),
-      report: report.fullReport,
-      validUntil: decoded.validUntil,
-    };
-  }
-  async start() {
-    if (this.stream || !this.client.createStream) return;
-    this.stream = this.client.createStream(Object.values(this.options.feedIds));
-    const byFeed = new Map(
-      Object.entries(this.options.feedIds).map(([market, feed]) => [feed.toLowerCase(), market]),
-    );
-    this.stream.on("report", (report) => {
-      const market = byFeed.get(report.feedID.toLowerCase());
-      if (!market) return;
-      try {
-        this.cached[market] = this.normalize(market, report);
-      } catch {
-        this.rejectedUpdates++;
-        return;
-      }
-      this.emit(market);
-    });
-    await this.stream.connect();
-  }
-  async close() {
-    const stream = this.stream;
-    this.stream = undefined;
-    if (stream) await stream.close();
-  }
-  async latest(market: OracleMarket) {
-    const cached = this.cached[market],
-      now = Date.now();
-    if (cached && now - cached.snapshot.observedAtMs <= 1_500 && cached.validUntil * 1_000 > now)
-      return cached;
-    return this.coalesce(market, async () => {
-      const quote = this.normalize(market, await this.client.getLatestReport(this.feedId(market)));
-      this.cached[market] = quote;
-      return quote;
     });
   }
 }

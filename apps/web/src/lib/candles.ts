@@ -3,7 +3,12 @@
 import type { Candle, CandleInterval } from "./types.js";
 
 export const CANDLE_INTERVALS: Record<CandleInterval, number> = {
-  "1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000,
+  "1m": 60_000,
+  "5m": 300_000,
+  "15m": 900_000,
+  "1h": 3_600_000,
+  "4h": 14_400_000,
+  "1d": 86_400_000,
 };
 export const DEFAULT_CANDLE_LIMIT = 300;
 export const MAX_CANDLE_LIMIT = 1_000;
@@ -17,29 +22,48 @@ const min = (a: bigint, b: bigint) => (a < b ? a : b);
  * older than the last bucket. Returns a new array (the input is not changed)
  * trimmed to `limit`.
  */
-export function mergeLiveCandle(candles: readonly Candle[], interval: CandleInterval, timeMs: number, midMicro: bigint, limit = MAX_CANDLE_LIMIT): Candle[] {
+export function mergeLiveCandle(
+  candles: readonly Candle[],
+  interval: CandleInterval,
+  timeMs: number,
+  midMicro: bigint,
+  limit = MAX_CANDLE_LIMIT,
+): Candle[] {
   if (midMicro <= 0n || !Number.isFinite(timeMs)) return [...candles];
-  const size = CANDLE_INTERVALS[interval], start = Math.floor(timeMs / size) * size, last = candles.at(-1);
+  const size = CANDLE_INTERVALS[interval],
+    start = Math.floor(timeMs / size) * size,
+    last = candles.at(-1);
   if (last && start < last.time) return [...candles];
   const price = midMicro.toString();
   if (last && start === last.time) {
     const updated: Candle = {
-      ...last, high: max(BigInt(last.high), midMicro).toString(), low: min(BigInt(last.low), midMicro).toString(),
-      close: price, samples: last.samples + 1,
+      ...last,
+      high: max(BigInt(last.high), midMicro).toString(),
+      low: min(BigInt(last.low), midMicro).toString(),
+      close: price,
+      samples: last.samples + 1,
     };
     return [...candles.slice(0, -1), updated];
   }
   const open = last?.close ?? price;
   const next: Candle = {
-    time: start, open, high: max(BigInt(open), midMicro).toString(), low: min(BigInt(open), midMicro).toString(), close: price, samples: 1,
+    time: start,
+    open,
+    high: max(BigInt(open), midMicro).toString(),
+    low: min(BigInt(open), midMicro).toString(),
+    close: price,
+    samples: 1,
   };
   return [...candles, next].slice(-limit);
 }
 
 /** Display numbers (USDC) for chart libraries; `time` stays in unix ms. */
 export const candleToNumbers = (candle: Candle) => ({
-  time: candle.time, open: Number(candle.open) / 1e6, high: Number(candle.high) / 1e6,
-  low: Number(candle.low) / 1e6, close: Number(candle.close) / 1e6,
+  time: candle.time,
+  open: Number(candle.open) / 1e6,
+  high: Number(candle.high) / 1e6,
+  low: Number(candle.low) / 1e6,
+  close: Number(candle.close) / 1e6,
 });
 
 /** A point on the Simple view's price line: unix ms and dollars. */
@@ -54,6 +78,9 @@ export function linePoints(candles: readonly Candle[], intervalMs: number, nowMs
   if (!candles.length) return [];
   return [
     { time: candles[0].time, value: Number(candles[0].open) / 1e6 },
-    ...candles.map(candle => ({ time: Math.min(candle.time + intervalMs, Math.max(candle.time, nowMs)), value: Number(candle.close) / 1e6 })),
+    ...candles.map((candle) => ({
+      time: Math.min(candle.time + intervalMs, Math.max(candle.time, nowMs)),
+      value: Number(candle.close) / 1e6,
+    })),
   ];
 }

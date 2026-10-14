@@ -17,7 +17,12 @@ type MarketFeed = {
   lastPrices: Record<Market, LastPrice>;
 };
 
-const MarketFeedContext = createContext<MarketFeed>({ snapshot: null, status: "connecting", receivedAtMs: null, lastPrices: {} });
+const MarketFeedContext = createContext<MarketFeed>({
+  snapshot: null,
+  status: "connecting",
+  receivedAtMs: null,
+  lastPrices: {},
+});
 
 export function MarketFeedProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<MarketSnapshot | null>(null);
@@ -26,20 +31,29 @@ export function MarketFeedProvider({ children }: { children: ReactNode }) {
   const [streamError, setStreamError] = useState(false);
 
   const status = useEventStream(`${MARKET_STREAM}/v1/markets/stream`, {
-    markets: data => {
+    markets: (data) => {
       const next = data as MarketSnapshot;
       if (!next?.markets || typeof next.markets !== "object" || !Object.keys(next.markets).length) return;
-      setSnapshot(next); setReceivedAtMs(Date.now()); setStreamError(false);
-      setLastPrices(current => {
+      setSnapshot(next);
+      setReceivedAtMs(Date.now());
+      setStreamError(false);
+      setLastPrices((current) => {
         const updated = { ...current };
-        for (const [market, state] of Object.entries(next.markets)) updated[market] = { mid: state.mid, observedAtMs: state.observedAtMs };
+        for (const [market, state] of Object.entries(next.markets))
+          updated[market] = { mid: state.mid, observedAtMs: state.observedAtMs };
         return updated;
       });
     },
     "stream-error": () => setStreamError(true),
   });
 
-  return <MarketFeedContext.Provider value={{ snapshot, status: streamError ? "reconnecting" : status, receivedAtMs, lastPrices }}>{children}</MarketFeedContext.Provider>;
+  return (
+    <MarketFeedContext.Provider
+      value={{ snapshot, status: streamError ? "reconnecting" : status, receivedAtMs, lastPrices }}
+    >
+      {children}
+    </MarketFeedContext.Provider>
+  );
 }
 
 export const useMarketFeed = () => useContext(MarketFeedContext);
@@ -47,18 +61,30 @@ export const useMarketFeed = () => useContext(MarketFeedContext);
 /** Re-renders on an interval; used to age quotes and detect stale prices. */
 export function useNow(intervalMs = 500) {
   const [now, setNow] = useState(Date.now);
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), intervalMs); return () => clearInterval(timer); }, [intervalMs]);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [intervalMs]);
   return now;
 }
 
 /** One market's live state and whether its price is live, delayed, paused or unavailable. */
-export function useMarketPrice(market: Market): { live: MarketSnapshot["markets"][Market] | undefined; status: PriceStatus; last: LastPrice | undefined } {
+export function useMarketPrice(market: Market): {
+  live: MarketSnapshot["markets"][Market] | undefined;
+  status: PriceStatus;
+  last: LastPrice | undefined;
+} {
   const { snapshot, status, receivedAtMs, lastPrices } = useMarketFeed();
   const now = useNow(2_000);
   const live = snapshot?.markets[market];
   return {
     live,
     last: lastPrices[market],
-    status: priceStatus(live, { streamLive: status === "live", nowMs: now, receivedAtMs, serverTimeMs: snapshot?.serverTimeMs }),
+    status: priceStatus(live, {
+      streamLive: status === "live",
+      nowMs: now,
+      receivedAtMs,
+      serverTimeMs: snapshot?.serverTimeMs,
+    }),
   };
 }

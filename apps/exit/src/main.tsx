@@ -8,6 +8,19 @@ import "./styles.css";
 
 const config = readConfig(import.meta.env);
 const root = createRoot(document.getElementById("root")!);
-root.render(<StrictMode>{typeof config === "string"
-  ? <main className="exit-page"><div className="exit-hero"><h1>Emergency exit</h1><div className="rfq-banner rfq-banner--danger" role="alert">{config}</div></div></main>
-  : <App config={config} />}</StrictMode>);
+root.render(
+  <StrictMode>
+    {typeof config === "string" ? (
+      <main className="exit-page">
+        <div className="exit-hero">
+          <h1>Emergency exit</h1>
+          <div className="rfq-banner rfq-banner--danger" role="alert">
+            {config}
+          </div>
+        </div>
+      </main>
+    ) : (
+      <App config={config} />
+    )}
+  </StrictMode>,
+);

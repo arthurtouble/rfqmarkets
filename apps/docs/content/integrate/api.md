@@ -101,7 +101,7 @@ Stop loss and take profit are always reduce-only, and need an open position to r
 
 ## Sponsored account actions
 
-Withdrawals, nonce cancellations, one-click trading grants and paused closes follow the same two-step pattern: `prepare` returns `{domain, types, intent}` (or `grant`), you sign it, and `execute` submits it with the venue paying gas. Prepared messages expire after two minutes.
+Withdrawals, nonce cancellations, one-tap trading grants and paused closes follow the same two-step pattern: `prepare` returns `{domain, types, intent}` (or `grant`), you sign it, and `execute` submits it with the venue paying gas. Prepared messages expire after two minutes.
 
 | Action | Prepare body |
 | --- | --- |

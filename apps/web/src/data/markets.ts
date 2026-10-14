@@ -60,13 +60,13 @@ export function useMarketList(): MarketList {
   const source = snapshot ?? fallback.data ?? null;
   return useMemo(() => {
     const markets = marketInfos(config.data, source);
-    const bySymbol = new Map(markets.map(market => [market.symbol, market]));
+    const bySymbol = new Map(markets.map((market) => [market.symbol, market]));
     const indexed = symbolsByIndex(markets);
     return {
       markets,
-      symbols: markets.map(market => market.symbol),
-      get: symbol => bySymbol.get(symbol),
-      marketFromIndex: index => marketFromIndex(index, indexed),
+      symbols: markets.map((market) => market.symbol),
+      get: (symbol) => bySymbol.get(symbol),
+      marketFromIndex: (index) => marketFromIndex(index, indexed),
       allMarketsMask: allMarketsMask(Math.max(1, indexed.length)),
       isLoading: !config.data && !source,
     };
@@ -76,9 +76,15 @@ export function useMarketList(): MarketList {
 /** One market's margin and leverage presets, e.g. `[2, 5, 10, 20]` for a 20x market. */
 export function useMarketLeverage(market: Market, steps?: readonly number[]) {
   const info = useMarketList().get(market);
-  return useMemo(() => info && {
-    maxLeverage: info.maxLeverage, initialMarginBps: info.initialMarginBps,
-    maintenanceMarginBps: info.maintenanceMarginBps, marginScaleBps: info.marginScaleBps,
-    presets: leveragePresets(info.maxLeverage, steps),
-  }, [info, steps]);
+  return useMemo(
+    () =>
+      info && {
+        maxLeverage: info.maxLeverage,
+        initialMarginBps: info.initialMarginBps,
+        maintenanceMarginBps: info.maintenanceMarginBps,
+        marginScaleBps: info.marginScaleBps,
+        presets: leveragePresets(info.maxLeverage, steps),
+      },
+    [info, steps],
+  );
 }

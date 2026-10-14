@@ -328,6 +328,9 @@ dialog.sheet { text-align: start; }
 /* Home: Up / Down in one centred column. */
 .updown { width: min(100%, 480px); }
 .updown__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.updown__end { display: flex; align-items: center; gap: var(--space-2); }
+.updown-balance { position: relative; }
+.updown-balance__menu { position: absolute; right: 0; top: calc(100% + var(--space-1)); z-index: 20; display: grid; gap: var(--space-2); padding: var(--space-2); min-width: 9rem; }
 .updown .price-header { text-align: center; }
 .updown .price-sub { justify-content: center; }
 .updown .price-chart { margin-bottom: var(--space-2); }

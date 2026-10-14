@@ -26,7 +26,6 @@ import {
 import { baseSpreadOf, DEFAULT_BASE_SPREAD_BPS } from "../../../packages/shared/src/markets.js";
 import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
-import { discountedFee } from "../../../packages/shared/src/fee-tiers.js";
 import { decodeLimits, encodeLocalReport, type ChainMarketState, type ChainReader } from "./chain.js";
 import type { ApiContext } from "./context.js";
 import type { DevChain } from "./dev-chain.js";
@@ -115,7 +114,7 @@ export type QuoteOptions = {
   persist?: boolean;
   /** Quote an exact base quantity (close quotes and refreshed approvals) instead of a USDC amount. */
   exactBaseDelta?: bigint;
-  /** Account whose position reduction may exceed the per-trade limit; its fee tier also applies. */
+  /** Account whose position reduction may exceed the per-trade limit. */
   reductionAccount?: string;
   /** Reservation to leave out of the pending envelope (the approval being refreshed). */
   excludeReservation?: string;
@@ -123,8 +122,6 @@ export type QuoteOptions = {
 
 export type CreatedQuote = {
   quote: Quote;
-  /** Share of the base fee waived for the account's volume tier, in bps. */
-  feeDiscountBps: number;
   versions: ProtocolVersions;
   oracleReport?: OracleReport;
   reservationRevision: number;
@@ -314,12 +311,13 @@ export class QuoteEngine {
         throw failure?.reason ?? new Error("market data unavailable");
       }
     } else for (const { symbol } of registered) if (!prices[symbol]) unpriced.add(symbol);
+    const operationalRead = this.hedgeRisk();
     const state = provider && clearing ? await this.marketState(now) : undefined,
       blockNumber = state?.blockNumber ?? 0,
       block = state?.block ?? null,
       chainMarkets: Array<ChainMarketState | null> = state?.chainMarkets ?? registered.map(() => null),
       limitWords: Array<unknown> = state?.limitWords ?? registered.map(() => null);
-    const operational = await this.hedgeRisk(),
+    const operational = await operationalRead,
       marginScales = state?.marginScales ?? (await this.chain.marginScales());
     const markets = {} as Record<Market, MarketView>;
     for (const { index, symbol: name } of registered) {
@@ -499,6 +497,8 @@ export class QuoteEngine {
     ctx.prune();
     const reservationRevision = ctx.pending.revision;
     if (persist && ctx.quotes.size >= ctx.maxActiveQuotes) throw new Error("firm quote capacity reached");
+    // The hedger snapshot is independent of the chain reads below, so fetch it alongside them.
+    const operationalRead = this.hedgeRisk();
     let oracleQuote: OracleQuote | undefined,
       versions: ProtocolVersions,
       maxTradeNotional = DEFAULT_TRADE_LIMIT;
@@ -536,7 +536,7 @@ export class QuoteEngine {
       oracleQuote = await this.refreshPrice(request.market);
     }
     const snapshot = this.priceOf(request.market),
-      operational = await this.hedgeRisk(),
+      operational = await operationalRead,
       mode = hedgeModeOf(operational, request.market),
       delta =
         exactBaseDelta === undefined
@@ -567,12 +567,6 @@ export class QuoteEngine {
       pricing,
       exactBaseDelta,
     );
-    const feeAccount = reductionAccount ?? request.account,
-      feeDiscountBps =
-        feeAccount && ctx.options.feeTierSource
-          ? await ctx.options.feeTierSource.discountBps(feeAccount).catch(() => 0)
-          : 0;
-    quote.fee = discountedFee(quote.fee, feeDiscountBps);
     let oracleReport: OracleReport | undefined;
     if (oracleQuote) {
       // The local chain cannot verify external proofs, so dev mode re-signs the price as a local report.
@@ -598,7 +592,7 @@ export class QuoteEngine {
       if (persist) ctx.quotes.reports.set(quote.quoteId, oracleReport);
     }
     if (persist) ctx.quotes.add(quote, versions);
-    return { quote, versions, oracleReport, reservationRevision, feeDiscountBps };
+    return { quote, versions, oracleReport, reservationRevision };
   }
 
   register(app: FastifyInstance, guards: HttpGuards) {
@@ -617,7 +611,7 @@ export class QuoteEngine {
       if (!parsed.success) return reply.code(400).send({ error: "invalid quote request" });
       try {
         const created = await this.createQuote(parsed.data);
-        return { ...quoteToWire(created.quote), feeDiscountBps: created.feeDiscountBps };
+        return quoteToWire(created.quote);
       } catch (error) {
         return reply
           .code(ctx.options.oracleSource || ctx.options.hedgeRiskSource ? 503 : 409)

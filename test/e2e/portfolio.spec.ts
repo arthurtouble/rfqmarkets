@@ -187,7 +187,6 @@ test.describe("positions and portfolio", () => {
     await page.getByRole("button", { name: "Close BTC long" }).click();
     const sheet = page.getByRole("dialog", { name: "Close BTC long" });
     await expect(sheet.getByText("Estimated PnL")).toBeVisible();
-    await expect(sheet.getByText("Fee")).toBeVisible();
     await sheet.getByRole("button", { name: "50%" }).click();
     await expectNoHorizontalOverflow(page);
     await sheet.getByRole("button", { name: "Close 50% of BTC long" }).click();
@@ -252,7 +251,7 @@ test.describe("positions and portfolio", () => {
     await flatten();
     await page.goto("/portfolio");
     const performance = page.getByRole("region", { name: "Performance" });
-    for (const label of ["Realized PnL", "Fees paid", "Funding", "Volume", "Net deposits", "Trades"])
+    for (const label of ["Realized PnL", "Funding", "Volume", "Net deposits", "Trades"])
       await expect(performance.getByText(label, { exact: true })).toBeVisible();
     await performance.getByRole("button", { name: "24H" }).click();
     await expect(performance.getByRole("img")).toBeVisible();
@@ -269,7 +268,7 @@ test.describe("positions and portfolio", () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test("the account page shows the wallet, one-click trading and help links", async ({ page }) => {
+  test("the account page shows the wallet, one-tap trading and help links", async ({ page }) => {
     const { account } = await devWallet();
     await page.goto("/account");
     await expect(page.getByText(`${account.slice(0, 6)}…${account.slice(-4)}`)).toBeVisible();
@@ -299,7 +298,7 @@ test.describe("positions and portfolio", () => {
     }
   });
 
-  test("with one-click trading on, a close signs with the session key, not the wallet", async ({ page }) => {
+  test("with one-tap trading on, a close signs with the session key, not the wallet", async ({ page }) => {
     const { account } = await devWallet();
     await trade("ETH", "sell", "1500");
     await page.goto("/account");

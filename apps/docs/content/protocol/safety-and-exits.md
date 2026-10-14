@@ -16,7 +16,7 @@ Open it in a browser with a wallet extension, or inside your wallet app's browse
 | --- | --- | --- |
 | **Withdraw** | Sends USDC from the contract to your wallet. | Any time outside resolution, if your account still meets initial margin afterwards. With positions open, the contract needs a price from the last 15 seconds; if the one on chain is older, the page first sends a price update, so your wallet asks twice. |
 | **Close at oracle price** | Closes a whole position at the oracle bid (long) or ask (short), with no fee. | Only while trading is paused. The page fetches a signed price from the oracle nodes; confirm within 15 seconds, while it is valid. |
-| **Turn off one-click trading** | Revokes the one-click trading key, so it can no longer trade for you. | Any time. The page finds your active keys; you can also paste a key's address. |
+| **Turn off one-tap trading** | Revokes the one-tap trading key, so it can no longer trade for you. | Any time. The page finds your active keys; you can also paste a key's address. |
 | **Cancel a signed order** (under Advanced) | Burns an order's nonce, so a signed trade, limit order or stop order using it can never execute. | Any time. |
 | **Resolution steps and claim** | Records the resolution price samples, processes accounts and pays out your share. | Only during resolution. Anyone can run the steps, so you do not have to wait for the operator. |
 
@@ -65,7 +65,7 @@ The reason for this design is fairness. Without it, the first traders to withdra
 
 ## Insurance
 
-The insurance fund sits between a bankrupt trader's account and the maker's capital. It is funded by a share of every trading fee (20% until it reaches a quarter of the maker's capital target, 10% after that) and by liquidation penalties after the liquidator's reward. Anyone can add to it. Its balance is public on chain.
+The insurance fund sits between a bankrupt trader's account and the maker's capital. It is funded by a share of the platform's 2 bps markup on every fill (20% while the fund is below a quarter of the maker's capital target, 10% after that) and by liquidation penalties after the liquidator's reward. Anyone can add to it. Its balance is public on chain.
 
 ## What these safeguards do not cover
 

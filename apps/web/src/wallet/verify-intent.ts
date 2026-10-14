@@ -1,5 +1,5 @@
 // Checks every EIP-712 payload the API prepares before a wallet or the
-// one-click key signs it. The API (or anything between it and the browser)
+// one-tap key signs it. The API (or anything between it and the browser)
 // is not trusted to choose what the user authorizes: the domain must be the
 // settlement contract this build trusts, the types must be the protocol's own,
 // the signer must be the connected account and the fields must match what the
@@ -33,7 +33,11 @@ const TRADE_FIELDS: Field[] = [
  */
 export const SIGNABLE_TYPES = {
   TradeIntent: TRADE_FIELDS,
-  TriggeredTradeIntent: [...TRADE_FIELDS, { name: "triggerPrice", type: "uint256" }, { name: "triggerAbove", type: "bool" }],
+  TriggeredTradeIntent: [
+    ...TRADE_FIELDS,
+    { name: "triggerPrice", type: "uint256" },
+    { name: "triggerAbove", type: "bool" },
+  ],
   WithdrawalIntent: [
     { name: "account", type: "address" },
     { name: "recipient", type: "address" },
@@ -86,32 +90,83 @@ export const MAX_SLIPPAGE_BPS = 500n;
 export const LIMIT_NOTIONAL_FACTOR = 2n;
 
 /** Who signs and for which contract: the connected account and the settlement this build trusts. */
-export type SigningContext = { account: string; chainId: number | bigint; clearing: string | null | undefined };
+export type SigningContext = {
+  account: string;
+  chainId: number | bigint;
+  clearing: string | null | undefined;
+};
 
 /** What the user asked for, per action. Amounts and prices are integers (USDC 1e6, base 1e18). */
 export type Expectation =
   /** An immediate trade at a firm quote. `amountMicro` is what the user asked for (absent for closes). */
-  | { kind: "trade"; market: number; side?: Side; reduceOnly: boolean; nonce: string;
-      quote: { baseDelta: bigint; worstPrice: bigint; expectedPrice: bigint; fee: bigint; amount: bigint; bid: bigint; ask: bigint };
-      amountMicro?: bigint; slippageBps?: number }
-  | { kind: "limit"; market: number; side: Side; reduceOnly: boolean; nonce: string; amountMicro: bigint; limitPrice: bigint }
-  | { kind: "trigger"; market: number; triggerKind: TriggerKind; triggerPrice: bigint; slippageBps: number; nonce: string;
-      reduceOnly: boolean; side?: Side; amountMicro?: bigint }
+  | {
+      kind: "trade";
+      market: number;
+      side?: Side;
+      reduceOnly: boolean;
+      nonce: string;
+      quote: {
+        baseDelta: bigint;
+        worstPrice: bigint;
+        expectedPrice: bigint;
+        fee: bigint;
+        amount: bigint;
+        bid: bigint;
+        ask: bigint;
+      };
+      amountMicro?: bigint;
+      slippageBps?: number;
+    }
+  | {
+      kind: "limit";
+      market: number;
+      side: Side;
+      reduceOnly: boolean;
+      nonce: string;
+      amountMicro: bigint;
+      limitPrice: bigint;
+    }
+  | {
+      kind: "trigger";
+      market: number;
+      triggerKind: TriggerKind;
+      triggerPrice: bigint;
+      slippageBps: number;
+      nonce: string;
+      reduceOnly: boolean;
+      side?: Side;
+      amountMicro?: bigint;
+    }
   | { kind: "withdraw"; amountMicro: bigint; nonce: string }
   | { kind: "cancel"; nonce: string }
   | { kind: "close"; market: number; nonce: string }
-  | { kind: "session"; session: string; marketMask: bigint; maxTradeNotional: bigint; maxCumulativeNotional: bigint;
-      maxFee: bigint; durationSeconds: number; nonce: string };
+  | {
+      kind: "session";
+      session: string;
+      marketMask: bigint;
+      maxTradeNotional: bigint;
+      maxCumulativeNotional: bigint;
+      maxFee: bigint;
+      durationSeconds: number;
+      nonce: string;
+    };
 
 const EXPECTED_TYPE: Record<Expectation["kind"], PrimaryType> = {
-  trade: "TradeIntent", limit: "TradeIntent", trigger: "TriggeredTradeIntent", withdraw: "WithdrawalIntent",
-  cancel: "CancelIntent", close: "CloseIntent", session: "SessionGrant",
+  trade: "TradeIntent",
+  limit: "TradeIntent",
+  trigger: "TriggeredTradeIntent",
+  withdraw: "WithdrawalIntent",
+  cancel: "CancelIntent",
+  close: "CloseIntent",
+  session: "SessionGrant",
 };
 
 /** Thrown instead of signing a payload that does not match the request. The message is shown to the user. */
 export class IntentMismatchError extends Error {
   constructor(detail: string) {
-    super(`Signature refused: the server's request does not match what you asked for (${detail}). Nothing was signed. Reload the page and try again; contact support if it keeps happening.`);
+    super(
+      `Signature refused: the server's request does not match what you asked for (${detail}). Nothing was signed. Reload the page and try again; contact support if it keeps happening.`,
+    );
     this.name = "IntentMismatchError";
   }
 }
@@ -121,7 +176,12 @@ function check(ok: boolean, detail: string): asserts ok {
 }
 
 const integer = (value: unknown, field: string): bigint => {
-  check((typeof value === "string" && /^-?\d{1,78}$/.test(value)) || (typeof value === "number" && Number.isSafeInteger(value)) || typeof value === "bigint", `${field} is not an integer`);
+  check(
+    (typeof value === "string" && /^-?\d{1,78}$/.test(value)) ||
+      (typeof value === "number" && Number.isSafeInteger(value)) ||
+      typeof value === "bigint",
+    `${field} is not an integer`,
+  );
   return BigInt(value as string | number | bigint);
 };
 const address = (value: unknown, field: string): Address => {
@@ -137,43 +197,92 @@ const ceilDiv = (a: bigint, b: bigint) => (a + b - 1n) / b;
 const sideOf = (baseDelta: bigint): Side => (baseDelta > 0n ? "buy" : "sell");
 
 function sameFields(actual: unknown, expected: readonly Field[]) {
-  return Array.isArray(actual) && actual.length === expected.length
-    && actual.every((field, index) => field && typeof field === "object"
-      && Object.keys(field).length === 2 && field.name === expected[index].name && field.type === expected[index].type);
+  return (
+    Array.isArray(actual) &&
+    actual.length === expected.length &&
+    actual.every(
+      (field, index) =>
+        field &&
+        typeof field === "object" &&
+        Object.keys(field).length === 2 &&
+        field.name === expected[index].name &&
+        field.type === expected[index].type,
+    )
+  );
 }
 
 /**
  * Verifies `prepared` against the trusted signing context and the user's request, and returns the typed
  * data to sign, built from the trusted domain and the bundled types (never the server's copies).
  */
-export function verifyPrepared(prepared: Prepared, primaryType: string, context: SigningContext, expectation: Expectation) {
+export function verifyPrepared(
+  prepared: Prepared,
+  primaryType: string,
+  context: SigningContext,
+  expectation: Expectation,
+) {
   check(primaryType in SIGNABLE_TYPES, `unknown message type ${primaryType}`);
   const type = primaryType as PrimaryType;
-  check(EXPECTED_TYPE[expectation.kind] === type, `expected a ${EXPECTED_TYPE[expectation.kind]}, got ${type}`);
-  check(!!context.clearing && isAddress(context.clearing, { strict: false }), "the settlement contract is not configured");
-  const clearing = getAddress(context.clearing!), chainId = BigInt(context.chainId);
+  check(
+    EXPECTED_TYPE[expectation.kind] === type,
+    `expected a ${EXPECTED_TYPE[expectation.kind]}, got ${type}`,
+  );
+  check(
+    !!context.clearing && isAddress(context.clearing, { strict: false }),
+    "the settlement contract is not configured",
+  );
+  const clearing = getAddress(context.clearing!),
+    chainId = BigInt(context.chainId);
   const account = address(context.account, "connected account");
 
   const domain = prepared?.domain;
   check(!!domain && typeof domain === "object", "missing signing domain");
-  check(Object.keys(domain).every(key => ["name", "version", "chainId", "verifyingContract"].includes(key)), "unexpected signing domain fields");
-  check(domain.name === DOMAIN_NAME && domain.version === DOMAIN_VERSION, "wrong signing domain name or version");
+  check(
+    Object.keys(domain).every((key) => ["name", "version", "chainId", "verifyingContract"].includes(key)),
+    "unexpected signing domain fields",
+  );
+  check(
+    domain.name === DOMAIN_NAME && domain.version === DOMAIN_VERSION,
+    "wrong signing domain name or version",
+  );
   check(integer(domain.chainId, "domain chainId") === chainId, "wrong chain");
-  check(address(domain.verifyingContract, "domain verifyingContract") === clearing, "wrong settlement contract");
+  check(
+    address(domain.verifyingContract, "domain verifyingContract") === clearing,
+    "wrong settlement contract",
+  );
 
   const types = prepared.types;
-  check(!!types && typeof types === "object" && Object.keys(types).length === 1 && sameFields(types[type], SIGNABLE_TYPES[type]), `wrong ${type} type definition`);
+  check(
+    !!types &&
+      typeof types === "object" &&
+      Object.keys(types).length === 1 &&
+      sameFields(types[type], SIGNABLE_TYPES[type]),
+    `wrong ${type} type definition`,
+  );
 
   const message = prepared.intent as Record<string, unknown>;
   check(!!message && typeof message === "object", "missing message");
   const fields = SIGNABLE_TYPES[type];
-  check(Object.keys(message).length === fields.length && fields.every(field => field.name in message), "unexpected message fields");
+  check(
+    Object.keys(message).length === fields.length && fields.every((field) => field.name in message),
+    "unexpected message fields",
+  );
   check(address(message.account, "account") === account, "the message is for another account");
 
   verifyFields(message, expectation, account);
 
-  const trustedDomain: TypedDataDomain = { name: DOMAIN_NAME, version: DOMAIN_VERSION, chainId: Number(chainId), verifyingContract: clearing };
-  return { domain: trustedDomain, types: { [type]: fields } as Record<string, readonly Field[]>, primaryType: type, message };
+  const trustedDomain: TypedDataDomain = {
+    name: DOMAIN_NAME,
+    version: DOMAIN_VERSION,
+    chainId: Number(chainId),
+    verifyingContract: clearing,
+  };
+  return {
+    domain: trustedDomain,
+    types: { [type]: fields } as Record<string, readonly Field[]>,
+    primaryType: type,
+    message,
+  };
 }
 
 function verifyFields(message: Record<string, unknown>, expectation: Expectation, account: Address) {
@@ -190,15 +299,28 @@ function verifyFields(message: Record<string, unknown>, expectation: Expectation
       check(Number(integer(message.market, "market")) === expectation.market, "market changed");
       return;
     case "session": {
-      check(address(message.session, "session") === getAddress(expectation.session), "session key is not the one this tab created");
+      check(
+        address(message.session, "session") === getAddress(expectation.session),
+        "session key is not the one this tab created",
+      );
       check(integer(message.marketMask, "marketMask") === expectation.marketMask, "session markets changed");
-      check(integer(message.maxTradeNotional, "maxTradeNotional") === expectation.maxTradeNotional, "session per-trade limit changed");
-      check(integer(message.maxCumulativeNotional, "maxCumulativeNotional") === expectation.maxCumulativeNotional, "session total limit changed");
+      check(
+        integer(message.maxTradeNotional, "maxTradeNotional") === expectation.maxTradeNotional,
+        "session per-trade limit changed",
+      );
+      check(
+        integer(message.maxCumulativeNotional, "maxCumulativeNotional") === expectation.maxCumulativeNotional,
+        "session total limit changed",
+      );
       check(integer(message.maxFee, "maxFee") === expectation.maxFee, "session fee limit changed");
       // Measured against the grant's own deadline (chain time plus the API's short action window), so a
       // local chain whose clock runs ahead does not matter.
-      const validUntil = integer(message.validUntil, "validUntil"), deadline = integer(message.deadline, "deadline");
-      check(validUntil <= deadline + BigInt(expectation.durationSeconds), "session lasts longer than requested");
+      const validUntil = integer(message.validUntil, "validUntil"),
+        deadline = integer(message.deadline, "deadline");
+      check(
+        validUntil <= deadline + BigInt(expectation.durationSeconds),
+        "session lasts longer than requested",
+      );
       return;
     }
     default:
@@ -206,9 +328,14 @@ function verifyFields(message: Record<string, unknown>, expectation: Expectation
   }
 }
 
-function verifyTrade(message: Record<string, unknown>, expectation: Extract<Expectation, { kind: "trade" | "limit" | "trigger" }>) {
-  const market = Number(integer(message.market, "market")), baseDelta = integer(message.baseDelta, "baseDelta");
-  const limitPrice = integer(message.limitPrice, "limitPrice"), maxFee = integer(message.maxFee, "maxFee");
+function verifyTrade(
+  message: Record<string, unknown>,
+  expectation: Extract<Expectation, { kind: "trade" | "limit" | "trigger" }>,
+) {
+  const market = Number(integer(message.market, "market")),
+    baseDelta = integer(message.baseDelta, "baseDelta");
+  const limitPrice = integer(message.limitPrice, "limitPrice"),
+    maxFee = integer(message.maxFee, "maxFee");
   const reduceOnly = bool(message.reduceOnly, "reduceOnly");
   check(market === expectation.market, "market changed");
   check(baseDelta !== 0n, "size is zero");
@@ -223,21 +350,39 @@ function verifyTrade(message: Record<string, unknown>, expectation: Extract<Expe
   if (expectation.kind === "trade") {
     const { quote } = expectation;
     check(baseDelta === quote.baseDelta, "size differs from the quote");
-    check(side === "buy" ? limitPrice <= quote.worstPrice : limitPrice >= quote.worstPrice, "limit price is worse than the quote");
+    check(
+      side === "buy" ? limitPrice <= quote.worstPrice : limitPrice >= quote.worstPrice,
+      "limit price is worse than the quote",
+    );
     check(quote.expectedPrice > 0n && quote.amount > 0n, "quote has no price");
-    const slippage = expectation.slippageBps === undefined ? MAX_SLIPPAGE_BPS : BigInt(expectation.slippageBps);
+    const slippage =
+      expectation.slippageBps === undefined ? MAX_SLIPPAGE_BPS : BigInt(expectation.slippageBps);
     // The quoted worst price may sit at most the allowed slippage (+1 bps for rounding) past the expected price.
     const band = ceilDiv(quote.expectedPrice * (slippage + 1n), 10_000n);
-    check(side === "buy" ? quote.worstPrice <= quote.expectedPrice + band : quote.worstPrice >= quote.expectedPrice - band, "quote's worst price is beyond your slippage");
+    check(
+      side === "buy"
+        ? quote.worstPrice <= quote.expectedPrice + band
+        : quote.worstPrice >= quote.expectedPrice - band,
+      "quote's worst price is beyond your slippage",
+    );
     // packages/shared constructQuote: the size is the amount at the mid, (bid + ask) / 2, and the expected
     // price is the mid plus spread and impact against the trader.
     check(quote.bid > 0n && quote.bid <= quote.ask, "quote has an invalid bid and ask");
-    const mid = (quote.bid + quote.ask) / 2n, premium = ceilDiv(mid * MAX_QUOTE_PREMIUM_BPS, 10_000n);
-    check(side === "buy" ? quote.expectedPrice >= mid && quote.expectedPrice <= mid + premium : quote.expectedPrice <= mid && quote.expectedPrice >= mid - premium, "quote price is too far from the market");
+    const mid = (quote.bid + quote.ask) / 2n,
+      premium = ceilDiv(mid * MAX_QUOTE_PREMIUM_BPS, 10_000n);
+    check(
+      side === "buy"
+        ? quote.expectedPrice >= mid && quote.expectedPrice <= mid + premium
+        : quote.expectedPrice <= mid && quote.expectedPrice >= mid - premium,
+      "quote price is too far from the market",
+    );
     if (expectation.amountMicro !== undefined) {
       // Within 1 bps (and one unit) for rounding.
       const notional = (abs(baseDelta) * mid) / BASE;
-      check(notional * 10_000n <= expectation.amountMicro * 10_001n + 10_000n, "size is larger than you asked for");
+      check(
+        notional * 10_000n <= expectation.amountMicro * 10_001n + 10_000n,
+        "size is larger than you asked for",
+      );
     }
     // Mirrors services/api execution.ts makeIntent, plus an absolute ceiling because quote.fee is the server's.
     // A sell has no upper price bound, so its fee cap lets the notional rise by as much as its protection
@@ -246,7 +391,9 @@ function verifyTrade(message: Record<string, unknown>, expectation: Extract<Expe
     const feeNotional =
       baseDelta < 0n
         ? ceilDiv(quote.amount * (2n * quote.expectedPrice - quote.worstPrice), quote.expectedPrice)
-        : protectedNotional > quote.amount ? protectedNotional : quote.amount;
+        : protectedNotional > quote.amount
+          ? protectedNotional
+          : quote.amount;
     check(maxFee <= ceilDiv(feeNotional * quote.fee, quote.amount), "fee cap is higher than the quote's fee");
     check(maxFee <= ceilDiv(feeNotional * MAX_TRADE_FEE_BPS, 10_000n), "fee cap is unreasonably high");
     return;
@@ -256,41 +403,80 @@ function verifyTrade(message: Record<string, unknown>, expectation: Extract<Expe
     check(limitPrice === expectation.limitPrice, "limit price changed");
     check(reduceOnly === expectation.reduceOnly, "reduce-only changed");
     const notionalAtLimit = (abs(baseDelta) * limitPrice) / BASE;
-    check(notionalAtLimit <= expectation.amountMicro * LIMIT_NOTIONAL_FACTOR, "size is larger than you asked for");
+    check(
+      notionalAtLimit <= expectation.amountMicro * LIMIT_NOTIONAL_FACTOR,
+      "size is larger than you asked for",
+    );
     check(maxFee <= ceilDiv(notionalAtLimit * ORDER_FEE_BPS, 10_000n), "fee cap changed");
     return;
   }
 
   // Triggered order: the signed trigger and limit are fully determined by the request.
-  const triggerPrice = integer(message.triggerPrice, "triggerPrice"), triggerAbove = bool(message.triggerAbove, "triggerAbove");
+  const triggerPrice = integer(message.triggerPrice, "triggerPrice"),
+    triggerAbove = bool(message.triggerAbove, "triggerAbove");
   check(triggerPrice === expectation.triggerPrice, "trigger price changed");
   check(triggerAbove === triggerAboveFor(expectation.triggerKind, side), "trigger direction changed");
   const slippage = BigInt(expectation.slippageBps);
   check(slippage >= 1n && slippage <= MAX_SLIPPAGE_BPS, "slippage out of range");
-  check(limitPrice === triggerLimitPrice(triggerPrice, side, slippage), "limit price differs from trigger and slippage");
-  if (expectation.triggerKind !== "stop-entry") check(reduceOnly, "stop-loss and take-profit must be reduce-only");
+  check(
+    limitPrice === triggerLimitPrice(triggerPrice, side, slippage),
+    "limit price differs from trigger and slippage",
+  );
+  if (expectation.triggerKind !== "stop-entry")
+    check(reduceOnly, "stop-loss and take-profit must be reduce-only");
   if (expectation.amountMicro === undefined) check(reduceOnly, "a whole-position order must be reduce-only");
-  else check(abs(baseDelta) === (expectation.amountMicro * BASE) / triggerPrice, "size differs from the amount at the trigger price");
+  else
+    check(
+      abs(baseDelta) === (expectation.amountMicro * BASE) / triggerPrice,
+      "size differs from the amount at the trigger price",
+    );
   // services/api orders.ts buildTriggerOrder: a sell may fill up to twice the trigger.
   const feePrice = side === "buy" ? limitPrice : triggerPrice * 2n;
   check(maxFee <= ceilDiv(((abs(baseDelta) * feePrice) / BASE) * ORDER_FEE_BPS, 10_000n), "fee cap changed");
 }
 
 /** Checks a TP/SL pair: the legs requested, in order (take-profit, then stop-loss), closing one position with one nonce. */
-export function verifyTpslPair(legs: Array<{ type: string; intent: Record<string, unknown> }>, request: { takeProfit?: bigint; stopLoss?: bigint }) {
-  const wanted = [request.takeProfit === undefined ? null : "take-profit", request.stopLoss === undefined ? null : "stop-loss"].filter(Boolean);
-  check(legs.length === wanted.length && legs.every((leg, index) => leg.type === wanted[index]), "unexpected take-profit/stop-loss legs");
+export function verifyTpslPair(
+  legs: Array<{ type: string; intent: Record<string, unknown> }>,
+  request: { takeProfit?: bigint; stopLoss?: bigint },
+) {
+  const wanted = [
+    request.takeProfit === undefined ? null : "take-profit",
+    request.stopLoss === undefined ? null : "stop-loss",
+  ].filter(Boolean);
+  check(
+    legs.length === wanted.length && legs.every((leg, index) => leg.type === wanted[index]),
+    "unexpected take-profit/stop-loss legs",
+  );
   if (legs.length === 2) {
-    check(String(legs[0].intent.baseDelta) === String(legs[1].intent.baseDelta), "take-profit and stop-loss sizes differ");
-    check(String(legs[0].intent.nonce) === String(legs[1].intent.nonce), "take-profit and stop-loss nonces differ");
+    check(
+      String(legs[0].intent.baseDelta) === String(legs[1].intent.baseDelta),
+      "take-profit and stop-loss sizes differ",
+    );
+    check(
+      String(legs[0].intent.nonce) === String(legs[1].intent.nonce),
+      "take-profit and stop-loss nonces differ",
+    );
   }
 }
 
 /** The integer terms of a firm quote, for a `trade` expectation. Throws when the quote lacks them. */
-export function quoteTerms(quote: { baseDelta?: string; worstPrice: string; expectedPrice: string; fee: string; amount?: string; bid: string; ask: string }) {
+export function quoteTerms(quote: {
+  baseDelta?: string;
+  worstPrice: string;
+  expectedPrice: string;
+  fee: string;
+  amount?: string;
+  bid: string;
+  ask: string;
+}) {
   return {
-    bid: integer(quote.bid, "quote bid"), ask: integer(quote.ask, "quote ask"),
-    baseDelta: integer(quote.baseDelta, "quote baseDelta"), worstPrice: integer(quote.worstPrice, "quote worstPrice"),
-    expectedPrice: integer(quote.expectedPrice, "quote expectedPrice"), fee: integer(quote.fee, "quote fee"), amount: integer(quote.amount, "quote amount"),
+    bid: integer(quote.bid, "quote bid"),
+    ask: integer(quote.ask, "quote ask"),
+    baseDelta: integer(quote.baseDelta, "quote baseDelta"),
+    worstPrice: integer(quote.worstPrice, "quote worstPrice"),
+    expectedPrice: integer(quote.expectedPrice, "quote expectedPrice"),
+    fee: integer(quote.fee, "quote fee"),
+    amount: integer(quote.amount, "quote amount"),
   };
 }

@@ -16,7 +16,15 @@ export type Page = {
 };
 export type Heading = { level: number; text: string; slug: string };
 
-const SECTION_ORDER = ["Start here", "Takeover", "Architecture", "Product", "Operations", "Release", "History"];
+const SECTION_ORDER = [
+  "Start here",
+  "Takeover",
+  "Architecture",
+  "Product",
+  "Operations",
+  "Release",
+  "History",
+];
 
 export const slugify = (text: string) =>
   text
@@ -33,7 +41,11 @@ const sectionOf = (id: string) => {
 const routeOf = (id: string) => `/${id.replace(/(^|\/)README$/, "")}`.replace(/(.)\/$/, "$1");
 
 export function titleOf(id: string, body: string) {
-  const title = body.match(/^#\s+(.+)$/m)?.[1].replace(/^RFQ Markets\s*[:—–-]\s+/, "").trim() ?? id.split("/").pop()!;
+  const title =
+    body
+      .match(/^#\s+(.+)$/m)?.[1]
+      .replace(/^RFQ Markets\s*[:—–-]\s+/, "")
+      .trim() ?? id.split("/").pop()!;
   return title[0].toUpperCase() + title.slice(1);
 }
 
@@ -69,7 +81,11 @@ export function headingsOf(body: string): Heading[] {
       seen = used.get(base) ?? 0;
     used.set(base, seen + 1);
     if (match[1].length === 2 || match[1].length === 3)
-      headings.push({ level: match[1].length, text: match[2].replace(/[`*]/g, ""), slug: seen ? `${base}-${seen + 1}` : base });
+      headings.push({
+        level: match[1].length,
+        text: match[2].replace(/[`*]/g, ""),
+        slug: seen ? `${base}-${seen + 1}` : base,
+      });
   }
   return headings;
 }
@@ -99,7 +115,9 @@ export function buildManual(sources: Record<string, string>): Page[] {
         rank(a) - rank(b) ||
         Number(b.id.endsWith("README")) - Number(a.id.endsWith("README")) ||
         // History is chronological by file name; numbered takeover files keep their order.
-        (a.section === "History" || a.section === "Takeover" ? a.id.localeCompare(b.id) : a.title.localeCompare(b.title)),
+        (a.section === "History" || a.section === "Takeover"
+          ? a.id.localeCompare(b.id)
+          : a.title.localeCompare(b.title)),
     );
 }
 
@@ -148,7 +166,10 @@ const plain = (body: string) =>
 
 /** Pages matching every word of `query`; title matches first, each with an excerpt around the first hit. */
 export function search(pages: Page[], query: string, limit = 20): SearchResult[] {
-  const words = query.toLowerCase().split(/\s+/).filter((word) => word.length > 1);
+  const words = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word.length > 1);
   if (!words.length) return [];
   return pages
     .map((page) => {

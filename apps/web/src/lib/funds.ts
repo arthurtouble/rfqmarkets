@@ -17,7 +17,8 @@ export const MIN_GAS_FREE_DEPOSIT = 1_000_000n;
  * Whether the account signs with a plain key, which USDC's gas-free authorization needs: no code, or an
  * EIP-7702 delegation (0xef0100…), which still signs with the account's own key. Smart wallets deposit directly.
  */
-export const plainAccount = (code: string | undefined) => !code || code === "0x" || code.toLowerCase().startsWith("0xef0100");
+export const plainAccount = (code: string | undefined) =>
+  !code || code === "0x" || code.toLowerCase().startsWith("0xef0100");
 
 export type FundsInput = {
   mode: FundsMode;
@@ -46,7 +47,8 @@ export type FundsCheck = {
   warning: string | null;
 };
 
-const hasPositions = (account: AccountState) => Object.values(account.positions).some(position => BigInt(position.size) !== 0n);
+const hasPositions = (account: AccountState) =>
+  Object.values(account.positions).some((position) => BigInt(position.size) !== 0n);
 
 /** Free margin a withdrawal may take: opening equity over initial margin, never below zero. */
 export function withdrawable(account: AccountState | null | undefined): bigint | null {
@@ -63,24 +65,31 @@ export function checkFunds(input: FundsInput): FundsCheck {
     let problem: string | null = null;
     if (amount !== null) {
       if (available !== null && amount > available) problem = "More than your wallet holds";
-      else if (input.registered === false && amount < MIN_FIRST_DEPOSIT) problem = `First deposit is at least ${usdc(MIN_FIRST_DEPOSIT)}`;
+      else if (input.registered === false && amount < MIN_FIRST_DEPOSIT)
+        problem = `First deposit is at least ${usdc(MIN_FIRST_DEPOSIT)}`;
     }
     const gasFree = input.gasFree === true && (amount === null || amount >= MIN_GAS_FREE_DEPOSIT);
     const warning = input.gasBalance === 0n && !gasFree ? "Your wallet has no ETH on Base to pay gas" : null;
     return { available, max, problem, warning };
   }
   const available = withdrawable(input.account);
-  const max = available === null ? 0n
-    : input.account && hasPositions(input.account) ? available * (10_000n - WITHDRAW_MAX_HEADROOM_BPS) / 10_000n
-    : available;
-  const problem = amount !== null && available !== null && amount > available
-    ? (available === 0n && input.account && hasPositions(input.account) ? "All your funds back open positions" : "More than you can withdraw")
-    : null;
+  const max =
+    available === null
+      ? 0n
+      : input.account && hasPositions(input.account)
+        ? (available * (10_000n - WITHDRAW_MAX_HEADROOM_BPS)) / 10_000n
+        : available;
+  const problem =
+    amount !== null && available !== null && amount > available
+      ? available === 0n && input.account && hasPositions(input.account)
+        ? "All your funds back open positions"
+        : "More than you can withdraw"
+      : null;
   return { available, max, problem, warning: null };
 }
 
 /** The amount a preset chip fills in: a share of Max, rounded down to whole cents. */
 export function presetAmount(max: bigint, percent: number) {
-  const value = percent === 100 ? max : max * BigInt(percent) / 100n;
-  return percent === 100 ? value : value - value % 10_000n;
+  const value = percent === 100 ? max : (max * BigInt(percent)) / 100n;
+  return percent === 100 ? value : value - (value % 10_000n);
 }

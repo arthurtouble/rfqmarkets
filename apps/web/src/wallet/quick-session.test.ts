@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { QUICK_LIMITS, allMarketsMask, forgetSessionKeys, maskIncludes, quickSessionRequest, sessionCovers, type QuickSession } from "./quick-session.js";
+import {
+  QUICK_LIMITS,
+  allMarketsMask,
+  forgetSessionKeys,
+  maskIncludes,
+  quickSessionRequest,
+  sessionCovers,
+  type QuickSession,
+} from "./quick-session.js";
 
 test("the session mask covers every registered market", () => {
   assert.equal(allMarketsMask(1), 1);
@@ -17,7 +25,13 @@ test("mask membership and session coverage by market", () => {
   assert.equal(maskIncludes(7, 2), true);
   assert.equal(maskIncludes(3, 2), false);
   assert.equal(maskIncludes(((1n << 100n) - 1n).toString(), 99), true);
-  const session: QuickSession = { account: "0x1", sessionAddress: "0x2", validUntil: Date.now() + 3_600_000, privateKey: "0x01", marketMask: "7" };
+  const session: QuickSession = {
+    account: "0x1",
+    sessionAddress: "0x2",
+    validUntil: Date.now() + 3_600_000,
+    privateKey: "0x01",
+    marketMask: "7",
+  };
   assert.equal(sessionCovers(session, 2_500_000_000n, 2), true);
   assert.equal(sessionCovers(session, 2_500_000_001n, 2), false);
   assert.equal(sessionCovers(session, 1n, 3), false);
@@ -28,7 +42,13 @@ test("mask membership and session coverage by market", () => {
 });
 
 test("sessions expire 30 seconds early and keys can be forgotten", () => {
-  const base: QuickSession = { account: "0x1", sessionAddress: "0x2", validUntil: Date.now() + 3_600_000, privateKey: "0x01", marketMask: "3" };
+  const base: QuickSession = {
+    account: "0x1",
+    sessionAddress: "0x2",
+    validUntil: Date.now() + 3_600_000,
+    privateKey: "0x01",
+    marketMask: "3",
+  };
   assert.equal(sessionCovers({ ...base, validUntil: Date.now() + 20_000 }, 1n, 0), false);
   assert.equal(sessionCovers({ ...base, validUntil: Date.now() + 60_000 }, 1n, 0), true);
   assert.equal(sessionCovers(null, 1n, 0), false);

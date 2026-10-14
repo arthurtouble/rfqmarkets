@@ -288,7 +288,7 @@ export function ShareSheet({
   };
 
   return (
-    <Sheet open onClose={onClose} title="Share your bet" labelledBy="share-title">
+    <Sheet open onClose={onClose} title="Share your trade" labelledBy="share-title">
       <div className="sheet-body share-sheet">
         {image ? (
           <img className="share-sheet__card" src={image.url} alt={`Share card: ${caption}`} />
