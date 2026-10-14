@@ -16,11 +16,12 @@ export const sections = [
     id: "trading",
     title: "Trading",
     pages: [
+      "up-down",
       "placing-a-trade",
       "limit-orders",
       "stop-orders",
       "positions",
-      "one-click-trading",
+      "one-tap-trading",
       "deposits-and-withdrawals",
     ],
   },

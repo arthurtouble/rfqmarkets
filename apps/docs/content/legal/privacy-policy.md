@@ -11,7 +11,7 @@ RFQ Markets is built so that we need very little information about you. We do no
 - **Public by design.** Your wallet address, deposits, trades, positions, withdrawals and liquidations are recorded on the Base blockchain, which is public and permanent. Anyone can see them, and nobody, including us, can delete them.
 - **What our servers see.** Your wallet address and the intents you sign, your IP address and approximate location (country and region), and basic technical information about your browser and requests.
 - **Why.** To provide quotes and settle trades, to keep the service secure and available, to enforce the [Restricted Jurisdictions](restricted-jurisdictions.md) policy and sanctions rules, and to meet legal obligations.
-- **Stored in your browser, not on our servers.** Your preferences, terms acceptance, last viewed market and details of any active one-click trading session.
+- **Stored in your browser, not on our servers.** Your preferences, terms acceptance, last viewed market and details of any active one-tap trading session.
 
 ## 1. Who is responsible
 
@@ -26,7 +26,7 @@ RFQ Markets is the controller of the personal information described in this poli
 | Wallet information | Your public wallet address, the network it uses, the wallet software or connector you choose | Your wallet, when you connect |
 | Trading information | Quote requests, the intents you sign (market, side, size, price limit, fee limit, deadline, nonce) and their signatures, orders, cancellations, withdrawal and session requests | You, through the Interface or API |
 | Account information | Collateral balance, positions, margin, funding, profit and loss, order history, liquidation history | Derived from the blockchain and from our services |
-| One-click trading | The public address of your session key and the limits you approve | You, when you turn it on |
+| One-tap trading | The public address of your session key and the limits you approve | You, when you turn it on |
 | Communications | Anything you send us, such as a bug report, a security disclosure or a support request | You |
 
 ### 2.2 Information collected automatically
@@ -66,10 +66,10 @@ The Interface stores a small amount of information in your browser's local stora
 
 | Item | Purpose |
 | --- | --- |
-| Display preferences | Theme, simple or advanced view, and similar settings |
+| Display preferences | Theme, last market viewed, chart settings and similar settings |
 | Last viewed market | Opens the market you were last looking at |
 | Terms acceptance | Records, per wallet address, which version of the terms you accepted and when, so we do not ask again |
-| One-click trading session | The public details of your session key (its address, limits and expiry) for the current browser tab. The private key is held in memory only and is discarded when you close the tab. |
+| One-tap trading session | The public details of your session key (its address, limits and expiry) for the current browser tab. The private key is held in memory only and is discarded when you close the tab. |
 | Wallet connection state | Set by your wallet connector (for example WalletConnect) so that you stay connected |
 
 You can clear this information at any time through your browser settings. We do not use cookies for tracking. Cloudflare may set strictly necessary cookies to protect the service from bots and attacks.

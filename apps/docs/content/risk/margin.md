@@ -69,8 +69,8 @@ You deposit 1.25 USDC and open a 25 USDC long on BTC at 100,000. That is 20x, an
 
 At 20x, a 2% move is an ordinary hour for BTC. The same 25 USDC position backed by 5 USDC of collateral, which is 5x, survives a fall of about 17% before liquidation. Being allowed 20x does not make 20x a good idea.
 
-These numbers ignore the spread and fee, which make each threshold arrive slightly sooner.
+These numbers ignore the spread, which makes each threshold arrive slightly sooner.
 
 ## Seeing it in the app
 
-The account summary shows your **Account value** (equity) and **Available to trade** (opening equity minus initial margin, which is also the most you can withdraw). The **Portfolio** page adds **Margin in use** and your effective **Leverage**. The ticket sizes each trade from what you pay and the leverage you pick, shows the estimated liquidation price, says when a leverage is above what the size's band allows, and asks you to add funds when the trade needs more margin than you have. Each position shows an estimated liquidation price. See [Positions and your account](../trading/positions.md).
+The account summary shows your **Account value** (equity) and **Available to trade** (opening equity minus initial margin, which is also the most you can withdraw). The **Portfolio** page adds **Margin in use** and your effective **Leverage**. In Pro, the ticket sizes each trade from what you pay and the leverage you pick, shows the estimated liquidation price, says when a leverage is above what the size's band allows, and asks you to add funds when the trade needs more margin than you have. On Home, the multiplier is the leverage, and the auto-close price is the estimated liquidation price. Each position shows an estimated liquidation price. See [Positions and your account](../trading/positions.md).

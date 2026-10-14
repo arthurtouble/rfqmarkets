@@ -1,6 +1,6 @@
 # Quick start
 
-This page takes you from an empty wallet to an open position and back out again. It should take about five minutes.
+This page takes you from an empty wallet to your first trade and back out again. It takes about five minutes.
 
 You need:
 
@@ -12,50 +12,53 @@ You need:
 
 ## 1. Connect
 
-Open the app at [dev.rfq-markets.workers.dev](https://dev.rfq-markets.workers.dev) and click **Connect** in the top right. Pick your browser wallet, **Base Account** to sign in with a passkey, or **WalletConnect** to scan a QR code with your phone. [Using the app](using-the-app.md#connecting-a-wallet) explains each option.
+Open the app at [dev.rfq-markets.workers.dev](https://dev.rfq-markets.workers.dev). It opens on **Home**, the Up / Down screen. Click **Connect** in the top right, or **Connect to trade** on Home. Pick your browser wallet, **Base Account** to sign in with a passkey, or **WalletConnect** to scan a QR code with your phone. [Using the app](using-the-app.md#connecting-a-wallet) explains each option.
 
 If your wallet is on another network, the button changes to **Switch to Base**. Click it and approve the switch in your wallet. The app also asks for the switch automatically whenever it needs a signature.
 
 ## 2. Deposit
 
-Click **Deposit**, or **Add funds to trade** on the ticket. Enter an amount, or click **Max** to use your whole wallet balance, then click **Deposit**.
+Click **Deposit** in the top bar, or **Add money** on Home. On a phone, tap your balance at the top of Home, then **Add money**. Enter an amount, or click **Max** to use your whole wallet balance, then click **Deposit**.
 
 Your wallet asks for two things in turn:
 
 1. **Approve USDC.** This lets the clearing contract take exactly the amount you entered, no more. If you have already approved enough, this step is skipped.
 2. **Confirm the deposit.** This moves the USDC into the contract and credits it to your account.
 
-Both are ordinary transactions, so you pay a small amount of ETH for gas. When the deposit confirms, the **Account value** card shows your balance and how much is **Available to trade**.
+Both are ordinary transactions, so you pay a small amount of ETH for gas. When the deposit confirms, your balance updates. In Pro, the **Account value** card also shows how much is **Available to trade**.
 
-## 3. Place a trade
+## 3. Make a trade
 
-The order ticket sits on the right of the trade page. On a phone, tap **Long** or **Short** at the bottom of the screen to open it.
+Home shows one market at a time. Switch between **Bitcoin** and **Ethereum** from the name at the top.
 
-1. Choose the market from the name above the chart: **BTC** or **ETH**.
-2. Choose **Long** if you expect the price to rise, or **Short** if you expect it to fall.
-3. Under **You pay**, enter the margin you want to put up in USDC, then pick a leverage. Paying 20 USDC at 5× opens a position worth 100 USDC of BTC; the ticket shows it as "Position $100".
-4. Check the **Entry price**, the **Liquidation price** and the **Fee** under the leverage.
-5. Click **Long BTC · $20 at 5×** (or the equivalent).
+1. Pick an amount: tap **$10**, or type any amount.
+2. Pick a multiplier: **2×**, **3×**, **5×** or **10×**. Your position is the amount times the multiplier: $10 at 2× is a $20 position. Positions are capped at 25 USDC per trade for now, so $10 at 3× is too big. The line under the buttons shows the position and what a 1% move your way would earn.
+3. Tap **Up** if you think the price will rise, or **Down** if you think it will fall.
 
-A **Review order** sheet gets a firm price, holds it for about 30 seconds and restates the trade with its price protection, which is the worst price you accept. Leave the one-click trading box ticked if you want later trades to skip this step, then click **Confirm and sign**.
+The first time, a sheet titled **Up on Bitcoin** (or **Down on Bitcoin**) shows the price and the **Auto-closes at** price. If the price reaches that level, the trade closes and you lose your amount. Tap **Confirm Up** and sign in your wallet.
 
-Your wallet shows a typed-data signature request titled *TradeIntent*. It lists the account, market, size, the limit price, the maximum fee, a nonce and a deadline about 30 seconds away. Signing is free. Once you sign, the app collects the approvers' signatures and submits the trade, and a notice shows the fill price and a link to the transaction.
+Your wallet shows a typed-data signature request titled *TradeIntent*. It lists the account, market, size, the worst price you accept, a maximum fee of zero, a nonce and a deadline about 30 seconds away. Signing is free. The app then collects the approvers' signatures and submits the trade. A notice says "You're Up on Bitcoin with $10" and links to the transaction.
 
-## 4. Watch the position
+Leave **Skip this next time** ticked if you want later trades to fill on a tap. Your wallet asks for one more signature to turn on [one-tap trading](../trading/one-tap-trading.md).
 
-The **Positions** tab under the chart shows your open position: its value, entry price, the current mark, the estimated liquidation price, the margin it uses and the profit or loss. The **Portfolio** page shows your whole account: account value, margin in use, leverage, a chart of your profit or loss, and every position and trade. [Positions and your account](../trading/positions.md) explains each figure.
+## 4. Watch the trade
 
-## 5. Close
+Home now shows your trade: what it has made or lost, in dollars and as a percentage of your amount, with the entry price and the auto-close price. There is no timer. The trade stays open until you cash out.
 
-Click **Close** on the position. Pick how much to close, from 25% to 100%, check the estimated price and profit, and confirm. The close is a reduce-only trade, so it can never accidentally open a position the other way. With more than one position open, **Close all** closes them all in one go.
+The **Portfolio** page shows your whole account: account value, margin in use, a chart of your profit or loss, and every position and trade. [Positions and your account](../trading/positions.md) explains each figure.
+
+## 5. Cash out
+
+Tap **Cash out** on Home. The trade closes at the current price and the result goes into your balance. Home shows what you made, with **Share** to send an image of it and **New trade** to start again.
+
+A cash-out can only close your position. It can never open one the other way.
 
 ## 6. Withdraw
 
-Click **Withdraw** on the Account value card, enter an amount up to what is available, and click **Withdraw**. You sign one message and the venue pays the gas. The USDC arrives in your connected wallet as soon as the transaction is included, usually within a few seconds.
+Click **Withdraw** in Pro or on Portfolio. On a phone you can also tap your balance on Home, then **Withdraw**. Enter an amount up to what is available and confirm. You sign one message and the venue pays the gas. The USDC arrives in your wallet as soon as the transaction is included, usually within a few seconds.
 
 ## What next
 
-- Read [Placing a trade](../trading/placing-a-trade.md) to understand price protection and why a trade can be refused.
-- Turn on [One-click trading](../trading/one-click-trading.md) if you trade often and want to skip the wallet prompt.
-- Switch to the Advanced view for [limit orders](../trading/limit-orders.md) and reduce-only trades.
-- Read [Margin](../risk/margin.md) and [Liquidation](../risk/liquidation.md) before you use leverage. Up to 20x is allowed; at 20x a 2% move liquidates you.
+- Read [Up / Down](../trading/up-down.md) for how Home works in detail.
+- Tap **Pro** on Home for the full ticket: higher leverage, [limit orders](../trading/limit-orders.md), [stop orders](../trading/stop-orders.md) and **Close only**. [Placing a trade](../trading/placing-a-trade.md) explains it.
+- Read [Margin](../risk/margin.md) and [Liquidation](../risk/liquidation.md) before you use a high multiplier. Pro allows up to 20×; at 20× a 2% move against you closes the trade.

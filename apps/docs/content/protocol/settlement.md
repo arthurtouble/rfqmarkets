@@ -61,7 +61,7 @@ The API checks that the oracle report still has enough life left, simulates the 
 6. The approval names exactly this oracle report, its price is within your limit and its fee within your maximum.
 7. The price includes at least the inventory charge the contract computes itself from settled positions.
 8. The market's per-trade, net, side and gross limits, the maker's capital floor and the stress limit all hold, or the trade reduces the relevant exposure.
-9. The trade is applied: profit or loss on any part that reduces your position is realized against the maker, the position and entry are updated, your nonce is marked used and the fee is charged.
+9. The trade is applied: profit or loss on any part that reduces your position is realized against the maker, the position and entry are updated, your nonce is marked used and the fee, zero today, is charged.
 10. Your account meets initial margin if the trade added risk, or maintenance margin if it reduced risk.
 
 If any check fails, the whole transaction reverts and nothing changes.

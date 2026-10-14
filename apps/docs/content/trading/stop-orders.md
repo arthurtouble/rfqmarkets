@@ -10,7 +10,7 @@ A stop order waits for the price to cross a level you choose, then trades. RFQ M
 | **Take profit** | The price rises to your trigger (for a long) or falls to it (for a short). | Lock in a gain at a target. |
 | **Stop entry** | The price rises to your trigger (to go long) or falls to it (to go short). | Enter only once a level breaks. |
 
-Stop loss and take profit are always **reduce-only**. They can shrink or close your position but never open one or flip it to the other side. A stop entry is an ordinary opening trade that waits for its trigger.
+Stop loss and take profit are always **close-only**. They can shrink or close your position but never open one or flip it to the other side. A stop entry is an ordinary opening trade that waits for its trigger.
 
 ## Setting a take profit and stop loss
 
@@ -18,7 +18,7 @@ Every open position has a **TP/SL** control: a column in the positions table on 
 
 1. Enter a **Take-profit price**, a **Stop-loss price**, or both. The chips under each field set the price a fixed distance from the current price: +1%, +2%, +5% or +10% for a long's take profit and −1% to −10% for its stop loss, and the other way round for a short.
 2. Read the hint under each field. Once you enter a price, it shows the estimated profit or loss if the order fills there.
-3. In Advanced view, choose the **Max slippage past the trigger**: 0.5%, 1%, 2% or 5%. Simple view uses 1%.
+3. Choose the **Max slippage past the trigger**: 0.5%, 1%, 2% or 5%. The default is 1%.
 4. Click **Set TP/SL** and sign in your wallet.
 
 The sheet warns you if your stop loss is past the estimated liquidation price, because the position would be liquidated before the stop could fire.
@@ -29,14 +29,14 @@ If you add to the position after setting TP/SL, the existing orders still cover 
 
 ## Placing a stop order
 
-A stop entry is placed from the ticket, in Advanced view:
+A stop entry is placed from the ticket in **Pro**:
 
 1. Switch the order type to **Stop**.
 2. Choose **Long** or **Short** and enter the amount in USDC.
 3. Enter the **Trigger price**. A long stop must be above the current price and fires when the price rises to it; a short stop must be below and fires when the price falls to it. The hint says what will happen, for example "Buys at market when the price rises to $105,000".
 4. Click **Place stop · Long BTC · $20.00** and sign in your wallet.
 
-Tick **Reduce only** as well if the stop should only shrink an existing position. Stops from the ticket are good for 30 days and use the default 1% slippage band.
+Tick **Close only** under **Options** as well if the stop should only shrink an existing position. Stops from the ticket are good for 30 days and use the default 1% slippage band.
 
 ## Watching your orders
 
@@ -56,7 +56,7 @@ A stop order is a market order once it fires, so it needs price protection like 
 
 If the price gaps straight through that band, for example after a sharp drop, the order does **not** fill at the worse price. It stays open, and fills if the price comes back inside the band before the order expires. A stop on RFQ Markets protects your price; it does not guarantee an exit. If you need certainty of getting out, use a wider band or close the position yourself.
 
-The fee is the normal 2 basis points of the fill's notional.
+There is no trading fee. As with a limit order, the signed maximum fee is a ceiling of 2 basis points; the fee charged is zero.
 
 ## Stop loss and take profit together
 
@@ -67,13 +67,13 @@ A take profit and stop loss set together from the TP/SL sheet are a pair. Both a
 A stop loss or take profit is signed for a size, but your position may change before it fires.
 
 - **If the position has shrunk**, for example after a partial close, the order closes only what is left. The contract clamps the fill to your remaining position, so the order never flips you to the other side.
-- **If the position is closed**, the venue cancels the order in its book. The signed message itself stays valid on chain until its expiry, but as a reduce-only order it has nothing to reduce. To make it unusable for certain, cancel its nonce from the [exit page](../protocol/safety-and-exits.md#the-exit-page).
+- **If the position is closed**, the venue cancels the order in its book. The signed message itself stays valid on chain until its expiry, but as a close-only order it has nothing to reduce. To make it unusable for certain, cancel its nonce from the [exit page](../protocol/safety-and-exits.md#the-exit-page).
 
 ## Margin and approval
 
 A stop order does not reserve margin. When it fires, it goes through the same path as any other trade: a fresh quote from the maker, two of three approver signatures and the contract's margin and risk checks. A stop entry that would take your account past its initial margin does not fill. Stop loss and take profit only need to keep the account above maintenance margin, like any reduction.
 
-Stop orders are always signed by your wallet, never by a one-click trading key, and the venue pays the gas when they fill.
+Stop orders are always signed by your wallet, never by a one-tap trading key, and the venue pays the gas when they fill.
 
 ## Expiry
 

@@ -69,7 +69,7 @@ The lists above are not a statement that the Interface is lawful everywhere else
 We use Cloudflare's IP geolocation to determine the country, and for Ukraine the region, that each request comes from.
 
 - **From a sanctioned jurisdiction**, every request to the venue's services is refused, including reads. The trading app shows that the service is not available in your location.
-- **From a restricted jurisdiction**, requests that open or increase a position, such as new quotes and new orders, are refused. Requests that reduce risk or return your own money remain available: closing positions, cancelling orders, withdrawing collateral and turning off one-click trading. This is so that a person who should not be using the Interface is never left unable to exit.
+- **From a restricted jurisdiction**, requests that open or increase a position, such as new quotes and new orders, are refused. Requests that reduce risk or return your own money remain available: closing positions, cancelling orders, withdrawing collateral and turning off one-tap trading. This is so that a person who should not be using the Interface is never left unable to exit.
 - **When your location cannot be established**, for example when you connect through Tor or Cloudflare cannot place your address, you are treated as being in a restricted jurisdiction.
 
 The emergency exit page talks only to your wallet, the public smart contracts and the public oracle nodes, and is not geographically restricted, so that funds can always be withdrawn directly from the contracts as the law allows. Using it does not change your obligations under this policy.

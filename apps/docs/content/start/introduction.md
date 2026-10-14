@@ -2,7 +2,9 @@
 
 RFQ Markets is a perpetual futures venue on Base. You trade BTC and ETH against a single market maker, you post USDC as collateral, and every trade settles in a smart contract that holds the money and enforces the rules.
 
-There is no order book. When you go long or short, the venue asks its market maker for a firm price for exactly the size you entered, checks that price against an independent oracle, gets it co-signed by two of three independent approvers, and submits it on chain. You sign once, and the venue pays the gas.
+The app opens on **Home**, the Up / Down screen. Pick an amount and a multiplier, then tap **Up** if you think the price will rise or **Down** if you think it will fall. The trade stays open until you tap **Cash out**. For limit orders, stop orders and more control, tap **Pro** for the full trading screen.
+
+There is no order book. When you trade, the venue asks its market maker for a firm price for exactly your size, checks that price against the venue's own price oracle, gets it co-signed by two of three approvers, and submits it on chain. You sign once, and the venue pays the gas. There are no trading fees.
 
 The point of this design is a clean trading experience without giving up custody. The prices come from a request-for-quote (RFQ) model, the way large trades are done in traditional markets, but your collateral never leaves the contract, and the contract refuses any fill that is worse than the price you signed.
 
@@ -10,12 +12,12 @@ The point of this design is a clean trading experience without giving up custody
 
 ## What you can do
 
-- **Trade BTC and ETH perpetuals** with up to 20x leverage, long or short, around the clock. Markets are open 24/7; there is no session close and no weekend gap. New markets are listed by governance without a new release of the app.
+- **Trade BTC and ETH** Up or Down from Home, or long and short with up to 20× leverage in Pro, around the clock. Markets are open 24/7; there is no session close and no weekend gap. New markets are listed by governance without a new release of the app.
 - **Use one pool of USDC for every market.** Margin is shared across your positions, so you do not have to fund each one separately.
-- **Protect positions with a take profit and stop loss**, or enter on a breakout with a stop order. Both trigger on the oracle price and fill within a slippage band you choose.
-- **Place market orders or resting limit orders.** A market order fills at once, all or nothing, within a price protection you sign. A limit order waits until the maker's executable price reaches your limit.
+- **Protect positions with a take profit and stop loss** in Pro, or enter on a breakout with a stop order. Both trigger on the oracle price and fill within a slippage band you choose.
+- **Place market orders or resting limit orders in Pro.** A market order fills at once, all or nothing, within a price protection you sign. A limit order waits until the maker's executable price reaches your limit.
 - **Connect the way you like**: a browser wallet, a phone wallet through WalletConnect, or a passkey with Base Account, which needs nothing installed.
-- **Trade without wallet pop-ups** by turning on one-click trading, a short-lived session key that can trade within limits the contract enforces and can never withdraw.
+- **Trade without wallet pop-ups** by turning on one-tap trading, a short-lived session key that can trade within limits the contract enforces and can never withdraw.
 - **Withdraw any time** your margin allows, with one signature and no gas.
 - **Leave without the venue.** If the venue's servers disappear, your wallet can still withdraw, cancel and claim directly from the contract through the exit page.
 
@@ -25,18 +27,18 @@ On a central limit order book, your order meets other traders' orders, and the p
 
 That has a few practical consequences:
 
-- **You see one price for your size.** The ticket shows the estimated fill for the amount you typed, including spread, fee and the effect of your size. There is no walking the book.
+- **You see one price for your size.** The app shows the estimated fill for your amount, with the spread and the effect of your size already in it. There is no fee on top and no walking the book.
 - **Fills are all or nothing.** A market order either fills completely within your protection or not at all. There are no partial fills.
 - **The maker can say no.** The maker has hard limits on how much risk it can take on. When a market is near its limit, trades that add to the maker's exposure may be refused while trades that reduce it go through. [Markets and limits](../markets/markets-and-limits.md) explains these limits.
 - **The maker hedges.** The maker offsets its net exposure on external venues. This is the maker's business, not yours, but it affects pricing and is described in [Hedging](../protocol/hedging.md).
 
 ## How a trade is protected
 
-Four separate parties have to agree before a trade settles:
+Four separate checks have to pass before a trade settles:
 
-1. **You** sign the exact trade: market, size, the worst price you accept, the maximum fee and a short deadline.
-2. **The oracle** supplies a price report signed by at least two of three independent price nodes, each of which aggregates prices from seven exchanges.
-3. **Two of three approvers** each check the quote independently against the oracle, the contract's state and the venue's risk policy, and co-sign it.
+1. **You** sign the exact trade: market, size, the worst price you accept, the maximum fee (zero for a market order) and a short deadline.
+2. **The oracle** supplies a price report signed by at least two of three price nodes in different regions, each of which aggregates prices from seven exchanges.
+3. **Two of three approvers** each check the quote separately against the oracle, the contract's state and the venue's risk policy, and co-sign it. The operator runs all three today; separate hosts are planned for production.
 4. **The contract** verifies all of the above again, plus your margin and the venue's risk limits, and only then moves any money.
 
 No single server can trade on your behalf, and no one can fill you outside the price you signed. [How a trade settles](../protocol/settlement.md) walks through the whole path.
@@ -58,6 +60,6 @@ Everything in these docs describes the product as it works today, and calls out 
 
 ## Where to go next
 
-- New here? Start with the [Quick start](quick-start.md), then [Using the app](using-the-app.md).
+- New here? Start with the [Quick start](quick-start.md), then [Using the app](using-the-app.md) and [Up / Down](../trading/up-down.md).
 - Confused by the different prices on screen? Read [Prices explained](prices-explained.md).
 - Building something? Go to the [API overview](../integrate/api.md).

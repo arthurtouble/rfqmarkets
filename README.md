@@ -12,6 +12,8 @@ The [takeover pack](docs/takeover/README.md) is the best single read: it maps th
 | Public docs | https://docs.rfq-markets.workers.dev |
 | Clearing proxy, Base mainnet (dev) | `0x6e67c66f955D88EBD6D69eD3343359651C6f45a1` |
 
+The trading UI opens on the Up / Down screen (`/updown/<market>`): an amount, a multiplier and two buttons. The full terminal, with limit and stop orders, is one tap away under **Pro** (`/trade/<market>`). Trades carry no fees; the platform earns a 2 bps markup inside the quoted spread.
+
 The Base mainnet deployment is a **development** deployment: owner-controlled, no timelock, capped at 25 USDC per trade and 100 USDC per market. Services run in a Cloudflare container with the hedger simulated. Production governance (Safes, timelock, independent review) comes later and is tracked in the [release checklist](docs/release/release-checklist.md). The earlier Base Sepolia deployments are retired; their record is in [docs/history](docs/history/base-sepolia-deployment.md).
 
 ## Repository layout
