@@ -27,14 +27,14 @@ To run the dev profile from GitHub Actions with the UI and services hosted on Cl
 ### Commands
 
 ```bash
-npm run dev-identities:base-mainnet -- SIGNER1,SIGNER2,SIGNER3   # once; prints the owner address to fund
-npm run dev-preflight:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.json
-npm run dev-deploy:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.json --unpause
-npm run dev-verify:base-mainnet -- .local-state/base-mainnet-dev/dev-manifest.json
-npm run dev-configure:base-mainnet -- MANIFEST [--unpause]  # after editing caps
-npm run dev-upgrade:base-mainnet -- MANIFEST                # after contract changes
-npm run dev-basescan:base-mainnet -- MANIFEST
-npm run dev-handover:base-mainnet -- MANIFEST TIMELOCK GOVERNANCE_SAFE EMERGENCY_SAFE  # when going to production
+npm run mainnet -- dev-identities SIGNER1,SIGNER2,SIGNER3   # once; prints the owner address to fund
+npm run mainnet -- dev-preflight .local-state/base-mainnet-dev/dev-manifest.json
+npm run mainnet -- dev-deploy .local-state/base-mainnet-dev/dev-manifest.json --unpause
+npm run mainnet -- dev-verify .local-state/base-mainnet-dev/dev-manifest.json
+npm run mainnet -- dev-configure MANIFEST [--unpause]  # after editing caps
+npm run mainnet -- dev-upgrade MANIFEST                # after contract changes
+npm run mainnet -- dev-basescan MANIFEST
+npm run mainnet -- dev-handover MANIFEST TIMELOCK GOVERNANCE_SAFE EMERGENCY_SAFE  # when going to production
 ```
 
 `dev-deploy` deploys the same contracts as production (six libraries, implementation, `SignedPriceOracle`, proxy), then the owner binds the oracle with `setClearing(proxy)`. v1 initializes paused with the manifest caps and risk parameters already set, so `--unpause` is the only extra step. `dev-handover` also hands the oracle's ownership to the timelock (two-step, accepted in the same timelock batch as `acceptGovernance`). `dev-configure` re-applies edited caps (pause, set exposure and market caps, optionally unpause). `dev-upgrade` checks the new build's storage layout against the build-info snapshot taken at deploy (or at the last upgrade), deploys fresh libraries and a fresh implementation, and points the proxy at them with one `upgradeAndCall` transaction. Balances and positions stay in place, which the rehearsal checks. Each broadcasting command still requires the `RFQ_MAINNET_DEPLOY_CONFIRM` string it prints, so a stray shell can't send mainnet transactions by accident.
@@ -43,7 +43,7 @@ v1 storage lives in the ERC-7201 namespace `rfq.clearing.v1`. A change the valid
 
 ### Handing the dev proxy to production governance
 
-1. Create the governance and emergency Safes, run `deploy:base-mainnet-timelock -- GOVERNANCE_SAFE`, and execute the renounce batch it writes.
+1. Create the governance and emergency Safes, run `npm run mainnet -- deploy-timelock GOVERNANCE_SAFE`, and execute the renounce batch it writes.
 2. `dev-handover` checks the timelock (delay, self-administration, owner holds no role), sets the emergency Safe as emergency council, nominates the timelock as governance, and transfers the ProxyAdmin to it. It writes `safe-batches/handover-1-schedule-accept.json` and `handover-2-execute-accept.json`.
 3. The governance Safe schedules `acceptGovernance` now and executes it after 72 hours. Until then the owner key is still clearing governance, but upgrades already need the timelock.
 
@@ -57,7 +57,7 @@ Before relying on a handed-over proxy for real capital, lower or re-set caps thr
 | --- | --- | --- | --- |
 | 0a | Governance Safe | Owner, in the Safe app | 2-of-3 or stronger, hardware-wallet owners |
 | 0b | Emergency Safe | Owner, in the Safe app | Different owners from the governance Safe |
-| 0c | `RFQTimelock` | `deploy:base-mainnet-timelock` | OpenZeppelin `TimelockController`, 72 h delay. Governance Safe is proposer/executor and must renounce the bootstrap admin role |
+| 0c | `RFQTimelock` | `npm run mainnet -- deploy-timelock` | OpenZeppelin `TimelockController`, 72 h delay. Governance Safe is proposer/executor and must renounce the bootstrap admin role |
 | 1–5 | `RFQRiskMath`, `RFQLiquidation`, `RFQResolution`, `RFQSignatureVerifier`, `RFQSettlement` | `deploy:base-mainnet` | Linked libraries, deployed in dependency order; part of implementation authority |
 | 6 | `RFQClearing` implementation | same | Constructor disables initializers |
 | 7 | `SignedPriceOracle` | same | Owned by the timelock, with the manifest signers, majority threshold and consensus parameters. `setClearing(proxy)` is a recorded pending owner step that runs in the timelocked go-live batch, so the oracle refuses every report until go-live |
@@ -102,12 +102,12 @@ Load an ignored env file first (`set -a; source ./base-mainnet.env; set +a`) hol
 Every broadcasting command refuses to run until `RFQ_MAINNET_DEPLOY_CONFIRM` equals a string it prints, which binds the action to chain 8453, the deployer address and the candidate (or governance Safe for the timelock).
 
 1. Create both Safes in the Safe app.
-2. `npm run deploy:base-mainnet-timelock -- GOVERNANCE_SAFE`, then execute `safe-batches/0-renounce-timelock-admin.json` from the governance Safe (Transaction Builder, "Load batch").
-3. Freeze the commit. Write the manifest outside the repository or under `.local-state/`, with `candidateHash` from `npm run candidate:base-mainnet`. Any change to tracked source changes the hash and invalidates the manifest.
-4. `npm run preflight:base-mainnet -- MANIFEST.json`. It is read-only: it checks the chain ID, USDC decimals, both Safe thresholds and owner overlap, timelock delay and self-administration, that the deployer holds no role, and gas/balance.
-5. `npm run deploy:base-mainnet -- MANIFEST.json --dormant` (or `--release-evidence EVIDENCE.json` once `release:check` passes). It deploys steps 1–8, waits two confirmations per transaction, and writes `deployment.json` plus two Safe batches. An interrupted run resumes from `deployment.partial.json`; a resumed oracle must be owned by governance and unbound. The proxy starts paused with the manifest caps, so no emergency step is needed.
-6. `npm run verify:base-mainnet -- MANIFEST.json` runs the checks against both RPCs: implementation and library runtime bytecode equal the local build, proxy slots, ProxyAdmin owned by the timelock, every role, approvers, capital floor, oracle bytecode, owner, signers, threshold, consensus parameters and binding (or its recorded pending step), two markets with caps and risk parameters matching the manifest, timelock self-administration, and no deployer authority.
-7. `npm run basescan:base-mainnet -- MANIFEST.json` publishes standard-JSON source for all nine contracts.
+2. `npm run mainnet -- deploy-timelock GOVERNANCE_SAFE`, then execute `safe-batches/0-renounce-timelock-admin.json` from the governance Safe (Transaction Builder, "Load batch").
+3. Freeze the commit. Write the manifest outside the repository or under `.local-state/`, with `candidateHash` from `npm run mainnet -- candidate`. Any change to tracked source changes the hash and invalidates the manifest.
+4. `npm run mainnet -- preflight MANIFEST.json`. It is read-only: it checks the chain ID, USDC decimals, both Safe thresholds and owner overlap, timelock delay and self-administration, that the deployer holds no role, and gas/balance.
+5. `npm run mainnet -- deploy MANIFEST.json --dormant` (or `--release-evidence EVIDENCE.json` once `release:check` passes). It deploys steps 1–8, waits two confirmations per transaction, and writes `deployment.json` plus two Safe batches. An interrupted run resumes from `deployment.partial.json`; a resumed oracle must be owned by governance and unbound. The proxy starts paused with the manifest caps, so no emergency step is needed.
+6. `npm run mainnet -- verify MANIFEST.json` runs the checks against both RPCs: implementation and library runtime bytecode equal the local build, proxy slots, ProxyAdmin owned by the timelock, every role, approvers, capital floor, oracle bytecode, owner, signers, threshold, consensus parameters and binding (or its recorded pending step), two markets with caps and risk parameters matching the manifest, timelock self-administration, and no deployer authority.
+7. `npm run mainnet -- basescan MANIFEST.json` publishes standard-JSON source for all nine contracts.
 8. Execute `safe-batches/1-schedule-go-live.json` from the governance Safe. It schedules a timelocked `unpause`.
 9. Execute `2-execute-go-live.json` after 72 hours and only once the approvers, keeper, hedger, indexer and monitoring are running against mainnet and the release checklist allows it. Until then the deployment stays paused, while deposits, withdrawals and paused closes keep working.
 

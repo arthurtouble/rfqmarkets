@@ -2,10 +2,6 @@
 
 Every file under `docs/` is published to the private internal manual (`npm run dev:internal-docs`); the folder becomes its section. Start with the overview, then read whichever area you are changing.
 
-## Takeover pack
-
-[takeover/](takeover/README.md) is the October 2026 handover: product and architecture summary, deployment inventory, decisions review, tech stack, refactor plan, flowcharts and roadmap, plus per-area code reviews.
-
 ## Architecture: how the system works
 
 - [Overview](architecture/overview.md): components, trust boundaries, request paths and launch gates. Read this first.
@@ -41,6 +37,9 @@ Every file under `docs/` is published to the private internal manual (`npm run d
 - [Release checklist](release/release-checklist.md): evidence required before a production mainnet release.
 - [Independent review package](release/independent-review-package.md): what external reviewers receive.
 
-## History
+## Archive
 
-[history/](history/) keeps superseded designs, dated audits and the retired Base Sepolia deployment records. They explain why the current design looks the way it does, but where they disagree with the documents above, the documents above win. File names start with the date they describe.
+[archive/](archive/README.md) keeps material that is no longer current, for the record. Where it disagrees with the documents above, the documents above win.
+
+- [archive/takeover/](archive/takeover/README.md): the October 2026 handover pack. Product and architecture summary, deployment inventory, decisions review, tech stack, refactor plan, flowcharts, roadmap and per-area code reviews, as they stood on 6 October 2026.
+- [archive/history/](archive/history/): superseded designs, dated audits and the retired Base Sepolia deployment records. File names start with the date they describe.

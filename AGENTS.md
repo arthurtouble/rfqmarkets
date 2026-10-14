@@ -52,4 +52,4 @@
   `deploy/cloudflare/`.
 - Production readiness and unresolved controls are tracked in
   `docs/release/implementation-plan.md` and `docs/release/release-checklist.md`.
-- `docs/history/` is superseded material; current docs win where they differ.
+- `docs/archive/` (the takeover pack and `history/`) is superseded material; current docs win where they differ.

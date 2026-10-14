@@ -38,4 +38,4 @@ For planned retirement: announce the reduce-only date; stop new risk off-chain; 
 
 ## Local commands
 
-`npm test` runs contract, service, fixed-point, scenario, upgrade, and web gates. `npm run smoke:adversarial-load` sends 10,000 concurrent firm-quote requests by default and verifies bounded 409 rejection after capacity. `python3 -B simulator/market_making_scenarios.py --seed 1` prints comparable regime metrics. Environment variables `RFQ_LOAD_REQUESTS`, `RFQ_LOAD_CAPACITY`, and `RFQ_LOAD_CONCURRENCY` scale the admission test.
+`npm test` runs contract, service, fixed-point, scenario, upgrade, and web gates. `npm run smoke -- adversarial-load` sends 10,000 concurrent firm-quote requests by default and verifies bounded 409 rejection after capacity. `python3 -B simulator/market_making_scenarios.py --seed 1` prints comparable regime metrics. Environment variables `RFQ_LOAD_REQUESTS`, `RFQ_LOAD_CAPACITY`, and `RFQ_LOAD_CONCURRENCY` scale the admission test.

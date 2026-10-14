@@ -33,10 +33,10 @@ test("every docs file is a page, the start page first, with unique routes", () =
   assert.equal(pages[0].id, "README");
   assert.equal(pages[0].route, "/");
   assert.equal(new Set(pages.map((page) => page.route)).size, pages.length);
-  assert.deepEqual(sectionsOf(pages).slice(0, 3), ["Start here", "Takeover", "Architecture"]);
-  assert.equal(sectionsOf(pages).at(-1), "History");
-  const takeover = pages.filter((page) => page.section === "Takeover");
-  assert.equal(takeover[0].route, "/takeover", "a folder README is the folder's page and comes first");
+  assert.deepEqual(sectionsOf(pages).slice(0, 2), ["Start here", "Architecture"]);
+  assert.equal(sectionsOf(pages).at(-1), "Archive", "superseded material comes last");
+  const archive = pages.filter((page) => page.section === "Archive");
+  assert.equal(archive[0].route, "/archive", "a folder README is the folder's page and comes first");
   for (const page of pages) {
     // A bad merge once left a doc empty; every page starts with its own "# " title.
     assert.match(page.body, /^# \S/m, `docs/${page.id}.md has a level-1 title`);
@@ -74,14 +74,17 @@ test("links: manual pages stay in the manual, other repository paths open on Git
     route: "/operations/cloudflare",
     hash: "deploy",
   });
-  assert.deepEqual(resolveLink("README", "takeover/", pages), { kind: "page", route: "/takeover" });
+  assert.deepEqual(resolveLink("README", "archive/takeover/", pages), {
+    kind: "page",
+    route: "/archive/takeover",
+  });
   assert.deepEqual(resolveLink("README", "./architecture/overview.md", pages), {
     kind: "page",
     route: "/architecture/overview",
   });
-  assert.deepEqual(resolveLink("README", "history/", pages), {
+  assert.deepEqual(resolveLink("README", "archive/history/", pages), {
     kind: "external",
-    href: "https://github.com/arthurtouble/rfqmarkets/tree/main/docs/history",
+    href: "https://github.com/arthurtouble/rfqmarkets/tree/main/docs/archive/history",
   });
   assert.deepEqual(
     resolveLink("operations/cloudflare", "../../deploy/cloudflare/DEV-ENVIRONMENT.md", pages),

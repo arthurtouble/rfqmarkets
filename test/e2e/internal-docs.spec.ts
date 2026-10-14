@@ -19,10 +19,10 @@ test.describe("internal manual", () => {
 
     await page.getByRole("article").getByRole("link", { name: "Overview" }).click();
     await expect(page).toHaveURL(/\/architecture\/overview$/);
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("consolidated architecture");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Architecture overview");
     await expectNoHorizontalOverflow(page);
     await page.reload();
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("consolidated architecture");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Architecture overview");
     await page.goBack();
     await expect(page.getByRole("heading", { level: 1, name: "Documentation" })).toBeVisible();
 
@@ -38,11 +38,14 @@ test.describe("internal manual", () => {
 
   test("links to other repository files open on GitHub", async ({ page }) => {
     await page.goto(`${urls.internalDocs}/`);
-    const history = page.getByRole("article").getByRole("link", { name: "history/" });
-    await expect(history).toHaveAttribute("href", /^https:\/\/github\.com\/.+\/tree\/main\/docs\/history$/);
+    const history = page.getByRole("article").getByRole("link", { name: "archive/history/" });
+    await expect(history).toHaveAttribute(
+      "href",
+      /^https:\/\/github\.com\/.+\/tree\/main\/docs\/archive\/history$/,
+    );
     await expect(history).toHaveAttribute("target", "_blank");
-    await page.getByRole("article").getByRole("link", { name: "takeover/" }).click();
-    await expect(page).toHaveURL(/\/takeover$/);
+    await page.getByRole("article").getByRole("link", { name: "archive/takeover/" }).click();
+    await expect(page).toHaveURL(/\/archive\/takeover$/);
   });
 
   test("searches every page", async ({ page, isMobile }) => {

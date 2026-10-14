@@ -1,26 +1,24 @@
 # Product design system
 
-The executable specimen is [`apps/design-system/index.html`](../../apps/design-system/index.html). Run `npm run dev:design-system` and open `http://127.0.0.1:4177`. It renders the actual foundations, typography, spacing, controls, tabular trading data and system states used by the product. Shared values live in `packages/design-system/tokens.css`; changes to either file must update the other in the same review.
+The design system lives in [`packages/design-system`](../../packages/design-system/README.md). `tokens.json` is the source of truth for color, type, spacing, radius, shadows and sizes; `npm run build:tokens` generates `tokens.css` and `colors.ts` from it, and CI fails when either is stale. `components.css` holds the shared `rfq-` component classes, and `logo.svg` is the mark.
 
-Customer surfaces use near-black neutral layers, saturated periwinkle selection, aqua buy/healthy states and coral sell/danger states. Private operations surfaces use graphite, cyan and amber so screenshots cannot be confused with the trading product. IBM Plex Sans and IBM Plex Mono are bundled locally; no third-party font request is made at runtime.
+The specimen page renders all of it straight from those files, so it cannot drift: run `npm run dev:design-system` and open `http://127.0.0.1:4177`. It shows every color token in both themes with its usage note, every type style, the spacing and radius scales, and the shared components.
+
+## Look
+
+- **One brand color.** `brand` (#3D6BF5 in dark) marks primary actions, the active nav item and selected chips. The logo, the favicons and the share card use the same value.
+- **Up and Down.** `long` is green for Up, gains and healthy state; `short` is red for Down, losses and danger. Neither is used for anything else, and every state also says what it is in words.
+- **Neutral surfaces.** `bg`, `surface`, `surface-raised` and `surface-sunken` layer the page in both themes. The page follows the system theme unless the person picks one.
+- **Type.** Geist for everything, with tabular figures for numbers. Geist Mono only for addresses, hashes and other machine identifiers. Both are bundled; no font is fetched from a third party.
+- **No hex values in app code.** A new color is a token first. Code that draws outside CSS, such as the share card's canvas, imports `colors.ts`.
 
 ## Product rules
 
-1. Keep the current market, order type, direction, amount, price protection and primary action in one compact ticket.
-2. Show index/oracle, maker bid/ask, funding and data freshness together. Never label an indicative price as executable.
-3. Keep collateral, equity, margin usage, effective leverage, positions, orders and history visible without leaving trading.
-4. Put advanced controls behind disclosure. Defaults must be safe and sufficient for a first trade.
-5. Use aqua only for buys, positive balances and healthy state; coral only for sells, losses and dangerous state; periwinkle for selection and navigation.
-6. Display numbers with tabular figures. Keep addresses, hashes and machine identifiers monospace.
-7. Public protocol data may show finalized aggregate exposure. Exact hedge state, venue orders, thresholds and failures remain private.
-8. Every loading, disconnected, guarded, reduce-only, rejected, pending, included and finalized state needs explicit text in addition to color.
-9. Put the wallet control in the persistent top-right application slot. Keep market selection beside the live market context and synchronize that selection with the order ticket.
-10. Charts are supporting context, not decoration. The launch chart is a lightweight line and area plot built from the same server-sent market stream that drives quotes, so the browser does not contact an exchange or oracle provider directly.
-
-## Typography and density
-
-The customer product uses IBM Plex Sans with IBM Plex Mono for prices, quantities and machine identifiers. It avoids rounded display fonts, oversized headings and decorative gradients. The visual hierarchy comes from weight, spacing, borders and a small semantic palette. Component corners are square; only status dots remain circular. The dense trading canvas stays readable at 390px without turning every value into a separate card.
-
-The layout borrows the persistent market context and dense feedback of Hyperliquid, Variational's indicative-versus-firm distinction, dYdX's unified account workspace, and Synthetix's explicit margin and fee preview. It omits an order book, isolated leverage selector and broad conditional-order matrix until those concepts have native RFQ semantics and matching contract enforcement.
-
-Primary references: [Hyperliquid order types](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/order-types), [Variational quoted, index and mark prices](https://docs.variational.io/omni/trading/quoted-index-and-mark-prices), [Variational RFQ flow](https://docs.variational.io/variational-protocol/key-concepts/trading-via-rfq), [dYdX trading concepts](https://docs.dydx.xyz/concepts/trading), and [Synthetix Perps V3 integration](https://docs.synthetix.io/developer-docs/for-perp-integrators/perps-v3).
+1. Home is the product for most people: a market, an amount, a multiplier and two buttons. Everything else (order types, slippage, close only, candles) lives in Pro, one tap away.
+2. Say it the way a person would: trade, amount, Up, Down, Cash out. No "bet", "stake", "notional" or "reduce-only" on Home.
+3. Show the price someone will get and what happens if it moves against them: the auto-close price and about how much they would lose there. Never label an indicative price as firm.
+4. There are no trading fees, so there are no fee rows. The spread is the price.
+5. Defaults must be safe and enough for a first trade. One tap is offered on the first trade's confirm step, with its limits stated.
+6. Every loading, delayed, paused, closing-only, rejected and pending state has explicit text, not just a color.
+7. Public data may show aggregate exposure. Hedge state, venue orders, thresholds and failures stay private.
+8. Layouts work at 390px wide with no horizontal scroll; the browser suite checks every app on a phone viewport.
