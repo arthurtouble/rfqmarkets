@@ -26,6 +26,34 @@ contract MakerCapitalTest is ClearingFixture {
         assertTrue(custodyMatchesBuckets());
     }
 
+    function test_tradesMoveTheInsuranceShareOfTheMarkupFromMakerBacking() public {
+        uint256 maker = clearing.makerBacking();
+        uint256 insurance = clearing.insuranceBalance();
+        int256 collateral = clearing.totalCustomerCollateral();
+        // 0.5 BTC at 100,000 is 50,000 USDC; the 2 bps markup is 10 USDC, and insurance, below a quarter of
+        // the floor, takes a fifth of it.
+        trade(alice, 0, 5e17, false);
+        uint256 moved = clearing.insuranceBalance() - insurance;
+        assertApproxEqAbs(moved, 2e6, 1e3);
+        assertEq(clearing.makerBacking(), maker - moved);
+        // The trader pays nothing extra for it.
+        assertEq(clearing.totalCustomerCollateral(), collateral);
+        assertTrue(custodyMatchesBuckets());
+    }
+
+    function test_theMarkupShareNeverTakesTheMakerBelowTheFloor() public {
+        vm.prank(governance);
+        clearing.withdrawMakerExcess(treasury, 50_000e6);
+        assertEq(clearing.makerBacking(), FLOOR);
+        uint256 insurance = clearing.insuranceBalance();
+        trade(alice, 0, 5e17, false);
+        assertEq(clearing.insuranceBalance(), insurance);
+        assertEq(clearing.makerBacking(), FLOOR);
+        // Trading continues: the next opening trade still meets the floor.
+        trade(alice, 0, 1e17, false);
+        assertTrue(custodyMatchesBuckets());
+    }
+
     function test_unrealizedCustomerGainsStayInBacking() public {
         trade(alice, 0, 5e17, false);
         vm.warp(block.timestamp + 1);

@@ -52,7 +52,7 @@ There is no trading fee on any trade, market or limit, open or close. The platfo
 
 Approvers enforce the markup: they refuse a fill whose price is not at least the market's base spread plus 2 bps (plus the inventory charge) away from the oracle.
 
-The contract can still charge an on-chain fee, which it splits between the insurance fund and the maker. With the fee at zero, the insurance fund grows from liquidation penalties and from direct top-ups by the operator.
+The insurance fund still gets its share. On every fill the contract moves part of the markup from the maker's capital to insurance: 20% of it until the insurance fund reaches a quarter of the maker's capital target, 10% after that. This comes out of the maker's side, not your balance, and only from maker capital above its required floor.
 
 There are no deposit, withdrawal or gas fees. Liquidation has its own penalty, described in [Liquidation](liquidation.md).
 

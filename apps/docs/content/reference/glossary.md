@@ -36,7 +36,7 @@
 
 **Initial margin.** The margin needed to open risk or withdraw. For BTC and ETH today, 5% of notional for positions up to 25,000 USDC, which allows 20x. Each market's rates are its base schedule times a multiplier set by governance.
 
-**Insurance fund.** Capital, built from liquidation penalties, direct top-ups and any on-chain fees, that covers bankrupt accounts before the maker's capital does.
+**Insurance fund.** Capital, built from a share of the platform markup, liquidation penalties and direct top-ups, that covers bankrupt accounts before the maker's capital does.
 
 **Intent.** A signed message stating exactly what you authorize, such as a *TradeIntent* or *WithdrawalIntent*.
 
