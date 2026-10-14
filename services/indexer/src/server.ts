@@ -36,7 +36,6 @@ import {
 } from "./leaderboard.js";
 import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import { validOwnerSignature } from "../../api/src/owner-signature.js";
-import { feeTierFor, feeTierWindow, nextFeeTier } from "../../../packages/shared/src/fee-tiers.js";
 import { referralBonus, referralDigest, referralTermsError } from "./referrals.js";
 
 export interface IndexerOptions {
@@ -69,6 +68,8 @@ export interface IndexerOptions {
 
 /** Bumped when the tables change shape; an older database is dropped and reindexed from `startBlock`. */
 const SCHEMA_VERSION = "2";
+/** How many stored blocks a reorg may undo before the index is rebuilt instead. */
+const REORG_DEPTH = 128;
 
 const ACTIVITY_KINDS = [
   "Deposited",
@@ -242,7 +243,7 @@ export function buildIndexer(options: IndexerOptions) {
     "CREATE TABLE IF NOT EXISTS referrals(account TEXT PRIMARY KEY,referrer TEXT NOT NULL,issued_at INTEGER NOT NULL,signature TEXT NOT NULL,created_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS referrals_referrer ON referrals(referrer)",
   );
   db.exec(
-    "CREATE TABLE IF NOT EXISTS blocks(number INTEGER PRIMARY KEY,hash TEXT NOT NULL,parent_hash TEXT NOT NULL,timestamp INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS activity(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,block_number INTEGER NOT NULL,block_hash TEXT NOT NULL,timestamp INTEGER NOT NULL,kind TEXT NOT NULL,account TEXT,market INTEGER,payload TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index)); CREATE INDEX IF NOT EXISTS activity_account_block ON activity(account,block_number DESC,log_index DESC); CREATE TABLE IF NOT EXISTS accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS finalized_accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS positions(account TEXT NOT NULL,market INTEGER NOT NULL,size TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(account,market)); CREATE TABLE IF NOT EXISTS finalized_positions(account TEXT NOT NULL,market INTEGER NOT NULL,size TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(account,market)); CREATE INDEX IF NOT EXISTS positions_market ON positions(market,account); CREATE INDEX IF NOT EXISTS finalized_positions_market ON finalized_positions(market,account); CREATE TABLE IF NOT EXISTS liquidation_marks(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,bid TEXT NOT NULL,ask TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index))",
+    "CREATE TABLE IF NOT EXISTS blocks(number INTEGER PRIMARY KEY,hash TEXT NOT NULL,parent_hash TEXT NOT NULL,timestamp INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS activity(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,block_number INTEGER NOT NULL,block_hash TEXT NOT NULL,timestamp INTEGER NOT NULL,kind TEXT NOT NULL,account TEXT,market INTEGER,payload TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index)); CREATE INDEX IF NOT EXISTS activity_account_block ON activity(account,block_number DESC,log_index DESC); CREATE INDEX IF NOT EXISTS activity_kind_block ON activity(kind,block_number DESC,log_index DESC); CREATE INDEX IF NOT EXISTS activity_block ON activity(block_number,log_index); CREATE TABLE IF NOT EXISTS accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS finalized_accounts(account TEXT PRIMARY KEY,collateral TEXT NOT NULL,indexed_block INTEGER NOT NULL,indexed_tx TEXT); CREATE TABLE IF NOT EXISTS positions(account TEXT NOT NULL,market INTEGER NOT NULL,size TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(account,market)); CREATE TABLE IF NOT EXISTS finalized_positions(account TEXT NOT NULL,market INTEGER NOT NULL,size TEXT NOT NULL,entry TEXT NOT NULL,PRIMARY KEY(account,market)); CREATE INDEX IF NOT EXISTS positions_market ON positions(market,account); CREATE INDEX IF NOT EXISTS finalized_positions_market ON finalized_positions(market,account); CREATE TABLE IF NOT EXISTS liquidation_marks(tx_hash TEXT NOT NULL,log_index INTEGER NOT NULL,bid TEXT NOT NULL,ask TEXT NOT NULL,PRIMARY KEY(tx_hash,log_index))",
   );
   /** Accounts and their position tables, live (included) or finalized. */
   const tables = (finalized: boolean) =>
@@ -431,17 +432,74 @@ export function buildIndexer(options: IndexerOptions) {
       "INSERT INTO metadata VALUES('finalized_cursor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
     ).run(String(stage.target));
   }
+  /**
+   * Undoes the blocks a reorg replaced, back to the newest stored block that is still canonical, and re-reads
+   * the accounts those blocks touched at that block. A reorg deeper than REORG_DEPTH stored blocks, or one
+   * that reaches the finalized cursor, rebuilds the index from scratch instead.
+   */
+  async function rollBack(): Promise<{ rebuilt: boolean; accounts: string[] }> {
+    const stored = db
+      .prepare("SELECT number,hash FROM blocks ORDER BY number DESC LIMIT ?")
+      .all(REORG_DEPTH) as Array<{
+      number: number;
+      hash: string;
+    }>;
+    let ancestor: number | undefined;
+    for (const block of stored) {
+      if ((await provider.getBlock(block.number))?.hash !== block.hash) continue;
+      ancestor = block.number;
+      break;
+    }
+    if (ancestor === undefined || ancestor < finalizedCursor()) {
+      reset();
+      return { rebuilt: true, accounts: [] };
+    }
+    const touched = (
+      db
+        .prepare("SELECT DISTINCT account FROM activity WHERE account IS NOT NULL AND block_number>?")
+        .all(ancestor) as Array<{ account: string }>
+    ).map((row) => row.account);
+    const earlier = new Set(
+      touched.filter((account) =>
+        db
+          .prepare("SELECT 1 FROM activity WHERE account=? AND block_number<=? LIMIT 1")
+          .get(account, ancestor),
+      ),
+    );
+    const rows = await Promise.all([...earlier].map((account) => readAccount(account, ancestor)));
+    atomic(() => {
+      db.prepare(
+        "DELETE FROM liquidation_marks WHERE (tx_hash,log_index) IN (SELECT tx_hash,log_index FROM activity WHERE block_number>?)",
+      ).run(ancestor);
+      db.prepare("DELETE FROM activity WHERE block_number>?").run(ancestor);
+      db.prepare("DELETE FROM blocks WHERE number>?").run(ancestor);
+      for (const account of touched) {
+        if (earlier.has(account)) continue;
+        db.prepare("DELETE FROM accounts WHERE account=?").run(account);
+        db.prepare("DELETE FROM positions WHERE account=?").run(account);
+      }
+      for (const row of rows) writeAccount(row, false);
+    });
+    for (const account of touched)
+      if (!earlier.has(account)) liveRisk.update({ account, collateral: "0", sizes: new Map() });
+    for (const row of rows) liveRisk.update(projection(row));
+    portfolioCache.clear();
+    return { rebuilt: false, accounts: touched };
+  }
   async function syncPass() {
     const head = await provider.getBlockNumber();
     let row = db.prepare("SELECT number,hash FROM blocks ORDER BY number DESC LIMIT 1").get() as
       { number: number; hash: string } | undefined;
     let rebuilt = false;
+    const rolledBack = new Set<string>();
     if (row) {
       const canonical = await provider.getBlock(row.number);
       if (!canonical || canonical.hash !== row.hash) {
-        reset();
-        row = undefined;
-        rebuilt = true;
+        const undone = await rollBack();
+        rebuilt = undone.rebuilt;
+        for (const account of undone.accounts) rolledBack.add(account);
+        row = db.prepare("SELECT number,hash FROM blocks ORDER BY number DESC LIMIT 1").get() as
+          { number: number; hash: string } | undefined;
       }
     }
     const from = Math.max(options.startBlock ?? 0, (row?.number ?? (options.startBlock ?? 0) - 1) + 1);
@@ -449,7 +507,7 @@ export function buildIndexer(options: IndexerOptions) {
       const finalized = await stageFinalized(head);
       atomic(() => writeFinalized(finalized));
       for (const item of finalized?.rows ?? []) finalizedRisk.update(projection(item));
-      return { accounts: new Set<string>(), reset: rebuilt };
+      return { accounts: rolledBack, reset: rebuilt };
     }
     // Stage every network read before opening a synchronous transaction. A failed
     // read or crash cannot advance the checkpoint past incomplete projections.
@@ -551,17 +609,23 @@ export function buildIndexer(options: IndexerOptions) {
     });
     for (const item of included) liveRisk.update(projection(item));
     for (const item of finalized?.rows ?? []) finalizedRisk.update(projection(item));
-    return { accounts: new Set(affected.keys()), reset: rebuilt };
+    return { accounts: new Set([...rolledBack, ...affected.keys()]), reset: rebuilt };
   }
   async function doSync() {
+    const accounts = new Set<string>();
+    let rebuilt = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       const result = await syncPass();
+      for (const account of result.accounts) accounts.add(account);
+      rebuilt ||= result.reset;
       const row = db.prepare("SELECT number,hash FROM blocks ORDER BY number DESC LIMIT 1").get() as
         { number: number; hash: string } | undefined;
-      if (!row) return result;
+      if (!row) return { accounts, reset: rebuilt };
       const canonical = await provider.getBlock(row.number);
-      if (canonical?.hash === row.hash) return result;
-      reset();
+      if (canonical?.hash === row.hash) return { accounts, reset: rebuilt };
+      const undone = await rollBack();
+      for (const account of undone.accounts) accounts.add(account);
+      rebuilt ||= undone.rebuilt;
     }
     throw new Error("chain changed during three consecutive index passes");
   }
@@ -973,38 +1037,6 @@ export function buildIndexer(options: IndexerOptions) {
       referees: referees.length,
       referralPoints: bonus.toString(),
       totalWithReferrals: (BigInt(own.total) + bonus).toString(),
-    };
-  });
-  app.get("/v1/fees/:address", async (request, reply) => {
-    await sync();
-    const params = parse(accountParams, request.params, reply);
-    if (!params) return;
-    const scope = await portfolioScope(false),
-      owners = isolatedOwners(scope.through),
-      // An isolated account trades on its owner's tier.
-      owner = owners.get(params.address) ?? params.address,
-      { accounts } = pointsOf(owner, scope.through, false, owners),
-      window = feeTierWindow(Date.now());
-    let volume = 0n;
-    for (const account of accounts)
-      for (const fill of portfolio(account, scope.through, false).fills)
-        if (fill.kind === "trade" && fill.timeMs >= window.startMs && fill.timeMs < window.endMs)
-          volume += BigInt(fill.notional);
-    const tier = feeTierFor(volume),
-      next = nextFeeTier(tier);
-    return {
-      account: params.address,
-      owner,
-      accounts,
-      windowStartMs: window.startMs,
-      windowEndMs: window.endMs,
-      volume: volume.toString(),
-      tier: tier.tier,
-      discountBps: tier.discountBps,
-      nextTier: next
-        ? { tier: next.tier, minVolume: next.minVolume.toString(), discountBps: next.discountBps }
-        : null,
-      indexedBlock: scope.through,
     };
   });
   let chainId: Promise<bigint> | undefined;

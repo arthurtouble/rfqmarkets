@@ -568,16 +568,99 @@ test("leaderboard ranks owners with their isolated accounts, and points sum trad
     assert.equal(referred.referralPoints, "3");
     assert.equal(referred.totalWithReferrals, "7");
 
-    // An isolated account trades on its owner's tier; these 1970 fills are outside today's 14-day window.
-    const fees = await get(`/v1/fees/${isolated}`);
-    assert.equal(fees.owner, account);
-    assert.deepEqual(fees.accounts, [account, isolated]);
-    assert.equal(fees.volume, "0");
-    assert.equal(fees.tier, 0);
-    assert.equal(fees.nextTier.tier, 1);
-    assert.equal(fees.windowEndMs - fees.windowStartMs, 14 * 86_400_000);
     for (const url of ["/v1/leaderboard?window=2d", "/v1/leaderboard?sort=fees", "/v1/points/0x12"])
       assert.equal((await app.inject({ method: "GET", url })).statusCode, 400, url);
+  } finally {
+    await app.close();
+    provider.destroy();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+/** A chain whose blocks, logs and balances the test rewrites to stage a reorg. */
+class ReorgChain extends JsonRpcProvider {
+  head = 12;
+  hashes = new Map<number, string>();
+  deposits: Array<{ block: number; account: string; amount: bigint }> = [];
+  scans: number[] = [];
+  hashOf(number: number) {
+    return this.hashes.get(number) ?? "0x" + number.toString(16).padStart(64, "0");
+  }
+  override async getBlockNumber() {
+    return this.head;
+  }
+  override async getBlock(number: unknown) {
+    const n = Number(number);
+    return { number: n, hash: this.hashOf(n), parentHash: this.hashOf(n - 1), timestamp: 1000 + n } as Block;
+  }
+  override async getLogs(filter: Filter | FilterByBlockHash) {
+    const { fromBlock, toBlock } = filter as { fromBlock: number; toBlock: number };
+    this.scans.push(fromBlock);
+    return this.deposits
+      .filter((deposit) => deposit.block >= fromBlock && deposit.block <= toBlock)
+      .map((deposit, index) => ({
+        ...iface.encodeEventLog(iface.getEvent("Deposited")!, [deposit.account, deposit.amount]),
+        blockNumber: deposit.block,
+        blockHash: this.hashOf(deposit.block),
+        transactionHash: "0x" + (deposit.block * 100 + index).toString(16).padStart(64, "0"),
+        index,
+      })) as unknown as Log[];
+  }
+  override async call(request: TransactionRequest) {
+    const decoded = iface.parseTransaction({ data: String(request.data) })!;
+    if (decoded.name !== "collateralOf")
+      return iface.encodeFunctionResult(decoded.name, chainResult(decoded.name, decoded.args));
+    const block = Number(request.blockTag ?? this.head);
+    const owner = String(decoded.args[0]).toLowerCase();
+    const total = this.deposits
+      .filter((deposit) => deposit.block <= block && deposit.account.toLowerCase() === owner)
+      .reduce((sum, deposit) => sum + deposit.amount, 0n);
+    return iface.encodeFunctionResult("collateralOf", [total]);
+  }
+}
+
+test("a shallow reorg rolls back only the replaced blocks and re-reads the accounts they touched", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-index-")),
+    path = join(directory, "index.sqlite"),
+    provider = new ReorgChain(),
+    alice = "0x00000000000000000000000000000000000000A1",
+    bob = "0x00000000000000000000000000000000000000B0";
+  provider.deposits = [
+    { block: 10, account: alice, amount: 100_000_000n },
+    { block: 12, account: bob, amount: 50_000_000n },
+  ];
+  const app = buildIndexer({
+    rpcUrl: "http://unused",
+    provider,
+    clearingAddress: clearing,
+    databasePath: path,
+    startBlock: 10,
+    confirmations: 5,
+    pollMs: 60_000,
+  });
+  try {
+    await app.ready();
+    assert.equal((await app.inject({ method: "GET", url: "/health" })).json().ok, true);
+    const db = new DatabaseSync(path);
+    assert.equal(db.prepare("SELECT count(*) n FROM accounts").get()!.n, 2);
+
+    // Block 12 is replaced: bob's deposit is gone, and alice deposits again in block 11.
+    provider.hashes.set(11, "0x" + "ab".repeat(32));
+    provider.hashes.set(12, "0x" + "cd".repeat(32));
+    provider.deposits = [
+      { block: 10, account: alice, amount: 100_000_000n },
+      { block: 11, account: alice, amount: 25_000_000n },
+    ];
+    provider.scans = [];
+    assert.equal((await app.inject({ method: "GET", url: "/health" })).json().ok, true);
+
+    assert.deepEqual(provider.scans, [11], "only the replaced blocks are scanned again");
+    assert.equal(db.prepare("SELECT count(*) n FROM accounts WHERE account=?").get(bob)!.n, 0);
+    assert.equal(db.prepare("SELECT count(*) n FROM activity").get()!.n, 2);
+    assert.equal(db.prepare("SELECT hash FROM blocks WHERE number=12").get()!.hash, "0x" + "cd".repeat(32));
+    const account = await app.inject({ method: "GET", url: `/v1/account/${alice}` });
+    assert.equal(account.json().collateral, "125000000");
+    db.close();
   } finally {
     await app.close();
     provider.destroy();
