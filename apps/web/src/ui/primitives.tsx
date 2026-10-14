@@ -31,6 +31,7 @@ export const Info = () => <svg width="20" height="20" viewBox="0 0 20 20" aria-h
 const path = (d: ReactNode) => <svg viewBox="0 0 24 24" aria-hidden="true">{d}</svg>;
 const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
 export const NavIcons = {
+  home: path(<path d="M8 20V4M4 8l4-4 4 4M16 4v16M12 16l4 4 4-4" {...stroke} />),
   trade: path(<path d="M4 16l5-5 4 4 7-7" {...stroke} />),
   markets: path(<path d="M5 7h14M5 12h14M5 17h9" {...stroke} />),
   portfolio: path(<><rect x="4" y="6" width="16" height="13" rx="3" {...stroke} /><path d="M9 6V5a3 3 0 016 0v1" {...stroke} /></>),

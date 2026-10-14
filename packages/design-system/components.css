@@ -141,7 +141,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 400 15px/22px
 .rfq-topbar__end { margin-left: auto; display: flex; align-items: center; gap: var(--space-3); }
 .rfq-account-btn { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 var(--space-3) 0 var(--space-2); border: 0; border-radius: var(--radius-full); background: var(--surface); color: var(--text); font: 500 14px/20px var(--font-sans); cursor: pointer; font-variant-numeric: tabular-nums; }
 .rfq-avatar { width: 28px; height: 28px; border-radius: 50%; background: conic-gradient(from 90deg, #3D6BF5, #2EBD85, #F0B90B, #3D6BF5); }
-.rfq-tabbar { display: grid; grid-template-columns: repeat(4, 1fr); height: calc(var(--size-tabbar) + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); border-top: 1px solid var(--line); background: var(--bg); }
+.rfq-tabbar { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; height: calc(var(--size-tabbar) + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); border-top: 1px solid var(--line); background: var(--bg); }
 .rfq-tabbar a { display: grid; justify-items: center; align-content: center; gap: 2px; color: var(--text-tertiary); font: 500 11px/14px var(--font-sans); text-decoration: none; }
 .rfq-tabbar a[aria-current="page"] { color: var(--text); }
 .rfq-tabbar svg { width: 24px; height: 24px; }
