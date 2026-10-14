@@ -5,10 +5,15 @@ import React from "react";
 import { slugify } from "./manual.js";
 
 /** How a link renders: in-manual links get a click handler, external ones open in a new tab. */
-export type LinkProps = { href: string; onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void; external?: boolean };
+export type LinkProps = {
+  href: string;
+  onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  external?: boolean;
+};
 export type LinkResolver = (href: string) => LinkProps;
 
-const TOKEN = /(`[^`]+`|\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|(?<![\w*])\*[^*\s][^*]*\*(?!\w)|(?<!\w)_[^_\s][^_]*_(?!\w))/g;
+const TOKEN =
+  /(`[^`]+`|\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|(?<![\w*])\*[^*\s][^*]*\*(?!\w)|(?<!\w)_[^_\s][^_]*_(?!\w))/g;
 
 function inline(text: string, link: LinkResolver): React.ReactNode[] {
   return text
@@ -17,12 +22,18 @@ function inline(text: string, link: LinkResolver): React.ReactNode[] {
     .map((part, index) => {
       if (part.startsWith("`")) return <code key={index}>{part.slice(1, -1)}</code>;
       if (part.startsWith("**")) return <strong key={index}>{inline(part.slice(2, -2), link)}</strong>;
-      if (/^([*_]).+\1$/.test(part) && part.length > 2) return <em key={index}>{inline(part.slice(1, -1), link)}</em>;
+      if (/^([*_]).+\1$/.test(part) && part.length > 2)
+        return <em key={index}>{inline(part.slice(1, -1), link)}</em>;
       const match = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (!match) return part;
       const { href, onClick, external } = link(match[2]);
       return (
-        <a key={index} href={href} onClick={onClick} {...(external ? { target: "_blank", rel: "noreferrer" } : {})}>
+        <a
+          key={index}
+          href={href}
+          onClick={onClick}
+          {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+        >
           {inline(match[1], link)}
         </a>
       );
@@ -32,7 +43,15 @@ function inline(text: string, link: LinkResolver): React.ReactNode[] {
 const BLOCK_START = /^(#{1,6})\s|^```|^\s*[-*] |^\s*\d+\. |^\||^> ?|^---+$/;
 
 /** `diagramHref` is where a reader can see Mermaid blocks rendered (GitHub renders them). */
-export function Markdown({ source, link, diagramHref }: { source: string; link: LinkResolver; diagramHref?: string }) {
+export function Markdown({
+  source,
+  link,
+  diagramHref,
+}: {
+  source: string;
+  link: LinkResolver;
+  diagramHref?: string;
+}) {
   const lines = source.split("\n"),
     blocks: React.ReactNode[] = [],
     used = new Map<string, number>();
@@ -101,7 +120,10 @@ export function Markdown({ source, link, diagramHref }: { source: string; link: 
     if (listItem.test(line)) {
       const ordered = /^\s*\d+\. /.test(line),
         items: string[] = [];
-      while (index < lines.length && (listItem.test(lines[index]) || (/^\s{2,}\S/.test(lines[index]) && items.length))) {
+      while (
+        index < lines.length &&
+        (listItem.test(lines[index]) || (/^\s{2,}\S/.test(lines[index]) && items.length))
+      ) {
         // An indented continuation line belongs to the item above it.
         if (listItem.test(lines[index])) items.push(lines[index].replace(listItem, ""));
         else items[items.length - 1] += ` ${lines[index].trim()}`;
@@ -151,7 +173,8 @@ export function Markdown({ source, link, diagramHref }: { source: string; link: 
     }
     if (/^> ?/.test(line)) {
       const quote: string[] = [];
-      while (index < lines.length && /^> ?/.test(lines[index])) quote.push(lines[index++].replace(/^> ?/, ""));
+      while (index < lines.length && /^> ?/.test(lines[index]))
+        quote.push(lines[index++].replace(/^> ?/, ""));
       blocks.push(<blockquote key={key}>{inline(quote.join(" "), link)}</blockquote>);
       continue;
     }
@@ -162,7 +185,8 @@ export function Markdown({ source, link, diagramHref }: { source: string; link: 
     }
     const paragraph = [line];
     index++;
-    while (index < lines.length && lines[index].trim() && !BLOCK_START.test(lines[index])) paragraph.push(lines[index++]);
+    while (index < lines.length && lines[index].trim() && !BLOCK_START.test(lines[index]))
+      paragraph.push(lines[index++]);
     blocks.push(<p key={key}>{inline(paragraph.join(" "), link)}</p>);
   }
   return <>{blocks}</>;

@@ -9,7 +9,10 @@ test("API and wallet reasons become plain language", () => {
   assert.match(friendlyError("market disabled"), /paused/);
   assert.match(friendlyError("market is paused"), /paused/);
   assert.match(friendlyError("reduce-only intent does not reduce position"), /opposite position/);
-  assert.match(friendlyError("hedging unavailable: only exposure-reducing trades are allowed"), /direction is closed/);
+  assert.match(
+    friendlyError("hedging unavailable: only exposure-reducing trades are allowed"),
+    /direction is closed/,
+  );
   assert.match(friendlyError("approver quorum unavailable"), /couldn't be confirmed/);
   assert.match(friendlyError("firm quote capacity reached"), /busy/);
   assert.match(friendlyError("price moved beyond signed protection"), /slippage/);

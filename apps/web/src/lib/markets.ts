@@ -19,9 +19,13 @@ export type MarketInfo = MarketMargin & {
  * index order. Margin comes from the snapshot when it carries it (fresh per
  * block), then the config, then the 1x defaults.
  */
-export function marketInfos(config: ChainConfig | null | undefined, snapshot: MarketSnapshot | null | undefined): MarketInfo[] {
+export function marketInfos(
+  config: ChainConfig | null | undefined,
+  snapshot: MarketSnapshot | null | undefined,
+): MarketInfo[] {
   const order = new Map<Market, { index: number; enabled: boolean }>();
-  for (const item of config?.marketList ?? []) order.set(item.symbol, { index: item.index, enabled: item.enabled });
+  for (const item of config?.marketList ?? [])
+    order.set(item.symbol, { index: item.index, enabled: item.enabled });
   for (const live of Object.values(snapshot?.markets ?? {})) {
     if (order.has(live.market)) continue;
     order.set(live.market, { index: live.index ?? Number.MAX_SAFE_INTEGER, enabled: live.enabled });
@@ -30,10 +34,23 @@ export function marketInfos(config: ChainConfig | null | undefined, snapshot: Ma
   return [...order.entries()]
     .map(([symbol, entry]) => {
       const live = snapshot?.markets[symbol];
-      const margin: MarketMargin = live?.marginScaleBps !== undefined && live.maxLeverage !== undefined
-        ? { marginScaleBps: live.marginScaleBps, maxLeverage: live.maxLeverage, initialMarginBps: live.initialMarginBps ?? marginForScale(live.marginScaleBps).initialMarginBps, maintenanceMarginBps: live.maintenanceMarginBps ?? marginForScale(live.marginScaleBps).maintenanceMarginBps }
-        : config?.markets?.[symbol] ?? marginForScale(live?.marginScaleBps);
-      return { symbol, index: live?.index ?? entry.index, enabled: live?.enabled ?? entry.enabled, priced: !!live, ...margin };
+      const margin: MarketMargin =
+        live?.marginScaleBps !== undefined && live.maxLeverage !== undefined
+          ? {
+              marginScaleBps: live.marginScaleBps,
+              maxLeverage: live.maxLeverage,
+              initialMarginBps: live.initialMarginBps ?? marginForScale(live.marginScaleBps).initialMarginBps,
+              maintenanceMarginBps:
+                live.maintenanceMarginBps ?? marginForScale(live.marginScaleBps).maintenanceMarginBps,
+            }
+          : (config?.markets?.[symbol] ?? marginForScale(live?.marginScaleBps));
+      return {
+        symbol,
+        index: live?.index ?? entry.index,
+        enabled: live?.enabled ?? entry.enabled,
+        priced: !!live,
+        ...margin,
+      };
     })
     .sort((a, b) => a.index - b.index || a.symbol.localeCompare(b.symbol));
 }
@@ -41,6 +58,7 @@ export function marketInfos(config: ChainConfig | null | undefined, snapshot: Ma
 /** Symbols by contract index, for `marketFromIndex(index, symbols)`; gaps stay undefined. */
 export function symbolsByIndex(markets: readonly MarketInfo[]): Market[] {
   const symbols: Market[] = [];
-  for (const market of markets) if (market.index < Number.MAX_SAFE_INTEGER) symbols[market.index] = market.symbol;
+  for (const market of markets)
+    if (market.index < Number.MAX_SAFE_INTEGER) symbols[market.index] = market.symbol;
   return symbols;
 }

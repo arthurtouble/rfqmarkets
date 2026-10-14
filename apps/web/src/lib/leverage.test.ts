@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { clampLeverage, leveragePresets, marginForScale, marginFromLeverage, maxLeverageAt, sizeFromLeverage } from "./leverage.js";
+import {
+  clampLeverage,
+  leveragePresets,
+  marginForScale,
+  marginFromLeverage,
+  maxLeverageAt,
+  sizeFromLeverage,
+} from "./leverage.js";
 
 const USDC = 1_000_000n;
 
@@ -10,7 +17,8 @@ test("sizes notional from margin and leverage in exact integers", () => {
   assert.equal(sizeFromLeverage(100n * USDC, 20), 2_000n * USDC);
   // Leverage below 0.01x precision rounds down.
   assert.equal(sizeFromLeverage(100n * USDC, 1.239), 123n * USDC);
-  for (const leverage of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(sizeFromLeverage(100n * USDC, leverage), 0n);
+  for (const leverage of [0, -2, Number.NaN, Number.POSITIVE_INFINITY])
+    assert.equal(sizeFromLeverage(100n * USDC, leverage), 0n);
   assert.equal(sizeFromLeverage(0n, 5), 0n);
 });
 
@@ -31,8 +39,18 @@ test("presets keep standard steps below the market max and end at the max", () =
 });
 
 test("max leverage follows the scaled tiers", () => {
-  assert.deepEqual(marginForScale(10_000), { marginScaleBps: 10_000, maxLeverage: 5, initialMarginBps: 2_000, maintenanceMarginBps: 1_200 });
-  assert.deepEqual(marginForScale(2_500), { marginScaleBps: 2_500, maxLeverage: 20, initialMarginBps: 500, maintenanceMarginBps: 300 });
+  assert.deepEqual(marginForScale(10_000), {
+    marginScaleBps: 10_000,
+    maxLeverage: 5,
+    initialMarginBps: 2_000,
+    maintenanceMarginBps: 1_200,
+  });
+  assert.deepEqual(marginForScale(2_500), {
+    marginScaleBps: 2_500,
+    maxLeverage: 20,
+    initialMarginBps: 500,
+    maintenanceMarginBps: 300,
+  });
   assert.equal(maxLeverageAt(0n, 2_500), 20);
   // 50k notional sits in the 25% tier: 6.25% scaled at 0.25x.
   assert.equal(maxLeverageAt(50_000n * USDC, 2_500), 16);

@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_SLIPPAGE_BPS, DEFAULT_TRIGGER_SLIPPAGE_BPS, MAX_SLIPPAGE_BPS, MIN_SLIPPAGE_BPS, clampSlippageBps, isValidSlippageBps, parseSlippagePercent, slippageToPercent } from "./slippage.js";
+import {
+  DEFAULT_SLIPPAGE_BPS,
+  DEFAULT_TRIGGER_SLIPPAGE_BPS,
+  MAX_SLIPPAGE_BPS,
+  MIN_SLIPPAGE_BPS,
+  clampSlippageBps,
+  isValidSlippageBps,
+  parseSlippagePercent,
+  slippageToPercent,
+} from "./slippage.js";
 
 test("slippage bounds match the API (1..500 bps, quote default 8, trigger default 100)", () => {
   assert.equal(MIN_SLIPPAGE_BPS, 1);
@@ -25,7 +34,8 @@ test("parses typed percentages into bps", () => {
   assert.equal(parseSlippagePercent("0.5%"), 50);
   assert.equal(parseSlippagePercent(" 5 "), 500);
   assert.equal(parseSlippagePercent(".25"), 25);
-  for (const invalid of ["", "0", "0.001", "5.01", "6", "-1", "abc", "1e1"]) assert.equal(parseSlippagePercent(invalid), null, invalid);
+  for (const invalid of ["", "0", "0.001", "5.01", "6", "-1", "abc", "1e1"])
+    assert.equal(parseSlippagePercent(invalid), null, invalid);
   assert.equal(slippageToPercent(8), "0.08");
   assert.equal(slippageToPercent(50), "0.5");
   assert.equal(slippageToPercent(500), "5");

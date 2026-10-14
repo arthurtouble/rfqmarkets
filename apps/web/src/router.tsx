@@ -224,7 +224,14 @@ const accountRoute = createRoute({
 });
 
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([indexRoute, upDownRoute, tradeRoute, marketsRoute, portfolioRoute, accountRoute]),
+  routeTree: rootRoute.addChildren([
+    indexRoute,
+    upDownRoute,
+    tradeRoute,
+    marketsRoute,
+    portfolioRoute,
+    accountRoute,
+  ]),
   defaultNotFoundComponent: () => (
     <div className="page">
       <div className="rfq-card">

@@ -3,31 +3,79 @@ import { test } from "node:test";
 import { emptyAccount, initialMarginAfter, markAccount } from "./account.js";
 import { maxLeverageAt } from "./leverage.js";
 import {
-  isDecimalDraft, leverageCeiling, leverageLabel, limitMarketable, MARGIN_PROBLEM, maxNotionalAt, maxPay, parseTicketMemory,
-  positionNotional, presetPay, quoteSecondsLeft, quoteUsable, reducesPosition, submitLabel, ticketProblem, type TicketCheck,
+  isDecimalDraft,
+  leverageCeiling,
+  leverageLabel,
+  limitMarketable,
+  MARGIN_PROBLEM,
+  maxNotionalAt,
+  maxPay,
+  parseTicketMemory,
+  positionNotional,
+  presetPay,
+  quoteSecondsLeft,
+  quoteUsable,
+  reducesPosition,
+  submitLabel,
+  ticketProblem,
+  type TicketCheck,
 } from "./ticket.js";
 import type { MarketSnapshot, MarketState } from "./types.js";
 
-const USDC = 1_000_000n, BASE = 10n ** 18n;
+const USDC = 1_000_000n,
+  BASE = 10n ** 18n;
 /** 20x at the first tier, as BTC and ETH on the dev deployment. */
 const SCALE = 2_500;
 
 const market = (name: string, bid: bigint, ask: bigint): MarketState => ({
-  market: name, bid: bid.toString(), ask: ask.toString(), mid: ((bid + ask) / 2n).toString(), observedAtMs: 0, source: "test",
-  volatilityBps: 0, baseSpreadBps: 2, fundingApr: "0", fundingIndex: "0", projectedFundingIndex: "0", enabled: true,
-  maxTradeNotional: "0", maxMarketNotional: "0", operatingMaxTradeNotional: "0", riskMode: "normal", canBuy: true, canSell: true,
-  marginScaleBps: SCALE, maxLeverage: 20,
+  market: name,
+  bid: bid.toString(),
+  ask: ask.toString(),
+  mid: ((bid + ask) / 2n).toString(),
+  observedAtMs: 0,
+  source: "test",
+  volatilityBps: 0,
+  baseSpreadBps: 2,
+  fundingApr: "0",
+  fundingIndex: "0",
+  projectedFundingIndex: "0",
+  enabled: true,
+  maxTradeNotional: "0",
+  maxMarketNotional: "0",
+  operatingMaxTradeNotional: "0",
+  riskMode: "normal",
+  canBuy: true,
+  canSell: true,
+  marginScaleBps: SCALE,
+  maxLeverage: 20,
 });
 const snapshot: MarketSnapshot = {
-  blockNumber: 1, serverTimeMs: 0,
-  markets: { BTC: market("BTC", 99_990n * USDC, 100_010n * USDC), ETH: market("ETH", 3_999n * USDC, 4_001n * USDC) },
+  blockNumber: 1,
+  serverTimeMs: 0,
+  markets: {
+    BTC: market("BTC", 99_990n * USDC, 100_010n * USDC),
+    ETH: market("ETH", 3_999n * USDC, 4_001n * USDC),
+  },
   pricing: { settled: { BTC: "0", ETH: "0" }, pending: [], baseSpreadBps: 2, feeBps: 2, toleranceBps: 8 },
 };
 
 const ready: TicketCheck = {
-  side: "buy", priceLive: true, enabled: true, reduces: false, sideOpen: true, amountText: "100", payMicro: 100n * USDC,
-  notionalMicro: 500n * USDC, tradeCapMicro: 25_000n * USDC, leverage: 5, leverageCeiling: 20, isLimit: false, limitMicro: null,
-  quoteError: null, hasQuote: true, marginShort: false,
+  side: "buy",
+  priceLive: true,
+  enabled: true,
+  reduces: false,
+  sideOpen: true,
+  amountText: "100",
+  payMicro: 100n * USDC,
+  notionalMicro: 500n * USDC,
+  tradeCapMicro: 25_000n * USDC,
+  leverage: 5,
+  leverageCeiling: 20,
+  isLimit: false,
+  limitMicro: null,
+  quoteError: null,
+  hasQuote: true,
+  marginShort: false,
 };
 
 test("the position is what you pay times leverage", () => {
@@ -59,26 +107,69 @@ test("the largest position a leverage allows follows the tiers", () => {
 
 test("max pay leaves room for the fee and respects the trade cap and tiers", () => {
   // Funds: pay + pay x 5 x 2bps <= 1,000.
-  const funds = maxPay({ availableMicro: 1_000n * USDC, leverage: 5, feeBps: 2, tradeCapMicro: 1_000_000n * USDC, scaleBps: SCALE });
+  const funds = maxPay({
+    availableMicro: 1_000n * USDC,
+    leverage: 5,
+    feeBps: 2,
+    tradeCapMicro: 1_000_000n * USDC,
+    scaleBps: SCALE,
+  });
   assert.equal(funds, 999_000_000n);
-  assert.ok(funds + positionNotional(funds, 5) * 2n / 10_000n <= 1_000n * USDC);
+  assert.ok(funds + (positionNotional(funds, 5) * 2n) / 10_000n <= 1_000n * USDC);
   // Cap: $25 per trade at 5x is $5 to pay, as on the mainnet dev deployment.
-  assert.equal(maxPay({ availableMicro: 1_000n * USDC, leverage: 5, feeBps: 2, tradeCapMicro: 25n * USDC, scaleBps: SCALE }), 5n * USDC);
+  assert.equal(
+    maxPay({
+      availableMicro: 1_000n * USDC,
+      leverage: 5,
+      feeBps: 2,
+      tradeCapMicro: 25n * USDC,
+      scaleBps: SCALE,
+    }),
+    5n * USDC,
+  );
   // Tiers: 20x stops at a $25,000 position, so $1,250 to pay.
-  assert.equal(maxPay({ availableMicro: 1_000_000n * USDC, leverage: 20, feeBps: 2, tradeCapMicro: 1_000_000n * USDC, scaleBps: SCALE }), 1_250n * USDC);
-  for (const available of [0n, -5n]) assert.equal(maxPay({ availableMicro: available, leverage: 5, feeBps: 2, tradeCapMicro: 0n, scaleBps: SCALE }), 0n);
-  assert.equal(maxPay({ availableMicro: 100n * USDC, leverage: 0, feeBps: 2, tradeCapMicro: 0n, scaleBps: SCALE }), 0n);
+  assert.equal(
+    maxPay({
+      availableMicro: 1_000_000n * USDC,
+      leverage: 20,
+      feeBps: 2,
+      tradeCapMicro: 1_000_000n * USDC,
+      scaleBps: SCALE,
+    }),
+    1_250n * USDC,
+  );
+  for (const available of [0n, -5n])
+    assert.equal(
+      maxPay({ availableMicro: available, leverage: 5, feeBps: 2, tradeCapMicro: 0n, scaleBps: SCALE }),
+      0n,
+    );
+  assert.equal(
+    maxPay({ availableMicro: 100n * USDC, leverage: 0, feeBps: 2, tradeCapMicro: 0n, scaleBps: SCALE }),
+    0n,
+  );
 });
 
 test("paying max pay at any preset leverage stays within initial margin", () => {
   for (const collateral of [10n, 100n, 1_000n, 50_000n]) {
-    const state = markAccount({ ...emptyAccount("0xabc", snapshot), collateral: (collateral * USDC).toString() }, snapshot);
+    const state = markAccount(
+      { ...emptyAccount("0xabc", snapshot), collateral: (collateral * USDC).toString() },
+      snapshot,
+    );
     for (const leverage of [2, 5, 10, 20]) {
-      const pay = maxPay({ availableMicro: BigInt(state.availableMargin), leverage, feeBps: 2, tradeCapMicro: 10_000_000n * USDC, scaleBps: SCALE });
+      const pay = maxPay({
+        availableMicro: BigInt(state.availableMargin),
+        leverage,
+        feeBps: 2,
+        tradeCapMicro: 10_000_000n * USDC,
+        scaleBps: SCALE,
+      });
       const notional = positionNotional(pay, leverage);
       assert.ok(leverage <= maxLeverageAt(notional, SCALE), `${leverage}x within the tier at ${notional}`);
-      const fee = notional * 2n / 10_000n;
-      assert.ok(initialMarginAfter(state, snapshot, "BTC", notional) + fee <= BigInt(state.openingEquity), `${collateral} USDC at ${leverage}x`);
+      const fee = (notional * 2n) / 10_000n;
+      assert.ok(
+        initialMarginAfter(state, snapshot, "BTC", notional) + fee <= BigInt(state.openingEquity),
+        `${collateral} USDC at ${leverage}x`,
+      );
     }
   }
 });
@@ -111,14 +202,21 @@ test("the ticket names the first thing to fix", () => {
 });
 
 test("labels say side, market, pay and leverage", () => {
-  assert.equal(submitLabel({ side: "buy", market: "BTC", pay: "$250", leverage: 5, isLimit: false }), "Long BTC · $250 at 5×");
-  assert.equal(submitLabel({ side: "sell", market: "ETH", pay: "$12.50", leverage: 2.5, isLimit: true }), "Limit short ETH · $12.50 at 2.5×");
+  assert.equal(
+    submitLabel({ side: "buy", market: "BTC", pay: "$250", leverage: 5, isLimit: false }),
+    "Long BTC · $250 at 5×",
+  );
+  assert.equal(
+    submitLabel({ side: "sell", market: "ETH", pay: "$12.50", leverage: 2.5, isLimit: true }),
+    "Limit short ETH · $12.50 at 2.5×",
+  );
   assert.equal(leverageLabel(20), "20×");
   assert.equal(leverageLabel(3.333), "3.33×");
 });
 
 test("a trade reduces only when it is opposite and no larger than the position", () => {
-  const long = BASE / 100n, notional = 1_000n * USDC;
+  const long = BASE / 100n,
+    notional = 1_000n * USDC;
   assert.equal(reducesPosition(long, notional, -500n * USDC), true);
   assert.equal(reducesPosition(long, notional, -1_000n * USDC), true);
   assert.equal(reducesPosition(long, notional, -1_001n * USDC), false);
@@ -143,7 +241,10 @@ test("firm quotes lapse before their deadline, leaving time to sign", () => {
 });
 
 test("remembered ticket inputs are validated", () => {
-  assert.deepEqual(parseTicketMemory(JSON.stringify({ pay: "250", leverage: 5 })), { pay: "250", leverage: 5 });
+  assert.deepEqual(parseTicketMemory(JSON.stringify({ pay: "250", leverage: 5 })), {
+    pay: "250",
+    leverage: 5,
+  });
   assert.deepEqual(parseTicketMemory(JSON.stringify({ pay: "1e9", leverage: -1 })), {});
   assert.deepEqual(parseTicketMemory(JSON.stringify({ pay: 5, leverage: "5" })), {});
   assert.deepEqual(parseTicketMemory("{not json"), {});

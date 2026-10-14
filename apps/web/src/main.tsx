@@ -21,20 +21,26 @@ const queryClient = new QueryClient({
 const settlement = await loadSettlement();
 const wagmiConfig = createWagmiConfig(settlement.chain);
 
-createRoot(document.getElementById("root")!).render(<StrictMode>
-  <WagmiProvider config={wagmiConfig}>
-    <QueryClientProvider client={queryClient}>
-      <TraderProvider chain={settlement.chain} settlement={settlement.config} settlementError={settlement.error ?? null}>
-        <ToastProvider>
-          <TradingProvider>
-            <MarketFeedProvider>
-              <PrefsProvider>
-                <RouterProvider router={router} />
-              </PrefsProvider>
-            </MarketFeedProvider>
-          </TradingProvider>
-        </ToastProvider>
-      </TraderProvider>
-    </QueryClientProvider>
-  </WagmiProvider>
-</StrictMode>);
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
+        <TraderProvider
+          chain={settlement.chain}
+          settlement={settlement.config}
+          settlementError={settlement.error ?? null}
+        >
+          <ToastProvider>
+            <TradingProvider>
+              <MarketFeedProvider>
+                <PrefsProvider>
+                  <RouterProvider router={router} />
+                </PrefsProvider>
+              </MarketFeedProvider>
+            </TradingProvider>
+          </ToastProvider>
+        </TraderProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
+  </StrictMode>,
+);

@@ -20,12 +20,21 @@ test("a new terms version or a corrupt value asks again", () => {
   assert.equal(hasAccepted(old, alice), false);
   assert.equal(JSON.parse(withAcceptance(old, bob, 2)).version, TERMS_VERSION);
   assert.deepEqual(Object.keys(JSON.parse(withAcceptance(old, bob, 2)).accounts), [bob.toLowerCase()]);
-  for (const raw of ["{", "[]", "1", JSON.stringify({ version: TERMS_VERSION, accounts: { [alice.toLowerCase()]: "yes" } })])
+  for (const raw of [
+    "{",
+    "[]",
+    "1",
+    JSON.stringify({ version: TERMS_VERSION, accounts: { [alice.toLowerCase()]: "yes" } }),
+  ])
     assert.equal(hasAccepted(raw, alice), false, raw);
 });
 
 test("location answers outside the known statuses never block", () => {
-  assert.deepEqual(parseLocation({ status: "sanctioned", message: "No" }), { status: "sanctioned", message: "No" });
+  assert.deepEqual(parseLocation({ status: "sanctioned", message: "No" }), {
+    status: "sanctioned",
+    message: "No",
+  });
   assert.deepEqual(parseLocation({ status: "restricted" }), { status: "restricted", message: null });
-  for (const body of [null, "x", {}, { status: "blocked" }]) assert.equal(parseLocation(body).status, "unknown");
+  for (const body of [null, "x", {}, { status: "blocked" }])
+    assert.equal(parseLocation(body).status, "unknown");
 });

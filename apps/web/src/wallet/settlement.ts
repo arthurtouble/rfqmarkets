@@ -24,17 +24,22 @@ export type BuildEnv = Record<string, string | boolean | undefined>;
 export function readPins(env: BuildEnv): Pins {
   const text = (key: string) => (typeof env[key] === "string" ? (env[key] as string).trim() : "");
   const pins: Pins = {};
-  const chainId = text("VITE_CHAIN_ID"), clearing = text("VITE_CLEARING_ADDRESS"), token = text("VITE_TOKEN_ADDRESS");
+  const chainId = text("VITE_CHAIN_ID"),
+    clearing = text("VITE_CLEARING_ADDRESS"),
+    token = text("VITE_TOKEN_ADDRESS");
   if (chainId) {
-    if (!/^[1-9]\d{0,15}$/.test(chainId)) throw new Error("This build has an invalid VITE_CHAIN_ID, so trading is disabled.");
+    if (!/^[1-9]\d{0,15}$/.test(chainId))
+      throw new Error("This build has an invalid VITE_CHAIN_ID, so trading is disabled.");
     pins.chainId = Number(chainId);
   }
   if (clearing) {
-    if (!isAddress(clearing, { strict: false })) throw new Error("This build has an invalid VITE_CLEARING_ADDRESS, so trading is disabled.");
+    if (!isAddress(clearing, { strict: false }))
+      throw new Error("This build has an invalid VITE_CLEARING_ADDRESS, so trading is disabled.");
     pins.clearing = getAddress(clearing);
   }
   if (token) {
-    if (!isAddress(token, { strict: false })) throw new Error("This build has an invalid VITE_TOKEN_ADDRESS, so trading is disabled.");
+    if (!isAddress(token, { strict: false }))
+      throw new Error("This build has an invalid VITE_TOKEN_ADDRESS, so trading is disabled.");
     pins.token = getAddress(token);
   }
   return pins;
@@ -43,13 +48,24 @@ export function readPins(env: BuildEnv): Pins {
 /** What in `config` disagrees with `pins` (or is malformed), or null when it can be used. */
 export function pinMismatch(config: ChainConfig, pins: Pins): string | null {
   let chainId: bigint;
-  try { chainId = BigInt(config.chainId); } catch { return "an invalid chain"; }
+  try {
+    chainId = BigInt(config.chainId);
+  } catch {
+    return "an invalid chain";
+  }
   if (chainId <= 0n || chainId > BigInt(Number.MAX_SAFE_INTEGER)) return "an invalid chain";
   if (pins.chainId !== undefined && chainId !== BigInt(pins.chainId)) return "a different chain";
-  if (typeof config.clearingAddress !== "string" || !isAddress(config.clearingAddress, { strict: false })) return "an invalid settlement contract";
-  if (pins.clearing && getAddress(config.clearingAddress) !== pins.clearing) return "a different settlement contract";
-  if (config.tokenAddress !== undefined && (typeof config.tokenAddress !== "string" || !isAddress(config.tokenAddress, { strict: false }))) return "an invalid USDC token";
-  if (pins.token && (!config.tokenAddress || getAddress(config.tokenAddress) !== pins.token)) return "a different USDC token";
+  if (typeof config.clearingAddress !== "string" || !isAddress(config.clearingAddress, { strict: false }))
+    return "an invalid settlement contract";
+  if (pins.clearing && getAddress(config.clearingAddress) !== pins.clearing)
+    return "a different settlement contract";
+  if (
+    config.tokenAddress !== undefined &&
+    (typeof config.tokenAddress !== "string" || !isAddress(config.tokenAddress, { strict: false }))
+  )
+    return "an invalid USDC token";
+  if (pins.token && (!config.tokenAddress || getAddress(config.tokenAddress) !== pins.token))
+    return "a different USDC token";
   return null;
 }
 
@@ -59,27 +75,49 @@ export function chainFor(config: ChainConfig): Chain {
   const known = KNOWN_CHAINS[id];
   if (known) return known;
   const rpc = config.rpcUrl ? [config.rpcUrl] : [];
-  return defineChain({ id, name: config.chainName, nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: rpc } } });
+  return defineChain({
+    id,
+    name: config.chainName,
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: rpc } },
+  });
 }
 
 /** The chain to show while the config is unavailable or refused. */
-const fallbackChain = (pins: Pins) => (pins.chainId !== undefined ? KNOWN_CHAINS[pins.chainId] : undefined) ?? base;
+const fallbackChain = (pins: Pins) =>
+  (pins.chainId !== undefined ? KNOWN_CHAINS[pins.chainId] : undefined) ?? base;
 
 /** Resolves the settlement from the build environment and a loader for GET /v1/config. Never throws. */
-export async function resolveSettlement(env: BuildEnv, fetchConfig: () => Promise<ChainConfig>): Promise<Settlement> {
+export async function resolveSettlement(
+  env: BuildEnv,
+  fetchConfig: () => Promise<ChainConfig>,
+): Promise<Settlement> {
   let pins: Pins;
-  try { pins = readPins(env); } catch (error) {
+  try {
+    pins = readPins(env);
+  } catch (error) {
     return { chain: base, config: null, error: (error as Error).message };
   }
   let config: ChainConfig;
-  try { config = await fetchConfig(); } catch {
+  try {
+    config = await fetchConfig();
+  } catch {
     return { chain: fallbackChain(pins), config: null };
   }
   const mismatch = pinMismatch(config, pins);
-  if (mismatch) return {
-    chain: fallbackChain(pins), config: null,
-    error: `Trading is disabled: the server's configuration names ${mismatch}, which this app does not trust. Do not sign anything from this page. To withdraw, use the exit page linked from the docs.`,
-  };
+  if (mismatch)
+    return {
+      chain: fallbackChain(pins),
+      config: null,
+      error: `Trading is disabled: the server's configuration names ${mismatch}, which this app does not trust. Do not sign anything from this page. To withdraw, use the exit page linked from the docs.`,
+    };
   // Pinned addresses win over the server's spelling of them.
-  return { chain: chainFor(config), config: { ...config, clearingAddress: pins.clearing ?? config.clearingAddress, tokenAddress: pins.token ?? config.tokenAddress } };
+  return {
+    chain: chainFor(config),
+    config: {
+      ...config,
+      clearingAddress: pins.clearing ?? config.clearingAddress,
+      tokenAddress: pins.token ?? config.tokenAddress,
+    },
+  };
 }

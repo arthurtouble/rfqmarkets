@@ -1,18 +1,46 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { emptyAccount, markAccount } from "./account.js";
-import { closeAllPreview, closePreview, fillAction, fillRealizes, isNearLiquidation, openPositions, positionView } from "./positions.js";
+import {
+  closeAllPreview,
+  closePreview,
+  fillAction,
+  fillRealizes,
+  isNearLiquidation,
+  openPositions,
+  positionView,
+} from "./positions.js";
 import type { MarketSnapshot, MarketState } from "./types.js";
 
-const USDC = 1_000_000n, BASE = 10n ** 18n;
+const USDC = 1_000_000n,
+  BASE = 10n ** 18n;
 const market = (name: string, bid: bigint, ask: bigint): MarketState => ({
-  market: name, bid: bid.toString(), ask: ask.toString(), mid: ((bid + ask) / 2n).toString(), observedAtMs: 0, source: "test",
-  volatilityBps: 0, baseSpreadBps: 2, fundingApr: "0", fundingIndex: "0", projectedFundingIndex: "0", enabled: true,
-  maxTradeNotional: "0", maxMarketNotional: "0", operatingMaxTradeNotional: "0", riskMode: "normal", canBuy: true, canSell: true,
+  market: name,
+  bid: bid.toString(),
+  ask: ask.toString(),
+  mid: ((bid + ask) / 2n).toString(),
+  observedAtMs: 0,
+  source: "test",
+  volatilityBps: 0,
+  baseSpreadBps: 2,
+  fundingApr: "0",
+  fundingIndex: "0",
+  projectedFundingIndex: "0",
+  enabled: true,
+  maxTradeNotional: "0",
+  maxMarketNotional: "0",
+  operatingMaxTradeNotional: "0",
+  riskMode: "normal",
+  canBuy: true,
+  canSell: true,
 });
 const snapshot: MarketSnapshot = {
-  blockNumber: 7, serverTimeMs: 0,
-  markets: { BTC: market("BTC", 99_990n * USDC, 100_010n * USDC), ETH: market("ETH", 3_999n * USDC, 4_001n * USDC) },
+  blockNumber: 7,
+  serverTimeMs: 0,
+  markets: {
+    BTC: market("BTC", 99_990n * USDC, 100_010n * USDC),
+    ETH: market("ETH", 3_999n * USDC, 4_001n * USDC),
+  },
   pricing: { settled: { BTC: "0", ETH: "0" }, pending: [], baseSpreadBps: 2, feeBps: 2, toleranceBps: 8 },
 };
 
@@ -20,8 +48,16 @@ const snapshot: MarketSnapshot = {
 function account(collateral = 10_000n * USDC) {
   const state = emptyAccount("0xabc", snapshot);
   state.collateral = collateral.toString();
-  state.positions.BTC = { ...state.positions.BTC, size: (BASE / 10n).toString(), entryPrice: (99_000n * USDC).toString() };
-  state.positions.ETH = { ...state.positions.ETH, size: (-2n * BASE).toString(), entryPrice: (4_100n * USDC).toString() };
+  state.positions.BTC = {
+    ...state.positions.BTC,
+    size: (BASE / 10n).toString(),
+    entryPrice: (99_000n * USDC).toString(),
+  };
+  state.positions.ETH = {
+    ...state.positions.ETH,
+    size: (-2n * BASE).toString(),
+    entryPrice: (4_100n * USDC).toString(),
+  };
   return markAccount(state, snapshot);
 }
 
@@ -44,7 +80,10 @@ test("a position view carries side, size, PnL, margin and return on margin", () 
 });
 
 test("open positions are listed largest first and skip flat markets", () => {
-  assert.deepEqual(openPositions(account()).map(view => view.market), ["BTC", "ETH"]);
+  assert.deepEqual(
+    openPositions(account()).map((view) => view.market),
+    ["BTC", "ETH"],
+  );
   assert.deepEqual(openPositions(emptyAccount("0xabc", snapshot)), []);
   assert.deepEqual(openPositions(null), []);
 });
@@ -55,7 +94,10 @@ test("liquidation distance flags positions within 10% of their liquidation price
   // 2,000 USDC behind ~18,000 USDC of positions sits just above maintenance margin.
   const thin = positionView(account(2_000n * USDC), "BTC")!;
   assert.ok(thin.liquidationPrice !== null && thin.liquidationPrice < thin.markPrice);
-  assert.ok(thin.liquidationDistance! > 0 && thin.liquidationDistance! < 0.1, String(thin.liquidationDistance));
+  assert.ok(
+    thin.liquidationDistance! > 0 && thin.liquidationDistance! < 0.1,
+    String(thin.liquidationDistance),
+  );
   assert.equal(isNearLiquidation(thin), true);
 });
 
@@ -94,7 +136,11 @@ test("close-all totals every position", () => {
 });
 
 test("fill actions describe what a trade did to the position", () => {
-  const fill = (before: bigint, after: bigint, kind: "trade" | "close" | "liquidation" = "trade") => ({ kind, sizeBefore: before.toString(), sizeAfter: after.toString() });
+  const fill = (before: bigint, after: bigint, kind: "trade" | "close" | "liquidation" = "trade") => ({
+    kind,
+    sizeBefore: before.toString(),
+    sizeAfter: after.toString(),
+  });
   assert.equal(fillAction(fill(0n, 5n)), "Open long");
   assert.equal(fillAction(fill(0n, -5n)), "Open short");
   assert.equal(fillAction(fill(5n, 8n)), "Add to long");

@@ -10,7 +10,16 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
 import { friendlyError } from "../lib/errors.js";
 import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
-import { checkRoute, formatDuration, lifiGet, quoteUrl, sourceChain, type LifiQuote, type Route, type SourceToken } from "../lib/bridge.js";
+import {
+  checkRoute,
+  formatDuration,
+  lifiGet,
+  quoteUrl,
+  sourceChain,
+  type LifiQuote,
+  type Route,
+  type SourceToken,
+} from "../lib/bridge.js";
 import { MIN_GAS_FREE_DEPOSIT, plainAccount } from "../lib/funds.js";
 import { abs, baseAmount, microToInput, parseUsdcInput, shortHash, usdc } from "../lib/format.js";
 import {
@@ -562,50 +571,62 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       })) ?? false,
 
     bridge: (route, source) =>
-      run("Deposit", `Deposit ${source.symbol} from ${sourceChain(route.request.fromChain)?.name ?? "another network"}`, async (progress) => {
-        const network = sourceChain(route.request.fromChain)?.name ?? "the source network";
-        // Quotes age quickly: fetch a fresh one, check it the same way, and stop if it now delivers less.
-        progress("Refreshing the route");
-        const fresh = checkRoute(await lifiGet<LifiQuote>(quoteUrl(route.request)), route.request, source.decimals);
-        if (fresh.toAmountMin * 100n < route.toAmountMin * 99n)
-          throw new Error("The rate moved. Review the new quote and try again");
-        if (fresh.approval) {
-          const reader = getPublicClient(config, { chainId: route.request.fromChain });
-          if (!reader) throw new Error(`No RPC for ${network}`);
-          const allowance = await reader.readContract({
-            address: route.request.fromToken,
-            abi: erc20Abi,
-            functionName: "allowance",
-            args: [account(), fresh.approval],
-          });
-          if (allowance < route.request.fromAmount) {
-            // USDT on Ethereum refuses to change a nonzero allowance without resetting it first.
-            if (allowance > 0n) {
-              progress(`Reset the ${source.symbol} approval in your wallet`);
+      run(
+        "Deposit",
+        `Deposit ${source.symbol} from ${sourceChain(route.request.fromChain)?.name ?? "another network"}`,
+        async (progress) => {
+          const network = sourceChain(route.request.fromChain)?.name ?? "the source network";
+          // Quotes age quickly: fetch a fresh one, check it the same way, and stop if it now delivers less.
+          progress("Refreshing the route");
+          const fresh = checkRoute(
+            await lifiGet<LifiQuote>(quoteUrl(route.request)),
+            route.request,
+            source.decimals,
+          );
+          if (fresh.toAmountMin * 100n < route.toAmountMin * 99n)
+            throw new Error("The rate moved. Review the new quote and try again");
+          if (fresh.approval) {
+            const reader = getPublicClient(config, { chainId: route.request.fromChain });
+            if (!reader) throw new Error(`No RPC for ${network}`);
+            const allowance = await reader.readContract({
+              address: route.request.fromToken,
+              abi: erc20Abi,
+              functionName: "allowance",
+              args: [account(), fresh.approval],
+            });
+            if (allowance < route.request.fromAmount) {
+              // USDT on Ethereum refuses to change a nonzero allowance without resetting it first.
+              if (allowance > 0n) {
+                progress(`Reset the ${source.symbol} approval in your wallet`);
+                await trader.sendOn(route.request.fromChain, {
+                  to: route.request.fromToken,
+                  data: encodeFunctionData({
+                    abi: erc20Abi,
+                    functionName: "approve",
+                    args: [fresh.approval, 0n],
+                  }),
+                });
+              }
+              progress(`Approve ${source.symbol} on ${network} in your wallet`);
               await trader.sendOn(route.request.fromChain, {
                 to: route.request.fromToken,
-                data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [fresh.approval, 0n] }),
+                data: encodeFunctionData({
+                  abi: erc20Abi,
+                  functionName: "approve",
+                  args: [fresh.approval, route.request.fromAmount],
+                }),
               });
             }
-            progress(`Approve ${source.symbol} on ${network} in your wallet`);
-            await trader.sendOn(route.request.fromChain, {
-              to: route.request.fromToken,
-              data: encodeFunctionData({
-                abi: erc20Abi,
-                functionName: "approve",
-                args: [fresh.approval, route.request.fromAmount],
-              }),
-            });
           }
-        }
-        progress(`Confirm the transfer on ${network} in your wallet`);
-        const sent = await trader.sendOn(route.request.fromChain, fresh.transaction);
-        return {
-          title: `Sent from ${network}`,
-          detail: `About ${usdc(fresh.toAmount)} arrives on Base in ${formatDuration(fresh.durationSeconds).replace("about ", "")}`,
-          value: { hash: sent.hash, route: fresh },
-        };
-      }),
+          progress(`Confirm the transfer on ${network} in your wallet`);
+          const sent = await trader.sendOn(route.request.fromChain, fresh.transaction);
+          return {
+            title: `Sent from ${network}`,
+            detail: `About ${usdc(fresh.toAmount)} arrives on Base in ${formatDuration(fresh.durationSeconds).replace("about ", "")}`,
+            value: { hash: sent.hash, route: fresh },
+          };
+        },
+      ),
 
     withdraw: async (amount) =>
       (await run("Withdrawal", `Withdraw ${usdc(amount)}`, async (progress) => {

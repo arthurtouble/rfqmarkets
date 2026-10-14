@@ -10,14 +10,22 @@ const SITE_URL = (process.env.DOCS_SITE_URL ?? "https://docs.rfq-markets.workers
 // crawlers and AI tools look for: sitemap.xml, robots.txt, llms.txt, llms-full.txt, each page's
 // Markdown, 404.html and _redirects for renamed pages.
 function prerender(): Plugin {
-  let root = "", outDir = "";
+  let root = "",
+    outDir = "";
   return {
     name: "rfq-docs-prerender",
     apply: "build",
-    configResolved(config) { root = config.root; outDir = resolve(config.root, config.build.outDir); },
+    configResolved(config) {
+      root = config.root;
+      outDir = resolve(config.root, config.build.outDir);
+    },
     async closeBundle() {
       const server = await createServer({
-        root, configFile: false, logLevel: "error", appType: "custom", plugins: [react()],
+        root,
+        configFile: false,
+        logLevel: "error",
+        appType: "custom",
+        plugins: [react()],
         server: { middlewareMode: true, hmr: false, ws: false },
         // Its own cache and no dependency pre-bundling: the shared node_modules/.vite belongs to any
         // dev server running alongside (the e2e suite builds the docs while the web app is served),
@@ -37,15 +45,24 @@ function prerender(): Plugin {
             .replace(/<meta name="description"[^>]*>/, "")
             .replace(/<title>[\s\S]*?<\/title>/, site.headTags(entry, SITE_URL))
             .replace('<div id="root"></div>', `<div id="root">${site.render(route)}</div>`);
-          if (!html.includes('<div id="root"><')) throw new Error(`docs prerender: template changed, ${route} not rendered`);
+          if (!html.includes('<div id="root"><'))
+            throw new Error(`docs prerender: template changed, ${route} not rendered`);
           return html;
         };
         for (const entry of site.pages) {
-          await write(entry.route === "/" ? "index.html" : `${entry.route.slice(1)}.html`, page(entry.route, entry));
+          await write(
+            entry.route === "/" ? "index.html" : `${entry.route.slice(1)}.html`,
+            page(entry.route, entry),
+          );
           await write(site.markdownPath(entry), entry.body);
         }
         await write("404.html", page(site.NOT_FOUND, undefined));
-        await write("_redirects", Object.entries(site.MOVED as Record<string, string>).map(([from, to]) => `${from} ${to} 301\n`).join(""));
+        await write(
+          "_redirects",
+          Object.entries(site.MOVED as Record<string, string>)
+            .map(([from, to]) => `${from} ${to} 301\n`)
+            .join(""),
+        );
         await write("sitemap.xml", site.sitemap(SITE_URL));
         await write("robots.txt", site.robots(SITE_URL));
         await write("llms.txt", site.llmsTxt(SITE_URL));

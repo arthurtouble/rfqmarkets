@@ -1,7 +1,17 @@
 // Turns wallet and contract failures into one sentence a person can act on.
 import { Interface } from "ethers";
 
-export type ExitAction = "withdraw" | "close" | "refresh" | "cancel" | "revoke" | "claim" | "sample" | "process" | "switch" | "connect";
+export type ExitAction =
+  | "withdraw"
+  | "close"
+  | "refresh"
+  | "cancel"
+  | "revoke"
+  | "claim"
+  | "sample"
+  | "process"
+  | "switch"
+  | "connect";
 
 const ERRORS = new Interface([
   "error Unauthorized()",
@@ -17,7 +27,8 @@ const ERRORS = new Interface([
 
 const REFUSED: Record<ExitAction, string> = {
   withdraw: "The contract refused the withdrawal. Withdrawals stop once resolution starts.",
-  close: "The contract refused the close. Closing here works only while trading is paused and before resolution.",
+  close:
+    "The contract refused the close. Closing here works only while trading is paused and before resolution.",
   refresh: "The contract refused the price update.",
   cancel: "The contract refused to cancel that number.",
   revoke: "The contract refused to revoke that key.",
@@ -29,11 +40,19 @@ const REFUSED: Record<ExitAction, string> = {
 };
 
 const BY_NAME: Record<string, (action: ExitAction) => string> = {
-  Unauthorized: action => action === "revoke" ? "That key is not an active one-click trading key of this wallet." : "This wallet is not allowed to do that.",
-  InvalidTrade: action => REFUSED[action],
-  Stale: () => "The price expired before the transaction landed. Try again and confirm in your wallet within 15 seconds.",
-  Replay: action => action === "cancel" ? "That number is already used or cancelled, so no order can use it." : "That signature was already used.",
-  Margin: () => "That would leave your account below its margin requirement. Withdraw less or close a position first.",
+  Unauthorized: (action) =>
+    action === "revoke"
+      ? "That key is not an active one-click trading key of this wallet."
+      : "This wallet is not allowed to do that.",
+  InvalidTrade: (action) => REFUSED[action],
+  Stale: () =>
+    "The price expired before the transaction landed. Try again and confirm in your wallet within 15 seconds.",
+  Replay: (action) =>
+    action === "cancel"
+      ? "That number is already used or cancelled, so no order can use it."
+      : "That signature was already used.",
+  Margin: () =>
+    "That would leave your account below its margin requirement. Withdraw less or close a position first.",
   OracleInvalid: () => "The oracle price was rejected. Try again in a few seconds.",
   InvalidReport: () => "The oracle nodes' prices did not agree closely enough. Try again in a few seconds.",
   InvalidSignature: () => "A signature was invalid.",
@@ -52,8 +71,14 @@ function findRevertData(error: unknown, depth = 0): string | undefined {
 }
 
 function rejected(error: unknown): boolean {
-  const record = error as { code?: unknown; info?: { error?: { code?: unknown } }; error?: { code?: unknown } } | undefined;
-  return record?.code === "ACTION_REJECTED" || record?.code === 4001 || record?.info?.error?.code === 4001 || record?.error?.code === 4001;
+  const record = error as
+    { code?: unknown; info?: { error?: { code?: unknown } }; error?: { code?: unknown } } | undefined;
+  return (
+    record?.code === "ACTION_REJECTED" ||
+    record?.code === 4001 ||
+    record?.info?.error?.code === 4001 ||
+    record?.error?.code === 4001
+  );
 }
 
 /** The custom error name in a failed call, if the contract reverted with one. */
@@ -75,9 +100,15 @@ export function explain(error: unknown, action: ExitAction): string {
   if (name && BY_NAME[name]) return BY_NAME[name](action);
   const code = (error as { code?: unknown } | undefined)?.code;
   if (code === "INSUFFICIENT_FUNDS") return "Your wallet does not have enough ETH to pay the network fee.";
-  if (code === "NETWORK_ERROR" || code === "TIMEOUT") return "Your wallet lost its connection to the network. Try again.";
+  if (code === "NETWORK_ERROR" || code === "TIMEOUT")
+    return "Your wallet lost its connection to the network. Try again.";
   if (code === "CALL_EXCEPTION") return REFUSED[action];
   const message = error instanceof Error ? error.message : String(error);
   // Our own errors are written for people; anything else is cut down to its first line.
-  return message.split("\n")[0].replace(/\s*\(action=.*$/, "").slice(0, 200) || "Something went wrong. Try again.";
+  return (
+    message
+      .split("\n")[0]
+      .replace(/\s*\(action=.*$/, "")
+      .slice(0, 200) || "Something went wrong. Try again."
+  );
 }

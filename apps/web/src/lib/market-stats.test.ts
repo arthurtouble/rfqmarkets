@@ -1,10 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CHART_RANGES, STALE_PRICE_MS, dayChange, dayRange, priceChange, priceStatus, searchMarkets, type DayStats } from "./market-stats.js";
+import {
+  CHART_RANGES,
+  STALE_PRICE_MS,
+  dayChange,
+  dayRange,
+  priceChange,
+  priceStatus,
+  searchMarkets,
+  type DayStats,
+} from "./market-stats.js";
 import { CANDLE_INTERVALS } from "./candles.js";
 import type { MarketState } from "./types.js";
 
-const stats: DayStats = { since: 0, open: "100000000", high: "120000000", low: "90000000", last: "110000000", change: "10000000", spark: ["100000000", "110000000"] };
+const stats: DayStats = {
+  since: 0,
+  open: "100000000",
+  high: "120000000",
+  low: "90000000",
+  last: "110000000",
+  change: "10000000",
+  spark: ["100000000", "110000000"],
+};
 
 test("price change is measured from the reference, and needs both prices", () => {
   assert.deepEqual(priceChange("100000000", "110000000"), { delta: 10, ratio: 0.1 });
@@ -23,13 +40,27 @@ test("24h change and range follow the live mid", () => {
 });
 
 test("search matches symbol or name, best matches first", () => {
-  const names: Record<string, string> = { BTC: "Bitcoin", ETH: "Ethereum", SOL: "Solana", BCH: "Bitcoin Cash", TAO: "Bittensor" };
+  const names: Record<string, string> = {
+    BTC: "Bitcoin",
+    ETH: "Ethereum",
+    SOL: "Solana",
+    BCH: "Bitcoin Cash",
+    TAO: "Bittensor",
+  };
   const name = (market: string) => names[market] ?? market;
   const markets = ["BTC", "ETH", "SOL", "BCH", "TAO"];
   assert.deepEqual(searchMarkets(markets, "", name), markets);
   assert.deepEqual(searchMarkets(markets, "  sol ", name), ["SOL"]);
-  assert.deepEqual(searchMarkets(markets, "bit", name), ["BTC", "BCH", "TAO"], "name prefix keeps list order");
-  assert.deepEqual(searchMarkets(markets, "b", name), ["BTC", "BCH", "TAO"], "symbol prefix before name prefix");
+  assert.deepEqual(
+    searchMarkets(markets, "bit", name),
+    ["BTC", "BCH", "TAO"],
+    "name prefix keeps list order",
+  );
+  assert.deepEqual(
+    searchMarkets(markets, "b", name),
+    ["BTC", "BCH", "TAO"],
+    "symbol prefix before name prefix",
+  );
   assert.deepEqual(searchMarkets(markets, "cash", name), ["BCH"]);
   assert.deepEqual(searchMarkets(markets, "eth", name), ["ETH"]);
   assert.deepEqual(searchMarkets(markets, "doge", name), []);
@@ -42,8 +73,16 @@ test("price status tells live, delayed, paused and missing prices apart", () => 
   assert.equal(priceStatus(live, fresh), "live");
   assert.equal(priceStatus({ ...live, enabled: false }, fresh), "paused");
   assert.equal(priceStatus(live, { ...fresh, streamLive: false }), "delayed");
-  assert.equal(priceStatus(live, { ...fresh, nowMs: 1_500 + STALE_PRICE_MS + 1 }), "delayed", "no snapshot for too long");
-  assert.equal(priceStatus(live, { ...fresh, serverTimeMs: 1_000 + STALE_PRICE_MS + 1 }), "delayed", "server kept an old oracle price");
+  assert.equal(
+    priceStatus(live, { ...fresh, nowMs: 1_500 + STALE_PRICE_MS + 1 }),
+    "delayed",
+    "no snapshot for too long",
+  );
+  assert.equal(
+    priceStatus(live, { ...fresh, serverTimeMs: 1_000 + STALE_PRICE_MS + 1 }),
+    "delayed",
+    "server kept an old oracle price",
+  );
   assert.equal(priceStatus(live, { ...fresh, receivedAtMs: null, serverTimeMs: undefined }), "live");
 });
 

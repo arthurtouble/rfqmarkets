@@ -22,7 +22,12 @@ import { verifyPrepared, type Expectation } from "./verify-intent.js";
 type DevWallet = { account: Address; privateKey: Hex };
 type Call = { to: Address; data: Hex; value?: bigint };
 /** EIP-712 typed data already checked by the caller (verify-intent.ts, verify-deposit.ts). */
-type TypedPayload = { domain: Record<string, unknown>; types: Record<string, readonly unknown[]>; primaryType: string; message: Record<string, unknown> };
+type TypedPayload = {
+  domain: Record<string, unknown>;
+  types: Record<string, readonly unknown[]>;
+  primaryType: string;
+  message: Record<string, unknown>;
+};
 
 export type Trader = {
   address: Address | null;

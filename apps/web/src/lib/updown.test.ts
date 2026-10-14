@@ -30,7 +30,13 @@ test("the tick line keeps a moving window and ignores repeated snapshots", () =>
   points = appendTick(points, { time: 2_000, value: 101 }, 10_000, 3);
   points = appendTick(points, { time: 3_000, value: 102 }, 10_000, 3);
   points = appendTick(points, { time: 4_000, value: 103 }, 10_000, 3);
-  assert.deepEqual(points.map((point) => point.time), [2_000, 3_000, 4_000]);
+  assert.deepEqual(
+    points.map((point) => point.time),
+    [2_000, 3_000, 4_000],
+  );
   points = appendTick(points, { time: 13_500, value: 104 }, 10_000, 3);
-  assert.deepEqual(points.map((point) => point.time), [4_000, 13_500]);
+  assert.deepEqual(
+    points.map((point) => point.time),
+    [4_000, 13_500],
+  );
 });

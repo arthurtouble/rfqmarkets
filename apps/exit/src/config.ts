@@ -6,13 +6,36 @@ export interface ChainInfo {
   name: string;
   explorer?: string;
   /** Parameters for wallet_addEthereumChain when the wallet does not know the chain yet. */
-  add?: { chainName: string; rpcUrls: string[]; nativeCurrency: { name: string; symbol: string; decimals: number }; blockExplorerUrls: string[] };
+  add?: {
+    chainName: string;
+    rpcUrls: string[];
+    nativeCurrency: { name: string; symbol: string; decimals: number };
+    blockExplorerUrls: string[];
+  };
 }
 
 const ETHER = { name: "Ether", symbol: "ETH", decimals: 18 };
 export const CHAINS: Record<string, ChainInfo> = {
-  "8453": { name: "Base", explorer: "https://basescan.org", add: { chainName: "Base", rpcUrls: ["https://mainnet.base.org"], nativeCurrency: ETHER, blockExplorerUrls: ["https://basescan.org"] } },
-  "84532": { name: "Base Sepolia", explorer: "https://sepolia.basescan.org", add: { chainName: "Base Sepolia", rpcUrls: ["https://sepolia.base.org"], nativeCurrency: ETHER, blockExplorerUrls: ["https://sepolia.basescan.org"] } },
+  "8453": {
+    name: "Base",
+    explorer: "https://basescan.org",
+    add: {
+      chainName: "Base",
+      rpcUrls: ["https://mainnet.base.org"],
+      nativeCurrency: ETHER,
+      blockExplorerUrls: ["https://basescan.org"],
+    },
+  },
+  "84532": {
+    name: "Base Sepolia",
+    explorer: "https://sepolia.basescan.org",
+    add: {
+      chainName: "Base Sepolia",
+      rpcUrls: ["https://sepolia.base.org"],
+      nativeCurrency: ETHER,
+      blockExplorerUrls: ["https://sepolia.basescan.org"],
+    },
+  },
   "31337": { name: "Local chain" },
 };
 
@@ -40,9 +63,12 @@ type Env = Record<string, string | undefined>;
 export function readConfig(env: Env): ExitConfig | string {
   const chainText = env.VITE_EXIT_CHAIN_ID?.trim() ?? "";
   const clearing = env.VITE_EXIT_CLEARING_ADDRESS?.trim() ?? "";
-  if (!/^[1-9]\d*$/.test(chainText) || !isAddress(clearing)) return "This copy of the exit page was built without a contract address, so it cannot do anything. Use the official exit page linked from the docs.";
+  if (!/^[1-9]\d*$/.test(chainText) || !isAddress(clearing))
+    return "This copy of the exit page was built without a contract address, so it cannot do anything. Use the official exit page linked from the docs.";
   const nodes = (env.VITE_EXIT_ORACLE_NODES ?? (chainText === "8453" ? DEV_ORACLE_NODES.join(",") : ""))
-    .split(",").map(node => node.trim().replace(/\/$/, "")).filter(node => /^https?:\/\//.test(node));
+    .split(",")
+    .map((node) => node.trim().replace(/\/$/, ""))
+    .filter((node) => /^https?:\/\//.test(node));
   const block = Number(env.VITE_EXIT_DEPLOYMENT_BLOCK ?? 0);
   return {
     chainId: BigInt(chainText),
@@ -55,5 +81,7 @@ export function readConfig(env: Env): ExitConfig | string {
   };
 }
 
-export const explorerTx = (config: ExitConfig, hash: string) => config.chain.explorer ? `${config.chain.explorer}/tx/${hash}` : undefined;
-export const explorerAddress = (config: ExitConfig, address: string) => config.chain.explorer ? `${config.chain.explorer}/address/${address}` : undefined;
+export const explorerTx = (config: ExitConfig, hash: string) =>
+  config.chain.explorer ? `${config.chain.explorer}/tx/${hash}` : undefined;
+export const explorerAddress = (config: ExitConfig, address: string) =>
+  config.chain.explorer ? `${config.chain.explorer}/address/${address}` : undefined;

@@ -61,7 +61,7 @@ export function resolutionPhase(resolution: Resolution): ResolutionPhase {
 export function claimable(resolution: Resolution): bigint {
   if (!resolution.finalized || resolution.totalClaims === 0n) return 0n;
   const pool = resolution.assets < resolution.totalClaims ? resolution.assets : resolution.totalClaims;
-  const entitlement = resolution.claim * pool / resolution.totalClaims;
+  const entitlement = (resolution.claim * pool) / resolution.totalClaims;
   return entitlement > resolution.paid ? entitlement - resolution.paid : 0n;
 }
 
@@ -70,7 +70,9 @@ export function claimable(resolution: Resolution): bigint {
  * otherwise what keeps opening equity at initial margin. Prices move, so with positions open the page
  * offers a little less than this as its maximum.
  */
-export function withdrawable(state: Pick<AccountState, "collateral" | "openingEquity" | "initialMargin" | "positions">): bigint {
+export function withdrawable(
+  state: Pick<AccountState, "collateral" | "openingEquity" | "initialMargin" | "positions">,
+): bigint {
   if (state.collateral <= 0n) return 0n;
   if (!state.positions.length) return state.collateral;
   const free = state.openingEquity - state.initialMargin;
@@ -79,30 +81,39 @@ export function withdrawable(state: Pick<AccountState, "collateral" | "openingEq
 }
 
 /** The maximum the page fills in: 98% of the estimate while positions are open, so a small price move does not fail it. */
-export function withdrawMax(state: Pick<AccountState, "collateral" | "openingEquity" | "initialMargin" | "positions">): bigint {
+export function withdrawMax(
+  state: Pick<AccountState, "collateral" | "openingEquity" | "initialMargin" | "positions">,
+): bigint {
   const estimate = withdrawable(state);
-  return state.positions.length ? estimate * 98n / 100n : estimate;
+  return state.positions.length ? (estimate * 98n) / 100n : estimate;
 }
 
 /** Markets whose stored price is too old for a withdrawal that has open positions. */
 export function staleMarkets(state: Pick<AccountState, "positions" | "prices" | "now">): number[] {
   return state.positions
-    .filter(position => {
+    .filter((position) => {
       const price = state.prices.get(position.market);
       return !price || price.time === 0 || state.now - price.time > MAX_ORACLE_AGE;
     })
-    .map(position => position.market);
+    .map((position) => position.market);
 }
 
 /** Longs close at the bid, shorts at the ask. */
-export const exitPrice = (position: Position, price: Pick<MarketPrice, "bid" | "ask">) => (position.size > 0n ? price.bid : price.ask);
+export const exitPrice = (position: Position, price: Pick<MarketPrice, "bid" | "ask">) =>
+  position.size > 0n ? price.bid : price.ask;
 
 /** Profit or loss of closing at `price`, before funding. */
-export const closePnl = (position: Position, price: bigint) => position.size * (price - position.entryPrice) / BASE_UNIT;
+export const closePnl = (position: Position, price: bigint) =>
+  (position.size * (price - position.entryPrice)) / BASE_UNIT;
 
 // ---- Formatting ----
 
-const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const usd = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 const coins = new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 });
 const ether = new Intl.NumberFormat("en-US", { maximumFractionDigits: 5 });
 
@@ -110,8 +121,10 @@ const scaled = (value: bigint, decimals: number) => Number(value) / 10 ** decima
 export const abs = (value: bigint) => (value < 0n ? -value : value);
 
 export const formatUsd = (micro: bigint) => usd.format(scaled(micro, 6));
-export const formatSignedUsd = (micro: bigint) => `${micro > 0n ? "+" : micro < 0n ? "−" : ""}${usd.format(scaled(abs(micro), 6))}`;
-export const formatSize = (size: bigint, symbol: string) => `${coins.format(scaled(abs(size), 18))} ${symbol}`;
+export const formatSignedUsd = (micro: bigint) =>
+  `${micro > 0n ? "+" : micro < 0n ? "−" : ""}${usd.format(scaled(abs(micro), 6))}`;
+export const formatSize = (size: bigint, symbol: string) =>
+  `${coins.format(scaled(abs(size), 18))} ${symbol}`;
 export const formatEth = (wei: bigint) => `${ether.format(scaled(wei, 18))} ETH`;
 export const shortAddress = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 export const side = (position: Position) => (position.size > 0n ? "Long" : "Short");
@@ -129,7 +142,8 @@ export function parseUsdc(text: string): bigint | null {
 
 /** Micro-units to the plain decimal an input shows. */
 export function usdcInput(micro: bigint): string {
-  const whole = micro / 1_000_000n, fraction = (micro % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
+  const whole = micro / 1_000_000n,
+    fraction = (micro % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 

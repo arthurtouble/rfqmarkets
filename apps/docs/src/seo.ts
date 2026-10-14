@@ -8,7 +8,11 @@ export const APP_URL = "https://dev.rfq-markets.workers.dev";
 const TAGLINE = "Perpetual futures on Base";
 
 export const pageTitle = (page: Page | undefined) =>
-  !page ? `Page not found · ${SITE_NAME}` : page.route === "/" ? `${SITE_NAME} · ${TAGLINE}` : `${page.title} · ${SITE_NAME}`;
+  !page
+    ? `Page not found · ${SITE_NAME}`
+    : page.route === "/"
+      ? `${SITE_NAME} · ${TAGLINE}`
+      : `${page.title} · ${SITE_NAME}`;
 
 // Each page's Markdown source is published next to it, at the same path as in apps/docs/content,
 // so the relative links inside it keep working.
@@ -19,7 +23,13 @@ const escape = (text: string) =>
 
 function structuredData(page: Page, site: string) {
   const url = `${site}${page.route}`;
-  const website = { "@type": "WebSite", "@id": `${site}/#website`, name: SITE_NAME, url: `${site}/`, inLanguage: "en" };
+  const website = {
+    "@type": "WebSite",
+    "@id": `${site}/#website`,
+    name: SITE_NAME,
+    url: `${site}/`,
+    inLanguage: "en",
+  };
   const article = {
     "@type": "TechArticle",
     headline: page.title,
@@ -59,7 +69,8 @@ function structuredData(page: Page, site: string) {
 
 // The <head> tags for one page, inserted by the build in place of the template's title and description.
 export function headTags(page: Page | undefined, site: string) {
-  if (!page) return [`<title>${escape(pageTitle(page))}</title>`, `<meta name="robots" content="noindex"/>`].join("");
+  if (!page)
+    return [`<title>${escape(pageTitle(page))}</title>`, `<meta name="robots" content="noindex"/>`].join("");
   const url = `${site}${page.route}`;
   const title = escape(pageTitle(page));
   const description = escape(page.description);
@@ -117,7 +128,14 @@ export function llmsTxt(site: string) {
       lines.push(`- [${page.title}](${site}${markdownPath(page)}): ${page.description}`);
     }
   }
-  lines.push("", "## Optional", "", `- [Trading app](${APP_URL}): the RFQ Markets web app on Base mainnet`, `- [Sitemap](${site}/sitemap.xml)`, "");
+  lines.push(
+    "",
+    "## Optional",
+    "",
+    `- [Trading app](${APP_URL}): the RFQ Markets web app on Base mainnet`,
+    `- [Sitemap](${site}/sitemap.xml)`,
+    "",
+  );
   return lines.join("\n");
 }
 

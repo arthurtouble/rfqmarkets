@@ -7,8 +7,16 @@ import { erc20Abi, type Address } from "viem";
 import { useConfig } from "wagmi";
 import { getPublicClient } from "wagmi/actions";
 import {
-  balancesUrl, bridgeStatus, checkRoute, holdingsFrom, isNative, lifiGet, quoteUrl, statusUrl,
-  type LifiQuote, type RouteRequest,
+  balancesUrl,
+  bridgeStatus,
+  checkRoute,
+  holdingsFrom,
+  isNative,
+  lifiGet,
+  quoteUrl,
+  statusUrl,
+  type LifiQuote,
+  type RouteRequest,
 } from "../lib/bridge.js";
 import { useTrader } from "../wallet/trader.js";
 
@@ -38,7 +46,8 @@ export function useHoldings(enabled: boolean) {
 
 /** The wallet's balance of one asset on its own network, read from that network's public RPC. */
 export function useSourceBalance(chainId: number | null, token: Address | null) {
-  const config = useConfig(), { address } = useTrader();
+  const config = useConfig(),
+    { address } = useTrader();
   return useQuery({
     queryKey: ["source-balance", address, chainId, token],
     queryFn: () => {
@@ -46,7 +55,12 @@ export function useSourceBalance(chainId: number | null, token: Address | null) 
       if (!reader) throw new Error("No RPC for that network");
       return isNative(token!)
         ? reader.getBalance({ address: address! })
-        : reader.readContract({ address: token!, abi: erc20Abi, functionName: "balanceOf", args: [address!] });
+        : reader.readContract({
+            address: token!,
+            abi: erc20Abi,
+            functionName: "balanceOf",
+            args: [address!],
+          });
     },
     enabled: !!address && chainId !== null && token !== null,
     staleTime: 15_000,
@@ -57,7 +71,8 @@ export function useSourceBalance(chainId: number | null, token: Address | null) 
 export function useRoute(request: RouteRequest | null, decimals: number) {
   return useQuery({
     queryKey: ["lifi", "route", request && { ...request, fromAmount: request.fromAmount.toString() }],
-    queryFn: async ({ signal }) => checkRoute(await lifiGet<LifiQuote>(quoteUrl(request!), signal), request!, decimals),
+    queryFn: async ({ signal }) =>
+      checkRoute(await lifiGet<LifiQuote>(quoteUrl(request!), signal), request!, decimals),
     enabled: request !== null,
     staleTime: 30_000,
     gcTime: 60_000,
@@ -104,9 +119,10 @@ export function useRouteStatus(route: SentRoute | null) {
   const usdc = settlement?.tokenAddress;
   return useQuery({
     queryKey: ["lifi", "status", route?.hash],
-    queryFn: async ({ signal }) => bridgeStatus(await lifiGet(statusUrl(route!.hash, route!.fromChain), signal), usdc!),
+    queryFn: async ({ signal }) =>
+      bridgeStatus(await lifiGet(statusUrl(route!.hash, route!.fromChain), signal), usdc!),
     enabled: !!route && !!usdc,
-    refetchInterval: query => (query.state.data && query.state.data.state !== "pending" ? false : 10_000),
+    refetchInterval: (query) => (query.state.data && query.state.data.state !== "pending" ? false : 10_000),
     retry: 3,
   });
 }

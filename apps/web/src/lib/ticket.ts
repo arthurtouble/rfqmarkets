@@ -46,22 +46,35 @@ export function maxNotionalAt(leverage: number, scaleBps: number): bigint | null
  * the margin tiers still allow that leverage. Rounded down to a cent. Zero
  * when nothing is available.
  */
-export function maxPay({ availableMicro, leverage, feeBps, tradeCapMicro, scaleBps }: { availableMicro: bigint; leverage: number; feeBps: number; tradeCapMicro: bigint; scaleBps: number }): bigint {
+export function maxPay({
+  availableMicro,
+  leverage,
+  feeBps,
+  tradeCapMicro,
+  scaleBps,
+}: {
+  availableMicro: bigint;
+  leverage: number;
+  feeBps: number;
+  tradeCapMicro: bigint;
+  scaleBps: number;
+}): bigint {
   const hundredths = BigInt(Math.floor(leverage * 100 + 1e-9));
   if (availableMicro <= 0n || hundredths <= 0n) return 0n;
   // pay + pay × leverage × fee ≤ available
-  let pay = availableMicro * 100n * BPS / (100n * BPS + hundredths * BigInt(feeBps));
+  let pay = (availableMicro * 100n * BPS) / (100n * BPS + hundredths * BigInt(feeBps));
   const tierMax = maxNotionalAt(leverage, scaleBps);
   for (const limit of [tradeCapMicro > 0n ? tradeCapMicro : null, tierMax]) {
     if (limit === null) continue;
-    const byLimit = limit * 100n / hundredths;
+    const byLimit = (limit * 100n) / hundredths;
     if (byLimit < pay) pay = byLimit;
   }
-  return pay / CENT * CENT;
+  return (pay / CENT) * CENT;
 }
 
 /** A share (1..100%) of `maxMicro`, rounded down to a cent. */
-export const presetPay = (maxMicro: bigint, percent: number) => maxMicro * BigInt(percent) / 100n / CENT * CENT;
+export const presetPay = (maxMicro: bigint, percent: number) =>
+  ((maxMicro * BigInt(percent)) / 100n / CENT) * CENT;
 
 /** Leverage as the ticket shows it: "5×", "2.5×". */
 export const leverageLabel = (leverage: number) => `${Number(leverage.toFixed(2))}×`;
@@ -101,8 +114,10 @@ export function ticketProblem(check: TicketCheck): string | null {
   if (!check.priceLive) return "Waiting for a fresh price";
   if (!check.amountText) return "Enter an amount";
   if (check.payMicro === null) return "Enter a valid amount";
-  if (check.tradeCapMicro > 0n && check.notionalMicro > check.tradeCapMicro) return "Over the per-trade limit";
-  if (check.leverage > check.leverageCeiling) return `Up to ${leverageLabel(check.leverageCeiling)} at this size`;
+  if (check.tradeCapMicro > 0n && check.notionalMicro > check.tradeCapMicro)
+    return "Over the per-trade limit";
+  if (check.leverage > check.leverageCeiling)
+    return `Up to ${leverageLabel(check.leverageCeiling)} at this size`;
   if (check.isLimit && check.limitMicro === null) return "Enter a limit price";
   if (check.quoteError) return check.quoteError;
   if (!check.hasQuote) return "Waiting for a fresh price";
@@ -111,13 +126,25 @@ export function ticketProblem(check: TicketCheck): string | null {
 }
 
 /** The submit button's label, e.g. "Long BTC · $250.00 at 5×". */
-export function submitLabel({ side, market, pay, leverage, isLimit }: { side: Side; market: string; pay: string; leverage: number; isLimit: boolean }) {
+export function submitLabel({
+  side,
+  market,
+  pay,
+  leverage,
+  isLimit,
+}: {
+  side: Side;
+  market: string;
+  pay: string;
+  leverage: number;
+  isLimit: boolean;
+}) {
   return `${isLimit ? `Limit ${SIDE_WORD[side].toLowerCase()}` : SIDE_WORD[side]} ${market} · ${pay} at ${leverageLabel(leverage)}`;
 }
 
 /** Whether trading `signedNotional` (positive long) at most closes `positionSize` (signed base) worth `positionNotional`. */
 export function reducesPosition(positionSize: bigint, positionNotionalMicro: bigint, signedNotional: bigint) {
-  if (positionSize === 0n || signedNotional === 0n || (positionSize > 0n) === (signedNotional > 0n)) return false;
+  if (positionSize === 0n || signedNotional === 0n || positionSize > 0n === signedNotional > 0n) return false;
   return (signedNotional < 0n ? -signedNotional : signedNotional) <= positionNotionalMicro;
 }
 
@@ -132,7 +159,8 @@ export const QUOTE_EXPIRY_MARGIN_MS = 1_500;
 export const quoteSecondsLeft = (expiresAtMs: number, nowMs: number) =>
   Math.max(0, Math.floor((expiresAtMs - QUOTE_EXPIRY_MARGIN_MS - nowMs) / 1_000));
 
-export const quoteUsable = (expiresAtMs: number, nowMs: number) => nowMs < expiresAtMs - QUOTE_EXPIRY_MARGIN_MS;
+export const quoteUsable = (expiresAtMs: number, nowMs: number) =>
+  nowMs < expiresAtMs - QUOTE_EXPIRY_MARGIN_MS;
 
 /** What the ticket remembers per market between visits. */
 export type TicketMemory = { pay: string; leverage: number };
@@ -147,8 +175,10 @@ export function parseTicketMemory(raw: string | null): Partial<TicketMemory> {
   try {
     const value = JSON.parse(raw) as Record<string, unknown>;
     const memory: Partial<TicketMemory> = {};
-    if (typeof value.pay === "string" && isDecimalDraft(value.pay) && value.pay.length <= 20) memory.pay = value.pay;
-    if (typeof value.leverage === "number" && Number.isFinite(value.leverage) && value.leverage > 0) memory.leverage = value.leverage;
+    if (typeof value.pay === "string" && isDecimalDraft(value.pay) && value.pay.length <= 20)
+      memory.pay = value.pay;
+    if (typeof value.leverage === "number" && Number.isFinite(value.leverage) && value.leverage > 0)
+      memory.leverage = value.leverage;
     return memory;
   } catch {
     return {};

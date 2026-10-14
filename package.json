@@ -81,8 +81,8 @@
     "basescan:base-mainnet": "npm run compile:contracts && node --import tsx scripts/base-mainnet-cli.ts basescan",
     "check:operations-alerts": "node --import tsx scripts/operations-alerts.ts",
     "validate:production-topology": "node --import tsx scripts/production-topology.ts",
-    "format": "prettier --write \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"packages/mcp/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/**/*.{ts,mts,mjs}\" hardhat.config.js playwright.config.ts \"test/e2e/**/*.ts\"",
-    "format:check": "prettier --check \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"packages/mcp/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/**/*.{ts,mts,mjs}\" hardhat.config.js playwright.config.ts \"test/e2e/**/*.ts\""
+    "format": "prettier --write \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"packages/mcp/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/**/*.{ts,mts,mjs}\" hardhat.config.js playwright.config.ts \"test/e2e/**/*.ts\" \"apps/*/src/**/*.{ts,tsx}\" \"apps/*/vite.config.ts\" \"packages/sdk/src/**/*.ts\"",
+    "format:check": "prettier --check \"services/**/*.ts\" \"packages/shared/src/**/*.ts\" \"packages/mcp/src/**/*.ts\" \"deploy/cloudflare/runtime/*.mjs\" \"scripts/**/*.{ts,mts,mjs}\" hardhat.config.js playwright.config.ts \"test/e2e/**/*.ts\" \"apps/*/src/**/*.{ts,tsx}\" \"apps/*/vite.config.ts\" \"packages/sdk/src/**/*.ts\""
   },
   "devDependencies": {
     "@base-org/account": "2.5.13",

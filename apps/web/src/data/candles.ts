@@ -9,18 +9,24 @@ import type { Candle, CandleInterval, CandleSeries, Market } from "../lib/types.
 import { useMarketFeed } from "./market-feed.js";
 
 export const candleKeys = {
-  series: (market: Market, interval: CandleInterval, limit: number) => ["candles", market, interval, limit] as const,
+  series: (market: Market, interval: CandleInterval, limit: number) =>
+    ["candles", market, interval, limit] as const,
 };
 
 /** Refetch cadence: the live merge covers the gap, so this only reconciles with the gateway. */
-const refetchMs = (interval: CandleInterval) => Math.min(60_000, Math.max(15_000, CANDLE_INTERVALS[interval] / 4));
+const refetchMs = (interval: CandleInterval) =>
+  Math.min(60_000, Math.max(15_000, CANDLE_INTERVALS[interval] / 4));
 
 /** GET /v1/candles?market&interval&limit (limit 1..1000, default 300). */
 export function useCandles(market: Market, interval: CandleInterval = "1m", limit = DEFAULT_CANDLE_LIMIT) {
   const bounded = Math.min(MAX_CANDLE_LIMIT, Math.max(1, Math.floor(limit)));
   return useQuery({
     queryKey: candleKeys.series(market, interval, bounded),
-    queryFn: ({ signal }) => getJson<CandleSeries>(`${MARKET_STREAM}/v1/candles?market=${encodeURIComponent(market)}&interval=${interval}&limit=${bounded}`, signal),
+    queryFn: ({ signal }) =>
+      getJson<CandleSeries>(
+        `${MARKET_STREAM}/v1/candles?market=${encodeURIComponent(market)}&interval=${interval}&limit=${bounded}`,
+        signal,
+      ),
     staleTime: refetchMs(interval),
     refetchInterval: refetchMs(interval),
     placeholderData: keepPreviousData,
@@ -32,7 +38,11 @@ export function useCandles(market: Market, interval: CandleInterval = "1m", limi
  * be under MarketFeedProvider). `candles` are ascending, prices USDC 1e6
  * strings; `lib/candles.ts` `candleToNumbers` converts for a chart library.
  */
-export function useLiveCandles(market: Market, interval: CandleInterval = "1m", limit = DEFAULT_CANDLE_LIMIT) {
+export function useLiveCandles(
+  market: Market,
+  interval: CandleInterval = "1m",
+  limit = DEFAULT_CANDLE_LIMIT,
+) {
   const query = useCandles(market, interval, limit);
   const { snapshot } = useMarketFeed();
   const live = snapshot?.markets[market];
@@ -42,7 +52,11 @@ export function useLiveCandles(market: Market, interval: CandleInterval = "1m", 
   useEffect(() => setCandles(base ?? []), [base]);
   useEffect(() => {
     if (!live) return;
-    setCandles(current => (current.length ? mergeLiveCandle(current, interval, live.observedAtMs, BigInt(live.mid), limit) : current));
+    setCandles((current) =>
+      current.length
+        ? mergeLiveCandle(current, interval, live.observedAtMs, BigInt(live.mid), limit)
+        : current,
+    );
   }, [live?.mid, live?.observedAtMs, interval, limit]); // eslint-disable-line react-hooks/exhaustive-deps
   return { ...query, candles };
 }

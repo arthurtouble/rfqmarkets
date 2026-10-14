@@ -28,7 +28,8 @@ export function pickMultiplier(chosen: number, choices: readonly number[]): numb
 }
 
 /** Position size (USDC 1e6) for a stake (USDC 1e6) at a multiplier. */
-export const betNotional = (stakeMicro: bigint, multiplier: number) => positionNotional(stakeMicro, multiplier);
+export const betNotional = (stakeMicro: bigint, multiplier: number) =>
+  positionNotional(stakeMicro, multiplier);
 
 /** What a 1% move the player's way is worth on a position of `notionalMicro`, before costs. */
 export const onePercentGain = (notionalMicro: bigint) => notionalMicro / 100n;
