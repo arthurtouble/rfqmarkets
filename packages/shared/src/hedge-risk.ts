@@ -19,6 +19,7 @@ export type HedgeRiskSnapshot = {
 export type HedgeMarketRisk = {
   mode: HedgeRiskMode;
   gapNotional: string;
+  /** The hedge band, or for a warehouse-only market its net cap (USDC 1e6). */
   bandUsdc: string;
   execution?: HedgeExecutionSignal;
   /** Why the market is reduce-only when it is not a venue condition, e.g. `"no_hedge_mapping"`. */

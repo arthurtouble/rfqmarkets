@@ -19,6 +19,10 @@ export const LAUNCH_RISK = {
   BTC: { impactK: 10_000, shockBps: 1_000, marginScaleBps: 10_000 },
   ETH: { impactK: 12_000, shockBps: 1_000, marginScaleBps: 10_000 },
 } as const;
+/** Defaults for markets listed after BTC and ETH: a larger stress shock and half the launch leverage. */
+export const LISTING_RISK = { impactK: 15_000, shockBps: 2_000, marginScaleBps: 5_000 } as const;
+/** Services' market symbol rule (`isMarketSymbol`): letters, digits, `.`, `_` or `-`, at most 31 bytes. */
+const MARKET_SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,30}$/;
 const risk = (defaults: { impactK: number; shockBps: number; marginScaleBps: number }) => ({
   impactK: int(1, 1_000_000).default(defaults.impactK),
   shockBps: int(500, 10_000).default(defaults.shockBps),
@@ -211,7 +215,15 @@ export const DEV_CEILINGS = {
 };
 const devMarket = (defaults: { impactK: number; shockBps: number; marginScaleBps: number }) =>
   z
-    .object({ maxTradeUsdc: amount, netUsdc: amount, grossUsdc: amount, sideUsdc: amount, ...risk(defaults) })
+    .object({
+      maxTradeUsdc: amount,
+      netUsdc: amount,
+      grossUsdc: amount,
+      sideUsdc: amount,
+      ...risk(defaults),
+      /** The market's own base quote spread (`setSpread`); omitted keeps the contract default. */
+      baseSpreadBps: int(2, 50).optional(),
+    })
     .strict();
 export const devManifestSchema = z
   .object({
@@ -228,7 +240,10 @@ export const devManifestSchema = z
     policy: z
       .object({
         makerCapitalUsdc: amount,
-        markets: z.object({ BTC: devMarket(LAUNCH_RISK.BTC), ETH: devMarket(LAUNCH_RISK.ETH) }).strict(),
+        // BTC and ETH are indexes 0 and 1; further markets list in the order written (index 2, 3, ...).
+        markets: z
+          .object({ BTC: devMarket(LAUNCH_RISK.BTC), ETH: devMarket(LAUNCH_RISK.ETH) })
+          .catchall(devMarket(LISTING_RISK)),
       })
       .strict(),
   })
@@ -244,7 +259,10 @@ export function validateDevManifest(input: unknown) {
     throw new Error("Dev roles must be distinct");
   if (value.policy.makerCapitalUsdc > DEV_CEILINGS.makerCapitalUsdc)
     throw new Error("Dev maker capital floor exceeds the 50,000 USDC dev ceiling");
+  if (Object.keys(value.policy.markets).length > 128)
+    throw new Error("Dev manifest lists more than the contract's 128 markets");
   for (const [name, item] of Object.entries(value.policy.markets)) {
+    if (!MARKET_SYMBOL.test(name)) throw new Error(`${name} is not a valid market symbol`);
     if (
       item.maxTradeUsdc > DEV_CEILINGS.maxTradeUsdc ||
       item.netUsdc > DEV_CEILINGS.netUsdc ||

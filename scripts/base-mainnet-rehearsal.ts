@@ -19,6 +19,8 @@ import {
 import {
   appointRiskOperatorDev,
   devPreflight,
+  DEV_LISTINGS,
+  configureDev,
   generateDevIdentities,
   handoverDev,
   unpauseDev,
@@ -275,12 +277,20 @@ assert.throws(
 );
 await assert.rejects(devPreflight(provider, devManifest, deployer.address), /owner key/);
 const devReport = await devPreflight(provider, devManifest, devOwner.address);
-let devRecord = await deployCore(devOwner, devManifest, {
+// The dev proxy launches with BTC and ETH; configure lists the manifest's later markets afterwards.
+const devLaunchManifest = validateDevManifest({
+  ...dev.manifest,
+  policy: {
+    ...dev.manifest.policy,
+    markets: { BTC: dev.manifest.policy.markets.BTC, ETH: dev.manifest.policy.markets.ETH },
+  },
+});
+let devRecord = await deployCore(devOwner, devLaunchManifest, {
   candidateHash: manifest.candidateHash,
   launchProfile: "dev",
   confirmations: 1,
 });
-const devInitial = await verifyDev(provider, devRecord, devManifest);
+const devInitial = await verifyDev(provider, devRecord, devLaunchManifest);
 assert.equal(devInitial.state.paused, true);
 assert.equal(devInitial.state.oracleBound, true, "the dev owner binds the oracle during deployment");
 assert.ok(devRecord.transactions.oracleSetClearing && !devRecord.pendingOwnerSteps);
@@ -290,9 +300,23 @@ const devOracle = new Contract(
   provider,
 );
 await unpauseDev(devOwner, devRecord, 1);
+await assert.rejects(verifyDev(provider, devRecord, devManifest), /lists exactly 7 markets/);
+await configureDev(devOwner, devRecord, devManifest, { confirmations: 1 });
 const devLive = await verifyDev(provider, devRecord, devManifest);
-assert.equal(devLive.state.paused, false);
-assert.ok(devLive.state.markets.every((item) => item.enabled && item.grossLimit === "200000000"));
+assert.equal(devLive.state.paused, false, "configure leaves a running clearing running");
+assert.deepEqual(
+  devLive.state.markets.map((item) => item.symbol),
+  ["BTC", "ETH", ...DEV_LISTINGS],
+);
+assert.ok(
+  devLive.state.markets.every(
+    (item, index) => item.enabled && item.grossLimit === (index < 2 ? "200000000" : "100000000"),
+  ),
+);
+await assert.rejects(
+  configureDev(devOwner, devRecord, devLaunchManifest, { confirmations: 1 }),
+  /lists 7 markets but the manifest names only 2/,
+);
 await (await usdc.mint(ceremony.address, amount)).wait();
 await (await usdc.approve(devRecord.contracts.clearingProxy, amount)).wait();
 const devClearing = new Contract(devRecord.contracts.clearingProxy, artifact("RFQClearing").abi, ceremony);

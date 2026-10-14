@@ -48,7 +48,11 @@ export type CoreInputs = {
   governance: string;
   emergencyCouncil: string;
   approvers: [string, string, string];
-  policy: { makerCapitalUsdc: bigint; markets: { BTC: MarketCaps; ETH: MarketCaps } };
+  /** Markets in listing order (index 0, 1, ...): BTC and ETH first, then any later listings. */
+  policy: {
+    makerCapitalUsdc: bigint;
+    markets: { BTC: MarketCaps; ETH: MarketCaps } & Record<string, MarketCaps>;
+  };
 };
 /** `oracleAdapter` is the SignedPriceOracle (the name is kept for the record's consumers). */
 export type DeploymentContracts = {
@@ -172,10 +176,19 @@ const artifactFor = (step: string) =>
         : step;
 // Upper bound for the owner's SignedPriceOracle.setClearing (one storage write); the oracle does not exist at preflight.
 export const SET_CLEARING_GAS_UPPER_BOUND = 100_000n;
+/** The launch markets, always indexes 0 and 1. */
 export const MARKET_SYMBOLS = ["BTC", "ETH"] as const;
 
+/** The manifest's market symbols in listing order: the launch markets, then later listings as written. */
+export const manifestMarkets = (manifest: Pick<CoreInputs, "policy">) => [
+  ...MARKET_SYMBOLS,
+  ...Object.keys(manifest.policy.markets).filter(
+    (symbol) => !(MARKET_SYMBOLS as readonly string[]).includes(symbol),
+  ),
+];
+
 export const marketConfigs = (manifest: CoreInputs) =>
-  MARKET_SYMBOLS.map((symbol) => {
+  manifestMarkets(manifest).map((symbol) => {
     const item = manifest.policy.markets[symbol];
     return {
       symbol: encodeBytes32String(symbol),
@@ -669,11 +682,12 @@ export async function verifyCore(
         marginScaleBps: number;
       }[],
     };
+  const symbols = manifestMarkets(manifest);
   check(
-    Number(await clearing.marketCount()) === MARKET_SYMBOLS.length,
-    `clearing lists exactly ${MARKET_SYMBOLS.length} markets`,
+    Number(await clearing.marketCount()) === symbols.length,
+    `clearing lists exactly ${symbols.length} markets`,
   );
-  for (let market = 0; market < MARKET_SYMBOLS.length; market++) {
+  for (let market = 0; market < symbols.length; market++) {
     const [info, limits, exposure, params] = await Promise.all([
       clearing.markets(market),
       clearing.marketLimitWord(market),
@@ -693,7 +707,7 @@ export async function verifyCore(
     });
   }
   for (const [index, config] of marketConfigs(manifest).entries()) {
-    const name = MARKET_SYMBOLS[index],
+    const name = symbols[index],
       actual = state.markets[index];
     check(
       actual.symbol === name && Number(await clearing.marketId(config.symbol)) === index,

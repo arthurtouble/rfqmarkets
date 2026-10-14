@@ -1,4 +1,12 @@
-import { Contract, Interface, Wallet, getAddress, type Provider, type Signer } from "ethers";
+import {
+  Contract,
+  Interface,
+  Wallet,
+  decodeBytes32String,
+  getAddress,
+  type Provider,
+  type Signer,
+} from "ethers";
 import {
   BASE_MAINNET_CHAIN_ID,
   IMPLEMENTATION_SLOT,
@@ -9,6 +17,8 @@ import {
   estimateDeployCost,
   factory,
   libraryOrder,
+  manifestMarkets,
+  marketConfigs,
   same,
   timelockOperation,
   verifyCore,
@@ -21,6 +31,9 @@ import { DEV_CEILINGS, validateDevManifest } from "./mainnet-manifest.js";
 // owner, so caps and upgrades apply immediately. Caps are bounded by DEV_CEILINGS. When the product
 // is ready, `handoverDev` moves governance and the ProxyAdmin to a Safe-controlled timelock in place.
 export type DevManifest = ReturnType<typeof validateDevManifest>;
+
+/** Markets the dev profile lists after BTC and ETH, in index order. */
+export const DEV_LISTINGS = ["SOL", "XRP", "DOGE", "HYPE", "SUI"] as const;
 
 /**
  * Fresh owner, emergency and approver keys plus a dev manifest that uses their addresses. The oracle signers
@@ -50,6 +63,12 @@ export function generateDevIdentities(
     sideUsdc: "150000000",
     marginScaleBps: 2_500,
   };
+  const listing = {
+    maxTradeUsdc: "25000000",
+    netUsdc: "50000000",
+    grossUsdc: "100000000",
+    sideUsdc: "75000000",
+  };
   const manifest = {
     version: 1,
     mode: "dev",
@@ -60,7 +79,16 @@ export function generateDevIdentities(
     owner: identities.owner.address,
     emergencyCouncil: identities.emergency.address,
     approvers: identities.approvers.map((item) => item.address),
-    policy: { makerCapitalUsdc: "100000000", markets: { BTC: market, ETH: market } },
+    policy: {
+      makerCapitalUsdc: "100000000",
+      markets: {
+        BTC: market,
+        ETH: market,
+        // Later listings, in index order (2, 3, ...): every one has a Hyperliquid perp to hedge on and at
+        // least three oracle venues. They use LISTING_RISK's defaults and half the launch caps.
+        ...Object.fromEntries(DEV_LISTINGS.map((symbol) => [symbol, listing])),
+      },
+    },
   };
   return { identities, manifest };
 }
@@ -94,41 +122,54 @@ const confirmed = async (tx: Promise<any>, confirmations: number) => {
   return receipt.hash as string;
 };
 
-/** Re-applies the manifest caps and risk parameters (setExposurePolicy requires a paused clearing), then optionally unpauses. v1 deploys paused with both already set. */
+/**
+ * Brings the clearing in line with the manifest: lists the markets it does not have yet (in manifest order,
+ * enabled, with their caps), re-applies caps and risk parameters to the markets it has, and sets each
+ * market's base spread where the manifest names one. setExposurePolicy needs a paused clearing, so this
+ * pauses first and unpauses at the end when the clearing was running before or `unpause` is set: a
+ * configure run never leaves a live venue paused.
+ */
 export async function configureDev(
   owner: Signer,
   record: DeploymentRecord,
   manifest: DevManifest,
-  options: { unpause: boolean; confirmations?: number },
+  options: { unpause?: boolean; confirmations?: number } = {},
 ) {
   const clearing = new Contract(record.contracts.clearingProxy, artifact("RFQClearing").abi, owner),
     confirmations = options.confirmations ?? 2,
-    transactions: string[] = [];
-  const markets = [manifest.policy.markets.BTC, manifest.policy.markets.ETH];
-  if (!(await clearing.paused())) transactions.push(await confirmed(clearing.pause(), confirmations));
-  for (const [market, item] of markets.entries())
-    transactions.push(
-      await confirmed(clearing.setExposurePolicy(market, item.grossUsdc, item.sideUsdc), confirmations),
-    );
-  for (const [market, item] of markets.entries())
-    transactions.push(
-      await confirmed(clearing.setMarketPolicy(market, true, item.maxTradeUsdc, item.netUsdc), confirmations),
-    );
-  for (const [market, item] of markets.entries()) {
+    transactions: string[] = [],
+    send = async (tx: Promise<any>) => void transactions.push(await confirmed(tx, confirmations));
+  const symbols = manifestMarkets(manifest),
+    listed = Number(await clearing.marketCount());
+  if (listed > symbols.length)
+    throw new Error(`the clearing lists ${listed} markets but the manifest names only ${symbols.length}`);
+  // Indexes are permanent: the manifest must name the listed markets in their on-chain order.
+  for (let market = 0; market < listed; market++) {
+    const symbol = decodeBytes32String((await clearing.marketParams(market)).symbol);
+    if (symbol !== symbols[market])
+      throw new Error(`market ${market} is ${symbol} on chain but ${symbols[market]} in the manifest`);
+  }
+  const wasPaused = (await clearing.paused()) as boolean;
+  if (!wasPaused) await send(clearing.pause());
+  for (let market = 0; market < listed; market++) {
+    const item = manifest.policy.markets[symbols[market]];
+    await send(clearing.setExposurePolicy(market, item.grossUsdc, item.sideUsdc));
+    await send(clearing.setMarketPolicy(market, true, item.maxTradeUsdc, item.netUsdc));
     const params = await clearing.marketParams(market);
     if (
       Number(params.impactK) !== item.impactK ||
       Number(params.shockBps) !== item.shockBps ||
       Number(params.marginScaleBps) !== item.marginScaleBps
     )
-      transactions.push(
-        await confirmed(
-          clearing.setMarketRisk(market, item.impactK, item.shockBps, item.marginScaleBps),
-          confirmations,
-        ),
-      );
+      await send(clearing.setMarketRisk(market, item.impactK, item.shockBps, item.marginScaleBps));
   }
-  if (options.unpause) transactions.push(await confirmed(clearing.unpause(), confirmations));
+  for (const config of marketConfigs(manifest).slice(listed)) await send(clearing.addMarket(config));
+  for (const [market, symbol] of symbols.entries()) {
+    const spread = manifest.policy.markets[symbol].baseSpreadBps;
+    if (spread !== undefined && Number(await clearing.marketSpread(market)) !== spread)
+      await send(clearing.setSpread(market, spread));
+  }
+  if (options.unpause || !wasPaused) await send(clearing.unpause());
   return transactions;
 }
 

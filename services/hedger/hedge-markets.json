@@ -1,7 +1,13 @@
 {
-  "$comment": "Market symbol -> Hyperliquid perp coin. A market without an entry is not hedged and stays reduce-only. See docs/operations/adding-a-market.md.",
+  "$comment": "coins: market symbol -> Hyperliquid perp coin. warehouse: markets the house holds unhedged, with a cap on net customer notional in whole USDC (normal up to half the cap, guarded up to the cap, reduce-only past it). A market in neither is not hedged and stays reduce-only. See docs/operations/adding-a-market.md.",
   "coins": {
     "BTC": "BTC",
-    "ETH": "ETH"
-  }
+    "ETH": "ETH",
+    "SOL": "SOL",
+    "XRP": "XRP",
+    "DOGE": "DOGE",
+    "HYPE": "HYPE",
+    "SUI": "SUI"
+  },
+  "warehouse": {}
 }

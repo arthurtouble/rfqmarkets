@@ -8,7 +8,7 @@ import {
   rpcUrl,
   type RuntimeIdentities,
 } from "./base-mainnet-dev-ci.js";
-import { validateDevManifest } from "./mainnet-manifest.js";
+import { LISTING_RISK, validateDevManifest } from "./mainnet-manifest.js";
 
 const owner = Wallet.createRandom().address,
   runtime: RuntimeIdentities = {
@@ -36,6 +36,26 @@ test("the dev manifest combines the owner with the runtime's published keys and 
     [validated.policy.markets.BTC.impactK, validated.policy.markets.ETH.impactK],
     [10000, 12000],
   );
+  assert.deepEqual(Object.keys(validated.policy.markets), [
+    "BTC",
+    "ETH",
+    "SOL",
+    "XRP",
+    "DOGE",
+    "HYPE",
+    "SUI",
+  ]);
+  assert.deepEqual(
+    { ...validated.policy.markets.SOL },
+    {
+      maxTradeUsdc: 25_000_000n,
+      netUsdc: 50_000_000n,
+      grossUsdc: 100_000_000n,
+      sideUsdc: 75_000_000n,
+      ...LISTING_RISK,
+    },
+    "later listings take the listing risk defaults",
+  );
   const market = {
     maxTradeUsdc: "50000000",
     netUsdc: "200000000",
@@ -56,6 +76,31 @@ test("the dev manifest combines the owner with the runtime's published keys and 
         markets: { BTC: { ...market, grossUsdc: "20000000000" }, ETH: market },
       }),
     /dev ceiling/,
+  );
+  const listed = validateDevManifest(
+    devManifestFor(owner, runtime, signers, {
+      makerCapitalUsdc: "200000000",
+      markets: { BTC: market, ETH: market, XYZ: { ...market, baseSpreadBps: 12 }, kPEPE: market },
+    }),
+  );
+  assert.deepEqual(Object.keys(listed.policy.markets), ["BTC", "ETH", "XYZ", "kPEPE"]);
+  assert.equal(listed.policy.markets.XYZ.baseSpreadBps, 12);
+  assert.throws(
+    () =>
+      devManifestFor(owner, runtime, signers, {
+        makerCapitalUsdc: "200000000",
+        markets: { BTC: market, ETH: market, XYZ: { ...market, baseSpreadBps: 60 } },
+      }),
+    /50/,
+    "a base spread past the contract's 50 bps is refused",
+  );
+  assert.throws(
+    () =>
+      devManifestFor(owner, runtime, signers, {
+        makerCapitalUsdc: "200000000",
+        markets: { BTC: market, ETH: market, "bad symbol": market },
+      }),
+    /not a valid market symbol/,
   );
   assert.throws(
     () => devManifestFor(runtime.approvers[0], runtime, signers),

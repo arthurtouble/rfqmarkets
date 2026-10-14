@@ -3,7 +3,8 @@
 // the DEV_STATE id and the image. Public on workers.dev, GET only.
 // ORACLE_MARKETS is the id:symbol allowlist each node signs for (kept in step with
 // services/hedger/hedge-markets.json); with the registry RPC a market is priced only when its on-chain
-// index and symbol match an entry here. Add a new market here when governance registers it.
+// index and symbol match an entry here; entries the chain has not listed yet are ignored. Indexes 2-6 are
+// the dev listings in scripts/base-mainnet-dev.ts (DEV_LISTINGS); add a new market here when it is listed.
 {
   "$schema": "../../../node_modules/wrangler/config-schema.json",
   "name": "oracle-ORACLE_NODE_INDEX_VALUE",
@@ -11,7 +12,7 @@
   "compatibility_date": "2026-09-11",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
-  "vars": {"ORACLE_NODE_INDEX": "ORACLE_NODE_INDEX_VALUE", "ORACLE_LOCATION_HINT": "ORACLE_LOCATION_HINT_VALUE", "ORACLE_MARKETS": "0:BTC,1:ETH"},
+  "vars": {"ORACLE_NODE_INDEX": "ORACLE_NODE_INDEX_VALUE", "ORACLE_LOCATION_HINT": "ORACLE_LOCATION_HINT_VALUE", "ORACLE_MARKETS": "0:BTC,1:ETH,2:SOL,3:XRP,4:DOGE,5:HYPE,6:SUI"},
   "containers": [{
     "class_name": "RFQOracleNode",
     "image": "../../../Dockerfile.cloudflare-oracle",
