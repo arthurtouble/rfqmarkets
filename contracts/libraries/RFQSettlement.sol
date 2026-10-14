@@ -106,6 +106,7 @@ library RFQSettlement {
         $.nonceUsed[intent.account][intent.nonce] = true;
         if (sessionSigner != address(0)) $.sessions[sessionSigner].usedNotional += uint128(notional);
         chargeFee(intent.account, approval.fee);
+        shareMarkup(notional);
         if (RFQRiskMath.isReduction(previousSize, previousSize + intent.baseDelta)) {
             RFQLedger.requireMaintenanceMargin(intent.account);
         } else {
@@ -166,8 +167,26 @@ library RFQSettlement {
     function chargeFee(address account, uint256 fee) private {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         RFQLedger.changeCollateral(account, -int256(fee));
-        uint256 insuranceShare = $.insuranceBalance < $.baseRiskCapitalTarget / 4 ? fee / 5 : fee / 10;
+        uint256 insuranceShare = insuranceShareOf(fee);
         $.insuranceBalance += insuranceShare;
         $.makerBacking += fee - insuranceShare;
+    }
+
+    /// @dev The trader pays the platform markup inside the price, so the maker holds it. Insurance takes the
+    /// same share of it as of a fee, moved from maker backing; the trader's balance is untouched and the
+    /// total of maker backing and insurance is unchanged. Only backing above the capital floor moves, so the
+    /// share never takes the maker below the floor that opening trades require.
+    function shareMarkup(uint256 notional) private {
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        uint256 share = insuranceShareOf(notional * PLATFORM_MARKUP_BPS / 10_000);
+        uint256 excess = $.makerBacking > $.baseRiskCapitalTarget ? $.makerBacking - $.baseRiskCapitalTarget : 0;
+        if (share > excess) share = excess;
+        $.makerBacking -= share;
+        $.insuranceBalance += share;
+    }
+
+    function insuranceShareOf(uint256 charge) private view returns (uint256) {
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        return $.insuranceBalance < $.baseRiskCapitalTarget / 4 ? charge / 5 : charge / 10;
     }
 }

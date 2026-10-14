@@ -21,7 +21,13 @@ import {
   type Market,
 } from "../../../packages/shared/src/markets.js";
 import { encodeLocalReport, oracleAdapterAbi } from "../../../packages/shared/src/oracle-report.js";
-import { adaptiveSpread, constructQuote, launchPricing } from "../../../packages/shared/src/pricing.js";
+import {
+  PLATFORM_MARKUP_BPS,
+  adaptiveSpread,
+  constructQuote,
+  launchPricing,
+} from "../../../packages/shared/src/pricing.js";
+import { DEFAULT_BASE_SPREAD_BPS } from "../../../packages/shared/src/markets.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import type { ChainClients, ClearingReader } from "./chain-state.js";
 
@@ -58,6 +64,8 @@ export interface Fixture {
   nowMs: number;
 }
 
+const LEADER_BASE_BPS = BigInt(DEFAULT_BASE_SPREAD_BPS) + PLATFORM_MARKUP_BPS;
+
 /** A consistent, signed leader envelope priced like the leader would price it. */
 export function buildFixture(options: PayloadOptions = {}): Fixture {
   const nowMs = options.nowMs ?? Date.now(),
@@ -76,7 +84,9 @@ export function buildFixture(options: PayloadOptions = {}): Fixture {
     {
       ...launchPricing,
       maxNotional: 10n ** 15n,
-      spread: options.spread === false ? undefined : adaptiveSpread(),
+      // The leader quotes the market's base spread plus the platform markup, and no fee.
+      baseSpreadBps: LEADER_BASE_BPS,
+      spread: options.spread === false ? undefined : adaptiveSpread({ baseBps: Number(LEADER_BASE_BPS) }),
     },
   );
   const report = encodeLocalReport({

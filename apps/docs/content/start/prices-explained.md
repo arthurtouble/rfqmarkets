@@ -18,7 +18,7 @@ The **Entry price** on the ticket is an indicative quote for the exact amount yo
 - the maker's **spread** is added on top;
 - an **inventory adjustment** is added if your trade increases the maker's existing exposure, or subtracted if it reduces it.
 
-The trading fee is shown separately, not folded into this price. Typing an amount does not send anything to the venue or reserve anything. Advanced view shows the spread and inventory adjustment as separate rows. [Pricing and fees](../risk/pricing-and-fees.md) gives the formula.
+There is no trading fee: the platform's markup is already in this price. Typing an amount does not send anything to the venue or reserve anything. Advanced view shows the spread and inventory adjustment as separate rows. [Pricing and fees](../risk/pricing-and-fees.md) gives the formula.
 
 ## Firm quote
 

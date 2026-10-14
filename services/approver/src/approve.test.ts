@@ -80,7 +80,7 @@ test("development mode rejects each pre-chain failure with its status and messag
       409,
       "quote spread rejected",
     ],
-    [{}, { ...payload, quote: { ...payload.quote, fee: "0" } }, 409, "inconsistent envelope"],
+    [{}, { ...payload, quote: { ...payload.quote, fee: "1" } }, 409, "inconsistent envelope"],
     [{}, { ...payload, userSignature: buildFixture().payload.userSignature }, 401, "invalid user signature"],
     [
       {},
@@ -99,13 +99,14 @@ test("development mode rejects each pre-chain failure with its status and messag
     assert.equal(result?.body.error, error);
   }
   const unsigned = buildFixture({ spread: false });
-  const lowFee = { ...unsigned.approval, fee: 0n },
-    payloadLowFee = {
+  // A fill priced at the touch carries none of the platform markup.
+  const atTouch = { ...unsigned.approval, executionPrice: BigInt(unsigned.payload.quote.ask) },
+    payloadAtTouch = {
       ...unsigned.payload,
-      quote: { ...unsigned.payload.quote, fee: "0" },
-      approval: approvalToWire(lowFee),
+      quote: { ...unsigned.payload.quote, expectedPrice: unsigned.payload.quote.ask },
+      approval: approvalToWire(atTouch),
     };
-  assert.equal(errorOf(await approve(context(), payloadLowFee)), "policy rejected");
+  assert.equal(errorOf(await approve(context(), payloadAtTouch)), "policy rejected");
   const staleReport = buildFixture({ report: { observedAt: BigInt(stale) } });
   assert.equal(errorOf(await approve(context(), staleReport.payload)), "oracle report rejected");
 });

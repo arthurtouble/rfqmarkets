@@ -1,6 +1,6 @@
 # Pricing and fees
 
-Every price on RFQ Markets is built the same way: start from the oracle, add the maker's spread, and adjust for what your trade does to the maker's inventory. The trading fee is charged on top. This page gives the formula and the current values.
+Every price on RFQ Markets is built the same way: start from the oracle, add the maker's spread, and adjust for what your trade does to the maker's inventory. There is no trading fee: the platform's charge is a 2 bps markup inside the spread, so the price you see is all you pay. This page gives the formula and the current values.
 
 ## The price you trade at
 
@@ -14,13 +14,7 @@ buy price        = oracle ask + premium
 sell price       = oracle bid − premium
 ```
 
-The fee is separate:
-
-```
-fee = notional × 2 bps
-```
-
-All three numbers are shown on the ticket: the estimated price includes the spread and inventory charge, **Fee (max)** shows the fee, and **Price details** splits out the spread and the inventory adjustment.
+The ticket shows the estimated price, which includes everything you pay, and **Fee** reads **None**. **Price details** splits out the spread and the inventory adjustment.
 
 ## The spread
 
@@ -28,14 +22,14 @@ The maker's spread is adaptive. It starts from a base and widens when trading is
 
 | Component | What widens it | Cap |
 | --- | --- | ---: |
-| Base | Always present | 2 bps today, 20 bps at most |
+| Base | Always present: the market's base spread plus the 2 bps platform markup | 4 bps today, 52 bps at most |
 | Volatility | Fast price movement across the oracle's sources | 40 bps |
 | Flow toxicity | Recent fills that the market then moved against the maker | 35 bps |
 | Hedging | The cost and latency of hedging, and whether hedging is degraded | 30 bps |
 | Basis | A gap between the hedging venue and the oracle | 25 bps |
 | Uncertainty | Disagreement between oracle sources | 20 bps |
 
-The total is capped at 100 bps. In calm markets it is close to the 2 bps base. The current total is shown as **Quote spread** in the market header.
+The total is capped at 100 bps. In calm markets it is close to the 4 bps base. The current total is shown as **Quote spread** in the market header.
 
 The flow-toxicity component reacts to how the market moves after the maker's fills in aggregate, decaying with a 30-second half-life. It does not look at who you are; the same price applies to every trader at the same moment and size.
 
@@ -52,11 +46,13 @@ The contract recomputes the minimum inventory charge itself from the actual sett
 
 Trades that are still in flight count too. If another trade in the same direction has been approved but not yet settled, your quote is priced as if it will settle, so that splitting a large trade across several wallets does not make it cheaper.
 
-## The fee
+## No fees
 
-The fee is 2 basis points (0.02%) of notional on every trade, market or limit, open or close. It is deducted from your collateral when the trade settles. The message you sign includes a maximum fee, and the contract refuses any trade that charges more.
+There is no trading fee on any trade, market or limit, open or close. The platform earns a 2 basis point (0.02%) markup that is part of the spread's base component, so it is already in the price you see. The message you sign still includes a maximum fee, which is zero, and the contract refuses any trade that charges one.
 
-Fees are split between the insurance fund and the maker. Until the insurance fund reaches a quarter of the maker's capital target, 20% of each fee goes to insurance; after that, 10%. The rest goes to the maker's capital.
+Approvers enforce the markup: they refuse a fill whose price is not at least the market's base spread plus 2 bps (plus the inventory charge) away from the oracle.
+
+The insurance fund still gets its share. On every fill the contract moves part of the markup from the maker's capital to insurance: 20% of it until the insurance fund reaches a quarter of the maker's capital target, 10% after that. This comes out of the maker's side, not your balance, and only from maker capital above its required floor.
 
 There are no deposit, withdrawal or gas fees. Liquidation has its own penalty, described in [Liquidation](liquidation.md).
 
@@ -66,11 +62,11 @@ On top of the firm price, the app sets your signed limit 8 basis points worse, s
 
 ## Example
 
-Opening a 20 USDC long on BTC when the oracle ask is 100,000, the spread is 2 bps and the maker's inventory is flat:
+Opening a 20 USDC long on BTC when the oracle ask is 100,000, the spread is 4 bps and the maker's inventory is flat:
 
-- spread charge: 20 × 0.0002 = 0.004 USDC, or 2 bps on the price;
-- buy price: about 100,020;
-- fee: 0.004 USDC;
-- signed limit: about 100,100 (8 bps above).
+- spread charge: 20 × 0.0004 = 0.008 USDC, or 4 bps on the price (2 bps base spread and the 2 bps markup);
+- buy price: about 100,040;
+- fee: none;
+- signed limit: about 100,120 (8 bps above).
 
-The round-trip cost of opening and closing in calm conditions is therefore roughly the oracle's bid-ask width, plus about 4 bps of spread and 4 bps of fees.
+The round-trip cost of opening and closing in calm conditions is therefore roughly the oracle's bid-ask width plus about 8 bps of spread, with no fees.

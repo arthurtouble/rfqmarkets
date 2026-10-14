@@ -3,7 +3,7 @@ import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { useMarketLeverage } from "../data/markets.js";
 import { emptyAccount, estimateLiquidationPrice, initialMarginAfter } from "../lib/account.js";
-import { abs, baseAmount, microToInput, parseUsdcInput, usdc, usdcCompact } from "../lib/format.js";
+import { abs, baseAmount, feeLabel, microToInput, parseUsdcInput, usdc, usdcCompact } from "../lib/format.js";
 import { DEFAULT_MARGIN_SCALE_BPS, leveragePresets } from "../lib/leverage.js";
 import { triggerProblem } from "../lib/orders.js";
 import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
@@ -105,7 +105,7 @@ export function OrderTicket({
   const quote = result && "quote" in result ? result.quote : null;
 
   const tradeCap = live ? BigInt(live.operatingMaxTradeNotional) : 0n;
-  const feeBps = snapshot?.pricing.feeBps ?? 2;
+  const feeBps = snapshot?.pricing.feeBps ?? 0;
   const available = account ? BigInt(account.availableMargin) : null;
   const payCeiling =
     available === null
@@ -415,7 +415,7 @@ export function OrderTicket({
         rows={[
           [orderType === "market" ? "Entry price" : "Current price", usdc(quote?.expectedPrice)],
           ["Liquidation price", liquidation === null ? "—" : usdc(liquidation)],
-          ["Fee", usdc(quote?.fee)],
+          ["Fee", feeLabel(quote?.fee)],
           ...(advanced && orderType === "market"
             ? ([
                 [

@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { discountedFee } from "../../../packages/shared/src/fee-tiers.js";
-import {
-  MAX_FEE_DISCOUNT_BPS,
-  checkPricePolicy,
-  checkQuoteModel,
-  checkQuoteSpread,
-} from "./pricing-policy.js";
+import { USDC, ceilDiv } from "../../../packages/shared/src/numeric.js";
+import { checkPricePolicy, checkQuoteModel, checkQuoteSpread } from "./pricing-policy.js";
 import { buildFixture } from "./test-fixtures.js";
 
 const error = (rejection: { body: { error: string } } | undefined) => rejection?.body.error;
@@ -63,7 +58,7 @@ test("checkQuoteSpread recomputes the spread breakdown and expected price", () =
   );
 });
 
-test("checkPricePolicy enforces freshness, rounding, notional cap, fee floor and minimum premium", () => {
+test("checkPricePolicy enforces freshness, rounding, notional cap and a minimum charge", () => {
   const fixture = buildFixture(),
     base = {
       quote: fixture.payload.quote,
@@ -72,7 +67,10 @@ test("checkPricePolicy enforces freshness, rounding, notional cap, fee floor and
       nowMs: fixture.nowMs,
       maxFutureSeconds: 5,
       capNotional: true,
+      baseSpreadBps: 2,
     };
+  // Fills carry no fee: the markup is in the price.
+  assert.equal(base.approval.fee, 0n);
   assert.equal(checkPricePolicy(base), undefined);
   const sell = buildFixture({ side: "sell" });
   assert.equal(
@@ -83,7 +81,9 @@ test("checkPricePolicy enforces freshness, rounding, notional cap, fee floor and
     { ...base, nowMs: fixture.nowMs + 8_001 },
     { ...base, nowMs: fixture.nowMs - 5_001 },
     { ...base, intent: { ...base.intent, baseDelta: base.intent.baseDelta * 2n } },
-    { ...base, approval: { ...base.approval, fee: 0n } },
+    { ...base, approval: { ...base.approval, fee: -1n } },
+    // A market with a wider base spread needs a wider charge than this quote carries.
+    { ...base, baseSpreadBps: 3 },
     { ...base, approval: { ...base.approval, executionPrice: BigInt(base.quote.ask) } },
     {
       ...base,
@@ -93,14 +93,22 @@ test("checkPricePolicy enforces freshness, rounding, notional cap, fee floor and
     },
   ];
   for (const input of rejected) assert.equal(error(checkPricePolicy(input)), "policy rejected");
-  // Volume tiers may discount the fee down to the deepest tier, and no further.
-  const deepest = discountedFee(base.approval.fee, MAX_FEE_DISCOUNT_BPS);
-  assert(deepest < base.approval.fee);
-  assert.equal(checkPricePolicy({ ...base, approval: { ...base.approval, fee: deepest } }), undefined);
-  assert.equal(
-    error(checkPricePolicy({ ...base, approval: { ...base.approval, fee: deepest - 1n } })),
-    "policy rejected",
-  );
+  // The charge is base spread + markup (4 bps here, 40 cents on $1,000) plus impact over the touch. A
+  // price premium short of it is rejected; an on-chain fee pays its share, so a smaller premium passes
+  // when a fee covers the gap.
+  const touch = BigInt(base.quote.ask),
+    notional = BigInt(base.quote.amount),
+    impact = base.approval.impactCharge;
+  assert.equal(notional, 1_000n * USDC);
+  const premium = (charge: bigint) => touch + ceilDiv(touch * (charge + impact), notional);
+  const at = (price: bigint, fee = 0n) => ({
+    ...base,
+    approval: { ...base.approval, executionPrice: price, fee },
+  });
+  assert.equal(checkPricePolicy(at(premium(400_000n))), undefined);
+  assert.equal(error(checkPricePolicy(at(premium(390_000n)))), "policy rejected");
+  assert.equal(checkPricePolicy(at(premium(200_000n), 200_000n)), undefined);
+  assert.equal(error(checkPricePolicy(at(premium(200_000n), 190_000n))), "policy rejected");
   const large = buildFixture({ amount: "1000001" });
   const largeInput = {
     ...base,

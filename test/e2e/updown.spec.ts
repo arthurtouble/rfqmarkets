@@ -38,7 +38,7 @@ test.describe("Up / Down", () => {
       .getByRole("group", { name: "Multiplier" })
       .getByRole("button", { name: "2×", exact: true })
       .click();
-    await expect(newBet.getByText("$20 position. A 1% move your way: +$0.20")).toBeVisible();
+    await expect(newBet.getByText("$20 position, no fees. A 1% move your way: +$0.20")).toBeVisible();
 
     await newBet.getByRole("button", { name: "Up", exact: true }).click();
     // The first bet in a tab signs through the review sheet, which turns one-click on for the next ones.

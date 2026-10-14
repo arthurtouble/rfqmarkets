@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { useProtocol } from "../data/queries.js";
-import { baseAmount, signedUsdc, usdc } from "../lib/format.js";
+import { baseAmount, feeLabel, signedUsdc, usdc } from "../lib/format.js";
 import {
   CLOSE_PRESETS,
   closeAllPreview,
@@ -326,7 +326,7 @@ export function ClosePositionSheet({ view, onClose }: { view: PositionView; onCl
               `${baseAmount(preview.closingSize)} ${view.market} · ${usdc(preview.closingNotional)}`,
             ],
             ["Estimated price", usdc(preview.price)],
-            ...(fee !== null ? [["Fee", usdc(fee)] as [string, string]] : []),
+            ...(fee !== null ? [["Fee", feeLabel(fee)] as [string, string]] : []),
             [
               "Left open",
               preview.remainingSize > 0n ? `${baseAmount(preview.remainingSize)} ${view.market}` : "Nothing",

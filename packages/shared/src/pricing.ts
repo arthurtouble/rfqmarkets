@@ -131,10 +131,18 @@ export interface PricingParameters {
   quoteLifetimeMs?: number;
   spread?: SpreadBreakdown;
 }
+/**
+ * The platform's charge per fill, in bps of notional. It is quoted in the
+ * price as part of the spread's base component, not charged as a separate
+ * fee, so trades show no fee. Approvers require it on top of the market's
+ * on-chain base spread.
+ */
+export const PLATFORM_MARKUP_BPS = 2n;
 export const launchPricing: PricingParameters = {
   maxNotional: 25_000n * USDC,
   baseSpreadBps: 2n,
-  feeBps: 2n,
+  // No separate fee: the platform's charge is PLATFORM_MARKUP_BPS in the price.
+  feeBps: 0n,
   toleranceBps: 8n,
 };
 const bounded = (value: number, min: number, max: number) =>
@@ -142,7 +150,8 @@ const bounded = (value: number, min: number, max: number) =>
 const bps = (value: number) => BigInt(Math.ceil(Math.max(0, value)));
 /** Deterministic market-wide quote-risk decomposition. */
 export function adaptiveSpread(inputs: AdaptiveSpreadInputs = {}): SpreadBreakdown {
-  const baseBps = bps(bounded(inputs.baseBps ?? 2, 1, 50));
+  // The base component carries the market's spread (at most 50 bps) plus the platform markup.
+  const baseBps = bps(bounded(inputs.baseBps ?? 2, 1, 50 + Number(PLATFORM_MARKUP_BPS)));
   const observedVol = bounded(inputs.volatilityBps ?? 0, 0, 2_000);
   const volatilityBps = bps(Math.min(40, observedVol / 5));
   const toxicityBps = bps(Math.min(35, (bounded(inputs.toxicityScoreBps ?? 0, 0, 10_000) * 35) / 10_000));
