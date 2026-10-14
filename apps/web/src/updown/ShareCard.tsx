@@ -14,20 +14,21 @@ import {
   type ShareBet,
 } from "../lib/share.js";
 import { Sheet } from "../ui/primitives.js";
+import { COLORS as TOKENS } from "../../../../packages/design-system/colors.js";
 
 export const CARD_WIDTH = 1080,
   CARD_HEIGHT = 1350;
-// The dark theme from packages/design-system/tokens.json. The card is always
-// dark so it looks the same wherever it is posted.
+// The dark theme's colors. The card is always dark so it looks the same wherever it is posted.
+const DARK = TOKENS.dark;
 const COLORS = {
-  bg: "#0B0D12",
-  line: "#232834",
-  text: "#F4F6FA",
-  secondary: "#A3ABBA",
-  tertiary: "#7D8596",
-  brand: "#3D6BF5",
-  up: "#2EBD85",
-  down: "#FF5C70",
+  bg: DARK.bg,
+  line: DARK.line,
+  text: DARK.text,
+  secondary: DARK["text-secondary"],
+  tertiary: DARK["text-tertiary"],
+  brand: DARK.brand,
+  up: DARK["long-text"],
+  down: DARK["short-text"],
 };
 const FONT = '"Geist Variable", Geist, -apple-system, "Segoe UI", system-ui, sans-serif';
 const font = (weight: number, size: number) => `${weight} ${size}px ${FONT}`;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Builds packages/design-system/tokens.css from tokens.json.
-// `--check` fails when the committed tokens.css is out of date.
+// Builds packages/design-system/tokens.css and colors.ts from tokens.json.
+// `--check` fails when either committed file is out of date.
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,15 +47,36 @@ for (const group of tokens.type.groups) {
   }
 }
 const css = `${out.join("\n")}\n`;
-const target = join(dir, "tokens.css");
 
+// Resolved colors per theme, for code that draws outside CSS (the share card's canvas).
+const resolve = (name, theme, seen = new Set()) => {
+  const token = tokens.color.tokens.find((item) => item.name === name);
+  if (!token || seen.has(name)) throw new Error(`unknown or circular color token ${name}`);
+  const picked = typeof token.value === "string" ? token.value : (token.value[theme] ?? token.value[first]);
+  return picked.startsWith("{") ? resolve(picked.slice(1, -1), theme, new Set([...seen, name])) : picked;
+};
+const palette = Object.fromEntries(
+  tokens.color.themes.map(({ id }) => [
+    id,
+    Object.fromEntries(tokens.color.tokens.map(({ name }) => [name, resolve(name, id)])),
+  ]),
+);
+const ts = `// ${tokens.name} colors, generated from tokens.json by scripts/build-design-tokens.mjs. Do not edit.\nexport const COLORS = ${JSON.stringify(palette, null, 2)} as const;\n`;
+
+const outputs = [
+  [join(dir, "tokens.css"), css],
+  [join(dir, "colors.ts"), ts],
+];
 if (process.argv.includes("--check")) {
-  if (readFileSync(target, "utf8") !== css) {
-    console.error("packages/design-system/tokens.css is out of date. Run npm run build:tokens.");
+  const stale = outputs.filter(([path, text]) => readFileSync(path, "utf8") !== text);
+  if (stale.length) {
+    console.error(`${stale.map(([path]) => path).join(", ")} out of date. Run npm run build:tokens.`);
     process.exit(1);
   }
-  console.log("tokens.css is up to date");
+  console.log("tokens.css and colors.ts are up to date");
 } else {
-  writeFileSync(target, css);
-  console.log(`wrote ${target}`);
+  for (const [path, text] of outputs) {
+    writeFileSync(path, text);
+    console.log(`wrote ${path}`);
+  }
 }
