@@ -29,7 +29,8 @@ library RFQRiskMath {
     /// @notice Canonical on-chain exposure admission for a trade at `price`.
     /// @dev Checks the capital floor, gross/side/net caps per market and stress loss <= backing.
     /// A reduction may proceed above a cap as long as it does not make that metric worse.
-    function checkExposureTrade(TradeIntent memory intent, uint256 price) public view {
+    /// @return stressAfter The portfolio stress loss once the trade is applied.
+    function checkExposureTrade(TradeIntent memory intent, uint256 price) public view returns (uint256 stressAfter) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Position storage position = $.accounts[intent.account].positions[intent.market];
         int256 previous = position.size;
@@ -40,7 +41,7 @@ library RFQRiskMath {
         uint256 backing = $.makerBacking;
         (,, int256 pnl) = positionTransition(previous, position.entryPrice, intent.baseDelta, price);
         if (pnl > 0) {
-            if (uint256(pnl) > backing) return;
+            if (uint256(pnl) > backing) return 0;
             backing -= uint256(pnl);
         } else {
             backing += abs(pnl);
@@ -50,7 +51,6 @@ library RFQRiskMath {
         if (!reduction && (!$.markets[intent.market].enabled || backing < $.baseRiskCapitalTarget)) revert Margin();
 
         uint256 stressBefore;
-        uint256 stressAfter;
         uint8 count = $.marketCount;
         for (uint8 i; i < count; ++i) {
             Market storage market = $.markets[i];
