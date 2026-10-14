@@ -352,3 +352,13 @@ dialog.sheet { text-align: start; }
 .share-sheet__card--loading { display: grid; place-items: center; background: var(--surface-sunken); color: var(--text-tertiary); }
 .share-sheet__actions { display: grid; gap: var(--space-2); }
 .share-sheet .footnote { margin: 0; }
+
+/* Shown by index.html until the app renders: the page paints at once, before the config arrives. */
+.boot {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-4);
+  min-height: 100vh;
+  background: var(--bg);
+}

@@ -2,7 +2,7 @@
   "version": 1,
   "mode": "capped-canary",
   "chainId": "8453",
-  "candidateHash": "REPLACE: output of `npm run candidate:base-mainnet` on the frozen commit",
+  "candidateHash": "REPLACE: output of `npm run mainnet -- candidate` on the frozen commit",
   "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   "oracleSigners": [
     "REPLACE: oracle node 1 signing address",

@@ -42,7 +42,7 @@ Each market present in at least `threshold` batches is then handled like this:
 - **Price:** otherwise the price is the median bid and median ask. With an even number of batches, the bid rounds down and the ask rounds up.
 - **Jumps:** a move larger than the market's jump limit within `jumpWindow` is also skipped.
 
-A skipped market simply has no fresh price. The clearing house therefore refuses trades on it, and a disagreement pauses that market instead of letting a doubtful price through. The report's `validUntil` is its oldest batch time plus 15 seconds. The clearing house separately enforces its own 8-second freshness and 1% width limits.
+A skipped market simply has no fresh price. The clearing house therefore refuses trades on it, and a disagreement pauses that market instead of letting a doubtful price through. The report's `validUntil` is its oldest batch time plus 15 seconds. The clearing house separately enforces its own 15-second freshness and 1% width limits, and approvers refuse to co-sign a quote older than 8 seconds.
 
 The owner (governance) manages the oracle with these calls:
 

@@ -1,173 +1,126 @@
-# RFQ Markets — consolidated architecture and status
+# Architecture overview
 
-> **Current deployment (2026-10-06).** A development deployment runs on Base mainnet: an owner-controlled clearing proxy at `0x6e67c66f955D88EBD6D69eD3343359651C6f45a1`, no timelock, capped at 25 USDC per trade and 100 USDC per market. The UI and all services run on Cloudflare, with the hedger simulated. The production topology below (Safes, timelock, independent approver domains, live hedging) is still the target, not what is deployed.
+RFQ Markets is a leveraged perpetuals venue on Base. Traders hold USDC in one clearing contract. One operator quotes every trade and takes the other side. Three approvers co-sign each quote, and the contract settles it only with two of their signatures. The contract is the ledger: every balance and position can be rebuilt from its events.
 
-2026-09-09. Canonical overview. Supersedes conflicting topology/status statements in earlier documents. Detailed requirements remain in the [simplified design](../history/2026-09-08-simplified-design.md), [adversarial flow](../history/2026-09-08-adversarial-flow.md) and [architecture review](../history/2026-09-08-architecture-review.md). The full local stack is implemented and tested; no public network deployment or independent audit has occurred. The latest unbiased assessment is [2026-09-09-system-audit.md](../history/2026-09-09-system-audit.md).
+This page describes the system as it runs in October 2026. The production layout is different, and the gap is tracked in the [implementation plan](../release/implementation-plan.md).
 
-## Readiness
+## What runs where
 
-We have a coherent proposed system architecture, integrated threat model and complete version 0.1 economic/recovery specification, sufficient for implementation modeling and prototyping. We do not yet have a validated production design. Defenses listed below are requirements, not demonstrated protections; their equations, fixed-point implementation, failover behavior and performance still require simulation, testing and independent review.
+There is one deployment today: a development deployment on Base mainnet. It is owner-controlled, has no timelock and is capped at 25 USDC per trade and 100 USDC net per market. It must not hold customer funds. Everything except the contracts runs on Cloudflare.
 
-The product is a proposed leveraged perpetual RFQ venue: on-chain USDC collateral/accounting/settlement, one operator's maker capital, off-chain prices approved by two of three operator-controlled signers, and external hedging. It is not permissionless market-making or independent-validator consensus. Governance, quoting, oracle, stablecoin, settlement-chain and hedge-venue dependencies remain explicit.
+| Component | Code | Where it runs in dev |
+| --- | --- | --- |
+| Clearing contract | `contracts/RFQClearing.sol` and its linked libraries, behind a transparent proxy | Base mainnet, proxy `0x6e67c66f955D88EBD6D69eD3343359651C6f45a1` |
+| Oracle adapter | `contracts/oracle/SignedPriceOracle.sol` | Base mainnet, called only by the clearing contract |
+| Oracle nodes 1, 2, 3 | `services/oracle-node` | Three Workers (`oracle-1`, `oracle-2`, `oracle-3`) with one container each, placed near western North America, western Europe and Asia-Pacific |
+| API | `services/api` | Dev runtime container |
+| Approvers A, B, C | `services/approver` | Dev runtime container, loopback only |
+| Indexer | `services/indexer` | Dev runtime container |
+| Stream gateway | `services/gateway` | Dev runtime container |
+| Hedger | `services/hedger` | Dev runtime container, with the local simulator as its venue. Nothing is sent to Hyperliquid. |
+| Trading app | `apps/web` | Worker `dev`, which is also the public edge for service routes |
+| Public docs | `apps/docs` | Worker `docs` |
+| Direct exit page | `apps/exit` | Worker `exit`, built for the dev clearing address |
+| Hedge dashboard and internal docs | `apps/admin`, `apps/internal-docs` | Workers `admin` and `internal-docs`, behind Cloudflare Access |
 
-## System map
+The API, approvers, indexer, gateway and hedger share one Cloudflare Container behind the Worker `rfq-markets-runtime-dev`. That Worker has no public route. The trading app's Worker reaches it through service bindings. The liquidation keeper (`services/keeper`) is built and tested locally, but the dev runtime does not start it.
+
+The runtime's Durable Object generates the approver, sponsor and emergency keys on first start and keeps them in its own storage. Each oracle node does the same for its signing key. Only the addresses leave Cloudflare. Container disk is ephemeral, so the Durable Object snapshots the SQLite journals every minute and restores them on start. A crash can lose up to a minute of journal. The contract still enforces nonces, signatures and caps, so that loss is operational. It is not a way around the checks.
+
+Hosting is described in [Cloudflare hosting](../operations/cloudflare.md), with the step-by-step in the [dev environment guide](../../deploy/cloudflare/DEV-ENVIRONMENT.md). Contract deployment and the dev caps are in [Base mainnet deployment](../operations/base-mainnet.md).
 
 ```mermaid
 flowchart TB
-    U[React frontend and wallet]
-    E[Public edge and independent fallback gateway]
-    GW[Stateless regional stream and request gateways]
-    API[One active execution leader: pricing, admission, approvals, submission]
-    ST[Warm standby API]
-    J[Pending intent and sender journal]
-    A[Private approver A]
-    B[Private approver B]
-    C[Private approver C]
-    O[Our three signed oracle nodes]
-    RPC[Independent Base RPC paths and live observers]
-    CH[Base clearing proxy: funds, positions and enforcement]
-    P[Rebuildable chain-event indexer]
-    H[Hedge executor and operational journal]
-    V[Hyperliquid first; other venues later]
-    K[Independent liquidation and exit keepers]
-    G[Cold governance and timelock]
-    GAS[Bounded gas reserve and refill trigger]
-
-    U --> E --> GW --> API
-    API -->|Versioned pricing frames| GW
-    ST -. Epoch fencing and reconciliation .-> API
-    API <--> J
-    API <--> A
-    API <--> B
-    API <--> C
-    O --> API
-    O --> A
-    O --> B
-    O --> C
-    O --> K
-    RPC --> API
-    RPC --> A
-    RPC --> B
-    RPC --> C
-    RPC --> H
-    RPC --> K
-    API --> CH
-    U -->|Owner actions and direct fallback| CH
-    CH --> P
-    P -->|Account history| U
-    P -->|Historical reconciliation| H
-    H <--> V
-    K --> CH
-    G --> CH
-    GAS -->|Limited ETH refill| API
+    U[Browser and wallet] --> W[Worker dev: trading app and public edge]
+    subgraph RT[Dev runtime container]
+        API[API]
+        A[Approver A]
+        B[Approver B]
+        C[Approver C]
+        IDX[Indexer]
+        GW[Stream gateway]
+        H[Hedger with simulated venue]
+    end
+    W -->|service bindings| API
+    W -->|service bindings| IDX
+    W -->|service bindings| GW
+    O1[Oracle node 1] --> API
+    O2[Oracle node 2] --> API
+    O3[Oracle node 3] --> API
+    API --> A & B & C
+    API -->|signed trade| CH[Clearing contract on Base]
+    U -->|direct exits| CH
+    CH --> IDX
+    IDX --> H
 ```
 
-The oracle report bundle accompanies applicable settlement/keeper calls for on-chain verification. The diagram shows logical components, not one server per box.
+## Trade flow
 
-## Elements and responsibilities
+The app opens on Up / Down (Home, `/updown/<market>`): an amount, a multiplier and two buttons. Pro (`/trade/<market>`) is the full terminal, with limit and stop orders. Both use the same flow.
 
-| Element | Baseline technology | Responsibility / authority |
-| --- | --- | --- |
-| Frontend | React, TypeScript, TanStack Router and Query; wallets through wagmi/viem (EIP-6963 discovery) | Quotes, generated user limits, exact typed signatures, positions, collateral and transaction state. Never trusted accounting. |
-| Public ingress | Managed edge candidate plus independent fallback | Static delivery, abuse limits and routing; cannot approve trades. Exact vendor configuration pending. |
-| Public gateways | Stateless regional HTTP + SSE; optional equivalent WebSocket transport | Fan out shared pricing frames and forward one-shot firm requests; hold no settlement authority. |
-| API leader + warm standby | TypeScript, Fastify | Produces pricing frames and serializes firm pricing, portfolio admission, reservations, approval collection, gas signing and broadcast. Only this writer is single-active. |
-| API journal | SQLite baseline candidate for one writer; tested recovery | Pending intents, escaped approvals, reservations, sender nonces and replacements. No second customer balance ledger. |
-| Approvers A/B/C | Minimal isolated services; TypeScript/viem candidate | Each independently verifies the complete deterministic policy and signs identical exact terms with its own key. |
-| Clearing system | Solidity, stable upgradeable proxy; Foundry for tests | Authoritative collateral, positions, funding, settlement, margin, risk, replay and resolution rules. |
-| Oracle | Three signed oracle nodes on Cloudflare (US, Europe, Asia) and the on-chain `SignedPriceOracle` (2-of-3 median) | The API combines node batches into one report; each approver dry-runs the adapter and clearing verifies again on settlement. See [Price oracle](oracle.md). |
-| Live chain observers | Independent RPC subscriptions plus reconciled reads | Fresh state for API, approvers, hedging and keepers; checkpointed disposable caches. |
-| User read model | Current local SQLite event projection; production database chosen after load measurement | Rebuildable chain-derived application read model for positions and history. Live risk is computed from block-tagged contract views plus the current oracle snapshot. It never authorizes settlement. |
-| Hedge executor | TypeScript/venue adapter candidate + SQLite operational journal | Actual external orders, fills and reconciled hedge exposure; separate trade authority. |
-| Keepers | Independent lightweight services | Permissionless contract-defined liquidation and fallback execution; direct chain inputs. |
-| Gas reserve | Capped funding mechanism plus operations trigger | Automatically supplies allowlisted gas senders under independently enforced limits. |
-| Governance | Cold multisig and timelock | Upgrades, signer additions, oracle changes and risk expansion. Separate constrained emergency roles. |
-| Operations | Pinned deploy artifacts, backups, external alerts and restore drills | Availability, incident response and recovery; no universal credential controlling all signers. |
+1. **Prices.** Each oracle node streams top-of-book from several exchanges, takes a median mid and signs a price batch about once a second. The API combines the latest batch from each node into one report. See [Price oracle](oracle.md).
+2. **Indication.** The browser gets one shared pricing frame over Server-Sent Events and works out the price for the typed amount itself. Watching and typing reserve nothing. See [Scale and streaming](scale-and-streaming.md).
+3. **Quote.** On tap, the app asks the API for a firm quote. The API prices it from the oracle report, the market spread, settled inventory and every open reservation. There is no trading fee. The platform earns a 2 bps markup that is part of the quoted price. The API reserves the trade's exposure before any approver can sign. See [Gross approval reservations](gross-approval-reservations.md).
+4. **User signature.** The user signs an EIP-712 intent: account, market, size, limit price, nonce, deadline and reduce-only flag. The app checks the payload against what the user asked for. The build pins the chain, clearing contract and USDC token. With one-tap trading, a session key signs instead of the wallet (see below).
+5. **Approvals.** The API asks all three approvers at once and stops at the first two matching signatures. Each approver checks the quote on its own: price against the oracle report, quote age (at most 8 seconds), exposure and hedge limits. It records the approval in its journal before it returns a signature.
+6. **Settlement.** The API's gas sponsor submits the bundle. The contract checks the user's authority, two distinct current approvers, the leader epoch and policy versions, the oracle report, the limit price, margin, maker capital, caps and stress. Then it settles. The sender has no authority of its own: anyone could submit the same signed bundle.
+7. **After settlement.** The indexer turns clearing events into account and history views. The hedger reads finalized exposure and hedges it, which in dev means the simulator. See [Indexer](indexer.md) and [Hedging](hedging.md).
 
-Base is the proposed single settlement chain, with native USDC collateral. External hedge venues are separate execution and custody domains. No bridge or external venue balance is assumed to supply instantaneous Base withdrawal liquidity. Network contracts, SDK versions and feed availability must be pinned and verified during implementation.
+### One-tap trading
 
-## Contracts, funds and authority
+One-tap trading uses a contract session key. The app generates the key in the tab and keeps it in memory only. The owner signs one grant (`grantSessionWithSignature`), which the API sponsors. The contract limits the session's markets, per-trade size, total size and expiry (at most 30 days). The app asks for 8 hours, 2,500 USDC per trade and 10,000 USDC in total. A session key cannot withdraw, cancel, create another session or change authority. A trade over the limits goes back to the wallet. See [Wallets and deposits](wallets-and-deposits.md).
 
-Use one principal clearing proxy with internal modules/libraries rather than many independently upgradeable contracts. Logical modules: collateral ledger; positions and funding; settlement; signer/session authorization; oracle validation; margin and portfolio risk; liquidation/bankruptcy; governance hooks. Separate governance/timelock and gas-budget contracts may be appropriate.
+### Deposits and exits
 
-Compatible upgrades preserve the proxy address, balances and positions. An immutable vault does not remove governance trust if upgradeable logic can invent withdrawals. No unrestricted emergency upgrade bypass. Storage layout and live financial state must both survive migration. [OpenZeppelin proxy documentation](https://docs.openzeppelin.com/upgrades-plugins/proxies).
+Base USDC deposits can be gas-free: the wallet signs a USDC transfer authorization and the API sponsors it. Withdrawals are owner-signed intents that the API sponsors. A user can also withdraw, cancel nonces, revoke sessions and, while trading is paused, close positions from their own wallet. The exit page (`apps/exit`) does this without the API.
 
-Settlement atomically verifies user authority, exact signed terms, two distinct current approvers, leader epoch, signer/policy versions, oracle eligibility, replay state, funding accrual, current-state execution-price acceptance, account margin, maker backing and aggregate limits before committing accounting and events. Version 0.1 specifies exact-size atomic fills and fixed-point rounding direction; adding partial fills later requires cumulative nonce/fee accounting.
+## Trust model
 
-Customer collateral, posted maker capital, insurance and external hedge margin are distinct. Version 0.1 treats the approximately $1M as a total budget and allocates 600k Base maker backing, 150k Base insurance, 200k external hedge margin and 50k operations/treasury. If $1M is intended only for maker backing, preserve the safety ratios and fund the other categories additionally. Do not double-count or use expected profitability as backing. On-chain balances are observable whether or not marketed.
+- **The contract is the authority.** It holds all collateral and positions. The API, approvers, indexer and edge cannot move funds by themselves.
+- **Two of three approvers.** If one approver is down, two remain. One compromised approver cannot meet the threshold. Two compromised approvers can sign bad prices, but only within what the contract still checks: caps, margin, maker capital, stress and the oracle report. In dev, all three keys sit in one Durable Object and the approvers share a container, so dev has none of this independence.
+- **Two of three oracle nodes.** The adapter needs signed batches from a majority of the configured nodes. It takes the median and skips any market where the nodes disagree or the price jumps. All three nodes run on one Cloudflare account. The [security review](../release/security-review.md) lists an open issue: whoever submits a report can choose which batches form it.
+- **The operator is the counterparty.** Maker capital, insurance and the hedge account are kept apart. The contract counts only maker capital and insurance held on Base.
+- **Governance.** In dev, one owner key controls governance and the ProxyAdmin, so upgrades and cap changes take effect at once. Production moves both to a 72-hour timelock run by a Safe. The emergency council can pause, disable a market and tighten limits. It cannot unpause, upgrade or move funds.
+- **The edge.** Cloudflare can block or delay requests. It cannot create a user signature, an approver signature, an oracle report or a contract state change.
 
-Owner-authorized deposit, withdrawal, cancellation and session revocation bypass quote approval, subject to contract risk checks. Session trading is optional and scoped by market, size/turnover, fee, expiry and withdrawal prohibition; exact limits need specification. A compromised session can still trade adversely within its scope.
+## Fail-closed checks
 
-## Normal execution and integrated economic defenses
+These checks refuse service rather than guess. Do not weaken them to make a test pass.
 
-The normal user-facing and generated-intent behavior is specified in [trading-ux-and-intents.md](../product/trading-ux-and-intents.md). Users enter an amount, view the live estimate and click Buy/Sell. Protective intent fields are populated automatically; advanced settings expose slippage and related preferences.
+- The contract rejects a trade if any market with open positions has a price older than 15 seconds. A market without a fresh agreed price cannot trade.
+- Approvers refuse quotes older than 8 seconds and check exposure and hedge state themselves, so a compromised API cannot get past them.
+- A large hedge gap, an unhealthy hedger or a stale hedge snapshot puts the market into reduce-only.
+- Oracle nodes answer 503 until the deployment record names their adapter and lists their address as a signer.
+- The dev runtime refuses to run against a deployment whose approvers are not its own keys.
+- The trading app refuses a `/v1/config` that names a different chain, clearing contract or USDC token, and signs only for the pinned contract.
+- The public edge returns a structured 503 when a service binding or rate limiter is missing, 451 for blocked locations and 404 for unknown service routes. Private pages stay locked if Cloudflare Access is missing or misconfigured.
+- The hedger cannot start on Base mainnet yet. Quotes return 503 there until that path is enabled on purpose.
 
-1. Stream one shared market and portfolio-pricing frame. The browser computes the exact-size indication with shared fixed-point code; browsing and typing create no request or reservation. A firm quote is minted only after the click.
-2. User signs a bounded intent: account, market, direction, size, limit, fee ceiling, deadline, nonce and relevant reduce-only/session constraints. Domain binds chain and contract.
-3. The one active API atomically calculates price and reserves portfolio capacity in a short local critical section. It does not wait for remote approvals or chain settlement inside the queue.
-4. Price from shared cumulative inventory cost; splitting wallets does not reset liquidity or size charges. Include fees, hedge cost and bounded inventory adjustments.
-5. Treat outstanding quotes as optional executable commitments. Never assume opposing pending orders both fill or grant a favorable offset discount based on an order that can disappear. Capacity remains reserved while an escaped quote could execute.
-6. Request all three approvers in parallel, collect two matching signatures, simulate and submit immediately. Each approver reads independent inputs and enforces the full policy.
-7. Contracts enforce the simple current-state impact acceptance boundary and market/side/portfolio constraints even if the API hid outstanding orders. Two-of-three approvals do not supply global off-chain ordering. [economic specification](economic-specification.md) defines the version 0.1 potential, risk-reduction credit caps and test parameters.
-8. Display provisional execution promptly; reconcile inclusion and reorgs through the chain-derived indexer without double counting. Refresh approval internally only under unchanged user authority; an exact accepted fill is never silently worsened.
-9. Hedge reconciled exposure at the selected confirmation stage within explicit risk limits; record and reconcile external outcomes.
+## Detailed docs
 
-Correlated markets share one admission budget and factor/stress accounting, with independent gross limits. Net delta alone does not cover basis jumps or separate-account defaults. Current contract caps cannot rely on unverified external hedge state. Conservative constraints may decline a valid user request when shared capacity or price limits are exhausted; no unconditional-fill promise.
+Architecture:
 
-Other mandatory controls: quote-stuffing budgets; deterministic eligible oracle observations; fee/rounding resistance; bounded sponsorship; funding accrual before exposure changes; replay-safe cancellation/retry; wash-reward economics; reference-market manipulation checks; and hedge execution slippage limits. Full attack cases and simulation requirements are in [2026-09-08-adversarial-flow.md](../history/2026-09-08-adversarial-flow.md).
+- [Contracts](contracts.md): settlement order, margin, liquidation, resolution and authority.
+- [Price oracle](oracle.md): the oracle nodes, the on-chain adapter and price history.
+- [Economic specification](economic-specification.md): margin, funding, impact and the loss waterfall.
+- [Gross approval reservations](gross-approval-reservations.md): how exposure is reserved before signing.
+- [Hedging](hedging.md): venue capital, the hedge loop and reconciliation.
+- [Indexer](indexer.md) and [read model and orders](read-model-and-orders.md): chain-derived account state and conditional orders.
+- [Scale and streaming](scale-and-streaming.md), [wallets and deposits](wallets-and-deposits.md) and [edge and origin privacy](edge-and-origin-privacy.md).
 
-## Keys, privacy and recovery
+Operations:
 
-Three distinct approver keys, never copies of one secret. One unavailable signer leaves two usable; one compromised signer alone cannot satisfy the threshold. All mandatory policy checks run on each signer. Two compromised signers can authorize hostile prices within remaining contract bounds. Shared code bugs, shared provider control and shared deployment credentials can defeat nominal isolation.
+- [Local development](../operations/local-development.md): the full stack on a local chain.
+- [Base mainnet deployment](../operations/base-mainnet.md): the dev and production profiles.
+- [Cloudflare hosting](../operations/cloudflare.md) and the [dev environment guide](../../deploy/cloudflare/DEV-ENVIRONMENT.md).
+- [Market lifecycle](../operations/market-lifecycle.md), [adding a market](../operations/adding-a-market.md) and [risk operator](../operations/risk-operator.md).
 
-Approvers expose no public application ingress. Only enrolled API identities request approval over mutually authenticated private transport or outbound connections. The API's transport identity grants connectivity, not fund control. Each approver has separately controlled provisioning, release authorization, key recovery and independent primary data paths. Stable keys avoid continual renewal; loss/compromise invokes explicit revocation/version change and cold replacement. Removal never silently reduces the threshold below two. Exposure/spend budgets survive rotation.
+Release:
 
-API holds a bounded gas key plus scoped network/oracle/RPC credentials. It has no maker, hedge, treasury or upgrade authority. The hedge host holds separately limited venue trading credentials; these can still lose venue capital. Cold governance and withdrawal authority are not on these hosts.
+- [Implementation plan](../release/implementation-plan.md): what is done and what is open.
+- [Release checklist](../release/release-checklist.md): the evidence needed before real capital.
+- [Security review](../release/security-review.md): the October 2026 findings and open decisions.
 
-API failover: the existing 2-of-3 emergency council advances an expected-current leader epoch, observes sealed inclusion, reconciles old fills/commitments, then routes traffic to a pre-enrolled standby. The expected value serializes competing transitions. Old approvals become unusable after the transition; trades before it must be reconciled. Each approver durably logs before returning a signature, so two signer logs identify every potentially escaped quorum bundle. The council cannot unpause, upgrade, transfer funds or add authority. Candidate identity and private approver ingress remain operational controls, rather than a second signature protocol in the custody contract.
+## History
 
-Hedge failover separately requires venue credential revocation or otherwise verified fencing of the old writer, followed by reconciliation. A Base epoch or database lease does not stop an old host trading on a hedge venue.
-
-## Data, gas and availability
-
-Base is authoritative; one rebuildable event projection is the customer read model. The executable local indexer uses SQLite and canonical block-hash reconciliation. Production may use PostgreSQL or a maintained indexing framework after dependency and load review. API intent/sender and hedge journals record different operational facts, not duplicated authoritative balances. Lost chain-derived data is rebuildable; unknown external or signed commitments require reconciliation before resuming risk. See [indexer.md](indexer.md).
-
-Trading is sponsored by API gas wallets; ordinary automatic top-ups come from a separate allowlisted reserve under individual/global caps, maximum balances, refill rates and a finite allowance. API cannot raise those limits. Independent refill triggering has recovery gas. Treasury replenishment is periodic. [trading UX](../product/trading-ux-and-intents.md) specifies signed USDC deposit, lazy scoped-session certificates and relayed owner withdrawals, with direct calls as fallback; deployed-token and wallet compatibility must be tested.
-
-Oracle observations carry identity, schema and validity metadata, but report expiry alone is not the safe trading freshness threshold. [Chainlink report schema](https://docs.chain.link/data-streams/reference/report-schema-v3). Specify maximum age, report selection, cross-market consistency and access for independent exit keepers. No arbitrary stale-price fallback or silent replacement oracle.
-
-Run independent keeper paths for liquidation and direct fallback exits. Partial liquidation, bankruptcy, loss allocation and outage valuation are mandatory but not finalized. An oracle outage cannot be solved simply by removing approver requirements. If Base cannot include transactions, there is no immediate on-chain execution or withdrawal guarantee.
-
-## Proposed hosting layout
-
-Countries below retain the earlier shortlist, not verified privacy guarantees or purchased servers. VPSBG/Bulgaria, Servers.guru/Netherlands and 1984/Iceland remain provider candidates pending terms, infrastructure independence, account recovery and latency checks. Exact instance sizing and monthly cost are unset.
-
-| Host group | Proposed placement | Workloads |
-| --- | --- | --- |
-| API primary / standby | Bulgaria / Netherlands | Same combined API application, separate bounded gas keys and local journals. |
-| Approvers A / B / C | Bulgaria / Netherlands / Iceland | Three isolated signer hosts with separate controls; no API co-location. |
-| Data primary / recovery | Bulgaria / Netherlands | Rebuildable event indexer and its database; independent keeper/monitoring processes with limited credentials. Recovery capacity can rebuild history but must meet a measured recovery target. |
-| Hedge primary / standby | Bulgaria / Netherlands, separate from API/signers | Hedge execution and durable operations state; standby inactive until safely fenced takeover. |
-| Independent frontend/gateway | Iceland, separate from signer | Static recovery interface and alternate ingress. |
-| Public edge | Managed global service candidate | Primary frontend/ingress; independent fallback avoids sole-edge dependency. |
-| Optional owned Base node | Dedicated separately sized host | Additional data independence; production RPC diversity still needed. |
-
-The table describes security and recovery domains, not a mandatory ten-server purchase. Start with the smallest placement that preserves separate approver keys, API/hedge isolation and a warm execution recovery path; add stateless gateways and read replicas from measured traffic. Only the execution writer and its warm standby are single-active. A provider outage can still pause trading during data/hedge recovery despite an available signer quorum.
-
-Origins are hidden from ordinary public ingress, not from providers or every network observer. Limit wallet/IP linkage, logs and retention; isolate admin access and signer deployment credentials; keep backups encrypted with separate recovery controls. Hosting country does not make public chain balances private or remove stablecoin/chain/venue dependencies.
-
-## Open specifications and launch gates
-
-The first complete candidate choices for these items now live in [economic-specification.md](economic-specification.md). They include initial capital allocation, quote equations, margin tiers, funding, oracle modes, liquidation, insolvency resolution, hedge limits, governance and recovery. They are specifications to simulate and audit, not validated production parameters. The table below therefore tracks validation work rather than missing conceptual mechanisms.
-
-| Item | What remains |
-| --- | --- |
-| Financial model | Integer model and one-year hourly synthetic-book replay now run; add high-frequency shocks, venue basis/depth, stochastic order flow and parameter sweeps. |
-| Economic execution | Prove production conservative pending bounds and calibrate spread/impact/expiry without subsidy loops. |
-| Resolution | Local partial liquidation, loss waterfall and batched pro-rata resolution pass; add multi-account fuzzing, live-oracle tests and recovery-after-payout cases. |
-| Independent exits | Verify primary/fallback feed availability, request/execute behavior and prolonged no-price handling. |
-| Recovery | Signer/API WALs, signed-before-broadcast sender recovery, API restart reservation reload, canonical index rebuild and idempotent hedge recovery run locally; prove process death at every broadcast boundary, automatic fee replacement, Base reorg/RPC disagreement, leader promotion and real venue credential fencing. |
-| Governance | Transparent-proxy administration and emergency restrictions exist and upgrade validation passes; deploy the timelock/multisigs and verify the ProxyAdmin owner, every selector and delay. |
-| UX and deployment | Local amount/Buy/Sell ticket, injected-wallet intent signing, exact API/approver quorum and sponsored local-chain settlement run; integrate production oracle/RPC inputs, then benchmark providers, cost, tail latency and recovery objectives. |
-
-Current executable evidence is catalogued in [2026-09-11-validation-report.md](../history/2026-09-11-validation-report.md), and the concise local-versus-production assessment is in [2026-09-10-local-readiness-review.md](../history/2026-09-10-local-readiness-review.md). The local API, contract-shaped approvals, scoped quick-trading sessions, restart-safe sender journal, chain-derived read model, owner-signed exit paths and hedge loop are connected. Portfolio risk math sits in a stateless linked library, and quotes pin live epoch/policy/signer-set versions. Base Sepolia now exercises native USDC custody, deployed Safe/timelock roles, authenticated Pyth updates and actual 2-of-3 sponsored fills. A repeatable lifecycle also drives finalized Base exposure into real Hyperliquid testnet fills and unwinds both sides through an exact reduce-only RFQ. The remaining external boundaries are independently provisioned RPCs, production credential custody and failover, long-running load/soak evidence, and independent economic/security audits before any bounded deployment.
+Earlier designs, audits and the retired Base Sepolia deployment are in [archive/history](../archive/history/). They explain how the system got here. Where they disagree with this page, this page wins.

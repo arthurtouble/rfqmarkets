@@ -2,7 +2,7 @@
 
 A leveraged perpetual RFQ venue on Base. Customers hold USDC collateral in an on-chain clearing contract; one operator prices trades, three private approvers co-sign them (two of three), and the operator hedges its inventory on Hyperliquid. The contract is the ledger: every balance and position can be rebuilt from chain events.
 
-The [takeover pack](docs/takeover/README.md) is the best single read: it maps the product, every deployment, the decisions behind them and the plan to production.
+Start with [docs/README.md](docs/README.md), the index of the internal knowledge base: architecture, operations, the release plan and, under Archive, the October 2026 takeover pack and older records.
 
 ## Where it runs today
 
@@ -14,7 +14,7 @@ The [takeover pack](docs/takeover/README.md) is the best single read: it maps th
 
 The trading UI opens on the Up / Down screen (`/updown/<market>`): an amount, a multiplier and two buttons. The full terminal, with limit and stop orders, is one tap away under **Pro** (`/trade/<market>`). Trades carry no fees; the platform earns a 2 bps markup inside the quoted spread.
 
-The Base mainnet deployment is a **development** deployment: owner-controlled, no timelock, capped at 25 USDC per trade and 100 USDC per market. Services run in a Cloudflare container with the hedger simulated. Production governance (Safes, timelock, independent review) comes later and is tracked in the [release checklist](docs/release/release-checklist.md). The earlier Base Sepolia deployments are retired; their record is in [docs/history](docs/history/base-sepolia-deployment.md).
+The Base mainnet deployment is a **development** deployment: owner-controlled, no timelock, capped at 25 USDC per trade and 100 USDC per market. Services run in a Cloudflare container with the hedger simulated. Production governance (Safes, timelock, independent review) comes later and is tracked in the [release checklist](docs/release/release-checklist.md). The earlier Base Sepolia deployments are retired; their record is in the [archive](docs/archive/history/base-sepolia-deployment.md).
 
 ## Repository layout
 

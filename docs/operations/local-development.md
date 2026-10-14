@@ -61,13 +61,13 @@ Each deployment creates a throwaway browser test wallet, funds it with local ETH
 
 The local market-data adapter subscribes to Coinbase Advanced Trade's unauthenticated BTC-USD and ETH-USD ticker channel and consumes its best bid and ask. It maintains a heartbeat subscription, reconnects after failure and falls back to Coinbase Exchange's public ticker REST endpoint when the WebSocket observation is absent or older than 1.5 seconds. The API fails closed if neither transport produces a fresh observation. The adapter encodes those prices into the mock oracle's contract report. This exercises the full report/approval/settlement path but does not claim Coinbase data is a production oracle; external deployments use the signed oracle described in [Oracle](../architecture/oracle.md).
 
-With the services running, exercise the real HTTP signature path using an ephemeral local EOA. The smoke test funds the wallet from the local faucet before trading against that collateral, and `npm run smoke:funds` covers deposits and withdrawals on their own:
+With the services running, exercise the real HTTP signature path using an ephemeral local EOA. The smoke test funds the wallet from the local faucet before trading against that collateral, and `npm run smoke -- funds` covers deposits and withdrawals on their own:
 
 ```bash
-npm run smoke:local
-npm run smoke:funds
-npm run smoke:live-market
-npm run smoke:quote-load
+npm run smoke -- local
+npm run smoke -- funds
+npm run smoke -- live-market
+npm run smoke -- quote-load
 ```
 
 ## Current request path
@@ -89,6 +89,6 @@ The trading app (`apps/web`, see its README) connects the local stack's funded d
 
 ## Security boundary still missing
 
-Approvers run as separate loopback-only OS processes, sign the contract's exact EIP-712 field layout and independently verify live contract state and the API's report against their pinned RPC. They fail closed when the configured secondary RPC has a different hash at that height. After assembling two signatures, the API performs a final `eth_call` of the exact transaction, including the adapter-reported oracle verification fee, before journaling and broadcasting it. `npm run smoke:approver-outage` suspends one process and proves the other two still settle, then suspends a second and proves the API fails closed. Production still requires genuinely independent provider, deployment and key-control domains for the signers.
+Approvers run as separate loopback-only OS processes, sign the contract's exact EIP-712 field layout and independently verify live contract state and the API's report against their pinned RPC. They fail closed when the configured secondary RPC has a different hash at that height. After assembling two signatures, the API performs a final `eth_call` of the exact transaction, including the adapter-reported oracle verification fee, before journaling and broadcasting it. `npm run smoke -- approver-outage` suspends one process and proves the other two still settle, then suspends a second and proves the API fails closed. Production still requires genuinely independent provider, deployment and key-control domains for the signers.
 
-The API journal now holds commitments plus every signed-before-broadcast sender attempt; it does not duplicate customer balances. `npm run smoke:sender-replacement` disables automining, forces a same-nonce fee replacement and proves the replacement is the included attempt. `npm run smoke:failover` advances the expected epoch through the local emergency-council account, proves an old intent is fenced immediately, and settles a fresh quote under the new epoch. A deployed production council/Safe and externally enforced gas-refill budget remain open. The local indexer is replaceable chain-derived infrastructure. [indexer.md](../architecture/indexer.md) defines its production boundary and the Ponder dependency gate.
+The API journal now holds commitments plus every signed-before-broadcast sender attempt; it does not duplicate customer balances. `npm run smoke -- sender-replacement` disables automining, forces a same-nonce fee replacement and proves the replacement is the included attempt. `npm run smoke -- failover` advances the expected epoch through the local emergency-council account, proves an old intent is fenced immediately, and settles a fresh quote under the new epoch. A deployed production council/Safe and externally enforced gas-refill budget remain open. The local indexer is replaceable chain-derived infrastructure. [indexer.md](../architecture/indexer.md) defines its production boundary and the Ponder dependency gate.

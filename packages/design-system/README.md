@@ -1,18 +1,22 @@
 # Design system
 
-The shared look of every RFQ Markets surface. The full reference (principles,
-components, screens, flows and the rollout plan) is the published design
+The shared look of every RFQ Markets surface. `tokens.json` is the source of
+truth; everything else is generated from it or built on it. The specimen page
+(`npm run dev:design-system`) renders the tokens and components straight from
+these files, and `docs/product/design-system.md` holds the written guidance. The
+longer reference (principles, screens and flows) is the published design
 system: https://claude.ai/artifact/CJRW4HX7NGNEmwYCb3aLU7
 
 | File | What it holds |
 | --- | --- |
-| `tokens.json` | The source of truth: colors for the dark and light themes, type, spacing, radius, shadows and sizes. |
+| `tokens.json` | Colors for the dark and light themes, type, spacing, radius, shadows and sizes, each with a usage note. |
 | `tokens.css` | Generated from `tokens.json` by `npm run build:tokens`. CI fails if it is stale (`npm run check:tokens`). |
+| `colors.ts` | Generated with `tokens.css`: the resolved colors per theme, for code that draws outside CSS, such as the share card. |
 | `components.css` | Component classes prefixed `rfq-` (buttons, side toggle, amount input, sheets, toasts, tables…). |
-| `legacy.css` | Old token names mapped onto the new ones for apps that have not been rebuilt yet. |
+| `logo.svg` | The mark: the R on the `brand` color. The favicons use the same drawing. |
 
 Apps import `tokens.css` and `components.css`, and the Geist fonts from
 `@fontsource-variable/geist` and `@fontsource/geist-mono` (the apps' CSP only
 allows self-hosted fonts). Without a `data-theme` attribute the page follows
 the system light or dark setting; `data-theme="dark"` or `"light"` pins it.
-Never put hex values in app CSS: add a token here first.
+Never put hex values in app code: add a token here first.

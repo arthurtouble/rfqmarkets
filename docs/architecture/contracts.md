@@ -98,6 +98,6 @@ Governance can withdraw maker capital only when the remaining backing, less cust
 
 ## Current engineering limits
 
-Runtime sizes with the IR pipeline at `optimizer_runs = 1`: RFQClearing 18,706 bytes, RFQRiskMath 9,799, RFQResolution 6,776, RFQSettlement 6,582, RFQLiquidation 5,804, RFQSignatureVerifier 2,700. `scripts/compile-contracts.mjs` fails the build if any contract exceeds EIP-170. Library addresses are recorded in the deployment manifest and must be verified with the implementation and proxy.
+Runtime sizes with the IR pipeline at `optimizer_runs = 1`: RFQClearing 22,376 bytes, RFQRiskMath 9,429, RFQSettlement 9,424, RFQResolution 7,196, RFQLiquidation 6,222, RFQSignatureVerifier 3,928 (measured 14 October 2026). `scripts/compile-contracts.mjs` fails the build if any contract exceeds EIP-170. Library addresses are recorded in the deployment manifest and must be verified with the implementation and proxy.
 
 Production still needs the timelock handover above, live validation of the oracle nodes on Base, and an external audit. The browser prototype keeps the limited session secret in tab-scoped storage; production requires a strict content-security policy, no unreviewed third-party scripts and a provider/session design chosen after wallet testing.

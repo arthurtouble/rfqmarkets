@@ -16,15 +16,7 @@ export type Page = {
 };
 export type Heading = { level: number; text: string; slug: string };
 
-const SECTION_ORDER = [
-  "Start here",
-  "Takeover",
-  "Architecture",
-  "Product",
-  "Operations",
-  "Release",
-  "History",
-];
+const SECTION_ORDER = ["Start here", "Architecture", "Product", "Operations", "Release", "Archive"];
 
 export const slugify = (text: string) =>
   text
@@ -114,10 +106,8 @@ export function buildManual(sources: Record<string, string>): Page[] {
       (a, b) =>
         rank(a) - rank(b) ||
         Number(b.id.endsWith("README")) - Number(a.id.endsWith("README")) ||
-        // History is chronological by file name; numbered takeover files keep their order.
-        (a.section === "History" || a.section === "Takeover"
-          ? a.id.localeCompare(b.id)
-          : a.title.localeCompare(b.title)),
+        // The archive keeps file order: dated history files and the numbered takeover pack.
+        (a.section === "Archive" ? a.id.localeCompare(b.id) : a.title.localeCompare(b.title)),
     );
 }
 
