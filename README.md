@@ -20,7 +20,7 @@ The Base mainnet deployment is a **development** deployment: owner-controlled, n
 | --- | --- |
 | `contracts/` | Solidity clearing contract, oracle adapter, libraries, mocks and tests |
 | `services/` | `api` (pricing and execution leader), `approver`, `gateway` (SSE fan-out), `indexer`, `keeper`, `hedger` (TypeScript plus a Python Hyperliquid bridge) |
-| `packages/` | Shared TypeScript (`shared`) and design tokens (`design-system`) |
+| `packages/` | Shared TypeScript (`shared`), design tokens (`design-system`), the TypeScript SDK (`sdk`) and the MCP server that lets AI agents trade ([`mcp`](packages/mcp/README.md)) |
 | `apps/` | React apps: `web` (trading), `admin` (operations), `exit` (direct withdrawal), `docs` (public guide), `internal-docs` (this repository's `docs/` as a private manual), `design-system` (specimen) |
 | `deploy/` | Cloudflare Workers and container config, host units, alert rules and the incident runbook |
 | `scripts/` | Local stack, deployment, smoke, soak and release-evidence tooling |
