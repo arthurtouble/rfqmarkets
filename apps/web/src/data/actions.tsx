@@ -80,8 +80,8 @@ type Trading = {
   placeTpsl(input: TpslInput): Promise<string[] | undefined>;
   /** Cancels an order by its nonce; for a TP/SL leg this cancels both legs. */
   cancelOrder(order: RestingOrder): Promise<void>;
-  /** Closes `fractionBps` of the position (1..10_000, default all) at a firm reduce-only quote. */
-  closePosition(market: Market, fractionBps?: number): Promise<void>;
+  /** Closes `fractionBps` of the position (1..10_000, default all) at a firm reduce-only quote; resolves to the fill when it settles. */
+  closePosition(market: Market, fractionBps?: number): Promise<ClosedAt | undefined>;
   /** Closes `fractionBps` of every open position, one quote each. Quick trading signs within its limits without prompts. */
   closeAll(fractionBps?: number): Promise<CloseAllResult | undefined>;
   emergencyClose(market: Market): Promise<void>;
@@ -93,6 +93,9 @@ type Trading = {
   enableQuickTrading(): Promise<boolean>;
   revokeQuickTrading(): Promise<void>;
 };
+
+/** The price and fee a close settled at (USDC 1e6). */
+export type ClosedAt = { price: bigint; fee: bigint };
 
 const TradingContext = createContext<Trading | null>(null);
 const sideLabel = (side: Side) => (side === "buy" ? "Long" : "Short");
@@ -423,7 +426,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             .filter(Boolean)
             .join(" · "),
           txHash: result.transaction?.hash,
-          value: undefined,
+          value: { price: BigInt(quote.expectedPrice), fee: BigInt(quote.fee) },
         };
       }),
 
