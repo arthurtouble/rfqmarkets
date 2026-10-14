@@ -8,6 +8,8 @@ import { AbiCoder, Wallet, keccak256 } from "ethers";
 import { buildApprover } from "../../approver/src/server.js";
 import { buildApi } from "./server.js";
 import { importApproverRecovery } from "../../../scripts/approver-recovery.js";
+import { DEFAULT_BASE_SPREAD_BPS } from "../../../packages/shared/src/markets.js";
+import { PLATFORM_MARKUP_BPS } from "../../../packages/shared/src/pricing.js";
 
 const directory = mkdtempSync(join(tmpdir(), "rfq-services-"));
 const chainId = 31_337n;
@@ -1026,16 +1028,16 @@ test("market intents bind reduce-only and cannot be re-prepared with weaker sema
   await target.close();
 });
 
-test("a sell's fee cap covers a fill above the expected price as far as its protection allows below", async () => {
+test("quotes carry no fee and intents cap the fee at zero, so a fill cannot charge one", async () => {
   const target = buildApi();
   await target.ready();
-  const prepare = async (side: "buy" | "sell", nonce: string, amount = "200") => {
+  for (const [side, amount, nonce] of [
+    ["sell", "200", "881001"],
+    ["sell", "10", "881003"],
+    ["buy", "200", "881002"],
+  ] as const) {
     const quote = (
-      await target.inject({
-        method: "POST",
-        url: "/v1/quote",
-        payload: { market: "ETH", side, amount },
-      })
+      await target.inject({ method: "POST", url: "/v1/quote", payload: { market: "ETH", side, amount } })
     ).json();
     const prepared = await target.inject({
       method: "POST",
@@ -1043,33 +1045,15 @@ test("a sell's fee cap covers a fill above the expected price as far as its prot
       payload: { quoteId: quote.quoteId, account: user.address, nonce },
     });
     assert.equal(prepared.statusCode, 200, prepared.body);
-    return { quote, intent: prepared.json().intent };
-  };
-  // The fee follows the notional at the fill's mid, so a sell filled higher pays more. Its cap allows
-  // the notional to rise by the protection's width, even on a 10 USDC sell where a 1-unit rise matters.
-  for (const [amount, nonce] of [
-    ["200", "881001"],
-    ["10", "881003"],
-  ] as const) {
-    const sell = await prepare("sell", nonce, amount);
-    const expected = BigInt(sell.quote.expectedPrice),
-      width = expected - BigInt(sell.quote.worstPrice);
-    assert.ok(
-      BigInt(sell.intent.maxFee) > BigInt(sell.quote.fee),
-      `a ${amount} USDC sell may pay a larger fee`,
-    );
-    assert.ok(
-      BigInt(sell.intent.maxFee) * expected >= BigInt(sell.quote.fee) * (expected + width),
-      `a ${amount} USDC sell's fee cap covers its protection width`,
+    assert.equal(quote.fee, "0", `a ${amount} USDC ${side} has no fee`);
+    assert.equal(prepared.json().intent.maxFee, "0", `a ${amount} USDC ${side} caps its fee at zero`);
+    // The platform markup is in the price: the base component is the market's spread plus the markup.
+    assert.equal(
+      BigInt(quote.spread.baseBps),
+      BigInt(DEFAULT_BASE_SPREAD_BPS) + PLATFORM_MARKUP_BPS,
+      `a ${side} quotes the markup`,
     );
   }
-  const buy = await prepare("buy", "881002");
-  const buyNotional = (BigInt(buy.quote.baseDelta) * BigInt(buy.quote.worstPrice)) / 10n ** 18n;
-  assert.ok(BigInt(buy.intent.maxFee) * BigInt(buy.quote.amount) >= buyNotional * BigInt(buy.quote.fee));
-  assert.ok(
-    BigInt(buy.intent.maxFee) > BigInt(buy.quote.fee),
-    "a buy's fee cap still follows its price protection",
-  );
   await target.close();
 });
 

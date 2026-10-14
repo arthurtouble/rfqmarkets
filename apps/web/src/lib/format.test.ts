@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bpsLeverage, dateTime, fundingApr, microToInput, parseUsdcInput, signedUsdc, usdc } from "./format.js";
+import { bpsLeverage, dateTime, feeLabel, fundingApr, microToInput, parseUsdcInput, signedUsdc, usdc } from "./format.js";
 
 test("parses user-typed USDC amounts exactly", () => {
   assert.equal(parseUsdcInput("1000"), 1_000_000_000n);
@@ -42,4 +42,10 @@ test("history times carry the date, and the year only when it differs", () => {
   assert.match(thisYear, /3/);
   assert.doesNotMatch(thisYear, /2026/);
   assert.match(lastYear, /2025/);
+});
+
+test("a zero fee reads as none", () => {
+  assert.equal(feeLabel("0"), "None");
+  assert.equal(feeLabel(20_000n), "$0.02");
+  assert.equal(feeLabel(undefined), "—");
 });

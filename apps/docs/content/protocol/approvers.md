@@ -14,7 +14,7 @@ Each approver reads its own view of the world and runs every check itself:
 
 - **Identity.** The approval is for the right chain, contract and policy, under the current epoch, approver set and policy version.
 - **Your authorization.** Your signature is valid. For a session key, the market, size, cumulative size, fee and expiry are inside the session's limits. For a smart-contract wallet, it confirms the signature on chain.
-- **Pricing.** The quote uses the current pricing model; the spread components are within their bounds and add up; the price covers the oracle side, the fee and the inventory charge; the fee is at least 2 bps.
+- **Pricing.** The quote uses the current pricing model; the spread components are within their bounds and add up; the price covers the oracle side, the market's base spread, the 2 bps platform markup and the inventory charge (any on-chain fee counts towards it).
 - **Oracle.** The report hashes to what the approval names, contains the market, passes the oracle contract's own verification in a dry run, is no more than 8 seconds old by chain time and no wider than 1%.
 - **Chain state.** It reads the contract at a single block from two separate RPC providers and refuses if they report different chains or blocks. The venue must be unpaused and not in resolution, and the approver must be enrolled.
 - **Market limits.** The trade is within the market's limit and the market is enabled, unless the trade only reduces exposure.

@@ -14,6 +14,9 @@ export const scaled = (value: string | bigint, decimals: number) => Number(toBig
 export const usdc = (micro?: string | bigint | null) => (micro === undefined || micro === null ? "—" : usd.format(scaled(micro, 6)));
 /** Like `usdc`, without cents on whole amounts ("$250", "$12.50"). */
 export const usdcCompact = (micro?: string | bigint | null) => usdc(micro).replace(/\.00$/, "");
+/** A trading fee: "None" at zero (trades carry no fee; the platform's charge is in the price). */
+export const feeLabel = (micro?: string | bigint | null) =>
+  micro === undefined || micro === null ? "—" : toBig(micro) === 0n ? "None" : usdc(micro);
 export const signedUsdc = (micro?: string | bigint | null) => {
   if (micro === undefined || micro === null) return "—";
   return `${toBig(micro) >= 5_000n ? "+" : ""}${usdc(micro)}`;

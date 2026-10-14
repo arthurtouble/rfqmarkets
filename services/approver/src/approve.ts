@@ -127,6 +127,7 @@ export async function approve(
       nowMs,
       maxFutureSeconds,
       capNotional: !chain,
+      baseSpreadBps: baseSpreadOf(marketRegistry.get(input.quote.market)),
     });
   if (signatureCheck) return signatureCheck;
 

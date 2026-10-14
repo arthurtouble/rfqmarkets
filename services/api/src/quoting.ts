@@ -15,6 +15,7 @@ import {
   launchPricing,
   marketMarginView,
   parseUsdc,
+  PLATFORM_MARKUP_BPS,
   quoteRequestSchema,
   RATE,
   type PriceSnapshot,
@@ -22,7 +23,7 @@ import {
   type Quote,
   type QuoteRequest,
 } from "../../../packages/shared/src/policy.js";
-import { baseSpreadOf } from "../../../packages/shared/src/markets.js";
+import { baseSpreadOf, DEFAULT_BASE_SPREAD_BPS } from "../../../packages/shared/src/markets.js";
 import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import { discountedFee } from "../../../packages/shared/src/fee-tiers.js";
@@ -137,10 +138,12 @@ function quoteSpread(
   volatilityScale = 1,
 ) {
   return adaptiveSpread({
-    // The base component is the market's on-chain spread, set by governance or the risk operator.
-    baseBps: marketRegistry.has(snapshot.market)
-      ? baseSpreadOf(marketRegistry.get(snapshot.market))
-      : undefined,
+    // The base component is the market's on-chain spread, set by governance or the risk operator,
+    // plus the platform markup that replaces a trading fee.
+    baseBps:
+      (marketRegistry.has(snapshot.market)
+        ? baseSpreadOf(marketRegistry.get(snapshot.market))
+        : DEFAULT_BASE_SPREAD_BPS) + Number(PLATFORM_MARKUP_BPS),
     volatilityBps: (snapshot.volatilityBps ?? 0) * volatilityScale,
     riskMode,
     toxicityScoreBps,

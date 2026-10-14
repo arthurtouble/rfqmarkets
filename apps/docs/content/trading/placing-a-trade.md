@@ -11,13 +11,13 @@ The ticket sits on the right of the trade page on a computer. On a phone, tap **
 | **Long** and **Short** | The direction. Long opens or adds to a long, or reduces a short. Short does the opposite. |
 | **Market**, **Limit** and **Stop** | The order type, shown in Advanced view only. Market orders fill now. Limit orders wait for your price; see [Limit orders](limit-orders.md). Stop orders wait for the price to break a level, then trade; see [Stop loss and take profit](stop-orders.md). In Simple view every order is a market order. |
 | **You pay** | The margin you put up, in USDC. The position is this amount times your leverage. |
-| **25%, 50%, 75%, Max** | Shortcuts that fill in a share of the most you can pay at the chosen leverage. Max leaves room for the fee and stays within your **Available** margin, the market's per-trade limit and the margin tier for that leverage. |
+| **25%, 50%, 75%, Max** | Shortcuts that fill in a share of the most you can pay at the chosen leverage. Max stays within your **Available** margin, the market's per-trade limit and the margin tier for that leverage. |
 | **Leverage** | Presets up to the market's maximum (20× on BTC and ETH). Beside it the ticket shows the position you will open, for example "Position $1,250 · 0.0125 BTC". |
 | **Options** | Advanced view only. **Reduce only** and **Max slippage**; the row shows what is set, such as "Slippage 0.5% · Reduce only". |
 
 The ticket remembers what you paid and the leverage you picked for each market, and your slippage setting, on this device.
 
-Under the controls the ticket shows the **Entry price** you can expect (the **Current price** for a limit order), your estimated **Liquidation price** after the trade and the **Fee**. Advanced view adds the **Price protection**, the worst price you will sign.
+Under the controls the ticket shows the **Entry price** you can expect (the **Current price** for a limit order), your estimated **Liquidation price** after the trade and the **Fee**, which reads **None**. Advanced view adds the **Price protection**, the worst price you will sign.
 
 Larger positions need more margin per dollar, so leverage falls in tiers as size grows: on BTC and ETH, 20× is available up to a $25,000 position, 16× up to $100,000, and less beyond. [Margin](../risk/margin.md#rates) has the full table. If you pick more leverage than your size allows, the button says how much you can use, for example **Up to 16× at this size**.
 
@@ -37,7 +37,7 @@ Click **Confirm and sign** to continue. When one-click trading is on and covers 
 
 Every market order carries a limit price that you sign. By default the app sets it 8 basis points (0.08%) beyond the firm quote: above it for a long, below it for a short. On a $250 position that is 20 cents of room.
 
-The protection is enforced by the contract. If the price the maker approves is worse than your limit, or the fee is higher than the maximum you signed, the contract rejects the trade. The venue's servers cannot widen your protection after you sign, and they cannot fill you at a worse price. A fill at a better price can carry a slightly larger fee, and the maximum fee you sign allows for that.
+The protection is enforced by the contract. If the price the maker approves is worse than your limit, or the fee is higher than the maximum you signed, the contract rejects the trade. The venue's servers cannot widen your protection after you sign, and they cannot fill you at a worse price. Trades carry no fee, so the maximum fee you sign is zero.
 
 In Advanced view, **Options** → **Max slippage** lets you choose 0.05%, 0.08%, 0.25%, 0.5% or 1%. Tighter protection fails more often when the price moves between your click and the trade's inclusion; wider protection fills more often at a possibly worse price. Either way a failed trade costs nothing. Integrators can choose any protection from 1 to 500 basis points with `slippageBps` on the [quote endpoint](../integrate/api.md#trading).
 
@@ -54,7 +54,7 @@ Only one action runs at a time. Wait for the notice to finish before placing ano
 
 ## Fees
 
-The trading fee is 2 basis points (0.02%) of the trade's notional, charged in USDC from your collateral when the trade settles. A 25 USDC trade pays half a cent. The maker's spread is separate and is already included in the price. [Pricing and fees](../risk/pricing-and-fees.md) explains both.
+There is no trading fee. The platform earns a 2 basis point markup that is part of the maker's spread, so it is already included in the price you see. [Pricing and fees](../risk/pricing-and-fees.md) explains both.
 
 There is no gas cost to you for trading. The venue pays it.
 

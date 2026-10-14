@@ -1,15 +1,17 @@
 import type { ApproverPayload } from "../../../packages/shared/src/approver-payload.js";
 import type { MakerApproval, TradeIntent } from "../../../packages/shared/src/eip712.js";
 import { BASE, USDC, abs, ceilDiv } from "../../../packages/shared/src/numeric.js";
-import { FEE_TIERS, discountedFee } from "../../../packages/shared/src/fee-tiers.js";
+import { PLATFORM_MARKUP_BPS } from "../../../packages/shared/src/pricing.js";
 import { reject, type Rejection } from "./rejection.js";
 
 type WireQuote = ApproverPayload["quote"];
 
-/** Protocol fee charged on every fill before volume discounts. */
-export const MIN_FEE_BPS = 2n;
-/** The deepest published volume-tier discount; the fee floor allows no more than this off the base fee. */
-export const MAX_FEE_DISCOUNT_BPS = Math.max(...FEE_TIERS.map((tier) => tier.discountBps));
+/**
+ * The least a fill may charge over the touch, before impact: the market's base spread plus the platform
+ * markup. Any on-chain fee counts towards it; fills now carry the markup in the price and no fee.
+ */
+export const minimumChargeBps = (baseSpreadBps: number | bigint) =>
+  BigInt(baseSpreadBps) + PLATFORM_MARKUP_BPS;
 /** Adaptive-spread bounds the approver accepts from the leader. */
 export const MIN_BASE_SPREAD_BPS = 2n;
 export const MAX_SPREAD_BPS = 100n;
@@ -67,9 +69,10 @@ export function checkQuoteSpread(
 }
 
 /**
- * Quote freshness, base/notional rounding, fee floor and a minimum premium of
- * fee + impact over the touch. `capNotional` applies the static per-trade
- * ceiling when no chain limit word is available.
+ * Quote freshness, base/notional rounding and a minimum charge: the fee plus
+ * the price premium over the touch must reach the market's base spread, the
+ * platform markup and the impact charge. `capNotional` applies the static
+ * per-trade ceiling when no chain limit word is available.
  */
 export function checkPricePolicy(input: {
   quote: WireQuote;
@@ -78,18 +81,20 @@ export function checkPricePolicy(input: {
   nowMs: number;
   maxFutureSeconds: number;
   capNotional: boolean;
+  /** The market's on-chain base spread. */
+  baseSpreadBps: number;
 }): Rejection | undefined {
   const { quote, intent, approval, nowMs, maxFutureSeconds, capNotional } = input;
   const notional = BigInt(quote.amount),
-    // Approvers cannot see an account's volume tier, so the floor is the base fee at the deepest tier.
-    requiredFee = discountedFee(ceilDiv(notional * MIN_FEE_BPS, 10_000n), MAX_FEE_DISCOUNT_BPS),
     observedAge = nowMs - quote.observedAtMs,
     mid = (BigInt(quote.bid) + BigInt(quote.ask)) / 2n;
   const baseRounding = abs(abs(intent.baseDelta) - (notional * BASE) / mid),
     positiveImpact = approval.impactCharge > 0n ? approval.impactCharge : 0n,
-    minimumCharge = requiredFee + positiveImpact,
+    minimumCharge = ceilDiv(notional * minimumChargeBps(input.baseSpreadBps), 10_000n) + positiveImpact,
+    // A fee pays part of the charge; the price premium must cover the rest.
+    premiumCharge = minimumCharge > approval.fee ? minimumCharge - approval.fee : 0n,
     anchor = intent.baseDelta > 0n ? BigInt(quote.ask) : BigInt(quote.bid),
-    minimumPremium = ceilDiv(anchor * minimumCharge, notional);
+    minimumPremium = ceilDiv(anchor * premiumCharge, notional);
   const underpriced =
     intent.baseDelta > 0n
       ? approval.executionPrice < anchor + minimumPremium
@@ -99,7 +104,7 @@ export function checkPricePolicy(input: {
     observedAge > MAX_QUOTE_AGE_MS ||
     (baseRounding * mid) / BASE > 1n ||
     (capNotional && notional > MAX_TRADE_NOTIONAL) ||
-    approval.fee < requiredFee ||
+    approval.fee < 0n ||
     underpriced
   )
     return reject("policy rejected");

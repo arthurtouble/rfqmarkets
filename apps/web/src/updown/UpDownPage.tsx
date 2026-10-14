@@ -380,7 +380,7 @@ function NewBet({ market, account }: { market: Market; account: AccountState | n
       />
       <p className="footnote rfq-muted center tnum" aria-live="polite">
         {notional > 0n
-          ? `${usdcCompact(notional)} position. A 1% move your way: +${usdc(onePercentGain(notional))}`
+          ? `${usdcCompact(notional)} position, no fees. A 1% move your way: +${usdc(onePercentGain(notional))}`
           : "Pick a stake to see what a move is worth"}
       </p>
 
