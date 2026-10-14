@@ -3,19 +3,19 @@
 import { spawnSync } from "node:child_process";
 
 const scenarios = [
-  ["smoke:local", "deposit, withdrawal, cancellation, session key and a sponsored fill"],
-  ["smoke:funds", "approve and deposit, first-deposit floor, sponsored withdrawals and their limits"],
-  ["smoke:approver-outage", "one approver down still settles; two down fails closed"],
-  ["smoke:failover", "leader epoch failover fences old approvals"],
+  ["local", "deposit, withdrawal, cancellation, session key and a sponsored fill"],
+  ["funds", "approve and deposit, first-deposit floor, sponsored withdrawals and their limits"],
+  ["approver-outage", "one approver down still settles; two down fails closed"],
+  ["failover", "leader epoch failover fences old approvals"],
 ] as const;
 const only = process.argv[2];
-const selected = only ? scenarios.filter(([name]) => name === only || name === `smoke:${only}`) : scenarios;
+const selected = only ? scenarios.filter(([name]) => name === only) : scenarios;
 if (selected.length === 0)
   throw new Error(`unknown scenario ${only}; choose from ${scenarios.map(([name]) => name).join(", ")}`);
 let failed = 0;
 for (const [script, summary] of selected) {
-  console.log(`\n▶ ${script}: ${summary}`);
-  const result = spawnSync("npm", ["run", "--silent", script], { stdio: "inherit" });
+  console.log(`\n▶ smoke ${script}: ${summary}`);
+  const result = spawnSync("npm", ["run", "--silent", "smoke", "--", script], { stdio: "inherit" });
   if (result.status !== 0) {
     failed++;
     console.error(`✖ ${script} failed`);
