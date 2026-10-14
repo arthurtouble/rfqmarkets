@@ -3,7 +3,9 @@
 The shared look of every RFQ Markets surface. `tokens.json` is the source of
 truth; everything else is generated from it or built on it. The specimen page
 (`npm run dev:design-system`) renders the tokens and components straight from
-these files, and `docs/product/design-system.md` holds the written guidance.
+these files, and `docs/product/design-system.md` holds the written guidance. The
+longer reference (principles, screens and flows) is the published design
+system: https://claude.ai/artifact/CJRW4HX7NGNEmwYCb3aLU7
 
 | File | What it holds |
 | --- | --- |
