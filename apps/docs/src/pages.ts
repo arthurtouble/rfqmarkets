@@ -8,7 +8,7 @@ export const sections = [
   { id: "risk", title: "Margin and risk", pages: ["margin", "funding", "liquidation", "pricing-and-fees"] },
   { id: "markets", title: "Markets", pages: ["markets-and-limits", "price-oracle"] },
   { id: "protocol", title: "How it works", pages: ["architecture", "settlement", "approvers", "hedging", "safety-and-exits", "governance", "contracts"] },
-  { id: "integrate", title: "Integrate", pages: ["api", "signing", "onchain-data", "oracle-feeds"] },
+  { id: "integrate", title: "Integrate", pages: ["api", "ai-agents", "signing", "onchain-data", "oracle-feeds"] },
   { id: "reference", title: "Reference", pages: ["glossary", "faq"] },
   { id: "legal", title: "Legal", pages: ["terms-of-service", "privacy-policy", "risk-disclosure", "restricted-jurisdictions"] },
 ] as const;
