@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildHedger,
   loadHedgeCoins,
+  loadHedgeMarkets,
   type HedgeMarket,
   type HedgeVenue,
   type VenueOrder,
@@ -13,7 +14,8 @@ import {
 } from "./server.js";
 
 const TOKEN = "hedge-test-token",
-  AUTH = { authorization: `Bearer ${TOKEN}` };
+  AUTH = { authorization: `Bearer ${TOKEN}` },
+  USDC = 1_000_000n;
 
 test("hedges finalized aggregate exposure once with a stable client order id", async () => {
   const directory = mkdtempSync(join(tmpdir(), "rfq-hedger-"));
@@ -620,10 +622,88 @@ test("hedges through the venue coin map and keeps an unmapped market reduce-only
   }
 });
 
-test("the default hedge coin map is data", () => {
+test("warehouse-only markets trade up to their net cap without touching the venue", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-hedger-warehouse-")),
+    submitted: VenueOrder[] = [],
+    logged: string[] = [];
+  const venue: HedgeVenue = {
+    mode: "warehouse",
+    position: async () => 0n,
+    find: async () => null,
+    submit: async (order) => {
+      submitted.push(order);
+      return { venueOrderId: "venue-1", status: "filled", filledBase: order.baseDelta };
+    },
+  };
+  // Customers are net long 100 XAU at $2,000 (200,000 USDC), short 4,000 ABC at $1 and long 15,000 DEF at $1.
+  const payload = {
+      blockNumber: 91,
+      markets: {
+        XAU: { aggregateBase: "100000000000000000000", bid: "2000000000", ask: "2000000000" },
+        ABC: { aggregateBase: "-4000000000000000000000", bid: "1000000", ask: "1000000" },
+        DEF: { aggregateBase: "15000000000000000000000", bid: "1000000", ask: "1000000" },
+      },
+    },
+    fetchImpl = (async () =>
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+  const hedge = buildHedger({
+    healthToken: TOKEN,
+    indexerUrl: "http://indexer",
+    databasePath: join(directory, "hedge.sqlite"),
+    fetchImpl,
+    pollMs: 60_000,
+    venue,
+    hedgeCoins: {},
+    warehouseCaps: { XAU: 25_000n * USDC, ABC: 10_000n * USDC, DEF: 25_000n * USDC },
+    log: (message) => logged.push(message),
+  });
+  try {
+    await hedge.ready();
+    await hedge.inject({ method: "POST", url: "/v1/tick", headers: AUTH });
+    assert.equal(submitted.length, 0, "warehouse-only markets are never sent to the venue");
+    const risk = (await hedge.inject({ method: "GET", url: "/internal/risk", headers: AUTH })).json();
+    assert.equal(risk.healthy, true);
+    assert.deepEqual(
+      [risk.markets.ABC.mode, risk.markets.DEF.mode, risk.markets.XAU.mode],
+      ["normal", "guarded", "reduce_only"],
+      "under half the cap trades normally, up to the cap is guarded, past it only reduces",
+    );
+    assert.equal(risk.markets.XAU.reason, "warehouse_cap");
+    assert.equal(risk.markets.XAU.bandUsdc, (25_000n * USDC).toString());
+    assert.equal(risk.markets.ABC.reason, undefined);
+    const status = (await hedge.inject({ method: "GET", url: "/v1/status", headers: AUTH })).json();
+    assert.equal(status.markets.XAU.state, "warehoused");
+    assert.ok(
+      !logged.some((line) => /XAU|ABC|DEF/.test(line)),
+      "warehouse-only markets are not reported as missing a mapping",
+    );
+  } finally {
+    await hedge.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("the default hedge markets file is data and rejects a market that is both hedged and warehoused", () => {
   const coins = loadHedgeCoins();
   assert.equal(coins.BTC, "BTC");
   assert.equal(coins.ETH, "ETH");
+  for (const symbol of ["SOL", "XRP", "DOGE", "HYPE", "SUI"]) assert.equal(coins[symbol], symbol);
+  const directory = mkdtempSync(join(tmpdir(), "rfq-hedge-markets-")),
+    path = join(directory, "markets.json");
+  try {
+    writeFileSync(
+      path,
+      JSON.stringify({ coins: { BTC: "BTC" }, warehouse: { XAU: { netCapUsdc: "25000" } } }),
+    );
+    assert.deepEqual(loadHedgeMarkets(path), { coins: { BTC: "BTC" }, warehouse: { XAU: 25_000n * USDC } });
+    writeFileSync(path, JSON.stringify({ coins: { BTC: "BTC" }, warehouse: { BTC: { netCapUsdc: "1" } } }));
+    assert.throws(() => loadHedgeMarkets(path), /both hedged and warehouse-only/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("public health never echoes venue errors", async () => {

@@ -56,12 +56,36 @@ A market with no price is left out of `/v1/markets` and can't be quoted.
 
 A market without a mapping is never sent to the venue. The hedger logs it once and reports the market `reduce_only` with reason `no_hedge_mapping` (status `unhedged`), so the API and approvers admit only exposure-reducing trades in it. Restart the hedger after you edit the file.
 
+### Warehouse-only listings
+
+A market the venue can't hedge (no Hyperliquid perp, or one too thin to use) can still trade as a warehouse-only listing. The house holds the customers' net position itself, up to a cap. List it under `warehouse` in the same file, with the cap on net customer notional in whole USDC:
+
+```json
+{ "coins": { "BTC": "BTC" }, "warehouse": { "XYZ": { "netCapUsdc": "25000" } } }
+```
+
+The hedger never sends a warehouse-only market to the venue (status `warehoused`). Customers' longs and shorts net against each other, and the hedger reports the market's mode from the net notional:
+
+| Net customer notional | Mode | Effect |
+| --- | --- | --- |
+| Up to half the cap | `normal` | Trades as usual |
+| Up to the cap | `guarded` | Half the trade size, plus the guarded spread add-on |
+| Past the cap, or the hedger is unhealthy | `reduce_only` (reason `warehouse_cap` when it is the cap) | Only trades that shrink the net position |
+
+A single trade can take the net position past the cap by at most `maxTradeNotional`, so size that cap with the overshoot in mind. A market can't be both hedged and warehouse-only; the hedger refuses such a file. Give warehouse-only markets a wider base spread (`setSpread`, or `baseSpreadBps` in the dev manifest) and a larger `shockBps`, because the house carries the price risk. Keep the cap inside the maker backing's stress budget.
+
 ## 4. Caps and enablement
 
 1. Size `maxTradeNotional`, `maxMarketNotional`, `grossLimit` and `sideLimit` against maker backing. Stress capital (`portfolioStress ≤ makerBacking`) now includes the new market's `shockBps`.
 2. Size the hedger's `hedgeBandUsdc`, `hedgeMaxOrderUsdc` and `hedgeMinOrderUsdc` for the new venue's depth.
 3. Fund hedge margin, then enable with `setMarketPolicy(market, true, …)` and minimal caps. After that, follow the staged limit procedure in [Market lifecycle](market-lifecycle.md).
-4. Session keys: a session's `marketMask` has one bit per index. Existing sessions don't cover the new market until the user signs a new grant (the web app's quick session still requests `marketMask: 3`).
+4. Session keys: a session's `marketMask` has one bit per index. Existing sessions don't cover the new market until the user signs a new grant. The web app's quick session requests every market registered when it is granted.
+
+## Dev profile
+
+On the Base mainnet dev deployment the owner key is governance, so listing is one workflow run. `scripts/base-mainnet-dev.ts` lists BTC and ETH, then `DEV_LISTINGS` (SOL, XRP, DOGE, HYPE, SUI as indexes 2 to 6) with half the launch caps and `LISTING_RISK` (20% stress shock, 10x first-tier leverage). `RFQ_DEV_POLICY_JSON` replaces the whole policy, markets included; extra markets after BTC and ETH take their index in the order written, and may set `baseSpreadBps`.
+
+The `configure` action of `dev-contracts.yml` lists any manifest market the chain doesn't have yet. It also re-applies the caps and risk parameters of the markets it does have, and sets each market's base spread when the manifest gives one. It refuses to run when the chain's markets don't match the manifest's first entries in order. Configure pauses the clearing while it changes exposure limits, then unpauses it if it was running before, so a configure run never leaves dev closed. The oracle allowlist in `deploy/cloudflare/runtime/wrangler.oracle.jsonc` and the coin map in `services/hedger/hedge-markets.json` already name indexes 2 to 6. A new dev listing prices and hedges once the merge that names it has redeployed dev and configure has listed it.
 
 ## Verify
 
@@ -69,4 +93,3 @@ A market without a mapping is never sent to the venue. The hedger logs it once a
 - The indexer's `/v1/exposure` and account positions show the market. An indexer upgraded from schema 1 reindexes from `startBlock` once.
 - The gateway relays history, candles and 24h stats for the market as soon as it appears in the API stream.
 - The trading app lists the market on the Markets page and in the market switcher with no release. Its display name comes from `MARKET_NAMES` in `apps/web/src/ui/primitives.tsx` (the symbol when it is not there), and until the oracle prices it the row reads **No price** and its trade page says the market has no price.
-- The `apps/web` client still hardcodes BTC/ETH in several places, so it doesn't show the market yet.

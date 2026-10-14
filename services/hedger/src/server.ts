@@ -27,21 +27,46 @@ const exposureResponse = z.object({
 });
 /** The reason a market without a hedge venue mapping reports while reduce-only. */
 export const NO_HEDGE_MAPPING = "no_hedge_mapping";
-const hedgeMarketsFile = z.object({
-  coins: z.record(
-    z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,30}$/),
-    z.string().regex(/^[A-Za-z0-9:._-]{1,32}$/),
-  ),
-});
+/** The reason a warehouse-only market reports while its net customer exposure is past its cap. */
+export const WAREHOUSE_CAP = "warehouse_cap";
+const marketSymbol = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,30}$/);
+const hedgeMarketsFile = z
+  .object({
+    coins: z.record(marketSymbol, z.string().regex(/^[A-Za-z0-9:._-]{1,32}$/)),
+    /** Warehouse-only markets: symbol -> cap on net customer notional, in whole USDC. */
+    warehouse: z
+      .record(marketSymbol, z.object({ netCapUsdc: z.string().regex(/^[1-9][0-9]{0,9}$/) }).strict())
+      .default({}),
+  })
+  .superRefine((file, context) => {
+    for (const symbol of Object.keys(file.warehouse))
+      if (Object.hasOwn(file.coins, symbol))
+        context.addIssue({ code: "custom", message: `${symbol} is both hedged and warehouse-only` });
+  });
+/** How each market is risk-managed, from `services/hedger/hedge-markets.json` (or `RFQ_HEDGE_MARKETS_FILE`). */
+export type HedgeMarkets = {
+  /** Market symbol -> venue coin. */
+  coins: Record<string, string>;
+  /** Warehouse-only market symbol -> cap on net customer notional, USDC 1e6. */
+  warehouse: Record<string, bigint>;
+};
 /**
- * The market symbol -> venue coin map, from a JSON data file (`{ "coins": { "BTC": "BTC" } }`). The
- * default file is `services/hedger/hedge-markets.json`; `RFQ_HEDGE_MARKETS_FILE` overrides it.
+ * The hedge markets file: `{ "coins": { "BTC": "BTC" }, "warehouse": { "XYZ": { "netCapUsdc": "25000" } } }`.
+ * The default file is `services/hedger/hedge-markets.json`; `RFQ_HEDGE_MARKETS_FILE` overrides it.
  */
-export function loadHedgeCoins(
+export function loadHedgeMarkets(
   path = process.env.RFQ_HEDGE_MARKETS_FILE ?? new URL("../hedge-markets.json", import.meta.url),
-): Record<string, string> {
-  return hedgeMarketsFile.parse(JSON.parse(readFileSync(path, "utf8"))).coins;
+): HedgeMarkets {
+  const file = hedgeMarketsFile.parse(JSON.parse(readFileSync(path, "utf8")));
+  return {
+    coins: file.coins,
+    warehouse: Object.fromEntries(
+      Object.entries(file.warehouse).map(([symbol, item]) => [symbol, BigInt(item.netCapUsdc) * 1_000_000n]),
+    ),
+  };
 }
+/** The market symbol -> venue coin map from the hedge markets file. */
+export const loadHedgeCoins = (path?: string | URL) => loadHedgeMarkets(path).coins;
 type ExposureResponse = z.infer<typeof exposureResponse>;
 
 const ONE = 10n ** 18n;
@@ -114,6 +139,13 @@ export interface HedgeOptions {
    * `loadHedgeCoins()`.
    */
   hedgeCoins?: Record<string, string>;
+  /**
+   * Warehouse-only markets: symbol -> cap on net customer notional (USDC 1e6). Such a market is never sent
+   * to the venue; the house holds the customers' net position. It trades normally while that net notional
+   * is at most half the cap, is guarded (half trade size, wider spread) up to the cap, and reduce-only
+   * (`warehouse_cap`) past it. Without `hedgeCoins`, both come from `loadHedgeMarkets()`.
+   */
+  warehouseCaps?: Record<string, bigint>;
   /** Where hedger notices (e.g. an unmapped market) are logged; defaults to stderr. */
   log?: (message: string) => void;
 }
@@ -184,14 +216,18 @@ export function buildHedger(options: HedgeOptions) {
   if (!columns.some((column) => column.name === "reason"))
     db.exec("ALTER TABLE hedge_orders ADD COLUMN reason TEXT");
   const venue: HedgeVenue = options.venue ?? new LocalHedgeVenue(db),
-    hedgeCoins = options.hedgeCoins ?? loadHedgeCoins(),
+    file = options.hedgeCoins ? undefined : loadHedgeMarkets(),
+    hedgeCoins = options.hedgeCoins ?? file!.coins,
+    warehouseCaps = options.warehouseCaps ?? file?.warehouse ?? {},
     log = options.log ?? ((message: string) => console.error(message)),
     unmappedLogged = new Set<string>(),
     cappedLogged = new Set<string>();
-  /** The venue coin for `market`, or undefined (logged once) when the market is not hedged. */
+  const warehouseCapOf = (market: HedgeMarket) =>
+    Object.hasOwn(warehouseCaps, market) ? warehouseCaps[market] : undefined;
+  /** The venue coin for `market`, or undefined (logged once unless warehouse-only) when it is not hedged. */
   const coinOf = (market: HedgeMarket) => {
     const coin = Object.hasOwn(hedgeCoins, market) ? hedgeCoins[market] : undefined;
-    if (!coin && !unmappedLogged.has(market)) {
+    if (!coin && !warehouseCapOf(market) && !unmappedLogged.has(market)) {
       unmappedLogged.add(market);
       log(
         `hedger: market ${market} has no hedge venue mapping; it is not hedged and stays reduce-only until one is configured`,
@@ -369,7 +405,13 @@ export function buildHedger(options: HedgeOptions) {
               gapNotional: gapNotional.toString(),
               bandUsdc: band.toString(),
               coin: coin ?? null,
-              state: !coin ? "unhedged" : gapNotional <= band ? "within_band" : "hedge_required",
+              state: warehouseCapOf(market)
+                ? "warehoused"
+                : !coin
+                  ? "unhedged"
+                  : gapNotional <= band
+                    ? "within_band"
+                    : "hedge_required",
               /** What the API currently allows in this market (`/internal/risk`'s mode). */
               tradingMode: marketRisk(market).mode,
               execution: lastExecution[market],
@@ -425,6 +467,18 @@ export function buildHedger(options: HedgeOptions) {
     const minOrder = options.minOrderUsdc ?? 0n,
       executableBand = minOrder > band ? minOrder : band,
       { gapNotional } = marketGap(lastExposure, market, lastVenuePositions[market] ?? 0n);
+    // Warehouse-only: the house holds the net customer position, up to its cap.
+    const cap = warehouseCapOf(market);
+    if (cap !== undefined) {
+      const mode =
+        !healthy || gapNotional > cap ? "reduce_only" : gapNotional * 2n > cap ? "guarded" : "normal";
+      return {
+        mode,
+        gapNotional: gapNotional.toString(),
+        bandUsdc: cap.toString(),
+        ...(healthy && mode === "reduce_only" ? { reason: WAREHOUSE_CAP } : {}),
+      };
+    }
     // Unhedgeable: only exposure-reducing trades, as when the venue is down.
     if (!coinOf(market))
       return {
