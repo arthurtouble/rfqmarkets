@@ -15,10 +15,11 @@ npm run build:web            # production bundle in dist/web
 | Path | What it holds |
 | --- | --- |
 | `src/main.tsx` | Loads the settlement chain from `GET /v1/config`, then mounts the providers. |
-| `src/router.tsx` | Shell and routes: `/trade/$market`, `/markets`. `/?view=markets` redirects. |
+| `src/router.tsx` | Shell and routes: `/updown/$market` (home), `/trade/$market`, `/markets`. `/` opens the last market's home screen; `/?view=markets` redirects. |
 | `src/lib/` | Pure code: wire types, formatting, account marking, indicative quotes, SSE hook. |
 | `src/wallet/` | wagmi config, the trader interface (browser wallet or local dev key), connect dialog, wallet menu, quick-trading key. |
 | `src/data/` | The shared market stream, TanStack Query hooks and every user action. |
+| `src/updown/` | The home screen: one centred column with the market, a live tick chart (`data/ticks.ts`), stake and multiplier, and Up / Down buttons that place a market order (one tap once one-click trading covers the size, else the review sheet). An open bet shows its live result and a Cash out button. Sizing and the tick window are in `lib/updown.ts`. The terminal is one tap away as Pro. |
 | `src/trade/`, `src/markets/`, `src/portfolio/`, `src/account/` | Pages and their components. `trade/MarketChart.tsx` is the price header and chart: a line with ranges in Simple, candlesticks in Advanced (`trade/CandleChart.tsx`, TradingView Lightweight Charts, loaded on first use). |
 | `src/positions/` | Open positions (table on desktop, cards on phones), the close sheet and close all. |
 | `src/ui/` | Small shared primitives and toasts. |

@@ -324,3 +324,23 @@ dialog.sheet { text-align: start; }
 .terms-check { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface); color: var(--text); font: 400 14px/20px var(--font-sans); cursor: pointer; }
 .terms-check input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--brand); }
 .terms-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+
+/* Home: Up / Down in one centred column. */
+.updown { width: min(100%, 480px); }
+.updown__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.updown .price-header { text-align: center; }
+.updown .price-sub { justify-content: center; }
+.updown .price-chart { margin-bottom: var(--space-2); }
+.updown-new, .updown-bet { display: grid; gap: var(--space-4); }
+.updown-stake { display: grid; gap: var(--space-3); justify-items: center; }
+.updown-stake__field { width: 100%; justify-content: center; }
+.updown-stake__field input { min-width: 0; flex: none; }
+.updown-stake .rfq-chips { justify-content: center; }
+.updown-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.updown-button { min-height: 72px; font-size: 20px; gap: var(--space-2); }
+.updown-button svg { width: 16px; height: 16px; }
+.updown-bet { text-align: center; padding: var(--space-5) var(--space-4); border-radius: var(--radius-lg); background: var(--surface-sunken); box-shadow: inset 0 0 0 1px var(--line); }
+.updown-bet__what { margin: 0; }
+.updown-bet__pnl { display: grid; gap: var(--space-1); font: 600 40px/1.1 var(--font-sans); }
+.updown-bet__roe { font-size: 17px; font-weight: 500; }
+.updown-bet .footnote { margin: 0; }

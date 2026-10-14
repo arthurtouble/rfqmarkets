@@ -4,9 +4,21 @@ import { expect, expectNoHorizontalOverflow, test } from "./fixtures.js";
 import { urls } from "./stack.js";
 
 test.describe("trading app", () => {
-  test("opens on the last market's trade page", async ({ page, isMobile }) => {
+  test("opens on the last market's Up / Down screen", async ({ page }) => {
     await page.goto("/");
-    await expect(page).toHaveURL(/\/trade\/[A-Z0-9]+$/);
+    await expect(page).toHaveURL(/\/updown\/[A-Z0-9]+$/);
+    await expect(
+      page
+        .getByRole("button", { name: "Up", exact: true })
+        .or(page.getByRole("region", { name: "Your bet" })),
+    ).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("the terminal is one tap away", async ({ page, isMobile }) => {
+    await page.goto("/updown/BTC");
+    await page.getByRole("link", { name: "Pro" }).click();
+    await expect(page).toHaveURL(/\/trade\/BTC$/);
     // Phones show sticky Long/Short buttons that open the ticket as a sheet.
     if (isMobile) await expect(page.getByRole("button", { name: "Long", exact: true })).toBeVisible();
     else await expect(page.getByRole("region", { name: "Order ticket" })).toBeVisible();
@@ -32,6 +44,8 @@ test.describe("trading app", () => {
     }
     await nav.getByRole("link", { name: "Trade" }).click();
     await expect(page).toHaveURL(/\/trade\//);
+    await nav.getByRole("link", { name: "Home" }).click();
+    await expect(page).toHaveURL(/\/updown\//);
   });
 
   test("connects the local dev wallet and shows the account", async ({ page, stack }) => {
@@ -40,7 +54,15 @@ test.describe("trading app", () => {
     await expect(page.getByRole("button", { name: `Account ${wallet.account.slice(0, 6)}` })).toBeVisible();
   });
 
-  for (const path of ["/trade/BTC", "/trade/ETH", "/markets", "/portfolio", "/account"])
+  for (const path of [
+    "/updown/BTC",
+    "/updown/ETH",
+    "/trade/BTC",
+    "/trade/ETH",
+    "/markets",
+    "/portfolio",
+    "/account",
+  ])
     test(`${path} fits the viewport`, async ({ page }) => {
       await page.goto(path);
       await expect(page.locator("main")).not.toBeEmpty();

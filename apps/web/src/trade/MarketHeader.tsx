@@ -26,7 +26,8 @@ export function PriceStatusBadge({ status, connecting = false }: { status: Price
   return <span className={`rfq-badge price-status price-status--${status}${tone === "warning" ? " rfq-badge--warning" : ""}`}><span className="rfq-dot" />{label}</span>;
 }
 
-export function MarketSwitcher({ market }: { market: Market }) {
+/** The market button and picker; picking a market opens it at `to` (the terminal by default). */
+export function MarketSwitcher({ market, to = "/trade/$market" }: { market: Market; to?: "/trade/$market" | "/updown/$market" }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const { snapshot } = useMarketFeed();
@@ -43,7 +44,7 @@ export function MarketSwitcher({ market }: { market: Market }) {
       <div className="rfq-list market-picker">
         {shown.map(name => {
           const live = snapshot?.markets[name], change = dayChange(stats?.[name], live?.mid);
-          return <Link key={name} to="/trade/$market" params={{ market: name }} className="rfq-row" onClick={close}>
+          return <Link key={name} to={to} params={{ market: name }} className="rfq-row" onClick={close}>
             <AssetIcon market={name} />
             <span><div className="rfq-row__title">{marketName(name)}</div><div className="rfq-row__sub">{name}</div></span>
             <span className="rfq-row__end"><span className="rfq-row__price">{usdc(live?.mid)}</span>

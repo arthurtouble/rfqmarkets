@@ -16,6 +16,7 @@ import { MarketsPage } from "./markets/MarketsPage.js";
 import { PortfolioPage } from "./portfolio/PortfolioPage.js";
 import { FundsProvider, useFunds } from "./trade/FundsDialog.js";
 import { TradePage } from "./trade/TradePage.js";
+import { UpDownPage } from "./updown/UpDownPage.js";
 import { NavIcons, Segmented } from "./ui/primitives.js";
 import { usePrefs } from "./ui/prefs.js";
 import { useTrader } from "./wallet/trader.js";
@@ -55,13 +56,15 @@ function ShellLayout() {
       ? "portfolio"
       : pathname.startsWith("/account")
         ? "account"
-        : "trade";
+        : pathname.startsWith("/trade")
+          ? "trade"
+          : "home";
   const current = (name: string) => (section === name ? ("page" as const) : undefined);
   return (
     <div className="app">
       <header className="rfq-topbar topbar">
         <Link
-          to="/trade/$market"
+          to="/updown/$market"
           params={{ market: lastMarket() }}
           className="rfq-logo"
           aria-label="RFQ Markets home"
@@ -69,6 +72,9 @@ function ShellLayout() {
           RFQ Markets
         </Link>
         <nav className="rfq-nav" aria-label="Main">
+          <Link to="/updown/$market" params={{ market: lastMarket() }} aria-current={current("home")}>
+            Home
+          </Link>
           <Link to="/trade/$market" params={{ market: lastMarket() }} aria-current={current("trade")}>
             Trade
           </Link>
@@ -114,6 +120,10 @@ function ShellLayout() {
       </main>
       {location.status !== "sanctioned" && <TermsDialog />}
       <nav className="rfq-tabbar tabbar" aria-label="Main">
+        <Link to="/updown/$market" params={{ market: lastMarket() }} aria-current={current("home")}>
+          {NavIcons.home}
+          <span>Home</span>
+        </Link>
         <Link to="/trade/$market" params={{ market: lastMarket() }} aria-current={current("trade")}>
           {NavIcons.trade}
           <span>Trade</span>
@@ -144,7 +154,7 @@ const indexRoute = createRoute({
     // The previous app used ?view=markets; keep old links working.
     const view = new URLSearchParams(location.searchStr).get("view");
     throw redirect(
-      view === "markets" ? { to: "/markets" } : { to: "/trade/$market", params: { market: lastMarket() } },
+      view === "markets" ? { to: "/markets" } : { to: "/updown/$market", params: { market: lastMarket() } },
     );
   },
 });
@@ -173,6 +183,30 @@ const tradeRoute = createRoute({
   },
 });
 
+/** The home screen: Up or Down on one market. Paths normalise like the terminal's. */
+const upDownRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/updown/$market",
+  params: {
+    parse: ({ market }) => ({ market: market.toUpperCase() }),
+    stringify: ({ market }) => ({ market }),
+  },
+  beforeLoad: ({ params, location }) => {
+    if (!isMarket(params.market)) throw redirect({ to: "/updown/$market", params: { market: "BTC" } });
+    if (location.pathname !== `/updown/${params.market}`)
+      throw redirect({ to: "/updown/$market", params: { market: params.market }, replace: true });
+    try {
+      localStorage.setItem(LAST_MARKET, params.market);
+    } catch {
+      /* private mode */
+    }
+  },
+  component: function Home() {
+    const { market } = upDownRoute.useParams();
+    return <UpDownPage market={market as Market} />;
+  },
+});
+
 const marketsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/markets",
@@ -190,13 +224,13 @@ const accountRoute = createRoute({
 });
 
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([indexRoute, tradeRoute, marketsRoute, portfolioRoute, accountRoute]),
+  routeTree: rootRoute.addChildren([indexRoute, upDownRoute, tradeRoute, marketsRoute, portfolioRoute, accountRoute]),
   defaultNotFoundComponent: () => (
     <div className="page">
       <div className="rfq-card">
         <div className="rfq-empty">
           <p>This page doesn't exist.</p>
-          <Link className="rfq-btn rfq-btn--primary" to="/trade/$market" params={{ market: "BTC" }}>
+          <Link className="rfq-btn rfq-btn--primary" to="/updown/$market" params={{ market: "BTC" }}>
             Go to trading
           </Link>
         </div>
