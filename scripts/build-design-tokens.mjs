@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Builds packages/design-system/tokens.css and colors.ts from tokens.json.
-// `--check` fails when either committed file is out of date.
-import { readFileSync, writeFileSync } from "node:fs";
+// Builds packages/design-system/tokens.css and colors.ts from tokens.json, and the mascot's logo.svg and
+// every app's favicon from mascot.json. `--check` fails when any of them is out of date.
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,9 +63,34 @@ const palette = Object.fromEntries(
 );
 const ts = `// ${tokens.name} colors, generated from tokens.json by scripts/build-design-tokens.mjs. Do not edit.\nexport const COLORS = ${JSON.stringify(palette, null, 2)} as const;\n`;
 
+// Tick, the mascot, idle and in the dark theme's colors: the logo and every app's favicon. The same
+// drawing as mascotSvg("idle") in mascot.ts (scripts/brand.test.ts holds them together).
+const mascot = JSON.parse(readFileSync(join(dir, "mascot.json"), "utf8"));
+const tint = (role) => palette.dark[mascot.colors[role]];
+const logo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${mascot.viewBox} ${mascot.viewBox}">${[
+  ...mascot.shared,
+  ...mascot.moods.idle,
+]
+  .map((shape) =>
+    shape.fill
+      ? `<path d="${shape.d}" fill="${tint(shape.fill)}"/>`
+      : `<path d="${shape.d}" fill="none" stroke="${tint(shape.stroke)}" stroke-width="${shape.width}" stroke-linecap="round" stroke-linejoin="round"/>`,
+  )
+  .join("")}</svg>`;
+const favicon = `data:image/svg+xml,${logo.replace(/"/g, "'").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/#/g, "%23")}`;
+const apps = join(dir, "../../apps");
+const pages = readdirSync(apps).map((app) => join(apps, app, "index.html"));
+const withFavicon = (path) => {
+  const html = readFileSync(path, "utf8");
+  if (!/<link rel="icon" href="[^"]*"/.test(html)) throw new Error(`${path} has no <link rel="icon">`);
+  return html.replace(/<link rel="icon" href="[^"]*"/, `<link rel="icon" href="${favicon}"`);
+};
+
 const outputs = [
   [join(dir, "tokens.css"), css],
   [join(dir, "colors.ts"), ts],
+  [join(dir, "logo.svg"), `${logo}\n`],
+  ...pages.map((path) => [path, withFavicon(path)]),
 ];
 if (process.argv.includes("--check")) {
   const stale = outputs.filter(([path, text]) => readFileSync(path, "utf8") !== text);
@@ -73,7 +98,7 @@ if (process.argv.includes("--check")) {
     console.error(`${stale.map(([path]) => path).join(", ")} out of date. Run npm run build:tokens.`);
     process.exit(1);
   }
-  console.log("tokens.css and colors.ts are up to date");
+  console.log("tokens.css, colors.ts, logo.svg and the favicons are up to date");
 } else {
   for (const [path, text] of outputs) {
     writeFileSync(path, text);

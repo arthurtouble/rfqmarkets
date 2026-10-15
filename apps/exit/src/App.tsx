@@ -26,6 +26,7 @@ import {
   type Position,
 } from "./model.js";
 import { ActionButton, Banner, Card, ExternalIcon, Toast, WalletIcon, type ToastState } from "./ui.js";
+import { Mascot } from "../../../packages/design-system/react.js";
 import {
   discoverWallets,
   requestAccount,
@@ -359,6 +360,7 @@ export function App({ config }: { config: ExitConfig }) {
     <div className="exit-app">
       <header className="rfq-topbar exit-topbar">
         <a className="rfq-logo" href={config.appUrl}>
+          <Mascot size={28} />
           RFQ Markets
         </a>
         <span className="rfq-badge rfq-badge--warning exit-tag">Emergency exit</span>

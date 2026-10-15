@@ -82,9 +82,8 @@ export function TradeHistory({ address }: { address: string }) {
   const trades = usePortfolioTrades(address);
   const items = trades.data?.pages.flatMap((page) => page.items) ?? [];
   if (trades.isPending) return <EmptyState icon={NavIcons.markets}>Loading trades…</EmptyState>;
-  if (trades.isError)
-    return <EmptyState icon={NavIcons.markets}>Trade history is unavailable right now.</EmptyState>;
-  if (!items.length) return <EmptyState icon={NavIcons.markets}>Your trades show up here.</EmptyState>;
+  if (trades.isError) return <EmptyState mood="loss">Trade history is unavailable right now.</EmptyState>;
+  if (!items.length) return <EmptyState mood="idle">Your trades show up here.</EmptyState>;
   const pnl = (fill: Fill) =>
     fillRealizes(fill) ? (
       <Change value={BigInt(fill.realizedPnl)}>{signedUsdc(fill.realizedPnl)}</Change>
@@ -153,8 +152,7 @@ export function FundingHistory({ address }: { address: string }) {
   const funding = useFundingHistory(address);
   const items = funding.data?.pages.flatMap((page) => page.items) ?? [];
   if (funding.isPending) return <EmptyState icon={NavIcons.markets}>Loading funding…</EmptyState>;
-  if (funding.isError)
-    return <EmptyState icon={NavIcons.markets}>Funding history is unavailable right now.</EmptyState>;
+  if (funding.isError) return <EmptyState mood="loss">Funding history is unavailable right now.</EmptyState>;
   if (!items.length)
     return (
       <EmptyState icon={NavIcons.markets}>
@@ -231,7 +229,7 @@ export function AccountHistory({ address }: { address: string }) {
   const items = activity.data?.pages.flatMap((page) => page.items) ?? [];
   if (activity.isPending) return <EmptyState icon={NavIcons.markets}>Loading activity…</EmptyState>;
   if (activity.isError)
-    return <EmptyState icon={NavIcons.markets}>Account activity is unavailable right now.</EmptyState>;
+    return <EmptyState mood="loss">Account activity is unavailable right now.</EmptyState>;
   if (!items.length)
     return (
       <EmptyState icon={NavIcons.markets}>

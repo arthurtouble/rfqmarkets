@@ -21,6 +21,7 @@ import { NavIcons } from "./ui/primitives.js";
 import { load, store } from "./lib/storage.js";
 import { useTrader } from "./wallet/trader.js";
 import { WalletMenu } from "./wallet/WalletMenu.js";
+import { Mascot } from "../../../packages/design-system/react.js";
 
 // Markets are listed on chain and can be added any time, so any symbol-shaped path is a market.
 const isMarket = (value: string): value is Market => /^[A-Z0-9]{2,12}$/.test(value);
@@ -74,6 +75,7 @@ function ShellLayout() {
           className="rfq-logo"
           aria-label="RFQ Markets home"
         >
+          <Mascot size={28} />
           RFQ Markets
         </Link>
         <nav className="rfq-nav" aria-label="Main">
@@ -198,6 +200,7 @@ export const router = createRouter({
     <div className="page">
       <div className="rfq-card">
         <div className="rfq-empty">
+          <Mascot mood="loss" size={64} />
           <p>This page doesn't exist.</p>
           <Link className="rfq-btn rfq-btn--primary" to="/updown/$market" params={{ market: "BTC" }}>
             Go to trading

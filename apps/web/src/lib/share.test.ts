@@ -7,6 +7,7 @@ import {
   shareCaption,
   shareFileName,
   shareHeadline,
+  shareMood,
   shareSubline,
   type ShareBet,
 } from "./share.js";
@@ -40,6 +41,12 @@ test("the card leads with the return and falls back to dollars without a stake",
   assert.equal(shareSubline(bet()), "+$12.40");
   assert.equal(shareHeadline(bet({ ret: null })), "+$12.40");
   assert.equal(shareSubline(bet({ ret: null })), null);
+});
+
+test("Tick cheers a gain, sweats a loss and stays calm at break-even", () => {
+  assert.equal(shareMood(bet()), "win");
+  assert.equal(shareMood(bet({ pnl: -1n })), "loss");
+  assert.equal(shareMood(bet({ pnl: 0n })), "idle");
 });
 
 test("captions say what the bet was and whether it is still open", () => {

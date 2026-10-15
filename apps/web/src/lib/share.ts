@@ -4,6 +4,7 @@
 import type { ChartPoint } from "./candles.js";
 import { signedUsdc, usdc } from "./format.js";
 import type { Market } from "./types.js";
+import type { MascotMood } from "../../../../packages/design-system/mascot.js";
 
 export type ShareBet = {
   market: Market;
@@ -41,6 +42,10 @@ export const shareHeadline = (bet: ShareBet) => returnLabel(bet.ret) ?? signedUs
 
 /** The line under it: the dollar result when the headline is the return, else nothing. */
 export const shareSubline = (bet: ShareBet) => (returnLabel(bet.ret) ? signedUsdc(bet.pnl) : null);
+
+/** How Tick looks on the card: cheering a gain, sweating a loss, calm at break-even. */
+export const shareMood = (bet: Pick<ShareBet, "pnl">): MascotMood =>
+  bet.pnl > 0n ? "win" : bet.pnl < 0n ? "loss" : "idle";
 
 /** "Entry $2,500.00 → $2,550.00" for the card's footer row. */
 export const sharePrices = (bet: ShareBet) => `Entry ${usdc(bet.entryPrice)} → ${usdc(bet.price)}`;

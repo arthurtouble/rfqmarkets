@@ -1,6 +1,8 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import type { StreamStatus } from "../lib/event-stream.js";
 import type { Market } from "../lib/types.js";
+import type { MascotMood } from "../../../../packages/design-system/mascot.js";
+import { Mascot } from "../../../../packages/design-system/react.js";
 
 /**
  * Display names. Governance lists markets on chain by symbol only, so this
@@ -223,18 +225,21 @@ export function Tabs<T extends string>({
   );
 }
 
+/** An empty or failed panel. With `mood`, Tick stands in for the icon. */
 export function EmptyState({
   icon = NavIcons.trade,
+  mood,
   children,
   action,
 }: {
   icon?: ReactNode;
+  mood?: MascotMood;
   children: ReactNode;
   action?: ReactNode;
 }) {
   return (
     <div className="rfq-empty">
-      <span className="rfq-empty__icon">{icon}</span>
+      {mood ? <Mascot mood={mood} size={64} /> : <span className="rfq-empty__icon">{icon}</span>}
       <p>{children}</p>
       {action}
     </div>
