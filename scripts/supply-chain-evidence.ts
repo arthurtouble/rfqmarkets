@@ -33,7 +33,7 @@ const sha = (value: Buffer | string) => createHash("sha256").update(value).diges
 export function createSupplyChainEvidence(root: string, hostImageDigest: string) {
   digest.parse(hostImageDigest);
   const { candidateHash } = identifyCandidate(root),
-    docker = readFileSync(resolve(root, "Dockerfile.host"), "utf8"),
+    docker = readFileSync(resolve(root, "deploy/host/Dockerfile"), "utf8"),
     from = docker.match(/^FROM(?:\s+--platform=\S+)?\s+(\S+)@((?:sha256:)[a-f0-9]{64})$/m);
   if (!from) throw new Error("Host Dockerfile base image is not digest pinned");
   const packageLockBytes = readFileSync(resolve(root, "package-lock.json")),

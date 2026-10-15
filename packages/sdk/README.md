@@ -27,11 +27,38 @@ const stop = client.streamMarkets(({ event, data }) => console.log(event, data))
 stop(); // closes the stream
 ```
 
-Use a session key as the signer to trade without wallet prompts: grant it once with `/v1/session` (scoped to
-markets, notional and fees), then sign with the session key. A session key can also move isolated margin, adding
-at most its per-trade cap at a time, so a bot can keep each position isolated without prompts: pass the owner as
-`account` to `moveIsolatedMargin`. Errors from the API throw `RfqApiError` with the
-API's status and body.
+Responses are typed with the shared wire types in `packages/shared/src/api-types.ts` (`Quote`, `TradeResult`,
+`AccountState`, `RestingOrder` and the rest, re-exported from the client).
+
+### Sessions
+
+A session key is the safe way to hand a bot or an AI agent a budget. The owner grants it once; the clearing
+contract enforces its markets, per-trade and total caps and expiry, and the key can never withdraw, cancel or
+grant. The client checks every field of the grant the API prepares before the owner signs it.
+
+```ts
+const session = Wallet.createRandom();
+await client.grantSession({
+  session: session.address,
+  marketIndexes: [0, 1], // market indexes from config().marketList
+  maxTradeAmount: "100",
+  maxCumulativeAmount: "1000",
+  durationSeconds: 86_400,
+});
+const bot = new RfqClient({ baseUrl, signer: session });
+await bot.trade({ market: "BTC", side: "buy", amount: "25", account: ownerAddress });
+```
+
+A session key can also move isolated margin, adding at most its per-trade cap at a time, so a bot can keep each
+position isolated without prompts: pass the owner as `account` to `moveIsolatedMargin`. Revoke a session early
+with `revokeSession(session)` on the clearing contract from the owner's wallet.
+
+### Errors
+
+Errors from the API throw `RfqApiError` with the API's `status` and `body`, plus the stable `code` (for example
+`quote_expired`, `insufficient_margin` or `session_limit`) and `retryable`, which says whether the same call can
+succeed if made again shortly. Branch on `code`, not the message. The codes are listed in
+`packages/shared/src/api-errors.ts` and in the API's OpenAPI document at `/v1/openapi.json`.
 
 ## Advanced orders
 

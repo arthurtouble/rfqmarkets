@@ -1,11 +1,7 @@
 import { z } from "zod";
 import { isSecureOrLoopbackUrl } from "../services/lib/src/auth.js";
 
-const OFFICIAL_USDC = {
-  "base-sepolia": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
-  "base-mainnet": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-} as const;
-const CHAINS = { "base-sepolia": "84532", "base-mainnet": "8453" } as const;
+const OFFICIAL_USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 
 /**
  * True when two RPC URLs name the same endpoint (scheme, host, port, path and query; a trailing slash
@@ -26,8 +22,8 @@ export function rpcEndpointsMatch(first: string, second: string) {
 
 export const persistentConfigSchema = z
   .object({
-    environment: z.enum(["base-sepolia", "base-mainnet"]),
-    chainId: z.enum(["84532", "8453"]),
+    environment: z.literal("base-mainnet"),
+    chainId: z.literal("8453"),
     runtimeIdentity: z
       .object({
         oracleAddress: z.string(),
@@ -73,11 +69,25 @@ export const persistentConfigSchema = z
       .url()
       .refine(isSecureOrLoopbackUrl, "indexer URL must use HTTPS unless it is loopback"),
     apiUrl: z.string().url(),
-    /** Pyth feed ids: `[BTC, ETH]`, or a map from market symbol to feed id for any registered market. */
-    feedIds: z.union([
-      z.tuple([z.string(), z.string()]),
-      z.record(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,30}$/), z.string()),
-    ]),
+    /**
+     * The signed oracle: its node URLs and the adapter's agreement limits. Signers, threshold and the
+     * adapter address come from `runtimeIdentity`, which startup checks against the chain.
+     */
+    oracle: z
+      .object({
+        nodes: z
+          .array(
+            z
+              .string()
+              .url()
+              .refine((value) => value.startsWith("https://"), "oracle nodes must use HTTPS"),
+          )
+          .min(1)
+          .max(16),
+        maxDeviationBps: z.number().int().min(1).max(10_000),
+        maxSkewSeconds: z.number().int().min(1).max(3_600),
+      })
+      .strict(),
     approvers: z
       .array(z.object({ url: z.string().url(), token: z.string() }).strict())
       .length(3)
@@ -98,16 +108,14 @@ export const persistentConfigSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.chainId !== CHAINS[value.environment])
-      context.addIssue({ code: "custom", path: ["chainId"], message: "chain does not match environment" });
-    if (value.tokenAddress.toLowerCase() !== OFFICIAL_USDC[value.environment])
+    if (value.tokenAddress.toLowerCase() !== OFFICIAL_USDC)
       context.addIssue({
         code: "custom",
         path: ["tokenAddress"],
         message: "settlement token is not official USDC for environment",
       });
-    // Approvers cross-check chain reads against the secondary RPC; on mainnet it must be independent.
-    if (value.environment === "base-mainnet" && rpcEndpointsMatch(value.rpcUrl, value.secondaryRpcUrl))
+    // Approvers cross-check chain reads against the secondary RPC; it must be independent.
+    if (rpcEndpointsMatch(value.rpcUrl, value.secondaryRpcUrl))
       context.addIssue({
         code: "custom",
         path: ["secondaryRpcUrl"],
@@ -122,8 +130,5 @@ export const persistentConfigSchema = z
   });
 
 export type PersistentConfig = z.infer<typeof persistentConfigSchema>;
-/** Feed ids keyed by market symbol (the legacy `[BTC, ETH]` tuple maps to the launch markets). */
-export const feedIdsByMarket = (feedIds: PersistentConfig["feedIds"]): Record<string, string> =>
-  Array.isArray(feedIds) ? { BTC: feedIds[0], ETH: feedIds[1] } : { ...feedIds };
-export const hedgeVenueApiUrl = (environment: PersistentConfig["environment"]) =>
-  environment === "base-mainnet" ? "https://api.hyperliquid.xyz" : "https://api.hyperliquid-testnet.xyz";
+/** The production hedge venue; the host runs Base mainnet only. */
+export const HEDGE_VENUE_API_URL = "https://api.hyperliquid.xyz";

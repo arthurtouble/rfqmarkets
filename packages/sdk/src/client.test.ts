@@ -63,14 +63,12 @@ after(async () => {
 });
 
 test("trade quotes, signs with the wallet and gets a two-approver quorum", async () => {
-  const result = (await client.trade({ market: "BTC", side: "buy", amount: "1000" })) as {
-    approvals: Array<{ signer: string }>;
-  };
+  const result = await client.trade({ market: "BTC", side: "buy", amount: "1000" });
   assert.equal(new Set(result.approvals.map((approval) => approval.signer.toLowerCase())).size, 2);
 });
 
 test("reads and the ladder go through the same client", async () => {
-  const ladder = (await client.ladder("ETH", ["500", "5000"])) as { buy: unknown[]; sell: unknown[] };
+  const ladder = await client.ladder("ETH", ["500", "5000"]);
   assert.equal(ladder.buy.length, 2);
   assert.equal(ladder.sell.length, 2);
   const quote = await client.quote({ market: "BTC", side: "sell", amount: "250" });
@@ -96,4 +94,50 @@ test("API errors surface status and body", async () => {
 test("helpers: isolated addresses match the shared derivation and nonces are fresh", async () => {
   assert.equal(await client.isolatedAccount(1), isolatedAccountAddress(wallet.address, 1));
   assert.notEqual(randomNonce(), randomNonce());
+});
+
+test("grantSession signs only the grant it asked for", async () => {
+  const session = Wallet.createRandom().address,
+    request = {
+      session,
+      marketIndexes: [0, 1],
+      maxTradeAmount: "100",
+      maxCumulativeAmount: "1000",
+      durationSeconds: 3600,
+    };
+  const prepared = await api.inject({
+    method: "POST",
+    url: "/v1/session/prepare",
+    payload: {
+      account: wallet.address,
+      session,
+      marketMask: 3,
+      maxTradeAmount: "100",
+      maxCumulativeAmount: "1000",
+      maxFee: "0.000001",
+      durationSeconds: 3600,
+      nonce: randomNonce(),
+    },
+  });
+  assert.equal(prepared.statusCode, 200, prepared.body);
+  const tampered = (patch: Record<string, unknown>) =>
+    (async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await inject(api)(input, init);
+      if (!String(input).endsWith("/v1/session/prepare")) return response;
+      const body = (await response.json()) as { grant: Record<string, unknown> };
+      return Response.json({ ...body, grant: { ...body.grant, ...patch } }, { status: response.status });
+    }) as typeof fetch;
+  for (const patch of [
+    { session: Wallet.createRandom().address },
+    { marketMask: "7" },
+    { maxCumulativeNotional: "2000000000" },
+    { validUntil: String(Math.floor(Date.now() / 1000) + 7200) },
+  ])
+    await assert.rejects(
+      new RfqClient({ baseUrl: "http://api.test/", signer: wallet, fetch: tampered(patch) }).grantSession(
+        request,
+      ),
+      /differs from the one requested/,
+    );
+  await assert.rejects(client.grantSession({ ...request, marketIndexes: [] }), /at least one market index/);
 });

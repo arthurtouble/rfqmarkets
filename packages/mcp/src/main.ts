@@ -1,15 +1,17 @@
 // Runs the RFQ Markets MCP server on stdio: `npm run mcp`. Configuration comes from the environment:
 //   RFQ_API_URL             API origin (default the dev deployment)
 //   RFQ_PRIVATE_KEY         the agent's wallet key; without it only prices and quotes are offered
+//   RFQ_ACCOUNT             the account RFQ_PRIVATE_KEY trades for as a session key (granted with the SDK's
+//                           `grantSession`); without it the key's own wallet is the account
 //   RFQ_MCP_MAX_STAKE       largest stake per bet in dollars (default 100)
 //   RFQ_MCP_MAX_MULTIPLIER  highest multiplier (default 10)
 // The key never leaves this process: the API prepares typed data and the server signs it locally.
 
 import { pathToFileURL } from "node:url";
-import { Wallet } from "ethers";
+import { Wallet, getAddress } from "ethers";
 import { RfqClient } from "../../sdk/src/client.js";
 import { serve, type ServerInfo } from "./protocol.js";
-import { DEFAULT_LIMITS, accountTools, readTools, type Limits } from "./tools.js";
+import { DEFAULT_LIMITS, accountTools, readTools, type Limits, type Venue } from "./tools.js";
 
 export const DEFAULT_API_URL = "https://dev.rfq-markets.workers.dev";
 
@@ -28,17 +30,46 @@ export function limitsFrom(env: NodeJS.ProcessEnv): Limits {
   };
 }
 
+/**
+ * A venue that trades for `account` with a session key: every call names the account, and TP/SL is left out
+ * because a session key may only place market orders and closes.
+ */
+export function sessionVenue(client: RfqClient, account: string): Venue {
+  return {
+    markets: () => client.markets(),
+    quote: (input) => client.quote({ ...input, account }),
+    account: (address) => client.account(address ?? account),
+    trade: (input) => client.trade({ ...input, account }),
+    close: (input) => client.close({ ...input, account }),
+    closeAll: (input = {}) => client.closeAll({ ...input, account }),
+    tpsl: () => Promise.reject(new Error("a session key cannot set take-profit or stop-loss orders")),
+  };
+}
+
 export function serverFrom(env: NodeJS.ProcessEnv) {
-  const key = env.RFQ_PRIVATE_KEY?.trim();
+  const key = env.RFQ_PRIVATE_KEY?.trim(),
+    account = env.RFQ_ACCOUNT?.trim() ? getAddress(env.RFQ_ACCOUNT.trim()) : undefined;
+  if (account && !key)
+    throw new Error("RFQ_ACCOUNT needs RFQ_PRIVATE_KEY, the session key that trades for it");
   const signer = key ? new Wallet(key) : undefined;
   const client = new RfqClient({ baseUrl: env.RFQ_API_URL || DEFAULT_API_URL, signer });
-  const tools = signer ? [...readTools(client), ...accountTools(client, limitsFrom(env))] : readTools(client);
+  const venue = account ? sessionVenue(client, account) : client;
+  const tools = signer
+    ? [
+        ...readTools(venue),
+        ...accountTools(venue, limitsFrom(env)).filter((tool) => !account || tool.name !== "protect_bet"),
+      ]
+    : readTools(client);
   const info: ServerInfo = {
     name: "rfq-markets",
     version: "0.1.0",
-    instructions: signer
-      ? `Trades RFQ Markets perpetuals as simple up / down bets from wallet ${signer.address}. Bets have no expiry; close them whenever. There are no trading fees. Amounts are US dollars (USDC).`
-      : "Reads RFQ Markets prices and quotes. Set RFQ_PRIVATE_KEY to trade.",
+    instructions: !signer
+      ? "Reads RFQ Markets prices and quotes. Set RFQ_PRIVATE_KEY to trade."
+      : `Trades RFQ Markets perpetuals as simple up / down bets from ${
+          account
+            ? `account ${account} with a session key whose limits the venue enforces`
+            : `wallet ${signer.address}`
+        }. Bets have no expiry; close them whenever. There are no trading fees. Amounts are US dollars (USDC).`,
   };
   return { info, tools };
 }

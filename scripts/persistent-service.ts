@@ -8,25 +8,18 @@ import { buildIndexer } from "../services/indexer/src/server.js";
 import { buildGateway } from "../services/gateway/src/server.js";
 import { buildHedger } from "../services/hedger/src/server.js";
 import { HyperliquidVenue } from "../services/hedger/src/hyperliquid.js";
-import { PythHermesSource } from "../services/api/src/oracle.js";
+import { SignedOracleSource } from "../services/api/src/oracle.js";
 import { HttpHedgeRiskSource } from "../services/api/src/hedge-risk.js";
 import { QUOTE_MODEL_VERSION } from "../packages/shared/src/pricing.js";
 import { buildKeeper } from "../services/keeper/src/server.js";
 import { validateRuntimeIdentity } from "./runtime-identity.js";
 import { MIN_SERVICE_TOKEN_LENGTH } from "../services/lib/src/auth.js";
-import {
-  feedIdsByMarket,
-  hedgeVenueApiUrl,
-  persistentConfigSchema,
-  rpcEndpointsMatch,
-} from "./persistent-config.js";
+import { HEDGE_VENUE_API_URL, persistentConfigSchema } from "./persistent-config.js";
 import { clearingStateAbi } from "../packages/shared/src/abi.js";
 import { marketRegistry } from "../packages/shared/src/markets.js";
 import { syncMarketRegistry } from "../packages/shared/src/markets-chain.js";
 const role = z.enum(["api", "approver", "indexer", "gateway", "hedger", "keeper"]).parse(process.argv[2]);
 const config = persistentConfigSchema.parse(JSON.parse(readFileSync(process.argv[3], "utf8")));
-if (rpcEndpointsMatch(config.rpcUrl, config.secondaryRpcUrl))
-  console.warn("secondaryRpcUrl equals rpcUrl: approver chain reads are not independently cross-checked");
 // Separate secret files and host users are required for every signing role.
 if (statSync(process.argv[3]).mode & 0o077) throw new Error("Role configuration must be private (0600)");
 const secretPath = process.argv[4];
@@ -36,7 +29,6 @@ const secretSchemas = {
   api: z
     .object({
       sponsorKey: z.string(),
-      oracleKey: z.string(),
       operationsToken: z.string(),
       dailyBudgetWei: z.string(),
       maxFeePerGas: z.string(),
@@ -46,7 +38,6 @@ const secretSchemas = {
   keeper: z
     .object({
       sponsorKey: z.string(),
-      oracleKey: z.string(),
       operationsToken: z.string(),
       dailyBudgetWei: z.string(),
       maxFeePerGas: z.string(),
@@ -124,6 +115,17 @@ if (role === "api" || role === "keeper") {
   )
     throw new Error("Sponsor must match its reviewed independent role identity");
 }
+/** Prices from the signed oracle nodes, checked against the adapter's reviewed signer set. */
+const signedOracle = () =>
+  new SignedOracleSource({
+    nodes: config.oracle.nodes,
+    signers: config.runtimeIdentity.oracleSigners,
+    threshold: config.runtimeIdentity.oracleThreshold,
+    maxDeviationBps: config.oracle.maxDeviationBps,
+    maxSkewSeconds: config.oracle.maxSkewSeconds,
+    chainId: BigInt(config.chainId),
+    adapter: config.runtimeIdentity.oracleAddress,
+  });
 const databasePath = join(config.stateDirectory, `${role}.sqlite`),
   chainId = BigInt(config.chainId);
 let app;
@@ -144,10 +146,7 @@ switch (role) {
         maxValue: BigInt(secrets.maxOracleValueWei),
         dailyBudgetWei: BigInt(secrets.dailyBudgetWei),
       },
-      oracleSource: new PythHermesSource({
-        apiKey: secrets.oracleKey,
-        feedIds: feedIdsByMarket(config.feedIds),
-      }),
+      oracleSource: signedOracle(),
     });
     break;
   case "indexer":
@@ -196,10 +195,7 @@ switch (role) {
         maxValue: BigInt(secrets.maxOracleValueWei),
         dailyBudgetWei: BigInt(secrets.dailyBudgetWei),
       },
-      oracleSource: new PythHermesSource({
-        apiKey: secrets.oracleKey,
-        feedIds: feedIdsByMarket(config.feedIds),
-      }),
+      oracleSource: signedOracle(),
       hedgeRiskSource: new HttpHedgeRiskSource(config.hedgeRiskUrl, secrets.operationsToken),
       operationsToken: secrets.operationsToken,
       publicRpcUrl: config.publicRpcUrl,
@@ -217,7 +213,7 @@ switch (role) {
       agentPrivateKey: secrets.agentKey,
       accountAddress: secrets.accountAddress,
       agentName: secrets.agentName,
-      apiUrl: hedgeVenueApiUrl(config.environment),
+      apiUrl: HEDGE_VENUE_API_URL,
       pythonPath: "/opt/hyperliquid/bin/python",
       minimumPerpUsdc: config.hedgeMinOrderUsdc,
     });

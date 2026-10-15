@@ -2,10 +2,10 @@
 // a multiplier, cash out whenever), plus prices and the account. Amounts in and out are plain US dollars;
 // the venue's 6-decimal USDC integers stay inside this file.
 
+import type { Side } from "../../shared/src/api-types.js";
 import type { Tool } from "./protocol.js";
 
 type Wire = Record<string, unknown>;
-type Side = "buy" | "sell";
 
 /** The slice of `RfqClient` the tools call, so tests can pass a stub. */
 export interface Venue {

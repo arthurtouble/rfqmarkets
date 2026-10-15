@@ -1,7 +1,8 @@
+import type { RiskMode } from "./api-types.js";
 import type { Market } from "./markets.js";
 import { abs } from "./numeric.js";
 
-export type HedgeRiskMode = "normal" | "guarded" | "reduce_only";
+export type HedgeRiskMode = RiskMode;
 export type HedgeExecutionSignal = {
   estimatedCostBps: number;
   latencyMs: number;

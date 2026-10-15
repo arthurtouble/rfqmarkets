@@ -20,6 +20,8 @@ import { registerLadderRoutes } from "./ladder.js";
 import { LimitOrders } from "./orders.js";
 import { QuoteEngine } from "./quoting.js";
 import { registerSignedActions } from "./signed-actions.js";
+import { registerErrorCodes } from "../../lib/src/error-codes.js";
+import { registerOpenApi } from "./openapi.js";
 
 export type { ApiOptions } from "./context.js";
 
@@ -30,6 +32,8 @@ const PRUNE_INTERVAL_MS = 3_600_000;
 /** Build the execution leader: quoting, approval, sponsored settlement and the public read model. */
 export function buildApi(options: ApiOptions = {}) {
   const app = Fastify({ logger: false, bodyLimit: 16_384, trustProxy: options.trustedProxy });
+  registerErrorCodes(app);
+  registerOpenApi(app);
   const ctx = new ApiContext(options),
     metrics = new RuntimeMetrics(),
     guards = registerHttpGuards(app, options, metrics);

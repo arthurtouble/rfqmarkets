@@ -3,7 +3,24 @@
 // the API's two-step flow: the API prepares EIP-712 typed data, the signer signs it, and the API submits it.
 // Nothing here holds keys: pass any ethers-compatible signer (a wallet, a browser signer or a session key).
 
-import { getAddress, hexlify, randomBytes } from "ethers";
+import { getAddress, hexlify, parseUnits, randomBytes } from "ethers";
+import type { ApiErrorBody, ApiErrorCode } from "../../shared/src/api-errors.js";
+import type {
+  AccountState,
+  ActionResult,
+  CancelResult,
+  CandleSeries,
+  ChainConfig,
+  MarketSnapshot,
+  PlacedOrder,
+  Portfolio,
+  Quote,
+  QuoteLadder,
+  RestingOrder,
+  SessionGrantResult,
+  Side,
+  TradeResult,
+} from "../../shared/src/api-types.js";
 import { isolatedAccountAddress } from "../../shared/src/isolated.js";
 
 export { isolatedAccountAddress };
@@ -26,20 +43,51 @@ export interface RfqClientOptions {
   timeoutMs?: number;
 }
 
-export type Side = "buy" | "sell";
+export type {
+  AccountState,
+  ActionResult,
+  CancelResult,
+  CandleSeries,
+  ChainConfig,
+  MarketSnapshot,
+  PlacedOrder,
+  Portfolio,
+  Quote,
+  QuoteLadder,
+  RestingOrder,
+  SessionGrantResult,
+  Side,
+  TradeResult,
+};
 
-/** A non-2xx API response; `status` and `body` are the API's own. */
+/**
+ * A non-2xx API response; `status` and `body` are the API's own. `code` is the stable error code
+ * (packages/shared/src/api-errors.ts) and `retryable` says whether the same call can succeed if made again
+ * shortly, for example with a fresh quote.
+ */
 export class RfqApiError extends Error {
+  readonly code: ApiErrorCode | "unknown";
+  readonly retryable: boolean;
   constructor(
     readonly status: number,
     readonly body: unknown,
     path: string,
   ) {
+    const fields = (typeof body === "object" && body ? body : {}) as Partial<ApiErrorBody>;
+    const code = typeof fields.code === "string" ? fields.code : "unknown",
+      retryable = fields.retryable === true;
     super(
-      `${path} failed with ${status}: ${typeof body === "object" && body && "error" in body ? String(body.error) : "error"}`,
+      `${path} failed with ${status}: ${typeof fields.error === "string" ? fields.error : "error"} (${code}${retryable ? ", retryable" : ""})`,
     );
+    this.code = code;
+    this.retryable = retryable;
   }
 }
+
+/** Trades carry no fee, so a session's fee cap is the smallest the contract accepts. */
+const SESSION_MAX_FEE = "0.000001";
+/** How far the venue's chain clock may run ahead of this machine's when it stamps a grant's expiry. */
+const GRANT_CLOCK_SLACK_SECONDS = 120;
 
 /** A fresh random 128-bit nonce; the clearing contract only requires each (account, nonce) to be unused. */
 export const randomNonce = () => BigInt(hexlify(randomBytes(16))).toString();
@@ -90,28 +138,28 @@ export class RfqClient {
   // ---- Reads ----
 
   config() {
-    return this.request("/v1/config");
+    return this.request<ChainConfig>("/v1/config");
   }
   markets() {
-    return this.request("/v1/markets");
+    return this.request<MarketSnapshot>("/v1/markets");
   }
   /** An indicative quote (not stored); prepare a trade with `trade`. */
   quote(input: { market: string; side: Side; amount: string; slippageBps?: number; account?: string }) {
-    return this.request<Wire & { quoteId: string }>("/v1/quote", input);
+    return this.request<Quote & { quoteId: string }>("/v1/quote", input);
   }
   /** Buy and sell prices at several USDC sizes. */
   ladder(market: string, amounts?: string[]) {
     const query = new URLSearchParams({ market, ...(amounts ? { amounts: amounts.join(",") } : {}) });
-    return this.request(`/v1/quote/ladder?${query}`);
+    return this.request<QuoteLadder>(`/v1/quote/ladder?${query}`);
   }
   async account(address?: string) {
-    return this.request(`/v1/account/${await this.accountOf(address)}`);
+    return this.request<AccountState>(`/v1/account/${await this.accountOf(address)}`);
   }
   async portfolio(address?: string) {
-    return this.request(`/v1/portfolio/${await this.accountOf(address)}`);
+    return this.request<Portfolio>(`/v1/portfolio/${await this.accountOf(address)}`);
   }
   async orders(address?: string) {
-    return this.request(`/v1/orders/${await this.accountOf(address)}`);
+    return this.request<{ items: RestingOrder[] }>(`/v1/orders/${await this.accountOf(address)}`);
   }
   leaderboard(input: { window?: "1d" | "7d" | "30d" | "all"; sort?: "volume" | "pnl"; limit?: number } = {}) {
     const query = new URLSearchParams({
@@ -125,7 +173,9 @@ export class RfqClient {
     return this.request(`/v1/points/${await this.accountOf(address)}`);
   }
   candles(market: string, interval = "1m", limit = 100) {
-    return this.request(`/v1/candles?${new URLSearchParams({ market, interval, limit: String(limit) })}`);
+    return this.request<CandleSeries>(
+      `/v1/candles?${new URLSearchParams({ market, interval, limit: String(limit) })}`,
+    );
   }
 
   // ---- Trading ----
@@ -143,7 +193,7 @@ export class RfqClient {
       nonce,
       reduceOnly,
     });
-    return this.request("/v1/approve", {
+    return this.request<TradeResult>("/v1/approve", {
       quoteId: quote.quoteId,
       account,
       nonce,
@@ -159,7 +209,7 @@ export class RfqClient {
     amount: string;
     slippageBps?: number;
     reduceOnly?: boolean;
-    /** Defaults to the signer; pass an isolated account to trade there. */
+    /** Defaults to the signer; pass an isolated account, or the owner when the signer is its session key. */
     account?: string;
     nonce?: string;
   }) {
@@ -201,7 +251,7 @@ export class RfqClient {
   // ---- Resting and triggered orders ----
 
   private async place(prepared: Prepared & { orderId: string }) {
-    return this.request("/v1/orders", {
+    return this.request<PlacedOrder>("/v1/orders", {
       orderId: prepared.orderId,
       userSignature: await this.sign(prepared),
     });
@@ -280,7 +330,7 @@ export class RfqClient {
       `/v1/orders/${encodeURIComponent(orderId)}/cancel/prepare`,
       {},
     );
-    return this.request(`/v1/orders/${encodeURIComponent(orderId)}/cancel`, {
+    return this.request<CancelResult>(`/v1/orders/${encodeURIComponent(orderId)}/cancel`, {
       intent: prepared.intent,
       userSignature: await this.sign(prepared),
     });
@@ -297,9 +347,65 @@ export class RfqClient {
         nonce: randomNonce(),
         ...(input.recipient ? { recipient: getAddress(input.recipient) } : {}),
       });
-    return this.request("/v1/withdraw/execute", {
+    return this.request<ActionResult>("/v1/withdraw/execute", {
       intent: prepared.intent,
       userSignature: await this.sign(prepared),
+    });
+  }
+
+  /**
+   * Grants `session` (the address of a key you hold, such as `Wallet.createRandom()`) bounded authority over the
+   * signer's account: market orders and closes in the markets at `marketIndexes`, at most `maxTradeAmount` USDC
+   * a trade and `maxCumulativeAmount` in total, for `durationSeconds` (at most 30 days). The clearing contract
+   * enforces every limit, and a session key can never withdraw, cancel or grant. The owner signs once and the
+   * venue pays the gas. Then trade with an `RfqClient` whose signer is the session key, passing `account`.
+   * This is the safe way to hand an agent a budget. Revoke early with `revokeSession(session)` on the clearing
+   * contract from the owner's wallet.
+   */
+  async grantSession(input: {
+    session: string;
+    marketIndexes: number[];
+    maxTradeAmount: string;
+    maxCumulativeAmount: string;
+    durationSeconds: number;
+  }) {
+    const account = await this.accountOf(),
+      session = getAddress(input.session),
+      mask = input.marketIndexes.reduce((bits, index) => bits | (1n << BigInt(index)), 0n),
+      limits = {
+        maxTradeAmount: input.maxTradeAmount,
+        maxCumulativeAmount: input.maxCumulativeAmount,
+        maxFee: SESSION_MAX_FEE,
+        durationSeconds: input.durationSeconds,
+      };
+    if (
+      !input.marketIndexes.length ||
+      input.marketIndexes.some((index) => !Number.isInteger(index) || index < 0)
+    )
+      throw new Error("grantSession needs at least one market index");
+    const prepared = await this.request<Prepared>("/v1/session/prepare", {
+      account,
+      session,
+      marketMask: mask <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(mask) : mask.toString(),
+      ...limits,
+      nonce: randomNonce(),
+    });
+    // Sign only the grant asked for: the API must not swap the key, the account or any limit.
+    const grant = prepared.grant ?? {},
+      now = Math.floor(Date.now() / 1000);
+    if (
+      getAddress(String(grant.account)) !== account ||
+      getAddress(String(grant.session)) !== session ||
+      BigInt(String(grant.marketMask)) !== mask ||
+      BigInt(String(grant.maxTradeNotional)) !== parseUnits(limits.maxTradeAmount, 6) ||
+      BigInt(String(grant.maxCumulativeNotional)) !== parseUnits(limits.maxCumulativeAmount, 6) ||
+      BigInt(String(grant.maxFee)) !== parseUnits(SESSION_MAX_FEE, 6) ||
+      Number(grant.validUntil) > now + input.durationSeconds + GRANT_CLOCK_SLACK_SECONDS
+    )
+      throw new Error("the prepared session grant differs from the one requested");
+    return this.request<SessionGrantResult>("/v1/session/execute", {
+      grant,
+      userSignature: await this.sign(prepared, "grant"),
     });
   }
 
@@ -325,7 +431,7 @@ export class RfqClient {
       ...move,
       nonce: randomNonce(),
     });
-    return this.request("/v1/isolated/margin/execute", {
+    return this.request<ActionResult>("/v1/isolated/margin/execute", {
       intent: prepared.intent,
       userSignature: await this.sign(prepared),
     });

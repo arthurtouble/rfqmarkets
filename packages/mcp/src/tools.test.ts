@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { serverFrom } from "./main.js";
+import { serverFrom, sessionVenue } from "./main.js";
 import { accountTools, dollars, readTools, toAmount, type Venue } from "./tools.js";
 
 const USDC = 1_000_000n;
@@ -197,4 +197,44 @@ test("without a key the server only offers prices and quotes", () => {
       }),
     /positive/,
   );
+});
+
+test("with RFQ_ACCOUNT the key trades for that account as a session key", async () => {
+  const owner = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    session = serverFrom({
+      RFQ_PRIVATE_KEY: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+      RFQ_ACCOUNT: owner.toLowerCase(),
+    });
+  assert.ok(!session.tools.some((tool) => tool.name === "protect_bet"));
+  assert.equal(session.tools.length, 7);
+  assert.match(session.info.instructions!, new RegExp(`account ${owner} with a session key`));
+  assert.throws(() => serverFrom({ RFQ_ACCOUNT: owner }), /needs RFQ_PRIVATE_KEY/);
+
+  const calls: Array<[string, unknown]> = [],
+    record = (name: string) => async (input?: unknown) => {
+      calls.push([name, input]);
+      return {};
+    },
+    venue = sessionVenue(
+      {
+        markets: record("markets"),
+        quote: record("quote"),
+        account: record("account"),
+        trade: record("trade"),
+        close: record("close"),
+        closeAll: record("closeAll"),
+      } as never,
+      owner,
+    );
+  await venue.trade({ market: "ETH", side: "buy", amount: "10" });
+  await venue.close({ market: "ETH" });
+  await venue.closeAll();
+  await venue.account();
+  assert.deepEqual(calls, [
+    ["trade", { market: "ETH", side: "buy", amount: "10", account: owner }],
+    ["close", { market: "ETH", account: owner }],
+    ["closeAll", { account: owner }],
+    ["account", owner],
+  ]);
+  await assert.rejects(venue.tpsl({ market: "ETH" }), /session key cannot/);
 });

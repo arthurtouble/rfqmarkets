@@ -46,7 +46,6 @@ The API's own market-data sources (`services/api/src/oracle.ts`) work as follows
 | --- | --- |
 | Signed and simulated | Automatic |
 | Coinbase | Subscribes to `<SYMBOL>-USD` |
-| Pyth | Needs a feed id per symbol. In persistent configs, `feedIds` accepts a `{ "SOL": "0x…" }` map. |
 
 A market with no price is left out of `/v1/markets` and can't be quoted.
 

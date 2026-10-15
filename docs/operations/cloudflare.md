@@ -28,7 +28,7 @@ The script works the same from any machine with Docker, Node and a Cloudflare to
 2. Builds the trading app with `VITE_CHAIN_ID=8453` and, once contracts exist, the clearing and USDC addresses from the deployment record. The app then refuses a `/v1/config` that names other contracts. Redeploy the app after a contract redeployment.
 3. Builds the docs (with `DOCS_SITE_URL` set to the docs Worker), the dashboard and the internal docs, then runs `npm run validate:cloudflare-static`.
 4. Runs `scripts/cloudflare-oracle-deploy.sh`. It builds the oracle image once and deploys the three nodes one at a time. After each one it waits up to 300 seconds (`RFQ_ORACLE_ROLLOUT_TIMEOUT`) for `/health` to answer 200, or 503 because it is waiting for a deployment that names it. Anything else stops the rollout, so a bad build reaches one node at most.
-5. Builds and pushes the runtime image (`Dockerfile.cloudflare-dev`), writes the `RFQ_DEV_RUNTIME_SECRETS` Worker secret (RPC URLs and the oracle node URLs), then deploys the runtime. The secret goes first because the runtime reads it only at start.
+5. Builds and pushes the runtime image (`deploy/cloudflare/Dockerfile.dev`), writes the `RFQ_DEV_RUNTIME_SECRETS` Worker secret (RPC URLs and the oracle node URLs), then deploys the runtime. The secret goes first because the runtime reads it only at start.
 6. Deploys the `dev` and `docs` Workers.
 7. Deploys `admin` and `internal-docs` after `scripts/cloudflare-access.mjs` has made sure each has an Access application.
 8. Builds and deploys the exit page once a clearing address exists.

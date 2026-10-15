@@ -11,6 +11,7 @@ test("release review requires complete source, exact audit identity and sustaine
   try {
     mkdirSync(join(root, "contracts"));
     mkdirSync(join(root, "services/hedger"), { recursive: true });
+    mkdirSync(join(root, "deploy/host"), { recursive: true });
     const put = (path: string, text: string) => {
       writeFileSync(join(root, path), text);
       return { path, sha256: createHash("sha256").update(text).digest("hex") };
@@ -19,7 +20,7 @@ test("release review requires complete source, exact audit identity and sustaine
         put("contracts/Clearing.sol", "candidate"),
         put("package-lock.json", "{}"),
         put("services/hedger/requirements.lock", "sdk==1 --hash=sha256:" + "1".repeat(64)),
-        put("Dockerfile.host", "FROM node@sha256:" + "2".repeat(64)),
+        put("deploy/host/Dockerfile", "FROM node@sha256:" + "2".repeat(64)),
       ],
       candidateHash = hashCandidate(candidate),
       proof = put("review.md", "external evidence");

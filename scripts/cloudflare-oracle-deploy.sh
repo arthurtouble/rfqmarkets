@@ -30,7 +30,7 @@ for index in 1 2 3; do render "$index" "${regions[$((index - 1))]}"; done
 if [ "${RFQ_ORACLE_RENDER_ONLY:-}" = 1 ]; then exit 0; fi
 : "${CLOUDFLARE_API_TOKEN:?}"
 
-build=(docker build --provenance=false --platform linux/amd64 -t "$image" -f Dockerfile.cloudflare-oracle)
+build=(docker build --provenance=false --platform linux/amd64 -t "$image" -f deploy/cloudflare/Dockerfile.oracle)
 if [ -n "${RFQ_DOCKER_BUILD_CA:-}" ]; then build+=(--secret "id=ca,src=$RFQ_DOCKER_BUILD_CA"); fi
 if [ -n "${RFQ_DOCKER_NODE_IMAGE:-}" ]; then build+=(--build-arg "NODE_IMAGE=$RFQ_DOCKER_NODE_IMAGE"); fi
 DOCKER_BUILDKIT=1 "${build[@]}" .
