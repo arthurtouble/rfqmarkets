@@ -1,6 +1,8 @@
 # Product design system
 
-The design system lives in [`packages/design-system`](../../packages/design-system/README.md). `tokens.json` is the source of truth for color, type, spacing, radius, shadows and sizes; `npm run build:tokens` generates `tokens.css` and `colors.ts` from it, and CI fails when either is stale. `components.css` holds the shared `rfq-` component classes, and `logo.svg` is the mark.
+The design system lives in [`packages/design-system`](../../packages/design-system/README.md). `tokens.json` is the source of truth for color, type, spacing, radius, shadows and sizes; `npm run build:tokens` generates `tokens.css` and `colors.ts` from it, and CI fails when either is stale. `components.css` holds the shared `rfq-` component classes.
+
+Tick, the mascot, is the logo. It is a blue character whose antenna is an arrow: green and pointing up when idle or winning, red and pointing down when losing. `mascot.json` holds the drawing; `npm run build:tokens` writes `logo.svg` and every app's favicon from it. Tick sits next to the name in each app's top bar, cheers or sweats on the share card depending on the result, and stands in for the icon in empty states (idle when there is nothing yet, losing when something is unavailable or not found).
 
 The specimen page renders all of it straight from those files, so it cannot drift: run `npm run dev:design-system` and open `http://127.0.0.1:4177`. It shows every color token in both themes with its usage note, every type style, the spacing and radius scales, and the shared components.
 

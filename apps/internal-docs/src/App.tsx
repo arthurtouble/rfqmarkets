@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { pages } from "./documents.js";
+import { Mascot } from "../../../packages/design-system/react.js";
 import { resolveLink, search, sectionsOf, sourceUrl, type Page } from "./manual.js";
 import { Markdown, type LinkProps } from "./Markdown.js";
 
@@ -82,7 +83,7 @@ export function App() {
           </svg>
         </button>
         <a className="rfq-logo" href="/" onClick={navigate(open, "/")}>
-          <Mark />
+          <Mascot size={28} />
           RFQ Markets
         </a>
         <span className="manual-tag">Internal manual</span>
@@ -236,14 +237,5 @@ function NotFound({ route, open }: { route: string; open: (target: string) => vo
         </p>
       </article>
     </div>
-  );
-}
-
-function Mark() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true">
-      <rect width="32" height="32" rx="8" fill="var(--brand)" />
-      <path d="M9 22V10h4.5v4.5h5V10H23v12h-4.5v-4.5h-5V22z" fill="var(--on-brand)" />
-    </svg>
   );
 }

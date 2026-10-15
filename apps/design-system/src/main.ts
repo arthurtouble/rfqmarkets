@@ -3,6 +3,7 @@ import "@fontsource-variable/geist/wght.css";
 import "@fontsource/geist-mono/500.css";
 import "./styles.css";
 import tokens from "../../../packages/design-system/tokens.json" with { type: "json" };
+import { MASCOT_MOODS, MASCOT_NAME, mascotSvg } from "../../../packages/design-system/mascot.js";
 
 type Token = { name: string; value: string | Record<string, string>; usage?: string };
 type Style = { name: string; fontSize: string; usage?: string; sample?: string };
@@ -83,7 +84,22 @@ const components = `
   <h3>Card</h3>
   <div class="rfq-card rfq-card--pad ds-stack"><b>Your trade</b><span class="rfq-up tnum">+$1.24 (12.4%)</span><span class="rfq-faint">Entry $4,007.05 · Auto-closes at $3,650.20</span></div>`;
 
+// Tick in each mood and at the sizes the apps use: the share card, empty states, the top bar and the favicon.
+const moodUse = {
+  idle: "The logo, favicons and calm empty states.",
+  win: "A share card for a gain.",
+  loss: "A share card for a loss, and anything unavailable or not found.",
+};
+const mascot = `<p class="ds-note">${MASCOT_NAME} is the mascot and the logo. Its antenna is an arrow: up when idle or winning, down when losing. Draw it from <code>mascot.json</code> through <code>mascotSvg</code>, <code>drawMascot</code> or the <code>Mascot</code> component, never as a copy.</p>
+  <div class="ds-mascots">${MASCOT_MOODS.map(
+    (mood) =>
+      `<figure class="ds-mascot"><div class="ds-mascot__sizes">${[96, 64, 28, 16]
+        .map((size) => `<span style="width:${size}px;height:${size}px">${mascotSvg(mood)}</span>`)
+        .join("")}</div><figcaption><b>${mood}</b>${usage(moodUse[mood])}</figcaption></figure>`,
+  ).join("")}</div>`;
+
 document.getElementById("specimen")!.innerHTML = `
+  <section id="mascot"><h2>Mascot</h2>${mascot}</section>
   <section id="color"><h2>Color</h2><div class="ds-grid">${colors}</div></section>
   <section id="type"><h2>Type</h2><div class="ds-type">${type}</div></section>
   <section id="space"><h2>Space and radius</h2><div class="ds-space">${sizes("spacing")}</div><div class="ds-space" style="margin-top:24px">${sizes("radius")}</div></section>

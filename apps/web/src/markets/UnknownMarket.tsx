@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { Market } from "../lib/types.js";
-import { EmptyState, NavIcons } from "../ui/primitives.js";
+import { EmptyState } from "../ui/primitives.js";
 
 /** A symbol-shaped URL for a market that is not listed. */
 export function UnknownMarket({ market }: { market: Market }) {
@@ -8,7 +8,7 @@ export function UnknownMarket({ market }: { market: Market }) {
     <div className="page">
       <section className="rfq-card">
         <EmptyState
-          icon={NavIcons.markets}
+          mood="loss"
           action={
             <Link className="rfq-btn rfq-btn--primary" to="/markets">
               See all markets

@@ -25,3 +25,10 @@ section > h2 { margin: 0 0 var(--space-5); }
 .ds-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); }
 .ds-stack { display: grid; gap: var(--space-2); max-width: 520px; margin-bottom: var(--space-4); }
 @media (max-width: 640px) { .ds-head { flex-direction: column; align-items: start; } }
+.ds-mascots { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-3); }
+.ds-mascot { margin: 0; display: grid; gap: var(--space-3); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); }
+.ds-mascot__sizes { display: flex; align-items: end; gap: var(--space-4); }
+.ds-mascot__sizes span { display: block; }
+.ds-mascot__sizes svg { display: block; width: 100%; height: 100%; }
+.ds-mascot figcaption p { margin: var(--space-1) 0 0; color: var(--text-secondary); }
+.ds-note { max-width: 64ch; margin: 0 0 var(--space-4); color: var(--text-secondary); }

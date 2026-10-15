@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Markdown } from "./Markdown.js";
+import { Mascot } from "../../../packages/design-system/react.js";
 import { pages, resolveLink, sections, type Page } from "./pages.js";
 import { APP_URL, markdownPath, pageTitle } from "./seo.js";
 
@@ -153,6 +154,7 @@ export function App({ initialRoute }: { initialRoute?: string }) {
         {link(
           "/",
           <>
+            <Mascot size={28} />
             RFQ Markets <span>Docs</span>
           </>,
           "rfq-logo",

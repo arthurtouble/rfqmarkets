@@ -9,12 +9,14 @@ import {
   shareCaption,
   shareFileName,
   shareHeadline,
+  shareMood,
   sharePrices,
   shareSubline,
   type ShareBet,
 } from "../lib/share.js";
 import { Sheet } from "../ui/primitives.js";
 import { COLORS as TOKENS } from "../../../../packages/design-system/colors.js";
+import { drawMascot } from "../../../../packages/design-system/mascot.js";
 
 export const CARD_WIDTH = 1080,
   CARD_HEIGHT = 1350;
@@ -66,27 +68,15 @@ function pill(
   ctx.fillText(text, left + padX, y + h / 2 + 1);
 }
 
-/** The brand mark: up and down arrows on a blue tile, then the name. */
+/** The brand: Tick, then the name. */
 function brand(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  const s = 64;
-  roundRect(ctx, x, y, s, s, 18);
-  ctx.fillStyle = COLORS.brand;
-  ctx.fill();
+  const s = 72;
+  drawMascot(ctx, "idle", x, y - 4, s);
   ctx.fillStyle = COLORS.text;
-  ctx.beginPath();
-  ctx.moveTo(x + s * 0.5, y + s * 0.18);
-  ctx.lineTo(x + s * 0.74, y + s * 0.44);
-  ctx.lineTo(x + s * 0.26, y + s * 0.44);
-  ctx.closePath();
-  ctx.moveTo(x + s * 0.5, y + s * 0.82);
-  ctx.lineTo(x + s * 0.26, y + s * 0.56);
-  ctx.lineTo(x + s * 0.74, y + s * 0.56);
-  ctx.closePath();
-  ctx.fill();
   ctx.font = font(700, 40);
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
-  ctx.fillText("RFQ Markets", x + s + 22, y + s / 2 + 1);
+  ctx.fillText("RFQ Markets", x + s + 18, y + s / 2 - 3);
 }
 
 /** Draws the card for `bet` onto `canvas` (resized to the card). */
@@ -207,6 +197,8 @@ export function drawShareCard(
   ctx.font = font(600, 34);
   ctx.fillStyle = COLORS.text;
   ctx.fillText(host, pad, H - 70);
+  // Tick reacts to the result in the corner.
+  drawMascot(ctx, shareMood(bet), W - pad - 150, H - 172, 150);
 }
 
 /** Renders the card to a PNG once the app font is ready. */

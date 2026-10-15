@@ -80,7 +80,7 @@ function PerformanceCard({ account }: { account: AccountState }) {
         />
       </div>
       {history.isError ? (
-        <EmptyState icon={NavIcons.trade}>PnL history is unavailable right now.</EmptyState>
+        <EmptyState mood="loss">PnL history is unavailable right now.</EmptyState>
       ) : (
         <PnlChart series={series} />
       )}
@@ -129,7 +129,7 @@ export function PortfolioPage() {
       <div className="page narrow">
         <h1 className="title-1 page-title">Portfolio</h1>
         <section className="rfq-card">
-          <EmptyState icon={NavIcons.portfolio} action={<WalletMenu />}>
+          <EmptyState mood="idle" action={<WalletMenu />}>
             Connect to see your balance, positions and history.
           </EmptyState>
         </section>
