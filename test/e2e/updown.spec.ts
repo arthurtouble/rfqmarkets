@@ -13,7 +13,9 @@ const MARKET_INDEX = 1;
 async function startFlat(page: Page) {
   const bet = page.getByRole("region", { name: "Your trade" });
   const newBet = page.getByRole("region", { name: "New trade" });
-  await expect(bet.or(newBet)).toBeVisible();
+  // Up turns on once both accounts have loaded, so by then an open trade would be showing.
+  const ready = newBet.getByRole("button", { name: "Up", exact: true, disabled: false });
+  await expect(bet.or(ready)).toBeVisible();
   if (await bet.isVisible()) {
     await bet.getByRole("button", { name: /^Cash out/ }).click();
     await page.getByRole("region", { name: "Cashed out" }).getByRole("button", { name: "New trade" }).click();

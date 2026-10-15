@@ -24,18 +24,20 @@ export function useAccount(): { account: AccountState | null; loading: boolean; 
 
 /**
  * The connected account's isolated account in `market` (where Home trades hold their own margin), marked to the
- * live prices; null with no wallet or before the market list names the market's index.
+ * live prices; null with no wallet or before the market list names the market's index. `loading` holds until
+ * the first read answers, so Home does not offer a new trade over one it has not seen yet.
  */
-export function useIsolatedAccount(market: Market): AccountState | null {
+export function useIsolatedAccount(market: Market): { account: AccountState | null; loading: boolean } {
   const { snapshot } = useMarketFeed();
   const { address } = useTrader();
   const index = useMarketList().get(market)?.index;
   const isolated = address && index !== undefined ? isolatedAccountOf(address, index) : null;
   const state = useAccountState(isolated);
-  return useMemo(
+  const account = useMemo(
     () => (isolated && state.data ? markAccount(state.data, snapshot) : null),
     [isolated, state.data, snapshot],
   );
+  return { account, loading: !!address && (index === undefined || (state.isPending && !state.isError)) };
 }
 
 /**
