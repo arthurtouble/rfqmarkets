@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { JsonRpcProvider, Wallet, parseEther } from "ethers";
-import { DurableSender } from "../services/api/src/sender.js";
+import { DurableSender } from "../../services/api/src/sender.js";
 
 const provider = new JsonRpcProvider(process.env.RFQ_RPC_URL ?? "http://127.0.0.1:8545"),
   funder = await provider.getSigner(0),

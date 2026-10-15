@@ -1,7 +1,7 @@
-import { QUOTE_MODEL_VERSION } from "../packages/shared/src/pricing.js";
-import { buildApprover } from "../services/approver/src/server.js";
-import type { OracleMode } from "../services/approver/src/options.js";
-import { requireStrongToken } from "../services/lib/src/auth.js";
+import { QUOTE_MODEL_VERSION } from "../../packages/shared/src/pricing.js";
+import { buildApprover } from "../../services/approver/src/server.js";
+import type { OracleMode } from "../../services/approver/src/options.js";
+import { requireStrongToken } from "../../services/lib/src/auth.js";
 import { rpcEndpointsMatch } from "./persistent-config.js";
 
 const env = process.env;

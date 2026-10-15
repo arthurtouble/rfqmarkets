@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { AbiCoder, Wallet, keccak256 } from "ethers";
 import { buildApprover } from "../../approver/src/server.js";
 import { buildApi } from "./server.js";
-import { importApproverRecovery } from "../../../scripts/approver-recovery.js";
+import { importApproverRecovery } from "../../../scripts/host/approver-recovery.js";
 import { DEFAULT_BASE_SPREAD_BPS } from "../../../packages/shared/src/markets.js";
 import { PLATFORM_MARKUP_BPS } from "../../../packages/shared/src/pricing.js";
 

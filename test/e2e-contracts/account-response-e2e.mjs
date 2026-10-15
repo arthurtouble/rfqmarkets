@@ -1,18 +1,18 @@
-import { validateRuntimeIdentity } from "./runtime-identity.ts";
-import { buildApprover } from "../services/approver/src/server.ts";
+import { validateRuntimeIdentity } from "../../scripts/host/runtime-identity.ts";
+import { buildApprover } from "../../services/approver/src/server.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { network } from "hardhat";
 import { JsonRpcProvider } from "ethers";
-import { buildApi } from "../services/api/src/server.ts";
-import { approvalTypes } from "../packages/shared/src/eip712.ts";
-import { isolatedAccountAddress } from "../packages/shared/src/isolated.ts";
+import { buildApi } from "../../services/api/src/server.ts";
+import { approvalTypes } from "../../packages/shared/src/eip712.ts";
+import { isolatedAccountAddress } from "../../packages/shared/src/isolated.ts";
 import {
   deployLinked,
   deploySignedOracle,
   launchMarkets,
   signedOracleReport,
-} from "./lib/contract-fixture.mjs";
+} from "../../scripts/lib/contract-fixture.mjs";
 const { ethers } = await network.create({ network: "hardhatOp", chainType: "op" }),
   [governance, emergency, a, b, c, maker, user] = await ethers.getSigners(),
   libraries = {};

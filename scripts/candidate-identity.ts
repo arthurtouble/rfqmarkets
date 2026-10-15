@@ -15,6 +15,7 @@ const roots = [
   "deploy",
   "security",
   "simulator",
+  "test/e2e-contracts",
 ];
 const rootFiles = [
   "package.json",

@@ -7,7 +7,7 @@ Markets live in the clearing contract's registry. Governance lists one with `RFQ
 3. A hedge mapping.
 4. Caps.
 
-`scripts/add-market-e2e.mjs`, which is part of `npm run test:contracts`, runs this whole path on the local chain. It lists SOL while the API is running, then opens, reduces and margins a SOL position through the API.
+`test/e2e-contracts/add-market-e2e.mjs`, which is part of `npm run test:contracts`, runs this whole path on the local chain. It lists SOL while the API is running, then opens, reduces and margins a SOL position through the API.
 
 ## 1. Governance call
 

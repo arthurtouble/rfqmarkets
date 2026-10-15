@@ -18,7 +18,7 @@ test("journal snapshot retains escaped commitments and validates restored integr
     execFileSync(process.execPath, [
       "--import",
       "tsx",
-      resolve("scripts/journal-snapshot.ts"),
+      resolve("scripts/host/journal-snapshot.ts"),
       source,
       snapshot,
     ]);
@@ -34,7 +34,7 @@ test("journal snapshot retains escaped commitments and validates restored integr
     execFileSync(process.execPath, [
       "--import",
       "tsx",
-      resolve("scripts/journal-restore.ts"),
+      resolve("scripts/host/journal-restore.ts"),
       snapshot,
       destination,
     ]);
@@ -47,7 +47,7 @@ test("journal snapshot retains escaped commitments and validates restored integr
         execFileSync(process.execPath, [
           "--import",
           "tsx",
-          resolve("scripts/journal-restore.ts"),
+          resolve("scripts/host/journal-restore.ts"),
           snapshot,
           destination,
         ]),
@@ -62,7 +62,7 @@ test("journal snapshot retains escaped commitments and validates restored integr
         execFileSync(process.execPath, [
           "--import",
           "tsx",
-          resolve("scripts/journal-restore.ts"),
+          resolve("scripts/host/journal-restore.ts"),
           snapshot,
           join(directory, "tampered.sqlite"),
         ]),

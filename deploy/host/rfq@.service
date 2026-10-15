@@ -9,7 +9,7 @@ User=rfq-%i
 Group=rfq-%i
 WorkingDirectory=/opt/rfq
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/flock --exclusive --nonblock --no-fork /var/lib/rfq/%i/writer.lock /usr/local/bin/node --import tsx scripts/persistent-service.ts %i /etc/rfq/%i.json /etc/rfq/%i.secret.json
+ExecStart=/usr/bin/flock --exclusive --nonblock --no-fork /var/lib/rfq/%i/writer.lock /usr/local/bin/node --import tsx scripts/host/persistent-service.ts %i /etc/rfq/%i.json /etc/rfq/%i.secret.json
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=45

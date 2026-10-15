@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { HyperliquidVenue } from "../services/hedger/src/hyperliquid.js";
+import { HyperliquidVenue } from "../../services/hedger/src/hyperliquid.js";
 
 type Identity = { address: string; privateKey: string };
 const identities = JSON.parse(readFileSync(resolve(".local-state/testnet-identities.json"), "utf8")) as {
