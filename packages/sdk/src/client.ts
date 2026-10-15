@@ -308,11 +308,21 @@ export class RfqClient {
     return isolatedAccountAddress(await this.accountOf(), marketIndex);
   }
 
-  /** Moves `amount` USDC into ("add") or out of ("remove") the signer's isolated account for `market`. */
-  async moveIsolatedMargin(input: { market: string; direction: "add" | "remove"; amount: string }) {
+  /**
+   * Moves `amount` USDC into ("add") or out of ("remove") the isolated account for `market` of the signer, or of
+   * `account` when the signer is that account's session key. A session key may add at most its per-trade cap at a
+   * time, in its markets.
+   */
+  async moveIsolatedMargin(input: {
+    market: string;
+    direction: "add" | "remove";
+    amount: string;
+    account?: string;
+  }) {
+    const { account, ...move } = input;
     const prepared = await this.request<Prepared>("/v1/isolated/margin/prepare", {
-      account: await this.accountOf(),
-      ...input,
+      account: await this.accountOf(account),
+      ...move,
       nonce: randomNonce(),
     });
     return this.request("/v1/isolated/margin/execute", {

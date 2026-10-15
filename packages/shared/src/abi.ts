@@ -41,6 +41,7 @@ export const clearingApiAbi = [
   "function depositWithAuthorization(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)",
   "function withdrawWithSignature(address,address,uint256,uint256,uint64,bytes)",
   "function moveIsolatedMarginWithSignature(address,uint8,int256,uint256,uint64,bytes)",
+  "function moveIsolatedMarginWithSessionSignature(address,uint8,int256,uint256,uint64,bytes)",
   "event MarginTransferred(address indexed account,address indexed counterparty,uint8 indexed market,int256 amount)",
   "function cancelNonceWithSignature(address,uint256,uint64,bytes)",
   "function closePositionWithSignature(address,uint8,uint256,uint64,bytes,bytes) payable",

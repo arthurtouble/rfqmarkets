@@ -170,4 +170,118 @@ contract IsolatedMarginTest is ClearingFixture {
         assertEq(clearing.resolutionClaim(alice.account), 10_000e6);
         assertEq(clearing.resolutionClaim(aliceIsolated.account), 0);
     }
+
+    uint256 internal constant SESSION_KEY = 0x5e55;
+
+    /// @dev Grants alice a session key over BTC only, with a 1,000 USDC per-trade cap.
+    function grantAliceSession() internal returns (address session) {
+        session = vm.addr(SESSION_KEY);
+        SessionGrant memory g = SessionGrant({
+            account: alice.account,
+            session: session,
+            marketMask: 1,
+            maxTradeNotional: 1_000e6,
+            maxCumulativeNotional: 5_000e6,
+            maxFee: 1,
+            validUntil: uint64(block.timestamp + 1 hours),
+            nonce: marginNonce++,
+            deadline: uint64(block.timestamp + 60)
+        });
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SESSION_GRANT_TYPEHASH,
+                g.account,
+                g.session,
+                g.marketMask,
+                g.maxTradeNotional,
+                g.maxCumulativeNotional,
+                g.maxFee,
+                g.validUntil,
+                g.nonce,
+                g.deadline
+            )
+        );
+        clearing.grantSessionWithSignature(g, signDigest(alice.key, typedDigest(structHash)));
+    }
+
+    function sessionMove(uint8 market, int256 amount) internal {
+        (uint256 nonce, uint64 deadline, bytes memory signature) =
+            signedMove(alice.account, market, amount, SESSION_KEY);
+        clearing.moveIsolatedMarginWithSessionSignature(alice.account, market, amount, nonce, deadline, signature);
+    }
+
+    function sessionMoveReverts(uint8 market, int256 amount, bytes4 selector) internal {
+        (uint256 nonce, uint64 deadline, bytes memory signature) =
+            signedMove(alice.account, market, amount, SESSION_KEY);
+        vm.expectRevert(selector);
+        clearing.moveIsolatedMarginWithSessionSignature(alice.account, market, amount, nonce, deadline, signature);
+    }
+
+    /// @notice A one-tap trade: the session key funds the isolated account, trades it and moves the margin back.
+    function test_sessionKeyMovesIsolatedMarginWithinItsCap() public {
+        grantAliceSession();
+        sessionMove(0, 1_000e6);
+        assertEq(clearing.collateralOf(aliceIsolated.account), 1_000e6);
+        assertEq(clearing.collateralOf(alice.account), 9_000e6);
+
+        trade(Trader(aliceIsolated.account, SESSION_KEY), 0, 5e15, false);
+        trade(Trader(aliceIsolated.account, SESSION_KEY), 0, -5e15, true);
+        uint256 left = uint256(clearing.collateralOf(aliceIsolated.account));
+        // Moving margin back is not capped: it only returns the owner's own funds.
+        sessionMove(0, 1_000e6);
+        sessionMove(0, -int256(left + 1_000e6));
+        assertEq(clearing.collateralOf(aliceIsolated.account), 0);
+        assertTrue(custodyMatchesBuckets());
+    }
+
+    function test_sessionMarginMoveStaysInsideTheGrant() public {
+        grantAliceSession();
+        // Above the per-trade cap, or in a market the key does not cover.
+        sessionMoveReverts(0, 1_000e6 + 1, Unauthorized.selector);
+        sessionMoveReverts(1, 100e6, Unauthorized.selector);
+
+        // Another account's key cannot move alice's margin.
+        (uint256 nonce, uint64 deadline, bytes memory signature) = signedMove(alice.account, 0, 100e6, mallory.key);
+        vm.expectRevert(Unauthorized.selector);
+        clearing.moveIsolatedMarginWithSessionSignature(alice.account, 0, 100e6, nonce, deadline, signature);
+
+        // A signed move cannot be replayed.
+        (nonce, deadline, signature) = signedMove(alice.account, 0, 100e6, SESSION_KEY);
+        clearing.moveIsolatedMarginWithSessionSignature(alice.account, 0, 100e6, nonce, deadline, signature);
+        vm.expectRevert(Replay.selector);
+        clearing.moveIsolatedMarginWithSessionSignature(alice.account, 0, 100e6, nonce, deadline, signature);
+
+        // Removing margin still has to leave the isolated position its initial margin (100 USDC here).
+        sessionMove(0, 300e6);
+        trade(Trader(aliceIsolated.account, SESSION_KEY), 0, 5e15, false);
+        sessionMoveReverts(0, -350e6, Margin.selector);
+    }
+
+    function test_revokedOrExpiredSessionCannotMoveMargin() public {
+        address session = grantAliceSession();
+        vm.prank(alice.account);
+        clearing.revokeSession(session);
+        sessionMoveReverts(0, 100e6, Unauthorized.selector);
+
+        grantAliceSession();
+        vm.warp(block.timestamp + 1 hours + 1);
+        (uint256 nonce,, bytes memory signature) = signedMove(alice.account, 0, 100e6, SESSION_KEY);
+        uint64 deadline = uint64(block.timestamp + 60);
+        signature = signDigest(
+            SESSION_KEY,
+            typedDigest(
+                keccak256(abi.encode(ISOLATED_MARGIN_TYPEHASH, alice.account, uint8(0), int256(100e6), nonce, deadline))
+            )
+        );
+        vm.expectRevert(Unauthorized.selector);
+        clearing.moveIsolatedMarginWithSessionSignature(alice.account, 0, 100e6, nonce, deadline, signature);
+    }
+
+    /// @notice The owner-signed entry point does not accept a session key's signature.
+    function test_ownerEntryPointRejectsSessionSignatures() public {
+        grantAliceSession();
+        (uint256 nonce, uint64 deadline, bytes memory signature) = signedMove(alice.account, 0, 100e6, SESSION_KEY);
+        vm.expectRevert(InvalidSignature.selector);
+        clearing.moveIsolatedMarginWithSignature(alice.account, 0, 100e6, nonce, deadline, signature);
+    }
 }

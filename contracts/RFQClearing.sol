@@ -186,6 +186,20 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         RFQSettlement.moveIsolatedMargin(account, market, amount);
     }
 
+    /// @notice Gas-sponsored isolated margin move signed by one of the owner's session keys, so one-tap trades
+    /// can each hold their own margin. See RFQSignatureVerifier.consumeSessionMarginAuthorization for its limits.
+    function moveIsolatedMarginWithSessionSignature(
+        address account,
+        uint8 market,
+        int256 amount,
+        uint256 nonce,
+        uint64 deadline,
+        bytes calldata signature
+    ) external nonReentrant {
+        RFQSignatureVerifier.consumeSessionMarginAuthorization(account, market, amount, nonce, deadline, signature);
+        RFQSettlement.moveIsolatedMargin(account, market, amount);
+    }
+
     /// @notice Adds maker backing. Anyone may top up.
     function fundMaker(uint256 amount) external nonReentrant {
         _pull(amount);
