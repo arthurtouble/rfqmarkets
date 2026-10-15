@@ -5,7 +5,7 @@
 // trade, open or cashed out, can be shared as an image card.
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { useAccount } from "../account/useAccount.js";
+import { useAccount, useIsolatedAccount } from "../account/useAccount.js";
 import { useTrading, type ClosedAt } from "../data/actions.js";
 import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { useMarketLeverage, useMarketList } from "../data/markets.js";
@@ -95,7 +95,11 @@ export function UpDownPage({ market }: { market: Market }) {
 function UpDown({ market }: { market: Market }) {
   const { account, loading, error } = useAccount();
   const ticks = useTicks(market);
-  const open = account ? positionView(account, market) : null;
+  // Home trades hold their own margin in the market's isolated account; one opened before that (or in Pro) is on
+  // the main balance.
+  const isolatedAccount = useIsolatedAccount(market);
+  const isolatedOpen = isolatedAccount ? positionView(isolatedAccount, market) : null;
+  const open = isolatedOpen ?? (account ? positionView(account, market) : null);
   const reference = ticks.points[0] ? BigInt(Math.round(ticks.points[0].value * 1e6)).toString() : null;
   const [cashedOut, setCashedOut] = useState<CashedOut | null>(null);
   const [scrub, setScrub] = useState<ChartPoint | null>(null);
@@ -129,6 +133,7 @@ function UpDown({ market }: { market: Market }) {
       {open ? (
         <OpenBet
           view={open}
+          isolated={!!isolatedOpen}
           points={ticks.points}
           onCashedOut={(bet) => setCashedOut({ bet, points: ticks.points })}
         />
@@ -189,10 +194,13 @@ const toneOf = (pnl: bigint) => (pnl > 0n ? "rfq-up" : pnl < 0n ? "rfq-down" : "
 /** The trade in this market: live result, one button to cash out and one to share. */
 function OpenBet({
   view,
+  isolated,
   points,
   onCashedOut,
 }: {
   view: PositionView;
+  /** The trade holds its own margin, which returns to the balance on cash out. */
+  isolated: boolean;
   points: ChartPoint[];
   onCashedOut: (bet: ShareBet) => void;
 }) {
@@ -204,7 +212,7 @@ function OpenBet({
   const bet = shareBet(view, record, null);
   const cashOut = async () => {
     // The position is gone once this resolves, so the result is worked out from the view captured here.
-    const closed = await trading.closePosition(view.market);
+    const closed = await trading.closePosition(view.market, 10_000, isolated);
     if (!closed) return;
     forget(betKey(view.market));
     onCashedOut(shareBet(view, record, closed));
@@ -390,6 +398,7 @@ function NewBet({
       leverage: multiplier,
       reduceOnly: false,
       title: `You're ${word} on ${marketName(market)} with ${usdcCompact(stakeMicro)}`,
+      isolated: { payMicro: stakeMicro },
     };
     // One tap once quick trading covers the size; otherwise the confirm step signs (and offers one tap).
     if (trading.quickCovers(market, notional)) {

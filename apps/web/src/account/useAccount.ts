@@ -1,8 +1,10 @@
 import { useMemo } from "react";
 import { useMarketFeed } from "../data/market-feed.js";
+import { useMarketList } from "../data/markets.js";
 import { useAccountState } from "../data/queries.js";
 import { emptyAccount, markAccount } from "../lib/account.js";
-import type { AccountState } from "../lib/types.js";
+import { isolatedAccountOf } from "../lib/isolated.js";
+import type { AccountState, Market } from "../lib/types.js";
 import { useTrader } from "../wallet/trader.js";
 
 /** The connected account marked to the live prices, or null when no wallet is connected. */
@@ -17,4 +19,20 @@ export function useAccount(): { account: AccountState | null; loading: boolean; 
   );
   if (!address) return { account: null, loading: false, error: null };
   return { account, loading: state.isPending, error: state.isError ? state.error : null };
+}
+
+/**
+ * The connected account's isolated account in `market` (where Home trades hold their own margin), marked to the
+ * live prices; null with no wallet or before the market list names the market's index.
+ */
+export function useIsolatedAccount(market: Market): AccountState | null {
+  const { snapshot } = useMarketFeed();
+  const { address } = useTrader();
+  const index = useMarketList().get(market)?.index;
+  const isolated = address && index !== undefined ? isolatedAccountOf(address, index) : null;
+  const state = useAccountState(isolated);
+  return useMemo(
+    () => (isolated && state.data ? markAccount(state.data, snapshot) : null),
+    [isolated, state.data, snapshot],
+  );
 }

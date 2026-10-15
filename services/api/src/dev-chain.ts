@@ -107,11 +107,15 @@ export class DevChain {
     });
   }
 
-  /** Give a local wallet trading collateral on its first trade. */
+  /**
+   * Give a local wallet trading collateral on its first trade. Isolated accounts are left alone: their margin is
+   * what their owner moved in, and topping it up would lift the cap on what the trade can lose.
+   */
   async autofund(account: string, quoteId: string) {
     const chain = this.ctx.chain;
     if (!this.enabled || !chain) return;
     if (BigInt(await chain.clearing.collateralOf(account)) >= AUTOFUND_THRESHOLD) return;
+    if (BigInt((await chain.clearing.isolatedOwner(account)).owner) !== 0n) return;
     await this.mintAndDeposit(
       "autofund",
       quoteId,
