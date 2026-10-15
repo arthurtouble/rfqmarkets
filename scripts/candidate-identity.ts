@@ -21,8 +21,6 @@ const rootFiles = [
   "package-lock.json",
   "hardhat.config.js",
   "tsconfig.json",
-  "Dockerfile.host",
-  "Dockerfile.cloudflare-dev",
   ".dockerignore",
   ".npmrc",
 ];
@@ -36,7 +34,8 @@ export function candidatePaths(root = process.cwd()) {
       if (item.isSymbolicLink()) throw new Error("Candidate source cannot contain symlinks");
       if (item.isDirectory()) walk(path);
       else if (
-        /\.(sol|ts|tsx|js|mjs|py|json|jsonc|html|css|txt|lock|toml|yaml|yml|sh|service)$/.test(item.name)
+        /\.(sol|ts|tsx|js|mjs|py|json|jsonc|html|css|txt|lock|toml|yaml|yml|sh|service)$/.test(item.name) ||
+        /^Dockerfile(\.|$)/.test(item.name)
       )
         paths.push(path);
     }

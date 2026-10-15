@@ -10,7 +10,8 @@ The venue's HTTP API is what the trading app uses, and you can use it too: to st
 - **Numbers are strings of integers.** USDC amounts and prices use 6 decimals (`"25000000"` is 25 USDC, and a BTC price of `"83111145000"` is 83,111.145 USDC). Sizes in BTC or ETH use 18 decimals. The exceptions are request fields named `amount` and `limitPrice`, which take decimal USDC strings such as `"25"` or `"83000.5"`.
 - **Markets** are named by symbol in the API (`"BTC"`, `"ETH"`) and by index on chain (0, 1 and upward). Governance can list new markets at any time, so discover them rather than hard-coding them: `GET /v1/config` returns `marketList`, an array of `{index, symbol, enabled}` in index order.
 - **Rates** such as `fundingApr` are scaled so that `1000000000000` (1e12) means 100% a year.
-- **Errors** return a non-2xx status with `{"error": "message"}`, sometimes with `"retriable": true`. The messages are listed in [Placing a trade](../trading/placing-a-trade.md#when-a-trade-is-refused).
+- **Errors** return a non-2xx status with `{"error", "code", "retryable"}`. `error` is a readable message that may change; `code` is a stable string to branch on, such as `quote_expired`, `price_moved`, `insufficient_margin`, `market_paused`, `session_limit` or `rate_limited`; `retryable` says whether the same request can succeed if sent again shortly, usually with a fresh quote. The full list of codes is in the OpenAPI document, and the messages are explained in [Placing a trade](../trading/placing-a-trade.md#when-a-trade-is-refused).
+- **OpenAPI:** `GET /v1/openapi.json` describes every public route and its request body. It is generated from the same schemas the API validates with, so it can't drift. Response shapes are the TypeScript types in `packages/shared/src/api-types.ts`.
 
 ## Rate limits
 
@@ -117,6 +118,8 @@ Deposits are not relayed. Approve the clearing contract for the exact amount and
 ## Signing with a session key
 
 If your account has granted a session (see [Signing](signing.md#sessiongrant)), sign the *TradeIntent* with the session key instead of the account key. The `account` field stays the account's address. Session signatures must be plain ECDSA.
+
+A session is the safe way to give a bot or an AI agent a budget: the clearing contract enforces its markets, per-trade and total caps and expiry, and a session key can never withdraw, cancel orders or grant another session. The TypeScript SDK grants one with `grantSession` and checks the prepared grant before the owner signs it.
 
 ## Going direct
 

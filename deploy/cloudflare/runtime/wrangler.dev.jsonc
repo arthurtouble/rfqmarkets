@@ -9,7 +9,7 @@
   "workers_dev": false,
   "containers": [{
     "class_name": "RFQDevRuntime",
-    "image": "../../../Dockerfile.cloudflare-dev",
+    "image": "../Dockerfile.dev",
     "max_instances": 1,
     "instance_type": "basic"
   }],

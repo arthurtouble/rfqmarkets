@@ -15,7 +15,7 @@
   "vars": {"ORACLE_NODE_INDEX": "ORACLE_NODE_INDEX_VALUE", "ORACLE_LOCATION_HINT": "ORACLE_LOCATION_HINT_VALUE", "ORACLE_MARKETS": "0:BTC,1:ETH,2:SOL,3:XRP,4:DOGE,5:HYPE,6:SUI"},
   "containers": [{
     "class_name": "RFQOracleNode",
-    "image": "../../../Dockerfile.cloudflare-oracle",
+    "image": "../Dockerfile.oracle",
     "max_instances": 1,
     "instance_type": "basic"
   }],

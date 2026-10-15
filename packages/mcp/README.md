@@ -33,11 +33,33 @@ RFQ_PRIVATE_KEY=0x... npm run -s mcp
 | ------------------------ | -------------------------------------------------------------------- | ------------------------------------- |
 | `RFQ_API_URL`            | API origin                                                           | `https://dev.rfq-markets.workers.dev` |
 | `RFQ_PRIVATE_KEY`        | The agent's wallet key. Without it only the read tools are offered.  | none                                  |
+| `RFQ_ACCOUNT`            | The account `RFQ_PRIVATE_KEY` trades for as a session key            | the key's own wallet                  |
 | `RFQ_MCP_MAX_STAKE`      | Largest stake one bet may put up, in dollars                         | `100`                                 |
 | `RFQ_MCP_MAX_MULTIPLIER` | Highest multiplier; a market's own lower cap still applies           | `10`                                  |
 
 Use a dedicated wallet funded with only what the agent may lose. The limits are checked here before anything
 is signed, on top of the venue's own per-trade and exposure limits.
+
+Safer still, use a session key. Grant it from the owner wallet with the SDK, then run the server with the
+session key and the owner's address:
+
+```ts
+const session = Wallet.createRandom(); // keep session.privateKey for the agent
+await new RfqClient({ baseUrl, signer: ownerWallet }).grantSession({
+  session: session.address,
+  marketIndexes: [0, 1], // BTC and ETH
+  maxTradeAmount: "50",
+  maxCumulativeAmount: "500",
+  durationSeconds: 7 * 86_400,
+});
+```
+
+```sh
+RFQ_PRIVATE_KEY=<session key> RFQ_ACCOUNT=<owner address> npm run -s mcp
+```
+
+The clearing contract enforces the session's markets, caps and expiry, and a session key can never withdraw,
+cancel or grant. `protect_bet` is not offered with a session key, which may only open and close.
 
 ### Claude Code
 

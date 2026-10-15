@@ -1,3 +1,4 @@
+import type { RiskMode } from "./api-types.js";
 import { BASE, RATE, USDC, abs, ceilDiv } from "./numeric.js";
 import { marketRegistry, type Market } from "./markets.js";
 
@@ -104,7 +105,7 @@ export interface AdaptiveSpreadInputs {
   hedgeLatencyMs?: number;
   venueBasisBps?: number;
   confidenceBps?: number;
-  riskMode?: "normal" | "guarded" | "reduce_only";
+  riskMode?: RiskMode;
   maxTotalBps?: number;
 }
 export interface Quote {

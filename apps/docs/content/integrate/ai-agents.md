@@ -23,8 +23,10 @@ The server runs on your own computer, next to the agent. When the agent places a
 
 Without a key the server only offers the price and quote tools. With one, it refuses any trade above its amount and multiplier limits before signing (100 dollars and 10× unless you set lower or higher ones), on top of the venue's own limits. Use a separate wallet holding only what you are happy for the agent to trade with.
 
+Safer still, give the agent a session key instead of a wallet. Grant it from your own wallet with limits (which markets, the most per trade, the most in total, and for how long), then run the server with the session key as `RFQ_PRIVATE_KEY` and your account's address as `RFQ_ACCOUNT`. The clearing contract enforces the limits, the key can never withdraw, and you can revoke it at any time. With a session key the server offers every tool except `protect_bet`, because a session key can't place take-profit or stop-loss orders.
+
 ## Setting it up
 
-The server ships with the RFQ Markets source code in `packages/mcp`; its README has the full setup for Claude Code, Claude Desktop and other MCP clients. In short, add a server that runs `npx tsx packages/mcp/src/main.ts` with `RFQ_PRIVATE_KEY` set to the agent wallet's key, and optionally `RFQ_MCP_MAX_STAKE` and `RFQ_MCP_MAX_MULTIPLIER`.
+The server ships with the RFQ Markets source code in `packages/mcp`; its README has the full setup for Claude Code, Claude Desktop and other MCP clients. In short, add a server that runs `npx tsx packages/mcp/src/main.ts` with `RFQ_PRIVATE_KEY` set to the agent wallet's key (or a session key, with `RFQ_ACCOUNT`), and optionally `RFQ_MCP_MAX_STAKE` and `RFQ_MCP_MAX_MULTIPLIER`.
 
 Prefer to write your own bot? The [API](api.md) page covers the same flow over HTTP.

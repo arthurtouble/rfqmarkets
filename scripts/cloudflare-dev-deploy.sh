@@ -36,7 +36,7 @@ generated=deploy/cloudflare/runtime/wrangler.dev.generated.jsonc
 bash scripts/cloudflare-oracle-deploy.sh "$kv"
 
 image="rfq-markets-runtime-dev:$sha"
-build=(docker build --provenance=false --platform linux/amd64 -t "$image" -f Dockerfile.cloudflare-dev)
+build=(docker build --provenance=false --platform linux/amd64 -t "$image" -f deploy/cloudflare/Dockerfile.dev)
 if [ -n "${RFQ_DOCKER_BUILD_CA:-}" ]; then build+=(--secret "id=ca,src=$RFQ_DOCKER_BUILD_CA"); fi
 if [ -n "${RFQ_DOCKER_NODE_IMAGE:-}" ]; then build+=(--build-arg "NODE_IMAGE=$RFQ_DOCKER_NODE_IMAGE"); fi
 DOCKER_BUILDKIT=1 "${build[@]}" .

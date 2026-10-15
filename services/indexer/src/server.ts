@@ -40,6 +40,7 @@ import {
 import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import { validOwnerSignature } from "../../api/src/owner-signature.js";
 import { referralBonus, referralDigest, referralTermsError } from "./referrals.js";
+import { registerErrorCodes } from "../../lib/src/error-codes.js";
 
 export interface IndexerOptions {
   rpcUrl: string;
@@ -217,6 +218,7 @@ export function buildIndexer(options: IndexerOptions) {
   // on public RPC latency. Keep Fastify's startup watchdog above the ordinary
   // ten-second plugin default while retaining a finite failure boundary.
   const app = Fastify({ logger: false, pluginTimeout: 60_000 });
+  registerErrorCodes(app);
   app.register(cors, { origin: corsOrigins });
   // staticNetwork: without it ethers sends eth_chainId ahead of every getBlock and getLogs.
   const provider =

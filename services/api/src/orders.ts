@@ -27,6 +27,7 @@ import type { ApiContext } from "./context.js";
 import { INSUFFICIENT_MARGIN, type ExecutionService } from "./execution.js";
 import type { HttpGuards } from "./http.js";
 import { LimitTriggerBook, StopTriggerBook } from "./limit-book.js";
+import type { OrderStatus as PublicOrderStatus } from "../../../packages/shared/src/api-types.js";
 import { abs, marketIndex, marketSymbols, type Market, type Side } from "./markets.js";
 import type { IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
 import { signingAccount, validOwnerSignature } from "./owner-signature.js";
@@ -41,7 +42,8 @@ import {
 } from "./schemas.js";
 import { admitSponsoredAction, verifySignedAction } from "./signed-actions.js";
 
-type OrderStatus = "prepared" | "open" | "executing" | "filled" | "cancelled" | "expired";
+/** A prepared order is awaiting its signature and is never listed; the rest are public statuses. */
+type OrderStatus = "prepared" | PublicOrderStatus;
 export type OrderType = "limit" | TriggerKind;
 /** A triggered order's signed trigger plus how it was built; stored as `resting_orders.trigger_json`. */
 type TriggerTerms = Trigger & {

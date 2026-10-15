@@ -2,6 +2,7 @@
 // Two read-only feeds: the indexer's finalized risk view (GET /v1/risk?finalized=true) and the hedger's
 // status stream (GET /v1/status/stream, services/hedger/src/server.ts). Pure functions only, so they are
 // unit-tested without a browser.
+import type { RiskMode } from "../../../packages/shared/src/api-types.js";
 
 /** Customer exposure per market from the indexer. Base amounts have 18 decimals, collateral 6 (USDC). */
 export type RiskSnapshot = {
@@ -15,7 +16,7 @@ export type RiskSnapshot = {
 };
 
 export type HedgeState = "within_band" | "hedge_required" | "unhedged";
-export type TradingMode = "normal" | "guarded" | "reduce_only";
+export type TradingMode = RiskMode;
 
 /** One market in the hedger's status. Notional and band are USDC (6 decimals). */
 export type HedgeMarket = {

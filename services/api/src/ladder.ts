@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { isKnownMarket, type Market } from "../../../packages/shared/src/markets.js";
+import type { LadderRung } from "../../../packages/shared/src/api-types.js";
 import { formatUsdc } from "../../../packages/shared/src/policy.js";
 import type { HttpGuards } from "./http.js";
 import { publicError } from "./public-error.js";
@@ -19,16 +20,7 @@ export const ladderQuerySchema = z.object({
     .optional(),
 });
 
-/** One rung: the price a firm quote of `amount` would get now, and what makes it up. */
-export type LadderRung = {
-  amount: string;
-  /** Average execution price, USDC micro-units per base unit. */
-  price: string;
-  /** Execution price vs the oracle mid, in bps (always a cost: positive for buys and sells). */
-  costBps: string;
-  impactCharge: string;
-  fee: string;
-};
+export type { LadderRung };
 
 /**
  * Indicative depth for RFQ: buy and sell prices at several sizes, priced exactly like a firm quote but not
