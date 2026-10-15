@@ -2,9 +2,12 @@
 // and multiplier, it shows its live result, Cash out closes it, and either can
 // be shared as an image card. Runs in the desktop and mobile projects.
 import type { Page } from "@playwright/test";
+import { isolatedAccountOf } from "../../apps/web/src/lib/isolated.js";
 import { expect, expectNoHorizontalOverflow, test } from "./fixtures.js";
 
 const MARKET = "ETH";
+/** ETH's market index on the local stack. */
+const MARKET_INDEX = 1;
 
 /** Cashes out a trade left open in `MARKET` by an earlier run (the chain is shared). */
 async function startFlat(page: Page) {
@@ -29,7 +32,10 @@ test.describe("Up / Down", () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test("an amount and multiplier size the trade, Up opens it and Cash out closes it", async ({ page }) => {
+  test("an amount and multiplier size the trade, Up opens it and Cash out closes it", async ({
+    page,
+    stack,
+  }) => {
     await page.goto(`/updown/${MARKET}`);
     await startFlat(page);
     const newBet = page.getByRole("region", { name: "New trade" });
@@ -56,6 +62,18 @@ test.describe("Up / Down", () => {
     const bet = page.getByRole("region", { name: "Your trade" });
     await expect(bet).toContainText("You're Up on Ethereum with $10 at 2×");
     await expectNoHorizontalOverflow(page);
+    // The trade holds its own $10 in the market's isolated account, so that is the most it can lose.
+    const { account } = await stack.devWallet();
+    const isolated = isolatedAccountOf(account, MARKET_INDEX);
+    const held = async () =>
+      (await (await fetch(`${stack.urls.api}/v1/account/${isolated}`)).json()) as {
+        collateral: string;
+        positions: Record<string, { size: string }>;
+      };
+    // The API reads at its latest priced block, which can trail the fill by a moment.
+    await expect.poll(async () => BigInt((await held()).positions[MARKET].size)).toBeGreaterThan(0n);
+    expect(BigInt((await held()).collateral)).toBeLessThanOrEqual(10_000_000n);
+    await expect(bet).toContainText(/losing about \$(10|\d(\.\d\d)?)\b/);
 
     // The open bet shares as a card that says what it is, and the image saves as a PNG.
     await bet.getByRole("button", { name: "Share", exact: true }).click();
@@ -74,6 +92,8 @@ test.describe("Up / Down", () => {
 
     await bet.getByRole("button", { name: /^Cash out/ }).click();
     await expect(page.getByRole("status", { name: "Notifications" })).toContainText("ETH position closed");
+    // Cashing out returns the trade's margin to the balance.
+    await expect.poll(async () => (await held()).collateral).toBe("0");
     // The result stays up with its own card until the next bet.
     const result = page.getByRole("region", { name: "Cashed out" });
     await expect(result).toContainText("You cashed out of Up on Ethereum");

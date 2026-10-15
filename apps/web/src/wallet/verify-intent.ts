@@ -8,6 +8,7 @@
 // Pure, so it is unit tested without a wallet (verify-intent.test.ts).
 import { getAddress, isAddress, type Address, type TypedDataDomain } from "viem";
 import { triggerAboveFor, triggerLimitPrice } from "../../../../packages/shared/src/trigger.js";
+import { isolatedAccountOf } from "../lib/isolated.js";
 import type { Prepared, Side, TriggerKind } from "../lib/types.js";
 
 /** `RFQTypes.sol` EIP712_NAME_HASH / EIP712_VERSION_HASH (packages/shared/src/eip712.ts). */
@@ -47,6 +48,13 @@ export const SIGNABLE_TYPES = {
   ],
   CancelIntent: [
     { name: "account", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint64" },
+  ],
+  IsolatedMarginIntent: [
+    { name: "account", type: "address" },
+    { name: "market", type: "uint8" },
+    { name: "amount", type: "int256" },
     { name: "nonce", type: "uint256" },
     { name: "deadline", type: "uint64" },
   ],
@@ -96,12 +104,16 @@ export type SigningContext = {
   clearing: string | null | undefined;
 };
 
-/** What the user asked for, per action. Amounts and prices are integers (USDC 1e6, base 1e18). */
+/**
+ * What the user asked for, per action. Amounts and prices are integers (USDC 1e6, base 1e18). A trade with
+ * `isolated` is for the connected account's isolated account in its market, which the owner signs for.
+ */
 export type Expectation =
   /** An immediate trade at a firm quote. `amountMicro` is what the user asked for (absent for closes). */
   | {
       kind: "trade";
       market: number;
+      isolated?: boolean;
       side?: Side;
       reduceOnly: boolean;
       nonce: string;
@@ -138,6 +150,8 @@ export type Expectation =
       amountMicro?: bigint;
     }
   | { kind: "withdraw"; amountMicro: bigint; nonce: string }
+  /** Moves `amountMicro` into (positive) or out of (negative) the connected account's isolated account. */
+  | { kind: "isolated-margin"; market: number; amountMicro: bigint; nonce: string }
   | { kind: "cancel"; nonce: string }
   | { kind: "close"; market: number; nonce: string }
   | {
@@ -156,6 +170,7 @@ const EXPECTED_TYPE: Record<Expectation["kind"], PrimaryType> = {
   limit: "TradeIntent",
   trigger: "TriggeredTradeIntent",
   withdraw: "WithdrawalIntent",
+  "isolated-margin": "IsolatedMarginIntent",
   cancel: "CancelIntent",
   close: "CloseIntent",
   session: "SessionGrant",
@@ -267,7 +282,11 @@ export function verifyPrepared(
     Object.keys(message).length === fields.length && fields.every((field) => field.name in message),
     "unexpected message fields",
   );
-  check(address(message.account, "account") === account, "the message is for another account");
+  const signsFor =
+    expectation.kind === "trade" && expectation.isolated
+      ? isolatedAccountOf(account, expectation.market)
+      : account;
+  check(address(message.account, "account") === signsFor, "the message is for another account");
 
   verifyFields(message, expectation, account);
 
@@ -292,6 +311,10 @@ function verifyFields(message: Record<string, unknown>, expectation: Expectation
     case "withdraw":
       check(address(message.recipient, "recipient") === account, "withdrawal recipient is not your wallet");
       check(integer(message.amount, "amount") === expectation.amountMicro, "withdrawal amount changed");
+      return;
+    case "isolated-margin":
+      check(Number(integer(message.market, "market")) === expectation.market, "market changed");
+      check(integer(message.amount, "amount") === expectation.amountMicro, "margin amount changed");
       return;
     case "cancel":
       return;

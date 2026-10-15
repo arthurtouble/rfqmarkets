@@ -348,12 +348,10 @@ export class ExecutionService {
       try {
         signer = recoverDigestSigner(domain, intent, signature, trigger);
       } catch {}
-      // An isolated account's intents are signed by its owner (or the owner's session key).
-      const owner = await signingAccount(
-        clearing as IsolatedOwnerReader | undefined,
-        intent.account,
-        blockNumber,
-      );
+      // An isolated account's intents are signed by its owner (or the owner's session key). Its owner never
+      // changes once set, so it is read at the latest block: a trade quoted just before the margin move that
+      // opened the isolated account must still find its owner.
+      const owner = await signingAccount(clearing as IsolatedOwnerReader | undefined, intent.account);
       if (signer === owner) return true;
       if (
         await validOwnerSignature(

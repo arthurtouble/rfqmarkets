@@ -10,6 +10,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { API } from "../lib/env.js";
 import { friendlyError } from "../lib/errors.js";
 import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
+import { isolatedAccountOf, marginTopUp } from "../lib/isolated.js";
 import {
   checkRoute,
   formatDuration,
@@ -56,7 +57,12 @@ import { useToasts } from "../ui/toasts.js";
 import { useMarketList } from "./markets.js";
 import { keys } from "./queries.js";
 
-const clearingAbi = parseAbi(["function deposit(uint256 amount)", "function revokeSession(address session)"]);
+const clearingAbi = parseAbi([
+  "function deposit(uint256 amount)",
+  "function revokeSession(address session)",
+  "function collateralOf(address account) view returns (int256)",
+  "function accountRegistered(address account) view returns (bool)",
+]);
 type Settled = { transaction?: Transaction; status?: string };
 
 /** `slippageBps` (1..500, default 8) sets the signed worst price beyond the expected price. */
@@ -68,6 +74,11 @@ export type MarketOrder = {
   slippageBps?: number;
   /** The success toast's title, when the screen has its own words for the trade. */
   title?: string;
+  /**
+   * Home: hold the trade's margin, `payMicro`, in its own isolated account so the loss stops there. A new
+   * isolated account needs at least MIN_ISOLATED_OPEN; a smaller first trade uses the main balance.
+   */
+  isolated?: { payMicro: bigint };
 };
 export type LimitOrder = MarketOrder & { limitPrice: string };
 export type { TpslInput, TriggerOrderInput };
@@ -91,8 +102,11 @@ type Trading = {
   placeTpsl(input: TpslInput): Promise<string[] | undefined>;
   /** Cancels an order by its nonce; for a TP/SL leg this cancels both legs. */
   cancelOrder(order: RestingOrder): Promise<void>;
-  /** Closes `fractionBps` of the position (1..10_000, default all) at a firm reduce-only quote; resolves to the fill when it settles. */
-  closePosition(market: Market, fractionBps?: number): Promise<ClosedAt | undefined>;
+  /**
+   * Closes `fractionBps` of the position (1..10_000, default all) at a firm reduce-only quote; resolves to the fill
+   * when it settles. With `isolated`, closes the isolated account's position and returns its margin to the balance.
+   */
+  closePosition(market: Market, fractionBps?: number, isolated?: boolean): Promise<ClosedAt | undefined>;
   /** Closes `fractionBps` of every open position, one quote each. Quick trading signs within its limits without prompts. */
   closeAll(fractionBps?: number): Promise<CloseAllResult | undefined>;
   emergencyClose(market: Market): Promise<void>;
@@ -171,7 +185,8 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       return undefined;
     } finally {
       setBusy(null);
-      void client.invalidateQueries({ queryKey: keys.account(address) });
+      // Every account query: the connected account's and those of its isolated accounts.
+      void client.invalidateQueries({ queryKey: ["account"] });
     }
   }
 
@@ -197,8 +212,23 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     return index;
   };
 
-  /** What the user asked for in a trade at a firm quote; checked against the quote and the prepared intent before signing. */
-  type TradeRequest = { market: Market; side?: Side; amountMicro?: bigint; slippageBps?: number };
+  /**
+   * What the user asked for in a trade at a firm quote; checked against the quote and the prepared intent before
+   * signing. `isolated` trades the connected account's isolated account in the market.
+   */
+  type TradeRequest = {
+    market: Market;
+    side?: Side;
+    amountMicro?: bigint;
+    slippageBps?: number;
+    isolated?: boolean;
+  };
+  /** The account a trade is for: the connected account, or its isolated account in the market. */
+  const tradeAccount = (market: Market, isolated?: boolean) =>
+    isolated ? isolatedAccountOf(account(), marketIndex(market)) : account();
+  /** The one-tap key, when it is live in this tab. */
+  const liveSession = () =>
+    quick.session?.privateKey ? (quick.session as QuickSession & { privateKey: Hex }) : null;
 
   async function settleTrade(
     quote: Quote,
@@ -209,9 +239,11 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   ) {
     if (quote.market !== request.market || (request.side && quote.side !== request.side))
       throw new IntentMismatchError("the quote is for another market or side");
-    const nonce = randomNonce();
+    const nonce = randomNonce(),
+      onAccount = tradeAccount(request.market, request.isolated);
     const expected = {
       kind: "trade" as const,
+      isolated: request.isolated,
       market: marketIndex(request.market),
       side: request.side,
       reduceOnly,
@@ -222,16 +254,13 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     };
     const prepared = await api<Prepared>("/v1/prepare", {
       quoteId: quote.quoteId,
-      account: account(),
+      account: onAccount,
       nonce,
       reduceOnly,
     });
-    const session =
-      sessionAllowed && quick.session?.privateKey
-        ? (quick.session as QuickSession & { privateKey: Hex })
-        : null;
+    const session = sessionAllowed ? liveSession() : null;
     const submit = (userSignature: Hex) =>
-      api<Settled>("/v1/approve", { quoteId: quote.quoteId, account: account(), nonce, userSignature });
+      api<Settled>("/v1/approve", { quoteId: quote.quoteId, account: onAccount, nonce, userSignature });
     if (session) {
       progress("Signing with one tap");
       try {
@@ -259,25 +288,87 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     fractionBps: number,
     quote: Quote,
     progress: (detail: string) => void,
+    isolated?: boolean,
   ) {
     try {
       return {
         quote,
-        result: await settleTrade(quote, true, progress, quickCovers(market, quoteAmount(quote)), { market }),
+        result: await settleTrade(quote, true, progress, quickCovers(market, quoteAmount(quote)), {
+          market,
+          isolated,
+        }),
       };
     } catch (error) {
       if (!priceMoved(error)) throw error;
       progress("Price moved, getting a new price");
       const fresh = await api<Quote>("/v1/close/quote", {
-        account: account(),
+        account: tradeAccount(market, isolated),
         market,
         fraction: fractionBps,
       });
       return {
         quote: fresh,
-        result: await settleTrade(fresh, true, progress, quickCovers(market, quoteAmount(fresh)), { market }),
+        result: await settleTrade(fresh, true, progress, quickCovers(market, quoteAmount(fresh)), {
+          market,
+          isolated,
+        }),
       };
     }
+  }
+
+  /**
+   * The connected account's isolated account in `market`: its margin, and whether it exists on chain yet. Read
+   * from the chain at its latest block, since a cash out moves exactly what is there right after the close.
+   */
+  const isolatedState = async (market: Market) => {
+    const clearing = trader.settlement?.clearingAddress,
+      reader = getPublicClient(config, { chainId: trader.chain.id });
+    if (!clearing || !reader) throw new Error("Settlement contract is not configured");
+    const address = tradeAccount(market, true);
+    const [held, registered] = await Promise.all([
+      reader.readContract({
+        address: clearing,
+        abi: clearingAbi,
+        functionName: "collateralOf",
+        args: [address],
+      }),
+      reader.readContract({
+        address: clearing,
+        abi: clearingAbi,
+        functionName: "accountRegistered",
+        args: [address],
+      }),
+    ]);
+    return { held, registered };
+  };
+
+  /**
+   * Moves `amountMicro` into (positive) or out of (negative) the isolated account for `market`. The one-tap key
+   * signs when it is live and covers the market (the contract caps what it may add at its per-trade limit);
+   * otherwise the wallet does.
+   */
+  async function moveMargin(market: Market, amountMicro: bigint, progress: (detail: string) => void) {
+    const nonce = randomNonce(),
+      index = marketIndex(market);
+    const prepared = await api<Prepared>("/v1/isolated/margin/prepare", {
+      account: account(),
+      market,
+      direction: amountMicro > 0n ? "add" : "remove",
+      amount: microToInput(abs(amountMicro)),
+      nonce,
+    });
+    const expected = { kind: "isolated-margin" as const, market: index, amountMicro, nonce };
+    const session = liveSession();
+    let userSignature: Hex;
+    if (session && quickCovers(market, amountMicro > 0n ? amountMicro : 0n)) {
+      userSignature = await privateKeyToAccount(session.privateKey).signTypedData(
+        trader.verified(prepared, "IsolatedMarginIntent", expected) as never,
+      );
+    } else {
+      progress("Confirm the trade's amount in your wallet");
+      userSignature = await trader.signIntent(prepared, "IsolatedMarginIntent", expected);
+    }
+    return api<Settled>("/v1/isolated/margin/execute", { intent: prepared.intent, userSignature });
   }
 
   const value: Trading = {
@@ -293,16 +384,36 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         async (progress) => {
           if (reviewed && !quoteUsable(reviewed.expiresAtMs, Date.now()))
             throw new Error("The quote expired. Review the new price");
-          if (!reviewed) progress("Getting a price");
           const slippageBps =
             order.slippageBps === undefined ? undefined : clampSlippageBps(order.slippageBps);
+          // Set the trade's own margin aside first, so the trade itself opens on the isolated account. A retry
+          // after a failed trade finds the margin already there and moves nothing.
+          let isolated = false;
+          if (order.isolated && !order.reduceOnly) {
+            const { held, registered } = await isolatedState(order.market);
+            const move = marginTopUp(order.isolated.payMicro, held, registered);
+            if (move !== null) {
+              if (move !== 0n) {
+                progress("Setting the amount aside");
+                await moveMargin(order.market, move, progress);
+              }
+              isolated = true;
+            }
+          }
+          if (!reviewed) progress("Getting a price");
           const quote = reviewed ?? (await requestQuote(order));
           const result = await settleTrade(
             quote,
             order.reduceOnly,
             progress,
             quickCovers(order.market, order.amountMicro),
-            { market: order.market, side: order.side, amountMicro: order.amountMicro, slippageBps },
+            {
+              market: order.market,
+              side: order.side,
+              amountMicro: order.amountMicro,
+              slippageBps,
+              isolated,
+            },
           );
           return {
             title: order.title
@@ -437,18 +548,35 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         };
       }),
 
-    closePosition: (market, fractionBps = 10_000) =>
+    closePosition: (market, fractionBps = 10_000, isolated = false) =>
       run("Close", `Close ${fractionLabel(fractionBps, market)}`, async (progress) => {
         progress("Getting a price");
         const { quote, result } = await settleClose(
           market,
           fractionBps,
-          await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps }),
+          await api<Quote>("/v1/close/quote", {
+            account: tradeAccount(market, isolated),
+            market,
+            fraction: fractionBps,
+          }),
           progress,
+          isolated,
         );
+        // The trade's margin goes back to the balance once it is fully closed. If that fails the money stays
+        // set aside for the market, and the next trade there starts with it.
+        let leftover = "";
+        if (isolated && fractionBps === 10_000) {
+          const { held } = await isolatedState(market);
+          if (held > 0n) {
+            progress("Returning the money to your balance");
+            await moveMargin(market, -held, progress).catch(() => {
+              leftover = `. ${usdc(held)} is still set aside for your next ${market} trade`;
+            });
+          }
+        }
         return {
           title: `${fractionLabel(fractionBps, market)} closed`,
-          detail: `at ${usdc(quote.expectedPrice)}`,
+          detail: `at ${usdc(quote.expectedPrice)}${leftover}`,
           txHash: result.transaction?.hash,
           value: { price: BigInt(quote.expectedPrice), fee: BigInt(quote.fee) },
         };

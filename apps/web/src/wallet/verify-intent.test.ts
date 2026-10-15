@@ -13,6 +13,8 @@ import {
   triggeredIntentTypes,
   withdrawalToWire,
   withdrawalTypes,
+  isolatedMarginToWire,
+  isolatedMarginTypes,
   cancelToWire,
   closeToWire,
   DOMAIN_NAME as SHARED_NAME,
@@ -20,6 +22,7 @@ import {
   type TradeIntent,
 } from "../../../../packages/shared/src/eip712.js";
 import { triggerLimitPrice } from "../../../../packages/shared/src/trigger.js";
+import { isolatedAccountOf } from "../lib/isolated.js";
 import type { Prepared } from "../lib/types.js";
 import {
   DOMAIN_NAME,
@@ -66,6 +69,7 @@ test("bundled types and domain match the protocol's (packages/shared, contracts/
     ...intentTypes,
     ...triggeredIntentTypes,
     ...withdrawalTypes,
+    ...isolatedMarginTypes,
     ...cancelTypes,
     ...closeTypes,
     ...sessionGrantTypes,
@@ -611,6 +615,70 @@ test("cancels and emergency closes name the requested nonce and market", () => {
         market: 1,
         nonce: "13",
       }),
+    /another account/,
+  );
+});
+
+test("an isolated trade is for the connected account's isolated account in that market", () => {
+  const isolated = { ...tradeExpectation, isolated: true };
+  verifyPrepared(tamper(trade, { account: isolatedAccountOf(ACCOUNT, 0) }), "TradeIntent", context, isolated);
+  refused(() => verifyPrepared(trade, "TradeIntent", context, isolated), /another account/);
+  refused(
+    () =>
+      verifyPrepared(
+        tamper(trade, { account: isolatedAccountOf(OTHER, 0) }),
+        "TradeIntent",
+        context,
+        isolated,
+      ),
+    /another account/,
+  );
+  refused(
+    () =>
+      verifyPrepared(
+        tamper(trade, { account: isolatedAccountOf(ACCOUNT, 1) }),
+        "TradeIntent",
+        context,
+        isolated,
+      ),
+    /another account/,
+  );
+  // Without `isolated`, only the connected account itself.
+  refused(
+    () =>
+      verifyPrepared(
+        tamper(trade, { account: isolatedAccountOf(ACCOUNT, 0) }),
+        "TradeIntent",
+        context,
+        tradeExpectation,
+      ),
+    /another account/,
+  );
+});
+
+test("an isolated margin move must be the requested market and amount for the connected account", () => {
+  const move = prepared(
+    isolatedMarginTypes,
+    isolatedMarginToWire({
+      account: ACCOUNT,
+      market: 2,
+      amount: -25_000_000n,
+      nonce: 9n,
+      deadline: 1_700_000_030n,
+    }),
+  );
+  const expected: Expectation = { kind: "isolated-margin", market: 2, amountMicro: -25_000_000n, nonce: "9" };
+  verifyPrepared(move, "IsolatedMarginIntent", context, expected);
+  refused(
+    () => verifyPrepared(tamper(move, { amount: "25000000" }), "IsolatedMarginIntent", context, expected),
+    /amount/,
+  );
+  refused(
+    () => verifyPrepared(tamper(move, { market: 1 }), "IsolatedMarginIntent", context, expected),
+    /market/,
+  );
+  refused(
+    () => verifyPrepared(tamper(move, { account: OTHER }), "IsolatedMarginIntent", context, expected),
     /another account/,
   );
 });

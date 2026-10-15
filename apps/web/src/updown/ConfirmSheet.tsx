@@ -56,9 +56,13 @@ export function ConfirmSheet({
 
   const autoClose = useMemo(() => {
     if (!snapshot) return null;
-    const base = account ?? { ...emptyAccount("", snapshot), collateral: payMicro.toString() };
+    // A Home trade holds only its amount as margin, so it auto-closes against that, not the whole balance.
+    const base =
+      order.isolated || !account
+        ? { ...emptyAccount("", snapshot), collateral: payMicro.toString() }
+        : account;
     return estimateLiquidationPrice(base, snapshot, market, side === "buy" ? amountMicro : -amountMicro);
-  }, [account, snapshot, market, side, amountMicro, payMicro]);
+  }, [account, snapshot, market, side, amountMicro, payMicro, order.isolated]);
 
   const confirm = async () => {
     if (!quote || !usable) return;
