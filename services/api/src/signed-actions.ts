@@ -1,4 +1,4 @@
-import { getAddress, parseUnits, TypedDataEncoder, type TypedDataField } from "ethers";
+import { getAddress, parseUnits, recoverAddress, TypedDataEncoder, type TypedDataField } from "ethers";
 import type { FastifyInstance } from "fastify";
 import type { z } from "zod";
 import {
@@ -18,6 +18,7 @@ import {
   type SessionGrant,
   type WithdrawalIntent,
 } from "../../../packages/shared/src/eip712.js";
+import { maskAllows } from "../../../packages/shared/src/clearing-structs.js";
 import type { PriceSnapshot } from "../../../packages/shared/src/policy.js";
 import { encodeLocalReport, type ChainReader } from "./chain.js";
 import type { ApiContext, ApiSender, ChainHandles } from "./context.js";
@@ -70,6 +71,35 @@ export async function verifySignedAction(
   );
 }
 
+/** The on-chain grant of a session key (RFQClearing.sessions). */
+type SessionView = { account: string; validUntil: bigint; marketMask: bigint; maxTradeNotional: bigint };
+
+/**
+ * An unexpired intent signed by a live session key of its account whose grant `allows` it. Only actions the
+ * contract also accepts from session keys opt in (see SignedAction.sessionAllows).
+ */
+async function verifySessionSignedAction<I extends SignedIntent>(
+  ctx: ApiContext,
+  types: Record<string, TypedDataField[]>,
+  intent: I,
+  signature: string,
+  allows: (intent: I, session: SessionView) => boolean,
+) {
+  const clearing = ctx.clearing as { sessions(session: string): Promise<SessionView> } | undefined;
+  if (!clearing || Number(intent.deadline) * 1_000 <= Date.now()) return false;
+  try {
+    const signer = recoverAddress(TypedDataEncoder.hash(ctx.domain, types, intent), signature);
+    const session = await clearing.sessions(signer);
+    return (
+      getAddress(session.account) === getAddress(intent.account) &&
+      BigInt(session.validUntil) >= intent.deadline &&
+      allows(intent, session)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Gate for sponsored actions that the contract accepts from any signer, funded or not (nonce
  * cancellation, session grants): the account must hold collateral, and each account has its own
@@ -112,7 +142,10 @@ interface SignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I extends
   build(input: z.infer<P>, chainTime: () => Promise<number>): Promise<I>;
   parse(input: z.infer<E>): I;
   toWire(intent: I): unknown;
-  execute(intent: I, signature: string, sponsor: Sponsor): Promise<unknown>;
+  /** `bySession` is true when a session key signed (see `sessionAllows`) rather than the owner. */
+  execute(intent: I, signature: string, sponsor: Sponsor, bySession: boolean): Promise<unknown>;
+  /** Also accept a signature from a session key of the account whose on-chain grant allows this intent. */
+  sessionAllows?(intent: I, session: SessionView): boolean;
   /** Requires collateral and a per-account budget before sponsoring (see admitSponsoredAction). */
   gated?: boolean;
 }
@@ -155,8 +188,12 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
     const signature: string = parsed.data.userSignature;
     try {
       const intent = action.parse(parsed.data);
-      if (!(await verifySignedAction(ctx, action.types, intent, signature)))
-        return reply.code(401).send({ error: `invalid ${action.label} signature` });
+      const byOwner = await verifySignedAction(ctx, action.types, intent, signature);
+      const bySession =
+        !byOwner &&
+        !!action.sessionAllows &&
+        (await verifySessionSignedAction(ctx, action.types, intent, signature, action.sessionAllows));
+      if (!byOwner && !bySession) return reply.code(401).send({ error: `invalid ${action.label} signature` });
       const handles = ctx.chain,
         sender = ctx.sender;
       if (!handles || !sender) return reply.code(503).send({ error: "chain unavailable" });
@@ -164,7 +201,9 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
         const refused = await admitSponsoredAction(ctx, intent.account);
         if (refused) return refused.send(reply);
       }
-      const result = await action.execute(intent, signature, { ...handles, sender });
+      const result = await action.execute(intent, signature, { ...handles, sender }, bySession);
+      // Quotes pin a block; the next one must see this action (a new session key or isolated account).
+      chain.invalidateQuoteSnapshot();
       return result instanceof Reply ? result.send(reply) : result;
     } catch (error) {
       return reply.code(409).send({ error: publicError(error, `${action.label} failed`) });
@@ -274,10 +313,14 @@ export function registerSignedActions(
       deadline: BigInt(intent.deadline),
     }),
     toWire: isolatedMarginToWire,
-    async execute(intent, signature, { sender, clearing, config }) {
+    // A session key may move margin for one-tap trades: in its markets, adding at most its per-trade cap.
+    sessionAllows: (intent, session) =>
+      maskAllows(session.marketMask, intent.market) && intent.amount <= BigInt(session.maxTradeNotional),
+    async execute(intent, signature, { sender, clearing, config }, bySession) {
+      const method = bySession ? "moveIsolatedMarginWithSessionSignature" : "moveIsolatedMarginWithSignature";
       const receipt = await sender.submit(`isolated:${intent.account}:${intent.nonce}`, {
         to: config.clearingAddress,
-        data: clearing.interface.encodeFunctionData("moveIsolatedMarginWithSignature", [
+        data: clearing.interface.encodeFunctionData(method, [
           intent.account,
           intent.market,
           intent.amount,

@@ -28,7 +28,9 @@ stop(); // closes the stream
 ```
 
 Use a session key as the signer to trade without wallet prompts: grant it once with `/v1/session` (scoped to
-markets, notional and fees), then sign with the session key. Errors from the API throw `RfqApiError` with the
+markets, notional and fees), then sign with the session key. A session key can also move isolated margin, adding
+at most its per-trade cap at a time, so a bot can keep each position isolated without prompts: pass the owner as
+`account` to `moveIsolatedMargin`. Errors from the API throw `RfqApiError` with the
 API's status and body.
 
 ## Advanced orders

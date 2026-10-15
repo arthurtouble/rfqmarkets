@@ -299,8 +299,51 @@ try {
   // Another wallet cannot sign for the isolated account.
   const forged = await isolatedOrder("902", maker);
   assert.notEqual(forged.statusCode, 200, forged.body);
+  // One-tap trades: a session key moves margin into the isolated account, trades it and moves margin back, all
+  // without the owner's wallet. It may add at most its per-trade cap and only in its markets.
+  const sessionKey = ethers.Wallet.createRandom();
+  const grant = await post("/v1/session/prepare", {
+    account: user.address,
+    session: sessionKey.address,
+    marketMask: 1,
+    maxTradeAmount: "200",
+    maxCumulativeAmount: "1000",
+    maxFee: "0.000001",
+    durationSeconds: 3600,
+    nonce: "904",
+  });
+  await post("/v1/session/execute", {
+    grant: grant.grant,
+    userSignature: await user.signTypedData(grant.domain, grant.types, grant.grant),
+  });
+  const sessionMove = async (market, direction, amount, nonce) => {
+    const prepared = await post("/v1/isolated/margin/prepare", {
+      account: user.address,
+      market,
+      direction,
+      amount,
+      nonce,
+    });
+    return app.inject({
+      method: "POST",
+      url: "/v1/isolated/margin/execute",
+      payload: {
+        intent: prepared.intent,
+        userSignature: await sessionKey.signTypedData(prepared.domain, prepared.types, prepared.intent),
+      },
+    });
+  };
+  const sessionAdded = await sessionMove("BTC", "add", "200", "905");
+  assert.equal(sessionAdded.statusCode, 200, sessionAdded.body);
+  assert.equal(sessionAdded.json().isolated.collateral, "700000000");
+  const sessionFilled = await isolatedOrder("906", sessionKey);
+  assert.equal(sessionFilled.statusCode, 200, sessionFilled.body);
+  assert.equal((await sessionMove("BTC", "add", "201", "907")).statusCode, 401);
+  assert.equal((await sessionMove("ETH", "add", "50", "908")).statusCode, 401);
+  const sessionRemoved = await sessionMove("BTC", "remove", "250", "909");
+  assert.equal(sessionRemoved.statusCode, 200, sessionRemoved.body);
   console.log(
-    "Runtime identity and account response E2E passed: dual RPC/code/feed/authority rejection, mixed winner/loser opening margin and separate-leg rounding match canonical clearing at a pinned block; isolated margin move, owner-signed isolated trade and isolated account views",
+    "Runtime identity and account response E2E passed: dual RPC/code/feed/authority rejection, mixed winner/loser opening margin and separate-leg rounding match canonical clearing at a pinned block; isolated margin move, owner-signed isolated trade, isolated account views and session-signed isolated margin",
   );
 } finally {
   await app.close();

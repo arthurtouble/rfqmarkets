@@ -34,6 +34,32 @@ library RFQSignatureVerifier {
         used[nonce] = true;
     }
 
+    /// @notice Verifies an isolated margin move signed by a live session key of `account` and burns its nonce.
+    /// @dev The move stays between the owner and its own isolated account, so a session key cannot take funds
+    /// out. It may add at most its per-trade cap at a time and only in its markets; it may always move margin
+    /// back to the owner, within the initial-margin check every removal already meets.
+    function consumeSessionMarginAuthorization(
+        address account,
+        uint8 market,
+        int256 amount,
+        uint256 nonce,
+        uint64 deadline,
+        bytes calldata signature
+    ) public {
+        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
+        mapping(uint256 => bool) storage used = $.nonceUsed[account];
+        if (block.timestamp > deadline || account == address(0) || used[nonce]) revert Replay();
+        bytes32 digest =
+            _hashTypedData(keccak256(abi.encode(ISOLATED_MARGIN_TYPEHASH, account, market, amount, nonce, deadline)));
+        Session storage session = $.sessions[ECDSA.recoverCalldata(digest, signature)];
+        if (
+            session.account != account || block.timestamp > session.validUntil || deadline > session.validUntil
+                || session.marketMask & (uint256(1) << market) == 0 || amount > 0
+                && uint256(amount) > session.maxTradeNotional
+        ) revert Unauthorized();
+        used[nonce] = true;
+    }
+
     /// @notice Validates a trade intent against its maker approval.
     /// @return digest The intent's EIP-712 digest (the `intentHash` the approvers signed).
     /// @return sessionSigner The session key that signed, or zero when the account signed directly.
