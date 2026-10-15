@@ -61,6 +61,50 @@ export interface ChainClients {
   clearing: ClearingReader;
   /** ERC-1271 `isValidSignature` at a block; false on revert. */
   isValidSignature(account: string, hash: string, signature: string, blockNumber: number): Promise<boolean>;
+  /**
+   * The session key `account` granted last in the {@link SESSION_LOOKBACK_BLOCKS} blocks through
+   * `toBlock`, or undefined when it granted none.
+   */
+  latestSession(account: string, toBlock: number): Promise<string | undefined>;
+}
+
+/**
+ * How far back an approver looks for an account's newest session grant: about five hours of Base blocks,
+ * longer than the app's four-hour keys. A key is honoured only while it is the newest one its account
+ * granted in this window, so keys left behind by old tabs, or granted long ago, stop signing trades.
+ */
+export const SESSION_LOOKBACK_BLOCKS = 9_000;
+/** Blocks per `eth_getLogs` call: the smallest cap among the free RPCs the dev runtime uses. */
+const GRANT_LOG_CHUNK = 1_000;
+/** Accounts whose newest grant is remembered; past this the memory starts over. */
+const GRANT_CACHE_ACCOUNTS = 10_000;
+
+type GrantLog = { session: string; block: number };
+
+/**
+ * `latestSession` over a log reader. Scans newest blocks first in {@link GRANT_LOG_CHUNK} ranges and
+ * stops at the first grant, and remembers each account's newest grant and how far it has scanned, so a
+ * key in steady use costs one small range per check.
+ */
+export function sessionGrantTracker(
+  grantsOf: (account: string, fromBlock: number, toBlock: number) => Promise<GrantLog[]>,
+): ChainClients["latestSession"] {
+  const known = new Map<string, { grant?: GrantLog; through: number }>();
+  return async (account, toBlock) => {
+    const floor = Math.max(0, toBlock - SESSION_LOOKBACK_BLOCKS),
+      cached = known.get(account),
+      usable = cached && cached.through >= floor && cached.through <= toBlock ? cached : undefined;
+    let found: GrantLog | undefined;
+    for (let end = toBlock, from = usable ? usable.through + 1 : floor; end >= from && !found;) {
+      const start = Math.max(from, end - GRANT_LOG_CHUNK + 1);
+      found = (await grantsOf(account, start, end)).at(-1);
+      end = start - 1;
+    }
+    const grant = found ?? (usable?.grant && usable.grant.block >= floor ? usable.grant : undefined);
+    if (known.size >= GRANT_CACHE_ACCOUNTS && !known.has(account)) known.clear();
+    known.set(account, { grant, through: toBlock });
+    return grant?.session;
+  };
 }
 
 const ERC1271_MAGIC_VALUE = "0x1626ba7e";
@@ -70,10 +114,17 @@ export function createChainClients(
   secondaryProvider: JsonRpcProvider | undefined,
   clearingAddress: string,
 ): ChainClients {
+  const clearing = new Contract(clearingAddress, clearingApproverAbi, provider);
   return {
     provider,
     secondaryProvider,
-    clearing: new Contract(clearingAddress, clearingApproverAbi, provider) as unknown as ClearingReader,
+    clearing: clearing as unknown as ClearingReader,
+    latestSession: sessionGrantTracker(async (account, fromBlock, toBlock) => {
+      const logs = await clearing.queryFilter(clearing.filters.SessionGranted(account), fromBlock, toBlock);
+      return logs.flatMap((log) =>
+        "args" in log ? [{ session: getAddress(log.args.session as string), block: log.blockNumber }] : [],
+      );
+    }),
     isValidSignature: (account, hash, signature, blockNumber) =>
       new Contract(account, ["function isValidSignature(bytes32,bytes) view returns(bytes4)"], provider)
         .isValidSignature(hash, signature, { blockTag: blockNumber })
@@ -108,7 +159,15 @@ export interface ChainSnapshot {
   accountSignatureValid: boolean;
   /** Session of a non-account ECDSA signer. */
   session?: SessionState;
+  /** That signer is the newest session key its account granted recently (see `SESSION_LOOKBACK_BLOCKS`). */
+  sessionIsLatest: boolean;
 }
+
+/**
+ * Each approver's last `isApprover` answer, valid while the on-chain signer set keeps the version it was
+ * read at: any change to the set bumps `signerSetVersion`, so a removed approver is re-read at once.
+ */
+const enrolment = new WeakMap<ChainClients, { signer: string; version: bigint; value: boolean }>();
 
 /**
  * Read everything the chain checks need at one block. Rejects when either RPC
@@ -162,11 +221,12 @@ export async function readChainState(
     policyVersion,
     paused,
     resolutionRequired,
-    isApprover,
+    cachedEnrolment,
     rawMarkets,
     limitWords,
     accountSignatureValid,
     session,
+    latestSession,
     position,
     rawBooks,
     backing,
@@ -179,7 +239,7 @@ export async function readChainState(
     clearing.policyVersion(at),
     clearing.paused(at),
     clearing.resolutionRequired(at),
-    clearing.isApprover(request.signer, at),
+    enrolment.get(chain),
     Promise.all(indexes.map((index) => clearing.markets(index, at))),
     Promise.all(indexes.map(async (index) => BigInt(await clearing.marketLimitWord(index, at)))),
     signedByAccount
@@ -188,6 +248,9 @@ export async function readChainState(
     signedByAccount || intentSigner === undefined
       ? Promise.resolve(undefined)
       : clearing.sessions(intentSigner, at),
+    signedByAccount || intentSigner === undefined
+      ? Promise.resolve(undefined)
+      : chain.latestSession(signingAccount, blockNumber),
     clearing.positionOf(intent.account, market, at),
     Promise.all(indexes.map((index) => clearing.exposureState(index, at))),
     clearing.makerBacking(at),
@@ -196,6 +259,15 @@ export async function readChainState(
   if (secondaryProvider && (!secondaryBlock || secondaryBlock.hash !== block?.hash))
     return { rejection: reject("rpc divergence") };
   if (!block) return { rejection: reject("independent chain policy rejected") };
+  let isApprover = cachedEnrolment?.value;
+  if (
+    isApprover === undefined ||
+    cachedEnrolment!.signer !== request.signer ||
+    cachedEnrolment!.version !== BigInt(signerSetVersion)
+  ) {
+    isApprover = Boolean(await clearing.isApprover(request.signer, at));
+    enrolment.set(chain, { signer: request.signer, version: BigInt(signerSetVersion), value: isApprover });
+  }
   return {
     snapshot: {
       blockNumber,
@@ -215,6 +287,7 @@ export async function readChainState(
       signingAccount,
       accountSignatureValid: Boolean(accountSignatureValid),
       session: session && toSession(session),
+      sessionIsLatest: latestSession !== undefined && latestSession === intentSigner,
     },
   };
 }

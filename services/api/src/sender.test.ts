@@ -335,3 +335,29 @@ test("reconcile keeps a mempool transaction submitted instead of declaring it am
   assert.equal(rows(database)[0].status, "included");
   database.close();
 });
+
+test("pruning deletes settled operations past retention and keeps unresolved ones", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    sender = new DurableSender(provider as never, randomWallet(), database, options);
+  await sender.submit("settled", request);
+  provider.holdInMempool = true;
+  await assert.rejects(sender.submit("pending", request));
+  const later = Date.now() + 31 * 24 * 60 * 60 * 1000;
+  await sender.prune(Date.now());
+  assert.equal(rows(database).length, 2, "nothing is inside the retention window yet");
+  await sender.prune(later);
+  assert.deepEqual(
+    rows(database).map((row) => row.operation_id),
+    ["pending"],
+  );
+  assert.equal(
+    (
+      database.prepare("SELECT count(*) n FROM sender_attempts WHERE operation_id='settled'").get() as {
+        n: number;
+      }
+    ).n,
+    0,
+  );
+  database.close();
+});

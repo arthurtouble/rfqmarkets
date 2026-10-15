@@ -1,25 +1,27 @@
 import { useTrading } from "../data/actions.js";
 import { DOCS_URL, EXIT_URL, LEGAL_LINKS } from "../lib/env.js";
 import { addressUrl } from "../lib/explorer.js";
-import { shortAddress } from "../lib/format.js";
+import { shortAddress, usdcCompact } from "../lib/format.js";
 import { NavIcons, EmptyState, Segmented } from "../ui/primitives.js";
 import { usePrefs } from "../ui/prefs.js";
-import { QUICK_LIMITS } from "../wallet/quick-session.js";
+import { useQuickLimits } from "../data/quick-limits.js";
+import { QUICK_CEILING, QUICK_HOURS } from "../wallet/quick-session.js";
 import { useTrader } from "../wallet/trader.js";
 import { WrongNetworkBanner } from "../wallet/SwitchNetwork.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
 
-const dollars = (amount: string) => `$${Number(amount).toLocaleString("en-US")}`;
-
 function OneClickRow() {
   const trading = useTrading(),
     session = trading.quickSession,
-    busy = trading.busy !== null;
+    busy = trading.busy !== null,
+    limits = useQuickLimits();
   const until =
     session && new Date(session.validUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const limit = dollars(QUICK_LIMITS.maxTradeAmount);
+  const limit = usdcCompact(
+    session ? BigInt(session.maxTradeNotional ?? QUICK_CEILING.maxTradeMicro) : limits.maxTradeMicro,
+  );
   const detail = !session
-    ? `Approve once, then trades up to ${limit} fill without a wallet prompt for 8 hours.`
+    ? `Approve once, then trades up to ${limit} fill without a wallet prompt for ${QUICK_HOURS} hours.`
     : session.privateKey
       ? `On until ${until}. Trades up to ${limit} fill without a wallet prompt.`
       : `Off since you reloaded the page. Turn it on again, or revoke the old key (it ends at ${until} anyway).`;
@@ -45,7 +47,7 @@ function OneClickRow() {
             type="button"
             className="rfq-btn rfq-btn--sm rfq-btn--primary"
             disabled={busy}
-            onClick={trading.enableQuickTrading}
+            onClick={() => void trading.enableQuickTrading(limits)}
           >
             {session ? "Turn on again" : "Turn on"}
           </button>

@@ -10,7 +10,7 @@ The full stack runs and is tested on a local chain. A development deployment run
 
 ## Decisions that still hold
 
-- One clearing proxy with linked libraries and one ERC-7201 storage namespace. The only size gate is EIP-170's 24,576-byte runtime limit, enforced by `scripts/compile-contracts.mjs`. RFQClearing is 22,376 bytes (2,200 bytes of headroom). Every library is under 9,500 bytes.
+- One clearing proxy with linked libraries and one ERC-7201 storage namespace. The only size gate is EIP-170's 24,576-byte runtime limit, enforced by `scripts/compile-contracts.mjs`. RFQClearing is 22,569 bytes (2,007 bytes of headroom, measured 15 October 2026). Every library is under 9,500 bytes.
 - Production financial services run on Linux hosts with persistent volumes ([deploy/host/README.md](../../deploy/host/README.md)). Cloudflare Containers are acceptable only for the dev profile, because their disk cannot be the only copy of a journal.
 - Production approvers are provisioned independently: separate hosts, providers and operators, with keys generated on each host. The dev setup, where one Durable Object holds all three keys, is never production key custody.
 - Prices come from our own three signed oracle nodes and the `SignedPriceOracle` adapter. There is no unsigned fallback price.

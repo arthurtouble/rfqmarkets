@@ -4,7 +4,7 @@ The clearing contract is the sole source of customer balances and positions. The
 
 ## Executable local shape and production path
 
-The repository now includes a small executable chain indexer in `services/indexer`. It follows clearing logs, stores canonical block hashes and derived account/activity projections in SQLite WAL, and exposes only the bounded HTTP surface below. On a canonical-hash mismatch it discards derived state and deterministically rebuilds from the deployment block. Customer accounting remains on-chain; deleting this database loses no authoritative financial state.
+The repository now includes a small executable chain indexer in `services/indexer`. It follows clearing logs, stores canonical block hashes and derived account/activity projections in SQLite WAL, and exposes only the bounded HTTP surface below. On a canonical-hash mismatch it undoes only the replaced blocks, back to the newest stored block that is still canonical, and re-reads the accounts they touched; a reorg deeper than 128 stored blocks, or one that reaches the finalized cursor, rebuilds from the deployment block. A poll timer (500 ms by default) follows the chain and pushes each change on `/v1/updates/stream`; requests read the last completed pass instead of waiting on the RPC, except before the first pass completes. Customer accounting remains on-chain; deleting this database loses no authoritative financial state.
 
 This implementation is appropriate for the complete local stack and fault work. For production, retain its narrow API and event semantics while moving storage to PostgreSQL and adding redundant RPC reads, metrics, backups and measured Base reorg/finality policy. Ponder remains a framework candidate rather than a dependency requirement.
 

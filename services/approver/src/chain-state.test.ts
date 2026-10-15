@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Wallet } from "ethers";
-import { checkChainPolicy, readChainState, verifySignedReport, type ChainSnapshot } from "./chain-state.js";
+import { Contract, Wallet } from "ethers";
+import { clearingApproverAbi } from "../../../packages/shared/src/abi.js";
+import {
+  SESSION_LOOKBACK_BLOCKS,
+  checkChainPolicy,
+  readChainState,
+  sessionGrantTracker,
+  verifySignedReport,
+  type ChainSnapshot,
+} from "./chain-state.js";
 import { CLEARING, LARGE, buildFixture, chainState, fakeChain, word } from "./test-fixtures.js";
 
 const signer = Wallet.createRandom().address;
@@ -87,6 +95,55 @@ test("readChainState resolves ERC-1271 accounts and session signers", async () =
   const contract = await snapshotOf(state, request(fixture, undefined));
   assert.equal(contract.accountSignatureValid, true);
   assert.equal(contract.session, undefined, "no session lookup without a recovered signer");
+});
+
+test("the approver's clearing ABI can filter session grants by account", () => {
+  const clearing = new Contract(CLEARING, clearingApproverAbi);
+  assert.equal(clearing.filters.SessionGranted(signer).fragment.name, "SessionGranted");
+});
+
+test("session grants are found newest first in bounded ranges and remembered per account", async () => {
+  const account = Wallet.createRandom().address,
+    [first, second] = [Wallet.createRandom().address, Wallet.createRandom().address],
+    grants = [{ session: first, block: 20_000 }],
+    ranges: Array<[number, number]> = [];
+  const latest = sessionGrantTracker(async (granter, from, to) => {
+    ranges.push([from, to]);
+    return granter === account ? grants.filter((grant) => grant.block >= from && grant.block <= to) : [];
+  });
+  assert.equal(await latest(account, 21_500), first);
+  // Newest first, at most 1,000 blocks a call, stopping at the range holding the grant.
+  assert.deepEqual(ranges, [
+    [20_501, 21_500],
+    [19_501, 20_500],
+  ]);
+  ranges.length = 0;
+  assert.equal(await latest(account, 21_510), first);
+  assert.deepEqual(ranges, [[21_501, 21_510]]);
+  grants.push({ session: second, block: 21_600 });
+  assert.equal(await latest(account, 21_700), second);
+  // A grant that falls out of the lookback window is no longer honoured.
+  assert.equal(await latest(account, 21_600 + SESSION_LOOKBACK_BLOCKS + 1), undefined);
+  assert.equal(await latest(Wallet.createRandom().address, 21_700), undefined);
+});
+
+test("enrolment is read once per signer set version", async () => {
+  const state = chainState(Date.now()),
+    chain = fakeChain(state),
+    enrolments = () => chain.calls.filter((call) => call === "isApprover").length,
+    read = async () => {
+      const result = await readChainState(chain, request());
+      assert("snapshot" in result);
+      return result.snapshot.isApprover;
+    };
+  assert.equal(await read(), true);
+  assert.equal(await read(), true);
+  assert.equal(enrolments(), 1);
+  // Removing the approver bumps the signer set version, so the next read sees it.
+  state.isApprover = false;
+  state.signerSetVersion = 2n;
+  assert.equal(await read(), false);
+  assert.equal(enrolments(), 2);
 });
 
 test("checkChainPolicy requires matching versions, an open venue and signer membership", async () => {

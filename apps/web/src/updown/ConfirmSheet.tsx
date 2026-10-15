@@ -14,7 +14,8 @@ import type { Quote } from "../lib/types.js";
 import { UP_DOWN, lossAt } from "../lib/updown.js";
 import type { ReviewOrder } from "../trade/ReviewSheet.js";
 import { Banner, Down, Rows, Sheet, Up, marketName } from "../ui/primitives.js";
-import { QUICK_LIMITS } from "../wallet/quick-session.js";
+import { useQuickLimits } from "../data/quick-limits.js";
+import { QUICK_HOURS } from "../wallet/quick-session.js";
 
 export function ConfirmSheet({
   order,
@@ -25,7 +26,8 @@ export function ConfirmSheet({
   onClose: () => void;
   onFilled: () => void;
 }) {
-  const trading = useTrading();
+  const trading = useTrading(),
+    quickLimits = useQuickLimits();
   const { snapshot } = useMarketFeed();
   const { account } = useAccount();
   const now = useNow(1_000);
@@ -70,7 +72,7 @@ export function ConfirmSheet({
       void refresh();
       return;
     }
-    if (oneTap && offerOneTap) await trading.enableQuickTrading();
+    if (oneTap && offerOneTap) await trading.enableQuickTrading(quickLimits);
     onFilled();
   };
 
@@ -103,7 +105,7 @@ export function ConfirmSheet({
               Skip this next time
               <span className="footnote rfq-faint">
                 {" "}
-                (up to {usdcCompact(BigInt(QUICK_LIMITS.maxTradeAmount) * 1_000_000n)} a trade, for 8 hours)
+                (up to {usdcCompact(quickLimits.maxTradeMicro)} a trade, for {QUICK_HOURS} hours)
               </span>
             </span>
           </label>

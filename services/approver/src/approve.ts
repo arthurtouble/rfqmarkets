@@ -244,6 +244,7 @@ async function chainChecks(
       signingAccount: snapshot.signingAccount,
       accountSignatureValid: snapshot.accountSignatureValid,
       session: snapshot.session,
+      sessionIsLatest: snapshot.sessionIsLatest,
       intent,
       fee: approval.fee,
       notional,

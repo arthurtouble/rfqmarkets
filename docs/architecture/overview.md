@@ -68,7 +68,7 @@ The app opens on Up / Down (Home, `/updown/<market>`): an amount, a multiplier a
 
 ### One-tap trading
 
-One-tap trading uses a contract session key. The app generates the key in the tab and keeps it in memory only. The owner signs one grant (`grantSessionWithSignature`), which the API sponsors. The contract limits the session's markets, per-trade size, total size and expiry (at most 30 days). The app asks for 8 hours, 2,500 USDC per trade and 10,000 USDC in total. A session key cannot withdraw, cancel, create another session or change authority. A trade over the limits goes back to the wallet. See [Wallets and deposits](wallets-and-deposits.md).
+One-tap trading uses a contract session key. The app generates the key in the tab and keeps it in memory only. The owner signs one grant (`grantSessionWithSignature`), which the API sponsors. The contract limits the session's markets, per-trade size, total size and expiry (at most 30 days). The app asks for 4 hours, twice the largest market's per-trade cap per trade and 40 times that in total, capped at 2,500 and 10,000 USDC. Approvers sign only for the newest session an account granted in the last 9,000 blocks, so a key left in an old tab stops trading once a newer one exists. A session key cannot withdraw, cancel, create another session or change authority. A trade over the limits goes back to the wallet. See [Wallets and deposits](wallets-and-deposits.md).
 
 ### Deposits and exits
 

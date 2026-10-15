@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { JsonRpcProvider, Transaction, Wallet, keccak256, type TransactionRequest } from "ethers";
+import { retentionCutoff } from "../../../packages/shared/src/retention.js";
 
 export interface IncludedReceipt {
   hash: string;
@@ -436,6 +437,32 @@ export class DurableSender {
        WHERE status IN (${UNRESOLVED_SQL}) OR (status IN ('included','reverted') AND included_block>?)
        ORDER BY nonce`,
     ).all(this.finalizedFloor) as unknown as StoredTransaction[];
+  }
+
+  /**
+   * Deletes settled operations older than the retention window (included, reverted or superseded; no reorg
+   * reaches that deep) with their attempts and budget days. Unresolved ones always stay, since they fence
+   * the sponsor nonce.
+   */
+  prune(nowMs = Date.now()) {
+    return this.serialize(async () => this.pruneLocked(nowMs));
+  }
+
+  private pruneLocked(nowMs: number) {
+    const cutoff = retentionCutoff(nowMs);
+    this.transaction((database) => {
+      database
+        .prepare(
+          "DELETE FROM sender_transactions WHERE updated_ms<? AND status IN ('included','reverted','superseded')",
+        )
+        .run(cutoff);
+      database.exec(
+        "DELETE FROM sender_attempts WHERE operation_id NOT IN (SELECT operation_id FROM sender_transactions)",
+      );
+      database
+        .prepare("DELETE FROM sender_budget WHERE day<?")
+        .run(new Date(cutoff).toISOString().slice(0, 10));
+    });
   }
 
   private async reconcileLocked() {

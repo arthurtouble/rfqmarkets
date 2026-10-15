@@ -155,6 +155,11 @@ export interface FakeChainState {
   limitWords: bigint[];
   position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
   sessions: Record<string, ClearingSessionStruct>;
+  /**
+   * Account => the session key it granted last within the lookback window. Accounts not listed default
+   * to their last entry in `sessions`.
+   */
+  latestSessions?: Record<string, string | undefined>;
   /** Isolated account => owner; accounts not listed are ordinary. */
   isolatedOwners: Record<string, string>;
   erc1271: boolean;
@@ -275,5 +280,14 @@ export function fakeChain(state: FakeChainState): ChainClients & { calls: string
     secondaryProvider: provider(true),
     clearing,
     isValidSignature: () => read("isValidSignature", () => state.erc1271),
+    latestSession: (account: string) =>
+      read("latestSession", () =>
+        state.latestSessions && account in state.latestSessions
+          ? state.latestSessions[account]
+          : Object.entries(state.sessions)
+              .filter(([, session]) => session.account === account)
+              .map(([signer]) => signer)
+              .at(-1),
+      ),
   };
 }

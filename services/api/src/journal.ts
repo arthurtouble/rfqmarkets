@@ -10,6 +10,7 @@ import {
 import type { PendingExposureBook } from "./bounded-state.js";
 import type { FlowFill } from "./flow-risk.js";
 import type { Market, Side } from "./markets.js";
+import { retentionCutoff } from "../../../packages/shared/src/retention.js";
 import { initializeApiRecoveryJournal } from "./recovery.js";
 
 /** Paid-flow evidence older than this no longer informs the toxicity score. */
@@ -117,4 +118,25 @@ export function recordFlowFill(
     ?.prepare("INSERT OR IGNORE INTO flow_fills VALUES (?,?,?,?,?,?)")
     .run(fillId, fill.market, fill.side, fill.price.toString(), fill.notional.toString(), fill.atMs);
   journal?.prepare("DELETE FROM flow_fills WHERE filled_ms<?").run(fill.atMs - FLOW_FILL_RETENTION_MS);
+}
+
+/**
+ * Deletes what the journal no longer needs once it is past the retention window: archived commitments and
+ * approval artifacts (their reservations were released at finalization) and filled, cancelled or expired
+ * resting orders. Live commitments, artifacts and open orders are never touched.
+ */
+export function pruneApiJournal(journal: DatabaseSync, nowMs = Date.now()) {
+  const cutoff = retentionCutoff(nowMs);
+  journal.exec("BEGIN IMMEDIATE");
+  try {
+    journal.prepare("DELETE FROM archived_commitments WHERE archived_ms<?").run(cutoff);
+    journal.prepare("DELETE FROM archived_approval_artifacts WHERE archived_ms<?").run(cutoff);
+    journal
+      .prepare("DELETE FROM resting_orders WHERE status IN ('filled','cancelled','expired') AND updated_ms<?")
+      .run(cutoff);
+    journal.exec("COMMIT");
+  } catch (error) {
+    journal.exec("ROLLBACK");
+    throw error;
+  }
 }

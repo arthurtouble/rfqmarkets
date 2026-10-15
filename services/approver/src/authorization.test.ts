@@ -49,6 +49,7 @@ test("checkUserAuthorization accepts account signatures and bounded sessions onl
       signingAccount: intent.account,
       accountSignatureValid: false,
       session,
+      sessionIsLatest: true,
       intent,
       fee: approval.fee,
       notional,
@@ -71,6 +72,15 @@ test("checkUserAuthorization accepts account signatures and bounded sessions onl
       error(checkUserAuthorization({ ...input, session: changed })),
       "user authorization rejected",
     );
+  // A key that is not the account's newest grant no longer signs, even within its limits.
+  assert.equal(
+    error(checkUserAuthorization({ ...input, sessionIsLatest: false })),
+    "user authorization rejected",
+  );
+  assert.equal(
+    checkUserAuthorization({ ...input, sessionIsLatest: false, accountSignatureValid: true }),
+    undefined,
+  );
 });
 
 test("an isolated account is authorized by its owner's session, not by a session of its own", () => {
@@ -90,6 +100,7 @@ test("an isolated account is authorized by its owner's session, not by a session
       signingAccount: owner,
       accountSignatureValid: false,
       session,
+      sessionIsLatest: true,
       intent,
       fee: approval.fee,
       notional,

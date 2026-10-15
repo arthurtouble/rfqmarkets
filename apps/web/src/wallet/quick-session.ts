@@ -3,18 +3,36 @@
 // The private key stays in memory only. sessionStorage keeps the public
 // session address so a reloaded tab can still revoke the grant.
 import { useCallback, useEffect, useState } from "react";
-import type { Hex } from "viem";
+import { formatUnits, type Hex } from "viem";
+
+/** How long a one-tap key lasts. The approvers only honour an account's newest key granted this recently. */
+export const QUICK_HOURS = 4;
+/** Trades carry no fee (the spread is in the price), so the fee cap is the smallest the contract accepts. */
+const QUICK_MAX_FEE = "0.000001";
+/** No one-tap key may sign more than this a trade or in total, whatever the markets allow (USDC micro). */
+export const QUICK_CEILING = { maxTradeMicro: 2_500_000_000n, maxCumulativeMicro: 10_000_000_000n } as const;
+/** Round trips one key covers before the wallet signs again. */
+const QUICK_TRADES = 20n;
+
+export type QuickLimits = { maxTradeMicro: bigint; maxCumulativeMicro: bigint };
 
 /**
- * What a one-tap key may do. Trades carry no fee (the spread is in the price), so the fee cap is the
- * smallest the contract accepts. A trade past these limits, closes included, falls back to the wallet.
+ * One-tap limits sized to the markets' per-trade caps (USDC micro): twice the largest, rounded up to a
+ * dollar, so a winning exit still fits, and enough in total for {@link QUICK_TRADES} round trips. Never
+ * above {@link QUICK_CEILING}; with no caps known, the ceiling. A trade past these limits, closes
+ * included, falls back to the wallet.
  */
-export const QUICK_LIMITS = {
-  maxTradeAmount: "2500",
-  maxCumulativeAmount: "10000",
-  maxFee: "0.000001",
-  durationSeconds: 8 * 60 * 60,
-} as const;
+export function quickLimits(tradeCapsMicro: readonly bigint[]): QuickLimits {
+  const largest = tradeCapsMicro.reduce((max, cap) => (cap > max ? cap : max), 0n),
+    doubled = ((largest * 2n + 999_999n) / 1_000_000n) * 1_000_000n,
+    min = (a: bigint, b: bigint) => (a < b ? a : b);
+  const maxTradeMicro =
+    largest > 0n ? min(doubled, QUICK_CEILING.maxTradeMicro) : QUICK_CEILING.maxTradeMicro;
+  return {
+    maxTradeMicro,
+    maxCumulativeMicro: min(maxTradeMicro * 2n * QUICK_TRADES, QUICK_CEILING.maxCumulativeMicro),
+  };
+}
 
 /** `RFQTypes.MAX_MARKETS`. */
 const MAX_MARKETS = 128;
@@ -32,8 +50,11 @@ export function allMarketsMask(marketCount: number): number | string {
 }
 
 /** Body fields of POST /v1/session/prepare for a quick-trading key over all `marketCount` markets. */
-export const quickSessionRequest = (marketCount: number) => ({
-  ...QUICK_LIMITS,
+export const quickSessionRequest = (marketCount: number, limits: QuickLimits) => ({
+  maxTradeAmount: formatUnits(limits.maxTradeMicro, 6),
+  maxCumulativeAmount: formatUnits(limits.maxCumulativeMicro, 6),
+  maxFee: QUICK_MAX_FEE,
+  durationSeconds: QUICK_HOURS * 60 * 60,
   marketMask: allMarketsMask(marketCount),
 });
 
@@ -41,13 +62,17 @@ export const quickSessionRequest = (marketCount: number) => ({
 export const maskIncludes = (mask: number | string, index: number) =>
   index >= 0 && ((BigInt(mask) >> BigInt(index)) & 1n) === 1n;
 
-/** `marketMask` is the granted mask as a decimal string; sessions saved before it existed cover the launch markets (3). */
+/**
+ * `marketMask` is the granted mask and `maxTradeNotional` the granted per-trade cap (USDC micro), both
+ * decimal strings. Sessions saved before they were stored cover the launch markets (3) and the ceiling.
+ */
 export type QuickSession = {
   account: string;
   sessionAddress: string;
   validUntil: number;
   privateKey?: Hex;
   marketMask?: string;
+  maxTradeNotional?: string;
 };
 
 const storageKey = (account: string) => `rfq-session:${account.toLowerCase()}`;
@@ -77,6 +102,10 @@ function load(account: string | null): QuickSession | null {
       marketMask:
         typeof parsed.marketMask === "string" && /^\d{1,39}$/.test(parsed.marketMask)
           ? parsed.marketMask
+          : undefined,
+      maxTradeNotional:
+        typeof parsed.maxTradeNotional === "string" && /^\d{1,39}$/.test(parsed.maxTradeNotional)
+          ? parsed.maxTradeNotional
           : undefined,
       privateKey: keys.get(parsed.sessionAddress.toLowerCase()),
     };
@@ -123,5 +152,5 @@ export function useQuickSession(account: string | null) {
 export const sessionCovers = (session: QuickSession | null, amountMicro: bigint, marketIndex?: number) =>
   live(session) &&
   !!session!.privateKey &&
-  amountMicro <= BigInt(QUICK_LIMITS.maxTradeAmount) * 1_000_000n &&
+  amountMicro <= BigInt(session!.maxTradeNotional ?? QUICK_CEILING.maxTradeMicro) &&
   (marketIndex === undefined || maskIncludes(session!.marketMask ?? "3", marketIndex));

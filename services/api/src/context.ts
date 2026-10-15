@@ -79,7 +79,8 @@ export interface ApiOptions {
   sponsoredActionBurst?: number;
 }
 
-export type ApiSender = Pick<DurableSender, "submit" | "reconcile" | "status">;
+export type ApiSender = Pick<DurableSender, "submit" | "reconcile" | "status"> &
+  Partial<Pick<DurableSender, "prune">>;
 
 /** Chain handles exist together: a clearing contract implies a provider, sponsor and sender config. */
 export interface ChainHandles {

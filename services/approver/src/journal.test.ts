@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BASE } from "../../../packages/shared/src/numeric.js";
+import { RETENTION_MS } from "../../../packages/shared/src/retention.js";
 import { ApprovalJournal } from "./journal.js";
 import { buildFixture } from "./test-fixtures.js";
 
@@ -67,6 +68,25 @@ test("finalize releases expired reservations and archives expired approvals", ()
     1,
   );
   database.close();
+});
+
+test("finalize deletes archived approvals past the retention window", () => {
+  const file = path(),
+    journal = new ApprovalJournal(file, "ctx"),
+    database = new DatabaseSync(file),
+    archived = database.prepare("INSERT INTO archived_approvals VALUES(?,1,0,'0xsig',0,NULL,?)");
+  archived.run("0xold", Date.now() - RETENTION_MS - 1);
+  archived.run("0xrecent", Date.now());
+  journal.finalize(10, 200);
+  assert.deepEqual(
+    database
+      .prepare("SELECT digest FROM archived_approvals")
+      .all()
+      .map((row) => row.digest),
+    ["0xrecent"],
+  );
+  database.close();
+  journal.close();
 });
 
 test("legacy approvals without payloads block signing until finalized past their expiry", () => {

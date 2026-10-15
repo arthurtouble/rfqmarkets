@@ -12,6 +12,7 @@ import { registerSponsoredDeposits } from "./deposits.js";
 import { DevChain, registerDevRoutes } from "./dev-chain.js";
 import { ExecutionService } from "./execution.js";
 import { registerHttpGuards } from "./http.js";
+import { pruneApiJournal } from "./journal.js";
 import { MarketStream } from "./market-stream.js";
 import { RuntimeMetrics } from "./metrics.js";
 import { registerOperationsRoutes } from "./operations.js";
@@ -23,6 +24,8 @@ import { registerSignedActions } from "./signed-actions.js";
 export type { ApiOptions } from "./context.js";
 
 const SENDER_RECONCILE_MS = 5_000;
+/** How often finished journal records past the retention window are deleted. */
+const PRUNE_INTERVAL_MS = 3_600_000;
 
 /** Build the execution leader: quoting, approval, sponsored settlement and the public read model. */
 export function buildApi(options: ApiOptions = {}) {
@@ -52,6 +55,7 @@ export function buildApi(options: ApiOptions = {}) {
 
   let senderReconciliation: Promise<void> | undefined,
     senderReconcileTimer: ReturnType<typeof setInterval> | undefined,
+    pruneTimer: ReturnType<typeof setInterval> | undefined,
     unsubscribeOracle: (() => void) | undefined,
     registryWatch: MarketRegistryWatch | undefined;
 
@@ -88,6 +92,17 @@ export function buildApi(options: ApiOptions = {}) {
           });
     }, SENDER_RECONCILE_MS);
     senderReconcileTimer.unref();
+    const prune = () => {
+      try {
+        if (ctx.journal) pruneApiJournal(ctx.journal);
+      } catch (error) {
+        console.error("api journal pruning failed", error);
+      }
+      void sender?.prune?.().catch((error: unknown) => console.error("sender journal pruning failed", error));
+    };
+    prune();
+    pruneTimer = setInterval(prune, PRUNE_INTERVAL_MS);
+    pruneTimer.unref();
     unsubscribeOracle = options.oracleSource?.subscribe?.(() => {
       stream.schedulePublish();
       orders.scheduleCheck();
@@ -100,6 +115,7 @@ export function buildApi(options: ApiOptions = {}) {
   app.addHook("onClose", async () => {
     registryWatch?.stop();
     if (senderReconcileTimer) clearInterval(senderReconcileTimer);
+    if (pruneTimer) clearInterval(pruneTimer);
     orders.close();
     stream.close();
     unsubscribeOracle?.();

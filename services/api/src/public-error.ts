@@ -50,6 +50,8 @@ const PUBLIC_POLICY_REASONS = new Set([
   "reduce-only intent does not reduce position",
   "hedge risk requires exposure reduction",
   "guarded hedge limit exceeded",
+  // A session key past its limits, or no longer the account's newest: the app retries with the wallet.
+  "user authorization rejected",
 ]);
 
 /**

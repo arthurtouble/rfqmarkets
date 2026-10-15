@@ -31,7 +31,7 @@ Unless one-tap trading is on, every market order opens a **Review order** sheet 
 
 The firm price is held for about 30 seconds, and a countdown under the button shows how long is left. When it runs out, the button changes to **Refresh quote**; you can only sign a price that is still held. Nothing is traded until you confirm.
 
-If you do not have a one-tap session, the sheet also has a **Skip this step next time** box, ticked by default. Leave it ticked to turn on [one-tap trading](one-tap-trading.md): it costs one extra signature now and skips this review and the wallet prompt in this tab for the next eight hours, for trades up to $2,500. Untick it if you would rather confirm every trade in your wallet.
+If you do not have a one-tap session, the sheet also has a **Skip this step next time** box, ticked by default. Leave it ticked to turn on [one-tap trading](one-tap-trading.md): it costs one extra signature now and skips this review and the wallet prompt in this tab for the next four hours, for trades up to twice the venue's per-trade cap. Untick it if you would rather confirm every trade in your wallet.
 
 Click **Confirm and sign** to continue. When one-tap trading is on and covers the trade, there is no review: the ticket shows "One-tap trading is on. No wallet prompt." and the order goes straight through.
 
