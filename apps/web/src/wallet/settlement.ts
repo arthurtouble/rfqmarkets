@@ -87,6 +87,21 @@ export function chainFor(config: ChainConfig): Chain {
 const fallbackChain = (pins: Pins) =>
   (pins.chainId !== undefined ? KNOWN_CHAINS[pins.chainId] : undefined) ?? base;
 
+/**
+ * What the app can show before GET /v1/config answers: a build pinned to a known chain draws on that
+ * chain at once, with nothing signable (`config: null`) until the config arrives and is checked. An
+ * unpinned or malformed build returns null and waits for `resolveSettlement`.
+ */
+export function provisionalSettlement(env: BuildEnv): Settlement | null {
+  try {
+    const { chainId } = readPins(env);
+    const chain = chainId !== undefined ? KNOWN_CHAINS[chainId] : undefined;
+    return chain ? { chain, config: null } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolves the settlement from the build environment and a loader for GET /v1/config. Never throws. */
 export async function resolveSettlement(
   env: BuildEnv,

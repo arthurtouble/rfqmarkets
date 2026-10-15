@@ -14,12 +14,8 @@ import {
   type TradeIntent,
   type Trigger,
 } from "../../../packages/shared/src/eip712.js";
-import {
-  encodeMarketSymbol,
-  marketIndex,
-  marketRegistry,
-  type Market,
-} from "../../../packages/shared/src/markets.js";
+import { marketIndex, marketRegistry, type Market } from "../../../packages/shared/src/markets.js";
+import { encodeMarketSymbol } from "../../../packages/shared/src/markets-chain.js";
 import { encodeLocalReport, oracleAdapterAbi } from "../../../packages/shared/src/oracle-report.js";
 import {
   PLATFORM_MARKUP_BPS,

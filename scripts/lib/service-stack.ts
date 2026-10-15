@@ -7,7 +7,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Contract, JsonRpcProvider, Wallet } from "ethers";
 import { clearingStateAbi } from "../../packages/shared/src/abi.js";
-import { syncMarketRegistry } from "../../packages/shared/src/markets.js";
+import { syncMarketRegistry } from "../../packages/shared/src/markets-chain.js";
 import { childEnvironment } from "../../packages/shared/src/process-environment.js";
 import { buildApi, type ApiOptions } from "../../services/api/src/server.js";
 import { HttpHedgeRiskSource } from "../../services/api/src/hedge-risk.js";

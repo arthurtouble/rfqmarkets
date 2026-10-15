@@ -97,7 +97,7 @@ function UpDown({ market }: { market: Market }) {
   const ticks = useTicks(market);
   // Home trades hold their own margin in the market's isolated account; one opened before that (or in Pro) is on
   // the main balance.
-  const isolatedAccount = useIsolatedAccount(market);
+  const { account: isolatedAccount, loading: isolatedLoading } = useIsolatedAccount(market);
   const isolatedOpen = isolatedAccount ? positionView(isolatedAccount, market) : null;
   const open = isolatedOpen ?? (account ? positionView(account, market) : null);
   const reference = ticks.points[0] ? BigInt(Math.round(ticks.points[0].value * 1e6)).toString() : null;
@@ -140,7 +140,7 @@ function UpDown({ market }: { market: Market }) {
       ) : done ? (
         <CashOutResult result={done} onNext={() => setCashedOut(null)} />
       ) : (
-        <NewBet market={market} account={account} accountLoading={loading} />
+        <NewBet market={market} account={account} accountLoading={loading || isolatedLoading} />
       )}
     </div>
   );

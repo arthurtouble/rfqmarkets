@@ -4,7 +4,7 @@ import {
   marketRefreshIntervalMs,
   watchMarketRegistry,
   type MarketRegistryWatch,
-} from "../../../packages/shared/src/markets.js";
+} from "../../../packages/shared/src/markets-chain.js";
 import { registerAccountRoutes } from "./account.js";
 import { ChainReader } from "./chain.js";
 import { ApiContext, DEFAULT_CORS_ORIGIN, type ApiOptions } from "./context.js";

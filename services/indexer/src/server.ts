@@ -10,11 +10,13 @@ import {
   MAX_MARKETS,
   isKnownMarket,
   marketIndex,
-  marketRefreshIntervalMs,
   marketRegistry,
+} from "../../../packages/shared/src/markets.js";
+import {
+  marketRefreshIntervalMs,
   watchMarketRegistry,
   type MarketRegistryWatch,
-} from "../../../packages/shared/src/markets.js";
+} from "../../../packages/shared/src/markets-chain.js";
 import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 import { RiskProjection, marketLabel } from "./risk-projection.js";
 import {

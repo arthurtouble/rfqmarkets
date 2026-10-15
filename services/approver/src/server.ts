@@ -5,7 +5,7 @@ import {
   marketRefreshIntervalMs,
   watchMarketRegistry,
   type MarketRegistryWatch,
-} from "../../../packages/shared/src/markets.js";
+} from "../../../packages/shared/src/markets-chain.js";
 import { bearerMatches } from "../../lib/src/auth.js";
 import { approve, type ApproverContext } from "./approve.js";
 import { createChainClients } from "./chain-state.js";

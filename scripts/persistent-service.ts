@@ -21,7 +21,8 @@ import {
   rpcEndpointsMatch,
 } from "./persistent-config.js";
 import { clearingStateAbi } from "../packages/shared/src/abi.js";
-import { marketRegistry, syncMarketRegistry } from "../packages/shared/src/markets.js";
+import { marketRegistry } from "../packages/shared/src/markets.js";
+import { syncMarketRegistry } from "../packages/shared/src/markets-chain.js";
 const role = z.enum(["api", "approver", "indexer", "gateway", "hedger", "keeper"]).parse(process.argv[2]);
 const config = persistentConfigSchema.parse(JSON.parse(readFileSync(process.argv[3], "utf8")));
 if (rpcEndpointsMatch(config.rpcUrl, config.secondaryRpcUrl))

@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { AbstractProvider, Contract, Interface, encodeBytes32String, type TransactionRequest } from "ethers";
 import { clearingStateAbi } from "./abi.js";
-import { readMarketsFromChain } from "./markets.js";
+import { readMarketsFromChain } from "./markets-chain.js";
 import { FallbackRpcProvider, MULTICALL3_ADDRESS, readViews } from "./rpc.js";
 
 const itemAbi = [
