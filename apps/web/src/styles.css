@@ -163,6 +163,7 @@ dialog.sheet > .rfq-sheet { width: 100%; max-height: 92dvh; overflow-y: auto; ov
 /* Positions (positions/Positions.tsx) ----------------------------------- */
 .positions { display: grid; }
 .positions__bar { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4) 0; }
+.home-bets .positions__bar { justify-content: flex-start; }
 .positions__cards { display: grid; gap: var(--space-3); }
 .positions > .rfq-banner { margin: var(--space-3) var(--space-4) 0; }
 /* Inside the activity card the positions are rows, not cards within a card. */

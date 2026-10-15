@@ -54,7 +54,8 @@ function NearLiquidation({ view }: { view: PositionView }) {
   );
 }
 
-type PositionActions = { onClose: (market: Market) => void; onTpsl: (market: Market) => void };
+/** Without `onTpsl` (Home bets, which hold their own margin) the TP/SL controls are left out. */
+type PositionActions = { onClose: (market: Market) => void; onTpsl?: (market: Market) => void };
 
 export function PositionCard({ view, onClose, onTpsl }: { view: PositionView } & PositionActions) {
   return (
@@ -93,20 +94,24 @@ export function PositionCard({ view, onClose, onTpsl }: { view: PositionView } &
           <b>{signedUsdc(view.funding)}</b>
         </div>
       </div>
-      <div className="rfq-pos__tpsl">
-        <span>TP/SL</span>
-        <ProtectionSummary market={view.market} size={view.long ? view.size : -view.size} />
-      </div>
+      {onTpsl && (
+        <div className="rfq-pos__tpsl">
+          <span>TP/SL</span>
+          <ProtectionSummary market={view.market} size={view.long ? view.size : -view.size} />
+        </div>
+      )}
       <NearLiquidation view={view} />
       <div className="rfq-pos__actions">
-        <button
-          type="button"
-          className="rfq-btn rfq-btn--secondary"
-          aria-label={`Set ${view.market} take-profit and stop-loss`}
-          onClick={() => onTpsl(view.market)}
-        >
-          TP/SL
-        </button>
+        {onTpsl && (
+          <button
+            type="button"
+            className="rfq-btn rfq-btn--secondary"
+            aria-label={`Set ${view.market} take-profit and stop-loss`}
+            onClick={() => onTpsl(view.market)}
+          >
+            TP/SL
+          </button>
+        )}
         <button
           type="button"
           className="rfq-btn rfq-btn--secondary"
@@ -179,18 +184,22 @@ function PositionsTable({
                 <Pnl view={view} />
               </td>
               <td>
-                <button
-                  type="button"
-                  className="tpsl-cell"
-                  aria-label={`Set ${view.market} take-profit and stop-loss`}
-                  onClick={() => onTpsl(view.market)}
-                >
-                  <ProtectionSummary
-                    market={view.market}
-                    size={view.long ? view.size : -view.size}
-                    empty="Add"
-                  />
-                </button>
+                {onTpsl ? (
+                  <button
+                    type="button"
+                    className="tpsl-cell"
+                    aria-label={`Set ${view.market} take-profit and stop-loss`}
+                    onClick={() => onTpsl(view.market)}
+                  >
+                    <ProtectionSummary
+                      market={view.market}
+                      size={view.long ? view.size : -view.size}
+                      empty="Add"
+                    />
+                  </button>
+                ) : (
+                  <span className="rfq-faint">—</span>
+                )}
               </td>
               <td>
                 <button
@@ -267,8 +276,19 @@ export function Positions({ account, only }: { account: AccountState | null; onl
 
 type Preset = `${(typeof CLOSE_PRESETS)[number]}`;
 
-/** Close a share of one position at a firm quote, or all of it at the oracle price while trading is paused. */
-export function ClosePositionSheet({ view, onClose }: { view: PositionView; onClose: () => void }) {
+/**
+ * Close a share of one position at a firm quote, or all of it at the oracle price while trading is paused.
+ * `isolated` closes a Home bet on its own margin, which returns to the balance once it is fully closed.
+ */
+export function ClosePositionSheet({
+  view,
+  onClose,
+  isolated = false,
+}: {
+  view: PositionView;
+  onClose: () => void;
+  isolated?: boolean;
+}) {
   const trading = useTrading(),
     protocol = useProtocol(),
     { snapshot } = useMarketFeed(),
@@ -293,6 +313,8 @@ export function ClosePositionSheet({ view, onClose }: { view: PositionView; onCl
   const fee = quote ? BigInt(quote.fee) : null;
   const net = preview.realizedPnl - (fee ?? 0n);
   const busy = trading.busy !== null;
+  // The oracle-price exit closes the main account's position only; a Home bet waits for trading to resume.
+  const blocked = paused && isolated;
   const label = paused
     ? `Close ${view.market} at oracle price`
     : fractionBps === 10_000
@@ -300,13 +322,17 @@ export function ClosePositionSheet({ view, onClose }: { view: PositionView; onCl
       : `Close ${preset}% of ${view.market} ${sideWord(view)}`;
   const close = async () => {
     if (paused) await trading.emergencyClose(view.market);
-    else await trading.closePosition(view.market, fractionBps);
+    else await trading.closePosition(view.market, fractionBps, isolated);
     onClose();
   };
   return (
     <Sheet open onClose={onClose} title={`Close ${view.market} ${sideWord(view)}`} labelledBy="close-title">
       <div className="sheet-body">
-        {paused ? (
+        {blocked ? (
+          <Banner tone="warning">
+            <b>Trading is paused.</b> You can cash out this Home bet once trading resumes.
+          </Banner>
+        ) : paused ? (
           <Banner tone="warning">
             <b>Trading is paused.</b> You can still close the whole position at the oracle price.
           </Banner>
@@ -341,7 +367,7 @@ export function ClosePositionSheet({ view, onClose }: { view: PositionView; onCl
         <button
           type="button"
           className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block"
-          disabled={busy}
+          disabled={busy || blocked}
           onClick={close}
         >
           {busy ? (
@@ -426,5 +452,36 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
         </button>
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * Open Home bets: one-tap trades that each hold their own margin in an isolated account, so the stake is the
+ * most they can lose. They close in full or in part here; TP/SL and close-all stay with the main account.
+ */
+export function HomeBets({ accounts }: { accounts: AccountState[] }) {
+  const desktop = useDesktop();
+  const [closing, setClosing] = useState<Market | null>(null);
+  const bets = accounts.flatMap((account) => openPositions(account).map((view) => ({ account, view })));
+  if (!bets.length) return null;
+  const views = bets.map((bet) => bet.view);
+  const closingBet = closing ? bets.find((bet) => bet.view.market === closing) : undefined;
+  const closingView = closingBet ? positionView(closingBet.account, closingBet.view.market) : null;
+  return (
+    <section className="positions home-bets" aria-label="Home bets">
+      <div className="positions__bar">
+        <span className="footnote rfq-muted">Home bets, each on its own margin</span>
+      </div>
+      {desktop ? (
+        <PositionsTable positions={views} onClose={setClosing} />
+      ) : (
+        <div className="positions__cards">
+          {views.map((view) => (
+            <PositionCard key={view.market} view={view} onClose={setClosing} />
+          ))}
+        </div>
+      )}
+      {closingView && <ClosePositionSheet view={closingView} onClose={() => setClosing(null)} isolated />}
+    </section>
   );
 }

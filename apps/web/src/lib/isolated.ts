@@ -26,3 +26,14 @@ export function marginTopUp(stake: bigint, held: bigint, registered: boolean): b
   if (!registered && stake < MIN_ISOLATED_OPEN) return null;
   return stake - held;
 }
+
+/** What the trader's Home bets add to their account value: equity and unrealized PnL summed over isolated accounts. */
+export function homeTotals(accounts: ReadonlyArray<{ equity: string; unrealizedPnl: string }>) {
+  return accounts.reduce(
+    (sum, account) => ({
+      equity: sum.equity + BigInt(account.equity),
+      unrealizedPnl: sum.unrealizedPnl + BigInt(account.unrealizedPnl),
+    }),
+    { equity: 0n, unrealizedPnl: 0n },
+  );
+}

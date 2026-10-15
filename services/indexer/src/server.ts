@@ -20,6 +20,7 @@ import { RiskProjection, marketLabel } from "./risk-projection.js";
 import {
   HISTORY_INTERVALS,
   bucketPoints,
+  combineReplays,
   replayPortfolio,
   type HistoryInterval,
   type PortfolioEvent,
@@ -123,10 +124,12 @@ const excludedKinds = z
   .optional()
   .transform((value) => (value ? value.split(",") : []))
   .pipe(z.array(z.enum(ACTIVITY_KINDS, { message: "invalid activity kind" })).max(ACTIVITY_KINDS.length));
+/** `isolated=true` on an owner's reads adds its isolated accounts (where one-tap Home trades hold their margin). */
 const accountActivityQuery = z.object({
   cursor: activityCursor,
   limit: pageLimit(25),
   exclude: excludedKinds,
+  isolated: isTrue,
 });
 const activityQuery = z.object({
   cursor: activityCursor,
@@ -141,6 +144,7 @@ const activityQuery = z.object({
   finalized: isTrue,
 });
 const finalityQuery = z.object({ finalized: isTrue });
+const portfolioQuery = z.object({ finalized: isTrue, isolated: isTrue });
 /** A registered market symbol (the registry refreshes from chain). */
 const knownMarket = z.string().refine(isKnownMarket, "invalid market");
 const fillMarket = knownMarket.optional();
@@ -156,12 +160,14 @@ const portfolioHistoryQuery = z.object({
     .catch(500)
     .transform((value) => Math.min(2_000, Math.max(1, value))),
   finalized: isTrue,
+  isolated: isTrue,
 });
 const portfolioPageQuery = z.object({
   cursor: activityCursor,
   limit: pageLimit(25),
   market: fillMarket,
   finalized: isTrue,
+  isolated: isTrue,
 });
 const leaderboardQuery = z.object({
   window: z
@@ -749,13 +755,24 @@ export function buildIndexer(options: IndexerOptions) {
     const excluded = query.exclude.length
       ? ` AND kind NOT IN (${query.exclude.map(() => "?").join(",")})`
       : "";
+    // A margin move shows on both sides; with isolated accounts included, keep only the owner's side of it.
+    const isolated = query.isolated ? isolatedAccountsOf(params.address, indexedBlock()) : [],
+      accounts = isolated.length
+        ? `(account=? OR (account IN (${isolated.map(() => "?").join(",")}) AND kind<>'MarginTransferred'))`
+        : "account=?";
     const rows = db
       .prepare(
-        `SELECT * FROM activity WHERE account=? AND (block_number<? OR (block_number=? AND log_index<?))${excluded} ORDER BY block_number DESC,log_index DESC LIMIT ?`,
+        `SELECT * FROM activity WHERE ${accounts} AND (block_number<? OR (block_number=? AND log_index<?))${excluded} ORDER BY block_number DESC,log_index DESC LIMIT ?`,
       )
-      .all(params.address, cursorBlock, cursorBlock, cursorLog, ...query.exclude, query.limit) as Array<
-      Record<string, string | number>
-    >;
+      .all(
+        params.address,
+        ...isolated,
+        cursorBlock,
+        cursorBlock,
+        cursorLog,
+        ...query.exclude,
+        query.limit,
+      ) as Array<Record<string, string | number>>;
     return activityPage(rows, query.limit, await finalityBlock());
   });
   app.get("/v1/activity", async (request, reply) => {
@@ -820,6 +837,35 @@ export function buildIndexer(options: IndexerOptions) {
     portfolioCache.set(key, replay);
     return replay;
   }
+  /** The owner's isolated accounts that margin has moved into, read from the owner's side of each move. */
+  function isolatedAccountsOf(owner: string, throughBlock: number) {
+    const accounts = new Set<string>(),
+      rows = db
+        .prepare(
+          "SELECT payload FROM activity WHERE account=? AND kind='MarginTransferred' AND block_number<=?",
+        )
+        .all(owner, throughBlock) as Array<{ payload: string }>;
+    for (const row of rows) {
+      const { counterparty, market } = JSON.parse(row.payload) as Record<string, string>;
+      if (!counterparty || market === undefined) continue;
+      const isolated = getAddress(counterparty);
+      if (isolatedAccountAddress(owner, Number(market)) === isolated) accounts.add(isolated);
+    }
+    return [...accounts];
+  }
+  /** An owner's portfolio, combined with its isolated accounts' when `isolated` is set. */
+  function ownerPortfolio(owner: string, throughBlock: number, finalized: boolean, isolated: boolean) {
+    const accounts = [owner, ...(isolated ? isolatedAccountsOf(owner, throughBlock) : [])];
+    return {
+      accounts,
+      replay:
+        accounts.length === 1
+          ? portfolio(owner, throughBlock, finalized)
+          : combineReplays(
+              accounts.map((account) => ({ account, replay: portfolio(account, throughBlock, finalized) })),
+            ),
+    };
+  }
   /** Indexed and finalized heights, and the height a portfolio read covers. */
   async function portfolioScope(finalized: boolean) {
     const indexed = indexedBlock(),
@@ -851,21 +897,30 @@ export function buildIndexer(options: IndexerOptions) {
   app.get("/v1/portfolio/:address", async (request, reply) => {
     await sync();
     const params = parse(accountParams, request.params, reply),
-      query = params && parse(finalityQuery, request.query, reply);
+      query = params && parse(portfolioQuery, request.query, reply);
     if (!params || !query) return;
     const scope = await portfolioScope(query.finalized),
-      replay = portfolio(params.address, scope.through, query.finalized),
+      { accounts, replay } = ownerPortfolio(params.address, scope.through, query.finalized, query.isolated),
       totals = replay.totals,
       netPnl = totals.realizedPnl - totals.fees + totals.funding - totals.liquidationPenalties,
       netDeposits = totals.deposits - totals.withdrawals + totals.transfers,
-      stored = db
-        .prepare(
-          `SELECT collateral FROM ${query.finalized ? "finalized_accounts" : "accounts"} WHERE account=?`,
+      stored = accounts
+        .map(
+          (account) =>
+            db
+              .prepare(
+                `SELECT collateral FROM ${query.finalized ? "finalized_accounts" : "accounts"} WHERE account=?`,
+              )
+              .get(account) as { collateral: string } | undefined,
         )
-        .get(params.address) as { collateral: string } | undefined;
+        .filter((row) => row !== undefined),
+      indexedCollateral = stored.length
+        ? stored.reduce((sum, row) => sum + BigInt(row.collateral), 0n).toString()
+        : null;
 
     return {
       account: params.address,
+      accounts,
       finality: query.finalized ? "finalized" : "included",
       indexedBlock: scope.through,
       finalizedBlock: scope.finalizedBlock,
@@ -880,7 +935,7 @@ export function buildIndexer(options: IndexerOptions) {
       marginTransfers: totals.transfers.toString(),
       netDeposits: netDeposits.toString(),
       collateral: (netDeposits + netPnl + totals.deficitCovered).toString(),
-      indexedCollateral: stored?.collateral ?? null,
+      indexedCollateral,
       volume: totals.volume.toString(),
       tradeCount: totals.tradeCount,
       fundingCount: replay.funding.length,
@@ -901,7 +956,7 @@ export function buildIndexer(options: IndexerOptions) {
       query = params && parse(portfolioHistoryQuery, request.query, reply);
     if (!params || !query) return;
     const scope = await portfolioScope(query.finalized),
-      replay = portfolio(params.address, scope.through, query.finalized),
+      { replay } = ownerPortfolio(params.address, scope.through, query.finalized, query.isolated),
       points = bucketPoints(replay.points, query.interval);
     return {
       account: params.address,
@@ -918,7 +973,7 @@ export function buildIndexer(options: IndexerOptions) {
       query = params && parse(portfolioPageQuery, request.query, reply);
     if (!params || !query) return;
     const scope = await portfolioScope(query.finalized),
-      replay = portfolio(params.address, scope.through, query.finalized),
+      { replay } = ownerPortfolio(params.address, scope.through, query.finalized, query.isolated),
       fills = query.market ? replay.fills.filter((fill) => fill.market === query.market) : replay.fills;
     return {
       ...replayPage(fills, query.cursor, query.limit, scope.finalizedBlock),
@@ -932,7 +987,7 @@ export function buildIndexer(options: IndexerOptions) {
       query = params && parse(portfolioPageQuery, request.query, reply);
     if (!params || !query) return;
     const scope = await portfolioScope(query.finalized),
-      replay = portfolio(params.address, scope.through, query.finalized),
+      { replay } = ownerPortfolio(params.address, scope.through, query.finalized, query.isolated),
       items = query.market ? replay.funding.filter((item) => item.market === query.market) : replay.funding;
     return {
       ...replayPage(items, query.cursor, query.limit, scope.finalizedBlock),

@@ -41,6 +41,8 @@ export interface Fill {
   entryPriceAfter: string;
   realizedPnl: string;
   cumulativeRealizedPnl: string;
+  /** The account the fill happened on, in an owner's combined portfolio (its own or an isolated account). */
+  account?: string;
 }
 
 export interface FundingItem {
@@ -54,6 +56,8 @@ export interface FundingItem {
   /** Effect on the account's PnL (= -payment). */
   amount: string;
   cumulativeFunding: string;
+  /** The account that paid or received it, in an owner's combined portfolio. */
+  account?: string;
 }
 
 export interface PortfolioTotals {
@@ -334,4 +338,84 @@ export function bucketPoints(points: readonly PortfolioPoint[], interval: Histor
     else buckets.push(value);
   }
   return buckets;
+}
+
+const POINT_AMOUNTS = [
+  "realizedPnl",
+  "fees",
+  "funding",
+  "liquidationPenalties",
+  "netPnl",
+  "netDeposits",
+  "collateral",
+] as const;
+
+/**
+ * One owner's replays (its own account first, then its isolated accounts) as a single portfolio: totals add up,
+ * fills and funding interleave in chain order with running totals across all of them and the account each
+ * happened on, and each history point sums every account's latest point. Margin moved between the owner and its
+ * isolated accounts nets to zero in the combined deposits. Positions stay the owner account's own, since an
+ * isolated account can hold the same market on its own margin.
+ */
+export function combineReplays(parts: ReadonlyArray<{ account: string; replay: PortfolioReplay }>) {
+  const [own] = parts,
+    totals: PortfolioTotals = { ...own.replay.totals };
+  for (const { replay } of parts.slice(1))
+    for (const key of Object.keys(totals) as Array<keyof PortfolioTotals>)
+      (totals as unknown as Record<string, bigint | number>)[key] =
+        key === "tradeCount"
+          ? totals.tradeCount + replay.totals.tradeCount
+          : (totals[key] as bigint) + (replay.totals[key] as bigint);
+
+  const chainOrder = (
+    a: { blockNumber: number; logIndex: number },
+    b: { blockNumber: number; logIndex: number },
+  ) => a.blockNumber - b.blockNumber || a.logIndex - b.logIndex;
+  let realized = 0n,
+    paid = 0n;
+  const fills = parts
+    .flatMap(({ account, replay }) => replay.fills.map((fill) => ({ ...fill, account })))
+    .sort(chainOrder)
+    .map((fill) => ({ ...fill, cumulativeRealizedPnl: (realized += BigInt(fill.realizedPnl)).toString() }));
+  const funding = parts
+    .flatMap(({ account, replay }) => replay.funding.map((item) => ({ ...item, account })))
+    .sort(chainOrder)
+    .map((item) => ({ ...item, cumulativeFunding: (paid += BigInt(item.amount)).toString() }));
+
+  const latest: Array<PortfolioPoint | undefined> = parts.map(() => undefined),
+    tagged = parts
+      .flatMap(({ replay }, index) => replay.points.map((item) => ({ item, index })))
+      .sort((a, b) => a.item.blockNumber - b.item.blockNumber),
+    points: PortfolioPoint[] = [];
+  for (let start = 0; start < tagged.length;) {
+    let end = start;
+    for (; end < tagged.length && tagged[end].item.blockNumber === tagged[start].item.blockNumber; end++)
+      latest[tagged[end].index] = tagged[end].item;
+    const sum = (key: (typeof POINT_AMOUNTS)[number]) =>
+      latest.reduce((total, item) => total + BigInt(item?.[key] ?? 0), 0n).toString();
+    points.push({
+      timeMs: tagged[start].item.timeMs,
+      blockNumber: tagged[start].item.blockNumber,
+      ...(Object.fromEntries(POINT_AMOUNTS.map((key) => [key, sum(key)])) as Record<
+        (typeof POINT_AMOUNTS)[number],
+        string
+      >),
+    });
+    start = end;
+  }
+
+  const times = (pick: (replay: PortfolioReplay) => number | null) =>
+    parts.map(({ replay }) => pick(replay)).filter((value): value is number => value !== null);
+  const first = times((replay) => replay.firstEventMs),
+    last = times((replay) => replay.lastEventMs);
+  return {
+    totals,
+    positions: own.replay.positions,
+    fills,
+    funding,
+    points,
+    firstEventMs: first.length ? Math.min(...first) : null,
+    lastEventMs: last.length ? Math.max(...last) : null,
+    incomplete: parts.some(({ replay }) => replay.incomplete),
+  } satisfies PortfolioReplay;
 }

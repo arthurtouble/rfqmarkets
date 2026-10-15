@@ -1,5 +1,6 @@
 // Server state through TanStack Query. The indexer's update stream
 // (useIndexerSync) invalidates these keys instead of polling.
+import { useMemo, useRef } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useConfig } from "wagmi";
 import { getPublicClient } from "wagmi/actions";
@@ -7,6 +8,7 @@ import { erc20Abi, type Address } from "viem";
 import { API, INDEXER } from "../lib/env.js";
 import { useEventStream } from "../lib/event-stream.js";
 import { getJson } from "../lib/http.js";
+import { isolatedAccountOf } from "../lib/isolated.js";
 import type {
   AccountState,
   Activity,
@@ -24,6 +26,7 @@ import type {
   Risk,
 } from "../lib/types.js";
 import { useTrader } from "../wallet/trader.js";
+import { useMarketList } from "./markets.js";
 
 export const keys = {
   account: (address: string) => ["account", address.toLowerCase()] as const,
@@ -33,12 +36,16 @@ export const keys = {
   orders: (address: string) => [...keys.account(address), "orders"] as const,
 };
 
+/** GET /v1/account/:address: collateral, margins and positions read from chain. */
+export const accountStateQuery = (address: string | null) => ({
+  queryKey: [...keys.account(address ?? ""), "state"],
+  queryFn: ({ signal }: { signal: AbortSignal }) =>
+    getJson<AccountState>(`${API}/v1/account/${address}`, signal),
+  enabled: !!address,
+});
+
 export function useAccountState(address: string | null) {
-  return useQuery({
-    queryKey: [...keys.account(address ?? ""), "state"],
-    queryFn: ({ signal }) => getJson<AccountState>(`${API}/v1/account/${address}`, signal),
-    enabled: !!address,
-  });
+  return useQuery(accountStateQuery(address));
 }
 
 /**
@@ -67,7 +74,7 @@ export function useAccountActivity(address: string | null, exclude: readonly str
     queryKey: [...keys.account(address ?? ""), "activity", exclude.join(",")],
     queryFn: ({ signal, pageParam }) =>
       getJson<ActivityPage>(
-        `${INDEXER}/v1/account/${address}/activity${query(pageParam ? `cursor=${pageParam}` : "", "limit=25", exclude.length ? `exclude=${exclude.join(",")}` : "")}`,
+        `${INDEXER}/v1/account/${address}/activity${query(pageParam ? `cursor=${pageParam}` : "", "limit=25", exclude.length ? `exclude=${exclude.join(",")}` : "", WITH_ISOLATED)}`,
         signal,
       ),
     initialPageParam: null as string | null,
@@ -141,6 +148,15 @@ type IndexedEvent = { initial?: boolean; reset?: boolean; changed?: boolean; acc
 /** Mount once: refreshes queries when the indexer reports new blocks. */
 export function useIndexerSync() {
   const client = useQueryClient();
+  const { address } = useTrader();
+  const { markets } = useMarketList();
+  // A Home trade only touches the trader's isolated account, but their history reads include it.
+  const isolated = useRef(new Set<string>());
+  isolated.current = useMemo(
+    () =>
+      new Set(address ? markets.map((market) => isolatedAccountOf(address, market.index).toLowerCase()) : []),
+    [address, markets],
+  );
   return useEventStream(`${INDEXER}/v1/updates/stream`, {
     indexed: (data) => {
       const update = data as IndexedEvent;
@@ -149,8 +165,11 @@ export function useIndexerSync() {
         return;
       }
       if (update.changed) void client.invalidateQueries({ queryKey: keys.indexer });
-      for (const account of update.accounts ?? [])
+      for (const account of update.accounts ?? []) {
         void client.invalidateQueries({ queryKey: keys.account(account) });
+        if (address && isolated.current.has(account.toLowerCase()))
+          void client.invalidateQueries({ queryKey: keys.account(address) });
+      }
     },
   });
 }
@@ -172,6 +191,8 @@ export function useOpenOrders(address: string | null, market?: Market) {
 }
 
 type FinalityOption = { finalized?: boolean };
+/** The trader's history reads include their isolated accounts, where Home trades hold their own margin. */
+const WITH_ISOLATED = "isolated=true";
 const finalityParam = (options?: FinalityOption) => (options?.finalized ? "finalized=true" : "");
 const query = (...parts: string[]) => {
   const joined = parts.filter(Boolean).join("&");
@@ -183,7 +204,10 @@ export function usePortfolio(address: string | null, options?: FinalityOption) {
   return useQuery({
     queryKey: [...keys.portfolio(address ?? ""), "summary", !!options?.finalized],
     queryFn: ({ signal }) =>
-      getJson<Portfolio>(`${INDEXER}/v1/portfolio/${address}${query(finalityParam(options))}`, signal),
+      getJson<Portfolio>(
+        `${INDEXER}/v1/portfolio/${address}${query(finalityParam(options), WITH_ISOLATED)}`,
+        signal,
+      ),
     enabled: !!address,
   });
 }
@@ -199,7 +223,7 @@ export function usePortfolioHistory(
     queryKey: [...keys.portfolio(address ?? ""), "history", interval, limit, !!options?.finalized],
     queryFn: ({ signal }) =>
       getJson<PortfolioHistory>(
-        `${INDEXER}/v1/portfolio/${address}/history${query(`interval=${interval}`, `limit=${limit}`, finalityParam(options))}`,
+        `${INDEXER}/v1/portfolio/${address}/history${query(`interval=${interval}`, `limit=${limit}`, finalityParam(options), WITH_ISOLATED)}`,
         signal,
       ),
     enabled: !!address,
@@ -213,6 +237,7 @@ const pageQuery = (options: PageOptions | undefined, cursor: string | null) =>
     `limit=${options?.limit ?? 25}`,
     options?.market ? `market=${encodeURIComponent(options.market)}` : "",
     finalityParam(options),
+    WITH_ISOLATED,
   );
 
 /**

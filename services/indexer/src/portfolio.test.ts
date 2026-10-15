@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bucketPoints, positionTransition, replayPortfolio, type PortfolioEvent } from "./portfolio.js";
+import {
+  bucketPoints,
+  combineReplays,
+  positionTransition,
+  replayPortfolio,
+  type PortfolioEvent,
+} from "./portfolio.js";
 
 const E = 10n ** 18n,
   usdc = (value: number) => BigInt(value) * 1_000_000n;
@@ -193,4 +199,46 @@ test("margin moved to an isolated account counts toward net deposits on both sid
   assert.equal(owner.points.at(-1)?.netDeposits, "60");
   assert.equal(owner.points.at(-1)?.collateral, "60");
   assert.equal(isolated.points.at(-1)?.collateral, "40");
+});
+
+test("an owner's combined portfolio adds its isolated accounts in chain order", () => {
+  const owner = replayPortfolio([
+      event(1, "Deposited", { amount: usdc(100).toString() }),
+      event(2, "MarginTransferred", { market: "0", amount: (-usdc(10)).toString() }),
+      trade(4, "1", E, usdc(50), 0n),
+    ]),
+    isolated = replayPortfolio([
+      event(2, "MarginTransferred", { market: "0", amount: usdc(10).toString() }),
+      trade(3, "0", E, usdc(100), 0n),
+      trade(5, "0", -E, usdc(94), 0n),
+    ]),
+    combined = combineReplays([
+      { account: "owner", replay: owner },
+      { account: "isolated", replay: isolated },
+    ]);
+  // The move nets out: one deposit of 100, and the isolated loss of 6 comes off it.
+  assert.equal(combined.totals.transfers, 0n);
+  assert.equal(combined.totals.realizedPnl, -usdc(6));
+  assert.equal(combined.totals.tradeCount, 3);
+  assert.deepEqual(
+    combined.fills.map((fill) => [fill.account, fill.blockNumber, fill.cumulativeRealizedPnl]),
+    [
+      ["isolated", 3, "0"],
+      ["owner", 4, "0"],
+      ["isolated", 5, (-usdc(6)).toString()],
+    ],
+  );
+  assert.deepEqual(
+    combined.points.map((point) => [point.blockNumber, point.collateral]),
+    [
+      [1, usdc(100).toString()],
+      [2, usdc(100).toString()],
+      [3, usdc(100).toString()],
+      [4, usdc(100).toString()],
+      [5, usdc(94).toString()],
+    ],
+  );
+  // Positions stay the owner account's own.
+  assert.equal(combined.positions.ETH.size, E);
+  assert.equal(combined.positions.BTC.size, 0n);
 });

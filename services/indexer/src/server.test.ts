@@ -533,6 +533,28 @@ test("leaderboard ranks owners with their isolated accounts, and points sum trad
     );
     const points = await get(`/v1/points/${account}`);
     assert.deepEqual(points.accounts, [account, isolated]);
+
+    // An owner's reads with isolated=true add the isolated account; the margin move shows once.
+    const own = await get(`/v1/portfolio/${account}`),
+      combined = await get(`/v1/portfolio/${account}?isolated=true`);
+    assert.equal(own.tradeCount, 1);
+    assert.deepEqual(combined.accounts, [account, isolated]);
+    assert.equal(combined.tradeCount, 2);
+    assert.equal(combined.marginTransfers, "0");
+    const fills = await get(`/v1/portfolio/${account}/trades?isolated=true`);
+    assert.deepEqual(
+      fills.items.map((fill: { account: string }) => fill.account),
+      [account, isolated],
+    );
+    const activity = await get(`/v1/account/${account}/activity?isolated=true`);
+    assert.deepEqual(
+      activity.items.map((item: { kind: string; account: string }) => [item.kind, item.account]),
+      [
+        ["TradeExecuted", account],
+        ["TradeExecuted", isolated],
+        ["MarginTransferred", account],
+      ],
+    );
     assert.equal(points.total, "4");
     assert.equal(points.referralPoints, "0");
 
