@@ -51,6 +51,8 @@ export const clearingApiAbi = [
 export const clearingApproverAbi = [
   ...clearingStateAbi,
   "function isApprover(address) view returns(bool)",
+  // Approvers honour only an account's newest session key.
+  "event SessionGranted(address indexed account,address indexed session,uint64 validUntil,uint128 maxCumulativeNotional)",
 ] as const;
 
 export const clearingIndexerAbi = [

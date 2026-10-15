@@ -504,8 +504,12 @@ export class QuoteEngine {
       maxTradeNotional = DEFAULT_TRADE_LIMIT;
     if (clearing && provider) {
       if (ctx.devFund) await this.dev.advanceTime();
-      const snapshot = await this.readFreshQuoteSnapshot(request.market);
-      oracleQuote = await this.refreshPrice(request.market);
+      // The signed price does not depend on the chain snapshot, so fetch both at once.
+      const [snapshot, observed] = await Promise.all([
+        this.readFreshQuoteSnapshot(request.market),
+        this.refreshPrice(request.market),
+      ]);
+      oracleQuote = observed;
       const quoteMid = midOf(this.priceOf(request.market)),
         selected = marketIndex(request.market);
       for (const [index, state] of snapshot.markets.entries())
@@ -532,8 +536,10 @@ export class QuoteEngine {
         }
       }
     } else {
-      versions = await this.chain.readProtocolVersions();
-      oracleQuote = await this.refreshPrice(request.market);
+      [versions, oracleQuote] = await Promise.all([
+        this.chain.readProtocolVersions(),
+        this.refreshPrice(request.market),
+      ]);
     }
     const snapshot = this.priceOf(request.market),
       operational = await operationalRead,

@@ -9,7 +9,8 @@ import { errorMessage } from "../lib/http.js";
 import { leverageLabel, quoteSecondsLeft, quoteUsable, SIDE_WORD } from "../lib/ticket.js";
 import type { Quote } from "../lib/types.js";
 import { Banner, Rows, marketName, Sheet } from "../ui/primitives.js";
-import { QUICK_LIMITS } from "../wallet/quick-session.js";
+import { useQuickLimits } from "../data/quick-limits.js";
+import { QUICK_HOURS } from "../wallet/quick-session.js";
 
 /** A market order as the ticket built it: the position (`amountMicro`) and what the trader pays for it. */
 export type ReviewOrder = MarketOrder & { payMicro: bigint; leverage: number };
@@ -28,7 +29,8 @@ export function ReviewSheet({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const trading = useTrading();
+  const trading = useTrading(),
+    quickLimits = useQuickLimits();
   const { snapshot } = useMarketFeed();
   const { account } = useAccount();
   const now = useNow(250);
@@ -71,7 +73,7 @@ export function ReviewSheet({
       void refresh();
       return;
     }
-    if (oneClick && offerOneClick) await trading.enableQuickTrading();
+    if (oneClick && offerOneClick) await trading.enableQuickTrading(quickLimits);
     onDone();
   };
 
@@ -107,8 +109,8 @@ export function ReviewSheet({
               Skip this step next time
               <span className="footnote rfq-faint">
                 {" "}
-                · trades up to {usdcCompact(BigInt(QUICK_LIMITS.maxTradeAmount) * 1_000_000n)} sign in this
-                tab for 8 hours (one more signature now)
+                · trades up to {usdcCompact(quickLimits.maxTradeMicro)} sign in this tab for {QUICK_HOURS}{" "}
+                hours (one more signature now)
               </span>
             </span>
           </label>

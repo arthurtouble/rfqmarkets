@@ -22,7 +22,7 @@ import {
   type SourceToken,
 } from "../lib/bridge.js";
 import { MIN_GAS_FREE_DEPOSIT, plainAccount } from "../lib/funds.js";
-import { abs, baseAmount, microToInput, parseUsdcInput, usdc } from "../lib/format.js";
+import { abs, baseAmount, microToInput, parseUsdcInput, usdc, usdcCompact } from "../lib/format.js";
 import {
   LIMIT_ORDER_DURATION_SECONDS,
   tpslPrepareBody,
@@ -44,10 +44,11 @@ import type {
   Transaction,
 } from "../lib/types.js";
 import {
-  QUICK_LIMITS,
+  QUICK_HOURS,
   quickSessionRequest,
   sessionCovers,
   useQuickSession,
+  type QuickLimits,
   type QuickSession,
 } from "../wallet/quick-session.js";
 import { useTrader } from "../wallet/trader.js";
@@ -115,7 +116,8 @@ type Trading = {
   /** Sends a LI.FI route from its source network; resolves to the source transaction once it is included. */
   bridge(route: Route, source: SourceToken): Promise<{ hash: Hex; route: Route } | undefined>;
   withdraw(amountMicro: bigint): Promise<boolean>;
-  enableQuickTrading(): Promise<boolean>;
+  /** Grants a one-tap key with `limits` (see `useQuickLimits`). */
+  enableQuickTrading(limits: QuickLimits): Promise<boolean>;
   revokeQuickTrading(): Promise<void>;
 };
 
@@ -791,12 +793,12 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         };
       })) ?? false,
 
-    enableQuickTrading: async () =>
+    enableQuickTrading: async (limits) =>
       (await run("One-tap trading", "Turn on one-tap trading", async (progress) => {
         const privateKey = generatePrivateKey(),
           sessionAddress = privateKeyToAccount(privateKey).address;
         // Covers every registered market; one added later needs a new session (sessionCovers checks the mask).
-        const request = quickSessionRequest(Math.max(1, marketList.markets.length)),
+        const request = quickSessionRequest(Math.max(1, marketList.markets.length), limits),
           nonce = randomNonce();
         const prepared = await api<Omit<Prepared, "intent"> & { grant: Record<string, unknown> }>(
           "/v1/session/prepare",
@@ -817,10 +819,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             session: sessionAddress,
             marketMask: BigInt(request.marketMask),
             nonce,
-            maxTradeNotional: parseUnits(QUICK_LIMITS.maxTradeAmount, 6),
-            maxCumulativeNotional: parseUnits(QUICK_LIMITS.maxCumulativeAmount, 6),
-            maxFee: parseUnits(QUICK_LIMITS.maxFee, 6),
-            durationSeconds: QUICK_LIMITS.durationSeconds,
+            maxTradeNotional: limits.maxTradeMicro,
+            maxCumulativeNotional: limits.maxCumulativeMicro,
+            maxFee: parseUnits(request.maxFee, 6),
+            durationSeconds: request.durationSeconds,
           },
         );
         progress("Turning on one tap");
@@ -834,10 +836,11 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           privateKey,
           validUntil: Number(result.validUntil) * 1_000,
           marketMask: String(request.marketMask),
+          maxTradeNotional: limits.maxTradeMicro.toString(),
         });
         return {
           title: "One-tap trading on",
-          detail: `Trades up to ${QUICK_LIMITS.maxTradeAmount} USDC sign instantly in this tab for 8 hours`,
+          detail: `Trades up to ${usdcCompact(limits.maxTradeMicro)} sign instantly in this tab for ${QUICK_HOURS} hours`,
           txHash: result.transaction?.hash,
           value: true,
         };

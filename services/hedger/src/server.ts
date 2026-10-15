@@ -10,6 +10,7 @@ import type {
   HedgeRiskSnapshot,
 } from "../../../packages/shared/src/hedge-risk.js";
 import { marketRegistry } from "../../../packages/shared/src/markets.js";
+import { retentionCutoff } from "../../../packages/shared/src/retention.js";
 import { bearerMatches } from "../../lib/src/auth.js";
 import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 
@@ -439,8 +440,18 @@ export function buildHedger(options: HedgeOptions) {
         .map((market) => [market, (lastVenuePositions[market] ?? 0n).toString()]),
     );
   const broadcastStatus = () => statusClients.broadcast(sseFrame("status", statusSnapshot()));
+  /** Finished hedge orders past the retention window are deleted, at most hourly. */
+  let prunedMs = 0;
+  function pruneFinished(nowMs = Date.now()) {
+    if (nowMs - prunedMs < 3_600_000) return;
+    prunedMs = nowMs;
+    db.prepare(
+      "DELETE FROM hedge_orders WHERE status NOT IN ('planned','submitted','open') AND updated_ms<?",
+    ).run(retentionCutoff(nowMs));
+  }
   async function tick() {
     if (ticking) return ticking;
+    pruneFinished();
     ticking = doTick()
       .then(() => {
         lastError = undefined;

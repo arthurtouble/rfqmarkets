@@ -178,6 +178,14 @@ test("chain mode rejects foreign signers without a session", async () => {
   };
   const result = await approve(target, { ...fixture.payload, userSignature: signature });
   assert(!("status" in result), JSON.stringify(result));
+  // A newer grant by the same account retires this key; so does a grant older than the lookback window.
+  for (const latest of [Wallet.createRandom().address, undefined]) {
+    state.latestSessions = { [fixture.intent.account]: latest };
+    assert.equal(
+      errorOf(await approve(target, { ...fixture.payload, userSignature: signature })),
+      "user authorization rejected",
+    );
+  }
 });
 
 test("chain mode applies hedge risk and fails closed when the hedger is unavailable", async () => {

@@ -5,12 +5,19 @@ import {Test} from "forge-std/Test.sol";
 import {ClearingFixture} from "./ClearingFixture.sol";
 import "../../contracts/RFQTypes.sol";
 
-/// @notice Drives random deposits, fills, withdrawals, price moves, liquidations and time through the
-/// real signing path. Calls that the venue rejects are discarded.
+/// @notice Drives random deposits, fills (some signed by a session key), withdrawals, price moves,
+/// liquidations and time through the real signing path. Calls that the venue rejects are discarded.
 contract ClearingHandler is ClearingFixture {
     Trader[] internal traders;
     uint256 public fills;
     uint256 public liquidations;
+    address internal sessionKey;
+    uint256 internal sessionPrivateKey;
+    /// @notice Session limits for alice's key: some fuzzed trades exceed the per-trade cap.
+    uint128 public constant SESSION_TRADE_CAP = 20_000e6;
+    uint128 public constant SESSION_TOTAL_CAP = 150_000e6;
+    /// @notice The largest spend a single session-signed fill added.
+    uint256 public largestSessionFill;
 
     function boot() external {
         setUp();
@@ -21,6 +28,37 @@ contract ClearingHandler is ClearingFixture {
         traders.push(newTrader("bob", 10_000e6));
         traders.push(newTrader("carol", 7_000e6));
         refreshAll();
+        (sessionKey, sessionPrivateKey) = makeAddrAndKey("session");
+        SessionGrant memory g = SessionGrant({
+            account: traders[0].account,
+            session: sessionKey,
+            marketMask: (uint256(1) << clearing.marketCount()) - 1,
+            maxTradeNotional: SESSION_TRADE_CAP,
+            maxCumulativeNotional: SESSION_TOTAL_CAP,
+            maxFee: 1,
+            validUntil: uint64(vm.getBlockTimestamp() + MAX_SESSION_DURATION),
+            nonce: 1,
+            deadline: uint64(vm.getBlockTimestamp() + 60)
+        });
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SESSION_GRANT_TYPEHASH,
+                g.account,
+                g.session,
+                g.marketMask,
+                g.maxTradeNotional,
+                g.maxCumulativeNotional,
+                g.maxFee,
+                g.validUntil,
+                g.nonce,
+                g.deadline
+            )
+        );
+        clearing.grantSessionWithSignature(g, signDigest(traders[0].key, typedDigest(structHash)));
+    }
+
+    function sessionState() external view returns (Session memory) {
+        return clearing.sessions(sessionKey);
     }
 
     function traderCount() external view returns (uint256) {
@@ -56,6 +94,29 @@ contract ClearingHandler is ClearingFixture {
         delta = bound(delta, -maxBase, maxBase);
         if (delta == 0) return;
         trade(traders[who % traders.length], market, delta, false);
+        ++fills;
+    }
+
+    /// @notice Alice's session key signs a fill; the venue refuses it past the session's limits.
+    function sessionTrade(uint256 marketSeed, int256 delta) external {
+        tick();
+        uint8 market = uint8(marketSeed % clearing.marketCount());
+        int256 maxBase = market == 0 ? int256(3e17) : int256(5e18);
+        delta = bound(delta, -maxBase, maxBase);
+        if (delta == 0) return;
+        (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
+            quote(traders[0].account, market, delta, false);
+        uint256 before = clearing.sessions(sessionKey).usedNotional;
+        clearing.executeTrade(
+            intent,
+            approval,
+            proof,
+            signDigest(sessionPrivateKey, intentDigest(intent)),
+            signApproval(approverKeys[0], approval),
+            signApproval(approverKeys[1], approval)
+        );
+        uint256 spent = clearing.sessions(sessionKey).usedNotional - before;
+        if (spent > largestSessionFill) largestSessionFill = spent;
         ++fills;
     }
 
@@ -129,7 +190,7 @@ contract ClearingInvariantsTest is Test {
         handler = new ClearingHandler();
         handler.boot();
         clearing = IClearingView(handler.clearingAddress());
-        bytes4[] memory selectors = new bytes4[](7);
+        bytes4[] memory selectors = new bytes4[](8);
         selectors[0] = ClearingHandler.deposit.selector;
         selectors[1] = ClearingHandler.open.selector;
         selectors[2] = ClearingHandler.reduce.selector;
@@ -137,6 +198,7 @@ contract ClearingInvariantsTest is Test {
         selectors[4] = ClearingHandler.movePrice.selector;
         selectors[5] = ClearingHandler.liquidate.selector;
         selectors[6] = ClearingHandler.elapse.selector;
+        selectors[7] = ClearingHandler.sessionTrade.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
@@ -178,6 +240,15 @@ contract ClearingInvariantsTest is Test {
         }
         int256 expected = pnl > 0 ? pnl : int256(0);
         assertApproxEqAbs(int256(clearing.customerUnrealizedGain()), expected, 2 * count, "unrealized gain");
+    }
+
+    /// @notice A session key never spends past its total, no single fill it signs passes its per-trade cap,
+    /// and it stays bound to the account that granted it.
+    function invariant_sessionSpendStaysWithinItsCaps() public view {
+        Session memory session = handler.sessionState();
+        assertEq(session.account, handler.traderAt(0), "session account");
+        assertLe(session.usedNotional, handler.SESSION_TOTAL_CAP(), "cumulative cap");
+        assertLe(handler.largestSessionFill(), handler.SESSION_TRADE_CAP(), "per-trade cap");
     }
 
     function afterInvariant() external view {

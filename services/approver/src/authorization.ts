@@ -48,21 +48,24 @@ export function checkUserSignature(input: {
 /**
  * Chain-state authorization: the account (its owner, for an isolated account) signed (EOA or ERC-1271),
  * or the signer holds a live session for that account whose market mask, expiry,
- * fee and notional budgets cover the intent.
+ * fee and notional budgets cover the intent and which is the account's newest session.
  */
 export function checkUserAuthorization(input: {
   /** The intent account, or its owner when the account is isolated. */
   signingAccount: string;
   accountSignatureValid: boolean;
   session: SessionState | undefined;
+  /** The session is the newest one its account granted recently. */
+  sessionIsLatest: boolean;
   intent: TradeIntent;
   fee: bigint;
   notional: bigint;
 }): Rejection | undefined {
-  const { signingAccount, accountSignatureValid, session, intent, fee, notional } = input;
+  const { signingAccount, accountSignatureValid, session, sessionIsLatest, intent, fee, notional } = input;
   if (
     !accountSignatureValid &&
     (!session ||
+      !sessionIsLatest ||
       getAddress(session.account) !== signingAccount ||
       session.validUntil < intent.deadline ||
       !maskAllows(session.marketMask, intent.market) ||

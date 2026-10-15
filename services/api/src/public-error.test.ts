@@ -34,6 +34,15 @@ test("a policy reason that blocks quorum reaches the trader; infrastructure fail
     ),
     "reduce-only intent does not reduce position",
   );
+  // A session key the approvers no longer honour: the app falls back to the wallet on this reason.
+  assert.equal(
+    approverPolicyRejection(
+      [0, 1, 2].map(() => rejected(409, "user authorization rejected")),
+      3,
+      2,
+    ),
+    "user authorization rejected",
+  );
   // One policy rejection alone did not block quorum: the cause was elsewhere.
   assert.equal(
     approverPolicyRejection(

@@ -72,6 +72,7 @@ test("failed account reads cannot advance indexer checkpoint; restart recovers t
     startBlock: 10,
     confirmations: 0,
     pollMs: 60_000,
+    syncOnRequest: true,
   };
   let app = buildIndexer(options);
   try {
@@ -98,6 +99,42 @@ test("failed account reads cannot advance indexer checkpoint; restart recovers t
   }
 });
 
+test("requests read the last pass without waiting on the RPC", async () => {
+  class Counting extends Chain {
+    heads = 0;
+    override async getBlockNumber() {
+      this.heads++;
+      return 10;
+    }
+  }
+  const directory = mkdtempSync(join(tmpdir(), "rfq-index-")),
+    provider = new Counting();
+  provider.failReads = false;
+  const app = buildIndexer({
+    rpcUrl: "http://unused",
+    provider,
+    clearingAddress: clearing,
+    databasePath: join(directory, "index.sqlite"),
+    startBlock: 10,
+    confirmations: 0,
+    pollMs: 60_000,
+  });
+  try {
+    await app.ready();
+    const heads = provider.heads;
+    assert(heads > 0);
+    for (let i = 0; i < 3; i++) {
+      const result = await app.inject({ method: "GET", url: `/v1/account/${account}` });
+      assert.equal(result.json().collateral, "100000000");
+    }
+    assert.equal(provider.heads, heads);
+  } finally {
+    await app.close();
+    provider.destroy();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("database failure rolls back headers, events, accounts and finalized cursor together", async () => {
   const directory = mkdtempSync(join(tmpdir(), "rfq-index-")),
     path = join(directory, "index.sqlite"),
@@ -110,6 +147,7 @@ test("database failure rolls back headers, events, accounts and finalized cursor
       startBlock: 10,
       confirmations: 0,
       pollMs: 60_000,
+      syncOnRequest: true,
     });
   try {
     await app.ready();
@@ -149,6 +187,7 @@ test("sync failures are logged once per distinct error and clear on recovery", a
       startBlock: 10,
       confirmations: 0,
       pollMs: 60_000,
+      syncOnRequest: true,
       logError: (message, error) => {
         if (message.startsWith("indexer sync failed")) logged.push(`${message} ${String(error)}`);
       },
@@ -180,6 +219,7 @@ test("query and path parameters are validated before reading the index", async (
     startBlock: 10,
     confirmations: 0,
     pollMs: 60_000,
+    syncOnRequest: true,
   });
   const get = (url: string) => app.inject({ method: "GET", url });
   try {
@@ -235,6 +275,7 @@ test("update stream connections are capped per client", async () => {
     startBlock: 10,
     confirmations: 0,
     pollMs: 60_000,
+    syncOnRequest: true,
     maxStreamConnectionsPerClient: 1,
   });
   const controller = new AbortController();
@@ -288,6 +329,7 @@ test("each eth_getLogs call spans at most maxLogRange blocks", async () => {
       confirmations: 0,
       maxLogRange: 500,
       pollMs: 60_000,
+      syncOnRequest: true,
     });
   try {
     await app.ready();
@@ -356,6 +398,7 @@ test("portfolio endpoints replay realized PnL, fees, funding and deposits from i
       startBlock: 10,
       confirmations: 1,
       pollMs: 60_000,
+      syncOnRequest: true,
     });
   const get = async (url: string) => {
     const response = await app.inject({ method: "GET", url });
@@ -507,6 +550,7 @@ test("leaderboard ranks owners with their isolated accounts, and points sum trad
       startBlock: 10,
       confirmations: 0,
       pollMs: 60_000,
+      syncOnRequest: true,
     });
   const get = async (url: string) => {
     const response = await app.inject({ method: "GET", url });
@@ -660,6 +704,7 @@ test("a shallow reorg rolls back only the replaced blocks and re-reads the accou
     startBlock: 10,
     confirmations: 5,
     pollMs: 60_000,
+    syncOnRequest: true,
   });
   try {
     await app.ready();

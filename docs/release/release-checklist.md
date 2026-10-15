@@ -8,7 +8,7 @@ Status date: 2026-09-16. This is the promotion record for a capped Base mainnet 
 - [ ] Run `npm test`; require every contract, upgrade, simulator, service, type and frontend gate to pass from a clean checkout.
 - [ ] Run the production dependency audit; require `npm audit --omit=dev` to report zero findings. Review development-only findings separately. Build the pinned Linux amd64 host image, record its immutable registry digest, and run `npm run evidence:supply-chain -- EVIDENCE_JSON sha256:IMAGE_DIGEST`; release evidence version 2 binds that digest and the complete npm/Python component inventory to the candidate.
 - [ ] Dispatch `Release host image` from the frozen `main` commit. Retain the BuildKit provenance, SPDX SBOM, high-severity vulnerability result, keyless Sigstore signature/attestation, supply-chain evidence and checksum artifact. Verify the signature against this repository workflow identity before promotion.
-- [ ] Verify implementation bytecode remains below the 21,000-byte project gate and repeat OpenZeppelin storage validation.
+- [ ] Verify every deployable contract stays under the 24,576-byte EIP-170 limit that `npm run compile:contracts` enforces (RFQClearing is 22,569 bytes) and repeat OpenZeppelin storage validation.
 - [ ] Verify the deployed implementation, linked libraries, proxy, ProxyAdmin, oracle adapter, USDC, Safe and timelock addresses from two independent RPCs and the explorer.
 - [ ] Validate the completed provider file with `npm run validate:production-topology -- PRODUCTION-TOPOLOGY.json`, and validate the frozen mainnet manifest with `npm run prepare:mainnet-plan -- MAINNET-MANIFEST.json UNSIGNED-PLAN.json`. Confirm the plan still says `executionAuthorized: false` before the final ceremony.
 

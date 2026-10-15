@@ -12,6 +12,7 @@ import {
   persistLegacyGross,
   restoreGross,
 } from "../../../packages/shared/src/gross-reservation-journal.js";
+import { retentionCutoff } from "../../../packages/shared/src/retention.js";
 import {
   GrossReservationBook,
   type GrossReservation,
@@ -19,6 +20,8 @@ import {
 
 /** Expired approvals moved to the archive per finalization. */
 const ARCHIVE_BATCH = 1024;
+/** How often archived approvals past the retention window are deleted. */
+const PRUNE_INTERVAL_MS = 3_600_000;
 
 /**
  * Durable approver state: every signed approval with its full payload, the
@@ -30,6 +33,7 @@ export class ApprovalJournal {
   private readonly database: DatabaseSync;
   /** Latest expiry of a pre-payload (legacy) approval; such approvals cannot be re-reserved. */
   private readonly incompleteExpiryMs: number;
+  private prunedMs = 0;
 
   /** `context` binds the journal to one chain, clearing contract and signer. */
   constructor(path: string, context: string) {
@@ -77,6 +81,16 @@ export class ApprovalJournal {
     finalizeGross(this.database, this.gross, block, timestamp, hash, () => this.archiveExpired(timestamp));
   }
 
+  /**
+   * Deletes archived approvals past the retention window; their reservations were released and their
+   * intents expired long before. Runs at most hourly, inside a finalization.
+   */
+  private pruneArchive(nowMs: number) {
+    if (nowMs - this.prunedMs < PRUNE_INTERVAL_MS) return;
+    this.prunedMs = nowMs;
+    this.database.prepare("DELETE FROM archived_approvals WHERE archived_ms<?").run(retentionCutoff(nowMs));
+  }
+
   private archiveExpired(finalizedTimestamp: number) {
     const database = this.database,
       rows = database
@@ -91,6 +105,7 @@ export class ApprovalJournal {
       move.run(archivedMs, row.digest);
       remove.run(row.digest);
     }
+    this.pruneArchive(archivedMs);
   }
 
   signatureFor(digest: string) {

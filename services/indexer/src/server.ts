@@ -57,7 +57,13 @@ export interface IndexerOptions {
   readRpcUrl?: string;
   /** RPCs that take a readRpcUrl request when it fails or is rate-limited, in order. */
   readFallbackRpcUrls?: string[];
+  /** How often the index follows the chain (default 500 ms). */
   pollMs?: number;
+  /**
+   * Sync before answering each request instead of serving the last pass (default false). Requests then
+   * wait for an RPC round trip; tests use it to read their own writes without a poll timer.
+   */
+  syncOnRequest?: boolean;
   corsOrigin?: string | string[];
   provider?: JsonRpcProvider;
   /** Update-stream connection caps (global and per client IP). */
@@ -637,11 +643,20 @@ export function buildIndexer(options: IndexerOptions) {
     }
     throw new Error("chain changed during three consecutive index passes");
   }
+  /**
+   * What a request reads: the last completed pass, which the poll timer keeps current (it also pushes each
+   * change to stream clients). Only a request before the first pass waits for one.
+   */
+  let synced = false;
+  async function current() {
+    if (options.syncOnRequest || !synced) await sync();
+  }
   async function sync() {
     if (syncing) return syncing;
     syncing = doSync()
       .then((result) => {
         lastError = undefined;
+        synced = true;
         publishUpdate(result.accounts, result.reset);
         return result;
       })
@@ -707,7 +722,7 @@ export function buildIndexer(options: IndexerOptions) {
   }
 
   app.get("/health", async () => {
-    await sync();
+    await current();
     const head = await provider.getBlockNumber(),
       indexed = indexedBlock(),
       finalized = Math.max((options.startBlock ?? 0) - 1, head - (options.confirmations ?? 2));
@@ -734,7 +749,7 @@ export function buildIndexer(options: IndexerOptions) {
     );
   });
   app.get("/v1/account/:address", async (request, reply) => {
-    await sync();
+    await current();
     const params = parse(accountParams, request.params, reply);
     if (!params) return;
     const row = db.prepare("SELECT * FROM accounts WHERE account=?").get(params.address) as
@@ -749,7 +764,7 @@ export function buildIndexer(options: IndexerOptions) {
     };
   });
   app.get("/v1/account/:address/activity", async (request, reply) => {
-    await sync();
+    await current();
     const params = parse(accountParams, request.params, reply),
       query = params && parse(accountActivityQuery, request.query, reply);
     if (!params || !query) return;
@@ -778,7 +793,7 @@ export function buildIndexer(options: IndexerOptions) {
     return activityPage(rows, query.limit, await finalityBlock());
   });
   app.get("/v1/activity", async (request, reply) => {
-    await sync();
+    await current();
     const query = parse(activityQuery, request.query, reply);
     if (!query) return;
     const [cursorBlock, cursorLog] = query.cursor,
@@ -897,7 +912,7 @@ export function buildIndexer(options: IndexerOptions) {
   }
 
   app.get("/v1/portfolio/:address", async (request, reply) => {
-    await sync();
+    await current();
     const params = parse(accountParams, request.params, reply),
       query = params && parse(portfolioQuery, request.query, reply);
     if (!params || !query) return;
@@ -953,7 +968,7 @@ export function buildIndexer(options: IndexerOptions) {
     };
   });
   app.get("/v1/portfolio/:address/history", async (request, reply) => {
-    await sync();
+    await current();
     const params = parse(accountParams, request.params, reply),
       query = params && parse(portfolioHistoryQuery, request.query, reply);
     if (!params || !query) return;
@@ -970,7 +985,7 @@ export function buildIndexer(options: IndexerOptions) {
     };
   });
   app.get("/v1/portfolio/:address/trades", async (request, reply) => {
-    await sync();
+    await current();
     const params = parse(accountParams, request.params, reply),
       query = params && parse(portfolioPageQuery, request.query, reply);
     if (!params || !query) return;
@@ -984,7 +999,7 @@ export function buildIndexer(options: IndexerOptions) {
     };
   });
   app.get("/v1/funding/:address", async (request, reply) => {
-    await sync();
+    await current();
     const params = parse(accountParams, request.params, reply),
       query = params && parse(portfolioPageQuery, request.query, reply);
     if (!params || !query) return;
@@ -1039,7 +1054,7 @@ export function buildIndexer(options: IndexerOptions) {
     return merged;
   }
   app.get("/v1/leaderboard", async (request, reply) => {
-    await sync();
+    await current();
     const query = parse(leaderboardQuery, request.query, reply);
     if (!query) return;
     const scope = await portfolioScope(query.finalized);
@@ -1075,7 +1090,7 @@ export function buildIndexer(options: IndexerOptions) {
       }>
     ).map((row) => row.account);
   app.get("/v1/points/:address", async (request, reply) => {
-    await sync();
+    await current();
     const params = parse(accountParams, request.params, reply),
       query = params && parse(finalityQuery, request.query, reply);
     if (!params || !query) return;
@@ -1157,13 +1172,13 @@ export function buildIndexer(options: IndexerOptions) {
     return response;
   });
   app.get("/v1/risk", async (request, reply) => {
-    await sync();
+    await current();
     const query = parse(finalityQuery, request.query, reply);
     if (!query) return;
     return query.finalized ? finalizedRisk.snapshot(finalizedCursor()) : liveRisk.snapshot(indexedBlock());
   });
   app.get("/v1/positions", async (request, reply) => {
-    await sync();
+    await current();
     const query = parse(positionsQuery, request.query, reply);
     if (!query) return;
     const table = tables(query.finalized),
@@ -1203,7 +1218,7 @@ export function buildIndexer(options: IndexerOptions) {
     };
   });
   app.get("/v1/protocol", async () => {
-    await sync();
+    await current();
     const blockNumber = await provider.getBlockNumber();
     const [epoch, signerSetVersion, policyVersion, paused, resolutionRequired] = await Promise.all([
       contract.leaderEpoch(),
