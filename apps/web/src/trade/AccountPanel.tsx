@@ -1,13 +1,15 @@
 import { useState } from "react";
+import { useIsolatedAccounts } from "../account/useAccount.js";
 import { useTrading } from "../data/actions.js";
 import { useOrders } from "../data/queries.js";
 import { openMarkets } from "../lib/account.js";
 import { txUrl } from "../lib/explorer.js";
+import { homeTotals } from "../lib/isolated.js";
 import { abs, baseAmount, parseUsdcInput, sentence, signedUsdc, usdc } from "../lib/format.js";
 import { pairedOrder } from "../lib/orders.js";
 import type { AccountState, RestingOrder } from "../lib/types.js";
 import { AccountHistory, FundingHistory, TradeHistory } from "../portfolio/History.js";
-import { Positions } from "../positions/Positions.js";
+import { HomeBets, Positions } from "../positions/Positions.js";
 import { AssetIcon, Banner, Change, EmptyState, NavIcons, Rows, Tabs } from "../ui/primitives.js";
 import { useDesktop } from "../ui/prefs.js";
 import { useTrader } from "../wallet/trader.js";
@@ -18,12 +20,16 @@ import { ORDER_TYPE_LABELS, TriggerPnl } from "./TriggerOrders.js";
 /** Account value and the two funds actions. */
 export function AccountCard({ account }: { account: AccountState | null }) {
   const funds = useFunds();
+  const home = homeTotals(useIsolatedAccounts());
   if (!account) return null;
   return (
     <section className="rfq-card rfq-card--pad stack account-card" aria-label="Account">
       <div>
         <div className="footnote rfq-muted">Account value</div>
-        <div className="balance">{usdc(account.equity)}</div>
+        <div className="balance">{usdc(BigInt(account.equity) + home.equity)}</div>
+        {home.equity > 0n && (
+          <div className="caption rfq-faint">Includes {usdc(home.equity)} in Home bets</div>
+        )}
       </div>
       <Rows
         rows={[
@@ -65,7 +71,9 @@ export function ActivityTabs({ account, full = false }: { account: AccountState 
   const [tab, setTab] = useState<Tab>("positions");
   const openOrders =
     orders.data?.filter((order) => order.status === "open" || order.status === "executing") ?? [];
-  const positionCount = openMarkets(account).length;
+  const bets = useIsolatedAccounts();
+  const positionCount =
+    openMarkets(account).length + bets.reduce((sum, bet) => sum + openMarkets(bet).length, 0);
   return (
     <section className="rfq-card activity">
       <div className="activity-tabs">
@@ -93,7 +101,10 @@ export function ActivityTabs({ account, full = false }: { account: AccountState 
           </EmptyState>
         ) : tab === "positions" ? (
           positionCount ? (
-            <Positions account={account} />
+            <>
+              <Positions account={account} />
+              <HomeBets accounts={bets} />
+            </>
           ) : (
             <EmptyState>Your open trades show up here.</EmptyState>
           )

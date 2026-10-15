@@ -254,6 +254,8 @@ export type CancelResult = {
 export type Finality = "finalized" | "included";
 export type Portfolio = {
   account: string;
+  /** With isolated accounts included: the owner first, then each isolated account it has moved margin into. */
+  accounts?: string[];
   finality: Finality;
   indexedBlock: number;
   finalizedBlock: number;
@@ -314,6 +316,8 @@ export type Fill = {
   realizedPnl: string;
   cumulativeRealizedPnl: string;
   finality: Finality;
+  /** The account it happened on when the read includes isolated accounts (a Home trade's isolated account). */
+  account?: string;
 };
 export type FundingPayment = {
   txHash: string;

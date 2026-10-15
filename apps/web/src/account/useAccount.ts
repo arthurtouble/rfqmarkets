@@ -1,7 +1,8 @@
 import { useMemo } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { useMarketFeed } from "../data/market-feed.js";
 import { useMarketList } from "../data/markets.js";
-import { useAccountState } from "../data/queries.js";
+import { accountStateQuery, useAccountState, usePortfolio } from "../data/queries.js";
 import { emptyAccount, markAccount } from "../lib/account.js";
 import { isolatedAccountOf } from "../lib/isolated.js";
 import type { AccountState, Market } from "../lib/types.js";
@@ -34,5 +35,24 @@ export function useIsolatedAccount(market: Market): AccountState | null {
   return useMemo(
     () => (isolated && state.data ? markAccount(state.data, snapshot) : null),
     [isolated, state.data, snapshot],
+  );
+}
+
+/**
+ * The connected trader's isolated accounts (where Home trades hold their own margin), marked to the live prices.
+ * The indexer names the isolated accounts the trader has moved margin into.
+ */
+export function useIsolatedAccounts(): AccountState[] {
+  const { snapshot } = useMarketFeed();
+  const { address } = useTrader();
+  const accounts = usePortfolio(address).data?.accounts?.slice(1) ?? [];
+  const states = useQueries({
+    queries: accounts.map((account) => accountStateQuery(account)),
+    combine: (results) => results.map((result) => result.data),
+  });
+  return useMemo(
+    () =>
+      states.filter((state): state is AccountState => !!state).map((state) => markAccount(state, snapshot)),
+    [states, snapshot],
   );
 }

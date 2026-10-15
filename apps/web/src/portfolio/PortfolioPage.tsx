@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useAccount } from "../account/useAccount.js";
+import { useAccount, useIsolatedAccounts } from "../account/useAccount.js";
 import { usePortfolio, usePortfolioHistory } from "../data/queries.js";
 import { bpsLeverage, signedUsdc, usdc } from "../lib/format.js";
+import { homeTotals } from "../lib/isolated.js";
 import { PNL_RANGES, RANGE_INTERVAL, pnlSeries, seriesChange, type PnlRange } from "../lib/portfolio.js";
 import type { AccountState } from "../lib/types.js";
 import { ActivityTabs } from "../trade/AccountPanel.js";
@@ -10,17 +11,22 @@ import { Banner, Change, EmptyState, NavIcons, Rows, Segmented } from "../ui/pri
 import { WalletMenu } from "../wallet/WalletMenu.js";
 import { PnlChart } from "./PnlChart.js";
 
-function ValueCard({ account }: { account: AccountState }) {
+type Home = ReturnType<typeof homeTotals>;
+
+function ValueCard({ account, home }: { account: AccountState; home: Home }) {
   const funds = useFunds();
-  const pnl = BigInt(account.unrealizedPnl);
+  const pnl = BigInt(account.unrealizedPnl) + home.unrealizedPnl;
   return (
     <section className="rfq-card rfq-card--pad stack" aria-label="Account value">
       <div>
         <div className="footnote rfq-muted">Account value</div>
-        <div className="balance">{usdc(account.equity)}</div>
+        <div className="balance">{usdc(BigInt(account.equity) + home.equity)}</div>
         <Change value={pnl}>
           {signedUsdc(pnl)} <span className="rfq-faint">unrealized</span>
         </Change>
+        {home.equity > 0n && (
+          <div className="caption rfq-faint">Includes {usdc(home.equity)} in Home bets</div>
+        )}
       </div>
       {account.liquidatable && (
         <Banner tone="danger">
@@ -55,11 +61,16 @@ function MarginCard({ account }: { account: AccountState }) {
   );
 }
 
-function PerformanceCard({ account }: { account: AccountState }) {
+function PerformanceCard({ account, home }: { account: AccountState; home: Home }) {
   const [range, setRange] = useState<PnlRange>("all");
   const summary = usePortfolio(account.account);
   const history = usePortfolioHistory(account.account, RANGE_INTERVAL[range]);
-  const series = pnlSeries(history.data?.points ?? [], range, Date.now(), BigInt(account.unrealizedPnl));
+  const series = pnlSeries(
+    history.data?.points ?? [],
+    range,
+    Date.now(),
+    BigInt(account.unrealizedPnl) + home.unrealizedPnl,
+  );
   const change = seriesChange(series);
   const data = summary.data;
   return (
@@ -124,6 +135,7 @@ function PerformanceCard({ account }: { account: AccountState }) {
 
 export function PortfolioPage() {
   const { account, error } = useAccount();
+  const home = homeTotals(useIsolatedAccounts());
   if (!account)
     return (
       <div className="page narrow">
@@ -140,10 +152,10 @@ export function PortfolioPage() {
       <h1 className="title-1 page-title">Portfolio</h1>
       {error && <Banner tone="warning">We can't load your account right now. {error.message}</Banner>}
       <div className="portfolio-summary">
-        <ValueCard account={account} />
+        <ValueCard account={account} home={home} />
         <MarginCard account={account} />
       </div>
-      <PerformanceCard account={account} />
+      <PerformanceCard account={account} home={home} />
       <ActivityTabs account={account} full />
     </div>
   );

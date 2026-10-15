@@ -45,6 +45,8 @@ The indexer replays an account's stored events in `(block, logIndex)` order. Eac
 
 The replay reconciles with on-chain collateral: `collateral = netDeposits + netPnl + deficitCovered`, where `netPnl = realizedPnl - fees + funding - liquidationPenalties`. Responses carry both this replayed `collateral` and the indexer's `indexedCollateral` read from the contract, so a client can detect drift. Replays are cached per account, finality and indexed block.
 
+`isolated=true` on the portfolio, history, trades, funding and account activity reads of an owner adds the owner's isolated accounts (found from its margin moves), so one-tap Home trades show with the rest. Totals add up, fills and funding interleave in chain order with running totals across them and an `account` field naming where each happened, and history points sum every account's latest point. Margin moved between the owner and its isolated accounts nets to zero, and activity shows each move once, from the owner's side. The summary then lists the `accounts` it covers and sums their `indexedCollateral`; its `positions` stay the owner account's own.
+
 All amounts are decimal strings in USDC micro-units (6 decimals). Sizes (`baseDelta`, `size`) are base units with 18 decimals. Prices are USDC micro-units per whole base unit. Times are unix milliseconds of the block. `finalized=true` limits a read to the confirmation boundary; the default includes every indexed block. Invalid parameters return `400 {"error": "..."}` (`invalid account`, `invalid interval`, `invalid market`, `invalid cursor`). An address with no events returns zeros, not 404.
 
 `GET /v1/portfolio/:address?finalized=` returns the summary:

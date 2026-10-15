@@ -73,6 +73,12 @@ function Row({
   );
 }
 
+/** Marks a fill made on one of the trader's isolated accounts: a Home trade on its own margin. */
+const HomeTag = ({ fill, owner }: { fill: Fill; owner: string }) =>
+  fill.account && fill.account.toLowerCase() !== owner.toLowerCase() ? (
+    <span className="rfq-badge rfq-badge--brand">Home</span>
+  ) : null;
+
 const actionTone = (fill: Fill) =>
   fill.kind === "liquidation" ? "rfq-down" : BigInt(fill.baseDelta) > 0n ? "rfq-up" : "rfq-down";
 
@@ -111,7 +117,8 @@ export function TradeHistory({ address }: { address: string }) {
                     <TimeLink ms={fill.timeMs} hash={fill.txHash} />
                   </td>
                   <td>
-                    <span className={actionTone(fill)}>{fillAction(fill)}</span> {fill.market}
+                    <span className={actionTone(fill)}>{fillAction(fill)}</span> {fill.market}{" "}
+                    <HomeTag fill={fill} owner={address} />
                   </td>
                   <td>
                     {baseAmount(abs(BigInt(fill.baseDelta)))} {fill.market}
@@ -131,7 +138,8 @@ export function TradeHistory({ address }: { address: string }) {
               key={`${fill.txHash}:${fill.logIndex}`}
               title={
                 <>
-                  <span className={actionTone(fill)}>{fillAction(fill)}</span> {fill.market}
+                  <span className={actionTone(fill)}>{fillAction(fill)}</span> {fill.market}{" "}
+                  <HomeTag fill={fill} owner={address} />
                 </>
               }
               time={<TimeLink ms={fill.timeMs} hash={fill.txHash} />}

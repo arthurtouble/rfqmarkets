@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isolatedAccountOf, marginTopUp, MIN_ISOLATED_OPEN } from "./isolated.js";
+import { homeTotals, isolatedAccountOf, marginTopUp, MIN_ISOLATED_OPEN } from "./isolated.js";
 
 test("isolated account addresses match the clearing contract's derivation", () => {
   // Same vector as test/contracts/IsolatedMargin.t.sol and packages/shared/src/isolated.test.ts.
@@ -18,4 +18,15 @@ test("the margin move leaves exactly the amount in the isolated account", () => 
   // A new isolated account opens with at least the contract's floor; smaller trades use the main balance.
   assert.equal(marginTopUp(MIN_ISOLATED_OPEN - 1n, 0n, false), null);
   assert.equal(marginTopUp(5_000_000n, 0n, true), 5_000_000n);
+});
+
+test("homeTotals sums the equity and unrealized PnL of every isolated account", () => {
+  assert.deepEqual(homeTotals([]), { equity: 0n, unrealizedPnl: 0n });
+  assert.deepEqual(
+    homeTotals([
+      { equity: "12000000", unrealizedPnl: "2000000" },
+      { equity: "7000000", unrealizedPnl: "-3000000" },
+    ]),
+    { equity: 19_000_000n, unrealizedPnl: -1_000_000n },
+  );
 });
