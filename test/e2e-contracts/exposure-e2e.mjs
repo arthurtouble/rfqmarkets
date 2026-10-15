@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { network } from "hardhat";
-import { deployLinked, launchMarkets } from "./lib/contract-fixture.mjs";
+import { deployLinked, launchMarkets } from "../../scripts/lib/contract-fixture.mjs";
 const { ethers } = await network.create({ network: "hardhatOp", chainType: "op" });
 const [gov, emergency, a, b, c, maker, long, short, third] = await ethers.getSigners(),
   libraries = {};

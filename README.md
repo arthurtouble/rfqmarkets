@@ -25,7 +25,8 @@ The Base mainnet deployment is a **development** deployment: owner-controlled, n
 | `packages/` | Shared TypeScript (`shared`), design tokens (`design-system`), the TypeScript SDK (`sdk`) and the MCP server that lets AI agents trade ([`mcp`](packages/mcp/README.md)) |
 | `apps/` | React apps: `web` (trading), `admin` (operations), `exit` (direct withdrawal), `docs` (public guide), `internal-docs` (this repository's `docs/` as a private manual), `design-system` (specimen) |
 | `deploy/` | Cloudflare Workers and container config, host units, alert rules and the incident runbook |
-| `scripts/` | Local stack, deployment, smoke, soak and release-evidence tooling |
+| `scripts/` | Local stack, deployment and release-evidence tooling; `host/` holds the persistent-host entrypoint and journal tools, `smoke/` the smoke, load and soak checks (`npm run smoke -- <name>`) |
+| `test/` | `e2e/` (Playwright, every app on desktop and phone) and `e2e-contracts/` (local-chain clearing, keeper and API settlement flows run by `npm run test:contracts`) |
 | `simulator/` | Python economic model, replay, calibration and fault harness |
 | `docs/` | Architecture, product, operations and release documentation ([index](docs/README.md)) |
 

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { getAddress, recoverAddress } from "ethers";
 import { z } from "zod";
-import { requestSchema } from "../services/approver/src/server.js";
+import { requestSchema } from "../../services/approver/src/server.js";
 import {
   DOMAIN_NAME,
   DOMAIN_VERSION,
@@ -11,9 +11,9 @@ import {
   type SigningDomain,
   type TradeIntent,
   type MakerApproval,
-} from "../packages/shared/src/eip712.js";
-import { plausibleTriggeredFill } from "../services/approver/src/envelope.js";
-import { persistGross } from "../packages/shared/src/gross-reservation-journal.js";
+} from "../../packages/shared/src/eip712.js";
+import { plausibleTriggeredFill } from "../../services/approver/src/envelope.js";
+import { persistGross } from "../../packages/shared/src/gross-reservation-journal.js";
 const schema = z.object({
   signer: z.string(),
   grossReservations: z

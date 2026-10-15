@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isSecureOrLoopbackUrl } from "../services/lib/src/auth.js";
+import { isSecureOrLoopbackUrl } from "../../services/lib/src/auth.js";
 
 const OFFICIAL_USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 

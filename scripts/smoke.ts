@@ -24,7 +24,7 @@ if (!script) {
   console.error(`Usage: npm run smoke -- <name> [args]\nNames: ${Object.keys(SMOKES).join(", ")}`);
   process.exit(2);
 }
-const result = spawnSync(process.execPath, ["--import", "tsx", `scripts/${script}`, ...rest], {
+const result = spawnSync(process.execPath, ["--import", "tsx", `scripts/smoke/${script}`, ...rest], {
   stdio: "inherit",
 });
 process.exit(result.status ?? 1);

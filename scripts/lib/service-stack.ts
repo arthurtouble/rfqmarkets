@@ -1,7 +1,7 @@
 // Starts every RFQ service in one process tree: indexer, hedger, three approver child processes,
 // API, stream gateway and, when configured, the liquidation keeper. The local, Base Sepolia and Base mainnet dev stacks differ only in the
 // configuration they pass here. The persistent-host profile runs one role per process instead
-// (scripts/persistent-service.ts).
+// (scripts/host/persistent-service.ts).
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -204,29 +204,33 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
         port = ports.approverBase + index,
         url = `http://127.0.0.1:${port}`,
         rpc = config.approvers.rpc(index);
-      const child = spawn(process.execPath, ["--import", "tsx", resolve("scripts/approver-process.ts")], {
-        stdio: ["ignore", "inherit", "inherit"],
-        env: childEnvironment({
-          RFQ_APPROVER_KEY: key,
-          RFQ_APPROVER_TOKEN: token,
-          RFQ_APPROVER_DB: state(`approver-${index}.sqlite`),
-          RFQ_CHAIN_ID: config.chainId.toString(),
-          RFQ_CLEARING_ADDRESS: config.clearingAddress,
-          RFQ_RPC_URL: rpc.primary,
-          RFQ_SECONDARY_RPC_URL: rpc.secondary,
-          RFQ_RPC_BATCH_MAX_COUNT: config.approvers.rpcBatchMaxCount,
-          RFQ_APPROVER_PORT: String(port),
-          RFQ_MAX_FUTURE_SECONDS: String(config.approvers.maxFutureSeconds),
-          RFQ_ORACLE_MODE: config.approvers.oracleMode,
-          RFQ_HEDGE_RISK_URL: hedgeRiskUrl,
-          RFQ_HEDGE_RISK_TOKEN: config.hedge.token,
-          RFQ_HEDGE_RISK_MAX_AGE_MS: config.hedge.riskMaxAgeMs?.toString(),
-          RFQ_MARKET_REFRESH_MS: config.marketRefreshMs?.toString(),
-        }),
-      });
+      const child = spawn(
+        process.execPath,
+        ["--import", "tsx", resolve("scripts/host/approver-process.ts")],
+        {
+          stdio: ["ignore", "inherit", "inherit"],
+          env: childEnvironment({
+            RFQ_APPROVER_KEY: key,
+            RFQ_APPROVER_TOKEN: token,
+            RFQ_APPROVER_DB: state(`approver-${index}.sqlite`),
+            RFQ_CHAIN_ID: config.chainId.toString(),
+            RFQ_CLEARING_ADDRESS: config.clearingAddress,
+            RFQ_RPC_URL: rpc.primary,
+            RFQ_SECONDARY_RPC_URL: rpc.secondary,
+            RFQ_RPC_BATCH_MAX_COUNT: config.approvers.rpcBatchMaxCount,
+            RFQ_APPROVER_PORT: String(port),
+            RFQ_MAX_FUTURE_SECONDS: String(config.approvers.maxFutureSeconds),
+            RFQ_ORACLE_MODE: config.approvers.oracleMode,
+            RFQ_HEDGE_RISK_URL: hedgeRiskUrl,
+            RFQ_HEDGE_RISK_TOKEN: config.hedge.token,
+            RFQ_HEDGE_RISK_MAX_AGE_MS: config.hedge.riskMaxAgeMs?.toString(),
+            RFQ_MARKET_REFRESH_MS: config.marketRefreshMs?.toString(),
+          }),
+        },
+      );
       approverProcesses.push(child);
       await waitForHealth(url, child);
-      // Outage scenarios (scripts/approver-outage-smoke.ts) stop approvers by PID.
+      // Outage scenarios (scripts/smoke/approver-outage-smoke.ts) stop approvers by PID.
       writeFileSync(state(`approver-${index}.pid`), String(child.pid));
       approvers.push({ url, token });
       ready(`approver ${index}`);

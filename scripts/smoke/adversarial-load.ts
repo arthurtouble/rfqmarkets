@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildApi } from "../services/api/src/server.js";
+import { buildApi } from "../../services/api/src/server.js";
 
 const requests = Number(process.env.RFQ_LOAD_REQUESTS ?? 10_000),
   capacity = Number(process.env.RFQ_LOAD_CAPACITY ?? 5_000),

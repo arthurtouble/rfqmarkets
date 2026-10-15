@@ -94,7 +94,7 @@ Governance can withdraw maker capital only when the remaining backing, less cust
 ## Tests
 
 - `test/contracts/*.t.sol` (Foundry, `npm run test:foundry`): launch configuration, trade authorization and fencing, collateral flows, margin and liquidation, funding settlement, maker capital, oracle monotonicity, maker incident grace period, resolution claims, recovery and surplus, governance handover to the timelock, session-key ownership, and stateful invariants (custody equals the collateral, maker and insurance buckets; market aggregates, exposure books and cost basis match the sum of positions) driven through the real signing path. In a cloud session without Foundry installed, use `forge test --offline` once forge and solc 0.8.34 are on the path.
-- `scripts/*-e2e.mjs`, `risk-differential.mjs` and `stateful-clearing-e2e.mjs` (Node, part of `npm run test:contracts`): end-to-end clearing, bankruptcy, exposure, API settlement, gross reservation, keeper and account-response flows against a local chain, and a differential check of the linked math against a JavaScript reference.
+- `test/e2e-contracts/` (`*-e2e.mjs`, `risk-differential.mjs` and `stateful-clearing-e2e.mjs`) (Node, part of `npm run test:contracts`): end-to-end clearing, bankruptcy, exposure, API settlement, gross reservation, keeper and account-response flows against a local chain, and a differential check of the linked math against a JavaScript reference.
 
 ## Current engineering limits
 

@@ -30,4 +30,4 @@ COPY packages ./packages
 COPY services ./services
 COPY scripts ./scripts
 USER 65532:65532
-ENTRYPOINT ["node", "--import", "tsx", "scripts/persistent-service.ts"]
+ENTRYPOINT ["node", "--import", "tsx", "scripts/host/persistent-service.ts"]

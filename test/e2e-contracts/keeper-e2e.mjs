@@ -1,21 +1,21 @@
-import { buildKeeper } from "../services/keeper/src/server.ts";
+import { buildKeeper } from "../../services/keeper/src/server.ts";
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildApprover } from "../services/approver/src/server.ts";
+import { buildApprover } from "../../services/approver/src/server.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { network } from "hardhat";
 import { JsonRpcProvider } from "ethers";
-import { buildApi } from "../services/api/src/server.ts";
-import { approvalTypes } from "../packages/shared/src/eip712.ts";
+import { buildApi } from "../../services/api/src/server.ts";
+import { approvalTypes } from "../../packages/shared/src/eip712.ts";
 import {
   deployLinked,
   deploySignedOracle,
   launchMarkets,
   signedOracleReport,
-} from "./lib/contract-fixture.mjs";
+} from "../../scripts/lib/contract-fixture.mjs";
 const { ethers } = await network.create({ network: "hardhatOp", chainType: "op" }),
   [governance, emergency, a, b, c, maker, user] = await ethers.getSigners(),
   libraries = {};

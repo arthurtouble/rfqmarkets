@@ -6,7 +6,7 @@ import {
   deploySignedOracle,
   launchMarkets,
   signedOracleReport,
-} from "./lib/contract-fixture.mjs";
+} from "../../scripts/lib/contract-fixture.mjs";
 
 const { ethers } = await network.create({ network: "hardhatOp", chainType: "op" });
 const [governance, emergency, approverA, approverB, approverC, maker, user, keeper, relayer] =
