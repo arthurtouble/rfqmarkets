@@ -4,18 +4,15 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   redirect,
   useRouterState,
 } from "@tanstack/react-router";
 import { useIndexerSync } from "./data/queries.js";
 import { useOrderFillAlerts } from "./trade/TriggerOrders.js";
 import type { Market } from "./lib/types.js";
-import { AccountPage } from "./account/AccountPage.js";
 import { RestrictedNotice, TermsDialog, UnavailableHere, useLocationStatus } from "./legal/LegalGate.js";
-import { MarketsPage } from "./markets/MarketsPage.js";
-import { PortfolioPage } from "./portfolio/PortfolioPage.js";
 import { FundsProvider, useFunds } from "./trade/FundsDialog.js";
-import { TradePage } from "./trade/TradePage.js";
 import { UpDownPage } from "./updown/UpDownPage.js";
 import { NavIcons } from "./ui/primitives.js";
 import { load, store } from "./lib/storage.js";
@@ -136,6 +133,9 @@ function ShellLayout() {
 
 const rootRoute = createRootRoute({ component: Shell });
 
+// Home ships in the entry chunk; every other page loads when it is first opened.
+const TradePage = lazyRouteComponent(() => import("./trade/TradePage.js"), "TradePage");
+
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
@@ -174,20 +174,22 @@ const upDownRoute = createRoute({
 const marketsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/markets",
-  component: MarketsPage,
+  component: lazyRouteComponent(() => import("./markets/MarketsPage.js"), "MarketsPage"),
 });
 const portfolioRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/portfolio",
-  component: PortfolioPage,
+  component: lazyRouteComponent(() => import("./portfolio/PortfolioPage.js"), "PortfolioPage"),
 });
 const accountRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/account",
-  component: AccountPage,
+  component: lazyRouteComponent(() => import("./account/AccountPage.js"), "AccountPage"),
 });
 
 export const router = createRouter({
+  // Start loading a lazy page when its link is hovered or touched, so it is usually ready on tap.
+  defaultPreload: "intent",
   routeTree: rootRoute.addChildren([
     indexRoute,
     upDownRoute,

@@ -12,17 +12,19 @@ import {
 } from "../packages/shared/src/clearing-structs.js";
 import {
   MarketRegistry,
-  encodeMarketSymbol,
   marketIndex,
   marketName,
   marketRegistry,
   marketSymbols,
-  readMarketsFromChain,
-  watchMarketRegistry,
   baseSpreadOf,
   DEFAULT_BASE_SPREAD_BPS,
   type MarketDefinition,
 } from "../packages/shared/src/markets.js";
+import {
+  encodeMarketSymbol,
+  readMarketsFromChain,
+  watchMarketRegistry,
+} from "../packages/shared/src/markets-chain.js";
 import { maskAllows } from "../packages/shared/src/clearing-structs.js";
 import {
   BASE,

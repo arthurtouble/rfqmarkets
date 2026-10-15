@@ -1,4 +1,7 @@
-import { readMarketsFromChain, type MarketRegistryReader } from "../../../packages/shared/src/markets.js";
+import {
+  readMarketsFromChain,
+  type MarketRegistryReader,
+} from "../../../packages/shared/src/markets-chain.js";
 import { SYMBOLS, type SymbolSpec } from "./symbols.js";
 
 export interface OracleMarketDefinition {

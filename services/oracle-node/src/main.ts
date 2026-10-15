@@ -1,6 +1,6 @@
 import { Contract, JsonRpcProvider, Wallet } from "ethers";
 import { clearingStateAbi } from "../../../packages/shared/src/abi.js";
-import type { MarketRegistryReader } from "../../../packages/shared/src/markets.js";
+import type { MarketRegistryReader } from "../../../packages/shared/src/markets-chain.js";
 import { MemoryCandleStore } from "./candles.js";
 import { loadConfig } from "./config.js";
 import { ChainMarketSource, StaticMarketSource, type MarketSource } from "./markets.js";

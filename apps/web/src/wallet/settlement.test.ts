@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { base } from "viem/chains";
 import type { ChainConfig } from "../lib/types.js";
-import { readPins, resolveSettlement } from "./settlement.js";
+import { provisionalSettlement, readPins, resolveSettlement } from "./settlement.js";
 
 const CLEARING = "0x3333333333333333333333333333333333333333";
 const TOKEN = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -79,4 +80,11 @@ test("malformed pins fail closed", async () => {
   const settlement = await resolveSettlement({ VITE_TOKEN_ADDRESS: "nope" }, async () => config());
   assert.equal(settlement.config, null);
   assert.match(settlement.error ?? "", /VITE_TOKEN_ADDRESS/);
+});
+
+test("only a build pinned to a known chain draws before the config arrives, with nothing signable", () => {
+  assert.deepEqual(provisionalSettlement({ VITE_CHAIN_ID: "8453" }), { chain: base, config: null });
+  assert.equal(provisionalSettlement({}), null);
+  assert.equal(provisionalSettlement({ VITE_CHAIN_ID: "31337" }), null);
+  assert.equal(provisionalSettlement({ VITE_CHAIN_ID: "not a chain" }), null);
 });

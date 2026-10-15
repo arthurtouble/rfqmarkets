@@ -16,7 +16,8 @@ import {
   type TransactionRequest,
 } from "ethers";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
-import { LAUNCH_MARKETS, encodeMarketSymbol } from "../../../packages/shared/src/markets.js";
+import { LAUNCH_MARKETS } from "../../../packages/shared/src/markets.js";
+import { encodeMarketSymbol } from "../../../packages/shared/src/markets-chain.js";
 import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import { buildIndexer } from "./server.js";
 import { referralTypes } from "./referrals.js";

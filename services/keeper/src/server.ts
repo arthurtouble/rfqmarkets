@@ -7,12 +7,12 @@ import {
   bindGrossContext,
   initializeGrossJournal,
 } from "../../../packages/shared/src/gross-reservation-journal.js";
+import { marketName } from "../../../packages/shared/src/markets.js";
 import {
-  marketName,
   marketRefreshIntervalMs,
   watchMarketRegistry,
   type MarketRegistryWatch,
-} from "../../../packages/shared/src/markets.js";
+} from "../../../packages/shared/src/markets-chain.js";
 import { DurableSender, type SenderOptions } from "../../api/src/sender.js";
 import type { OracleSource } from "../../api/src/oracle.js";
 import { bearerMatches } from "../../lib/src/auth.js";
