@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider, Wallet } from "ethers";
+import { Contract, Wallet } from "ethers";
 import { clearingStateAbi } from "../../../packages/shared/src/abi.js";
 import type { MarketRegistryReader } from "../../../packages/shared/src/markets-chain.js";
 import { MemoryCandleStore } from "./candles.js";
@@ -6,6 +6,7 @@ import { loadConfig } from "./config.js";
 import { ChainMarketSource, StaticMarketSource, type MarketSource } from "./markets.js";
 import { OracleNode } from "./node.js";
 import { buildOracleServer } from "./server.js";
+import { rpcProvider } from "../../lib/src/rpc.js";
 
 /** Oracle node entry point: `node --import tsx services/oracle-node/src/main.ts` (see config.ts for env). */
 const config = loadConfig();
@@ -26,7 +27,7 @@ const marketSource: MarketSource = config.registry
       new Contract(
         config.registry.clearing,
         clearingStateAbi,
-        new JsonRpcProvider(config.registry.rpcUrl, undefined, { staticNetwork: true }),
+        rpcProvider(config.registry.rpcUrl, undefined, { staticNetwork: true }),
       ) as unknown as MarketRegistryReader,
       {
         allow: config.marketsConfigured ? config.markets : undefined,

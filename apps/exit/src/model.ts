@@ -20,6 +20,17 @@ export interface MarketPrice {
   time: number;
 }
 
+/** A Home trade: the owner's isolated account for one market, with its own margin and position. */
+export interface IsolatedHolding {
+  market: number;
+  symbol: string;
+  /** The isolated account's address (derived from the owner and market). */
+  account: string;
+  collateral: bigint;
+  /** The open position, if any. */
+  position: Position | null;
+}
+
 export type ResolutionPhase = "none" | "pricing" | "processing" | "claimable";
 
 export interface Resolution {
@@ -44,7 +55,10 @@ export interface AccountState {
   collateral: bigint;
   openingEquity: bigint;
   initialMargin: bigint;
+  /** Positions of the main account. */
   positions: Position[];
+  /** Home trades holding money or a position, each in its own isolated account. */
+  isolated: IsolatedHolding[];
   prices: Map<number, MarketPrice>;
   resolution: Resolution;
   walletUsdc: bigint;
@@ -98,6 +112,14 @@ export function staleMarkets(state: Pick<AccountState, "positions" | "prices" | 
     .map((position) => position.market);
 }
 
+/** Money in Home trades with no open position, which the owner can move straight back to the balance. */
+export const idleIsolated = (holding: IsolatedHolding) =>
+  holding.position === null && holding.collateral > 0n;
+
+/** Total collateral held in Home trades (it can be negative after a loss is settled). */
+export const isolatedTotal = (holdings: IsolatedHolding[]) =>
+  holdings.reduce((sum, holding) => sum + holding.collateral, 0n);
+
 /** Longs close at the bid, shorts at the ask. */
 export const exitPrice = (position: Position, price: Pick<MarketPrice, "bid" | "ask">) =>
   position.size > 0n ? price.bid : price.ask;
@@ -120,7 +142,16 @@ const ether = new Intl.NumberFormat("en-US", { maximumFractionDigits: 5 });
 const scaled = (value: bigint, decimals: number) => Number(value) / 10 ** decimals;
 export const abs = (value: bigint) => (value < 0n ? -value : value);
 
+const smallPrice = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumSignificantDigits: 5,
+});
+
 export const formatUsd = (micro: bigint) => usd.format(scaled(micro, 6));
+/** A price: cents from $10 up, five significant digits below so low-priced coins don't read $0.00. */
+export const formatPrice = (micro: bigint) =>
+  abs(micro) >= 10_000_000n ? usd.format(scaled(micro, 6)) : smallPrice.format(scaled(micro, 6));
 export const formatSignedUsd = (micro: bigint) =>
   `${micro > 0n ? "+" : micro < 0n ? "−" : ""}${usd.format(scaled(abs(micro), 6))}`;
 export const formatSize = (size: bigint, symbol: string) =>

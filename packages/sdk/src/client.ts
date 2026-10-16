@@ -22,8 +22,12 @@ import type {
   TradeResult,
 } from "../../shared/src/api-types.js";
 import { isolatedAccountAddress } from "../../shared/src/isolated.js";
+import { LAUNCH_MARKETS } from "../../shared/src/markets.js";
+import type { TriggerKind } from "../../shared/src/trigger.js";
+import { quoteTerms, verifyPrepared, verifyTpslPair, type Expectation, type QuoteTerms } from "./verify.js";
 
 export { isolatedAccountAddress };
+export { IntentMismatchError } from "./verify.js";
 
 type TypedDataField = { name: string; type: string };
 type Wire = Record<string, unknown>;
@@ -41,6 +45,13 @@ export interface RfqClientOptions {
   fetch?: typeof fetch;
   /** Request timeout in milliseconds (default 15 s). */
   timeoutMs?: number;
+  /**
+   * The settlement chain and clearing contract every signature is bound to. Pinning both is recommended:
+   * the client then refuses to sign typed data for any other domain, whatever the API returns. Unpinned
+   * values are read once from the API's own `/v1/config`, which trusts the API to name the right contract.
+   */
+  chainId?: bigint | number | string;
+  clearingAddress?: string;
 }
 
 export type {
@@ -93,10 +104,15 @@ const GRANT_CLOCK_SLACK_SECONDS = 120;
 export const randomNonce = () => BigInt(hexlify(randomBytes(16))).toString();
 
 type Prepared = { domain: Wire; types: Record<string, TypedDataField[]>; intent?: Wire; grant?: Wire };
+type Settlement = { chainId: bigint; clearing: string; markets: Map<string, number> };
+
+/** Default trigger slippage the API applies when a request names none (services/api schemas.ts). */
+const DEFAULT_TRIGGER_SLIPPAGE_BPS = 100;
 
 export class RfqClient {
   private readonly fetchImpl: typeof fetch;
   private readonly baseUrl: string;
+  private settlementRead?: Promise<Settlement>;
 
   constructor(private readonly options: RfqClientOptions) {
     this.fetchImpl = options.fetch ?? fetch;
@@ -126,8 +142,60 @@ export class RfqClient {
     return this.options.signer;
   }
 
-  private async sign(prepared: Prepared, key: "intent" | "grant" = "intent") {
-    return this.signer().signTypedData(prepared.domain, prepared.types, prepared[key]!);
+  /**
+   * The chain and clearing contract signatures are bound to: the pinned options, with anything unpinned (and
+   * the market index list for markets added after launch) read once from `/v1/config`.
+   */
+  private async settlement(): Promise<Settlement> {
+    this.settlementRead ??= this.config().then(
+      (config) => ({
+        chainId: BigInt(this.options.chainId ?? config.chainId),
+        clearing: getAddress(this.options.clearingAddress ?? config.clearingAddress),
+        markets: new Map((config.marketList ?? []).map((market) => [market.symbol, market.index])),
+      }),
+      (error: unknown) => {
+        this.settlementRead = undefined;
+        throw error;
+      },
+    );
+    const settlement = await this.settlementRead;
+    // Pins always win, even if the API's config names another contract.
+    return {
+      ...settlement,
+      chainId: this.options.chainId === undefined ? settlement.chainId : BigInt(this.options.chainId),
+      clearing: this.options.clearingAddress ? getAddress(this.options.clearingAddress) : settlement.clearing,
+    };
+  }
+
+  /** The contract index of `market`: launch markets are built in, later ones come from `/v1/config`. */
+  private async marketIndex(market: string) {
+    const launch = LAUNCH_MARKETS.find((definition) => definition.symbol === market);
+    if (launch) return launch.index;
+    const index = (await this.settlement()).markets.get(market);
+    if (index === undefined) throw new Error(`unknown market ${market}`);
+    return index;
+  }
+
+  /**
+   * Verifies the prepared typed data against the trusted domain, the bundled types and what was asked for
+   * (verify.ts), then signs the verified copy. A mismatch throws IntentMismatchError before anything is signed.
+   */
+  private async sign(
+    prepared: Prepared,
+    primaryType: string,
+    account: string,
+    expectation: Expectation,
+    key: "intent" | "grant" = "intent",
+  ) {
+    const { chainId, clearing } = await this.settlement(),
+      verified = verifyPrepared(
+        prepared,
+        prepared[key],
+        primaryType,
+        { chainId, clearing, account },
+        expectation,
+      );
+    return this.signer().signTypedData(verified.domain, verified.types, verified.message);
   }
 
   /** The signer's address, or `account` when given (an isolated account the signer owns, for example). */
@@ -182,11 +250,26 @@ export class RfqClient {
 
   /** Signs and submits an approved quote. Resolves once the fill is included on chain. */
   private async fill(
-    quote: { quoteId: string },
+    quote: Wire & { quoteId: string },
     account: string,
     reduceOnly: boolean,
+    request: { market: string; side?: Side; amount?: string; slippageBps?: number },
     nonce = randomNonce(),
   ) {
+    if (quote.market !== undefined && quote.market !== request.market)
+      throw new Error("the quote is for another market");
+    if (request.side && quote.side !== undefined && quote.side !== request.side)
+      throw new Error("the quote is for the other side");
+    const expectation: Expectation = {
+      kind: "trade",
+      market: await this.marketIndex(request.market),
+      side: request.side,
+      reduceOnly,
+      nonce,
+      quote: quoteTerms(quote) satisfies QuoteTerms,
+      amountMicro: request.amount === undefined ? undefined : parseUnits(request.amount, 6),
+      slippageBps: request.slippageBps,
+    };
     const prepared = await this.request<Prepared>("/v1/prepare", {
       quoteId: quote.quoteId,
       account,
@@ -198,7 +281,7 @@ export class RfqClient {
       account,
       nonce,
       reduceOnly,
-      userSignature: await this.sign(prepared),
+      userSignature: await this.sign(prepared, "TradeIntent", account, expectation),
     });
   }
 
@@ -221,39 +304,53 @@ export class RfqClient {
         account,
         ...(input.slippageBps === undefined ? {} : { slippageBps: input.slippageBps }),
       });
-    return this.fill(quote, account, input.reduceOnly ?? false, input.nonce);
+    return this.fill(
+      quote as unknown as Wire & { quoteId: string },
+      account,
+      input.reduceOnly ?? false,
+      input,
+      input.nonce,
+    );
   }
 
   /** Closes `fraction` bps (default all) of the position in `market`. */
   async close(input: { market: string; fraction?: number; account?: string }) {
     const account = await this.accountOf(input.account),
-      quote = await this.request<{ quoteId: string }>("/v1/close/quote", {
+      quote = await this.request<Wire & { quoteId: string }>("/v1/close/quote", {
         account,
         market: input.market,
         fraction: input.fraction ?? 10_000,
       });
-    return this.fill(quote, account, true);
+    return this.fill(quote, account, true, { market: input.market });
   }
 
   /** Closes every open position, one signed reduce-only fill per market. */
   async closeAll(input: { fraction?: number; account?: string } = {}) {
     const account = await this.accountOf(input.account),
-      { quotes } = await this.request<{ quotes: Array<{ quoteId: string; market: string }> }>(
+      { quotes } = await this.request<{ quotes: Array<Wire & { quoteId: string; market: string }> }>(
         "/v1/close/all/quote",
         { account, fraction: input.fraction ?? 10_000 },
       ),
       results = [];
     for (const quote of quotes)
-      results.push({ market: quote.market, result: await this.fill(quote, account, true) });
+      results.push({
+        market: quote.market,
+        result: await this.fill(quote, account, true, { market: quote.market }),
+      });
     return results;
   }
 
   // ---- Resting and triggered orders ----
 
-  private async place(prepared: Prepared & { orderId: string }) {
+  private async place(
+    prepared: Prepared & { orderId: string },
+    primaryType: string,
+    account: string,
+    expectation: Expectation,
+  ) {
     return this.request<PlacedOrder>("/v1/orders", {
       orderId: prepared.orderId,
-      userSignature: await this.sign(prepared),
+      userSignature: await this.sign(prepared, primaryType, account, expectation),
     });
   }
 
@@ -267,17 +364,29 @@ export class RfqClient {
     reduceOnly?: boolean;
     account?: string;
   }) {
+    const account = await this.accountOf(input.account),
+      nonce = randomNonce(),
+      reduceOnly = input.reduceOnly ?? false;
+    const expectation: Expectation = {
+      kind: "limit",
+      market: await this.marketIndex(input.market),
+      side: input.side,
+      reduceOnly,
+      nonce,
+      amountMicro: parseUnits(input.amount, 6),
+      limitPrice: parseUnits(input.limitPrice, 6),
+    };
     const prepared = await this.request<Prepared & { orderId: string }>("/v1/orders/prepare", {
-      account: await this.accountOf(input.account),
+      account,
       market: input.market,
       side: input.side,
       amount: input.amount,
       limitPrice: input.limitPrice,
       durationSeconds: input.durationSeconds ?? 86_400,
-      nonce: randomNonce(),
-      reduceOnly: input.reduceOnly ?? false,
+      nonce,
+      reduceOnly,
     });
-    return this.place(prepared);
+    return this.place(prepared, "TradeIntent", account, expectation);
   }
 
   /** A stop-loss, take-profit or stop entry; the contract fills it only once the oracle mid crosses the trigger. */
@@ -292,13 +401,29 @@ export class RfqClient {
     durationSeconds?: number;
     account?: string;
   }) {
+    const account = await this.accountOf(input.account),
+      nonce = randomNonce(),
+      slippageBps = input.slippageBps ?? DEFAULT_TRIGGER_SLIPPAGE_BPS,
+      byPosition = input.sizing === "position";
+    const expectation: Expectation = {
+      kind: "trigger",
+      market: await this.marketIndex(input.market),
+      triggerKind: input.kind as TriggerKind,
+      triggerPrice: parseUnits(input.triggerPrice, 6),
+      slippageBps,
+      nonce,
+      reduceOnly: input.kind !== "stop-entry" || byPosition,
+      side: input.side,
+      amountMicro: byPosition || input.amount === undefined ? undefined : parseUnits(input.amount, 6),
+    };
     const prepared = await this.request<Prepared & { orderId: string }>("/v1/orders/trigger/prepare", {
       ...input,
-      account: await this.accountOf(input.account),
+      account,
+      slippageBps,
       durationSeconds: input.durationSeconds ?? 2_592_000,
-      nonce: randomNonce(),
+      nonce,
     });
-    return this.place(prepared);
+    return this.place(prepared, "TriggeredTradeIntent", account, expectation);
   }
 
   /** Take-profit and stop-loss for the whole position; the first to fill cancels the other. */
@@ -310,29 +435,57 @@ export class RfqClient {
     durationSeconds?: number;
     account?: string;
   }) {
-    const { orders } = await this.request<{ orders: Array<Prepared & { orderId: string }> }>(
-      "/v1/orders/tpsl/prepare",
-      {
-        ...input,
-        account: await this.accountOf(input.account),
-        durationSeconds: input.durationSeconds ?? 2_592_000,
-        nonce: randomNonce(),
-      },
-    );
+    const account = await this.accountOf(input.account),
+      nonce = randomNonce(),
+      slippageBps = input.slippageBps ?? DEFAULT_TRIGGER_SLIPPAGE_BPS,
+      market = await this.marketIndex(input.market);
+    const { orders } = await this.request<{
+      orders: Array<Prepared & { orderId: string; type: "take-profit" | "stop-loss" }>;
+    }>("/v1/orders/tpsl/prepare", {
+      ...input,
+      account,
+      slippageBps,
+      durationSeconds: input.durationSeconds ?? 2_592_000,
+      nonce,
+    });
+    verifyTpslPair(orders, {
+      takeProfit: input.takeProfitPrice !== undefined,
+      stopLoss: input.stopLossPrice !== undefined,
+    });
+    const legs = orders.map((order) => ({
+      order,
+      expectation: {
+        kind: "trigger",
+        market,
+        triggerKind: order.type,
+        triggerPrice: parseUnits(
+          (order.type === "take-profit" ? input.takeProfitPrice : input.stopLossPrice)!,
+          6,
+        ),
+        slippageBps,
+        nonce,
+        reduceOnly: true,
+      } satisfies Expectation,
+    }));
     const placed = [];
-    for (const order of orders) placed.push(await this.place(order));
+    for (const { order, expectation } of legs)
+      placed.push(await this.place(order, "TriggeredTradeIntent", account, expectation));
     return placed;
   }
 
-  /** Cancels an order on chain by burning its nonce (both legs of a TP/SL pair). */
-  async cancelOrder(orderId: string) {
+  /**
+   * Cancels an order on chain by burning its nonce (both legs of a TP/SL pair). The cancellation must be for
+   * `account` (default the signer); the nonce is the order's own, from the API's order record.
+   */
+  async cancelOrder(orderId: string, account?: string) {
+    const owner = await this.accountOf(account);
     const prepared = await this.request<Prepared>(
       `/v1/orders/${encodeURIComponent(orderId)}/cancel/prepare`,
       {},
     );
     return this.request<CancelResult>(`/v1/orders/${encodeURIComponent(orderId)}/cancel`, {
       intent: prepared.intent,
-      userSignature: await this.sign(prepared),
+      userSignature: await this.sign(prepared, "CancelIntent", owner, { kind: "cancel" }),
     });
   }
 
@@ -341,15 +494,22 @@ export class RfqClient {
   /** Withdraws `amount` USDC to `recipient` (default the signer). Gas is sponsored. */
   async withdraw(input: { amount: string; recipient?: string }) {
     const account = await this.accountOf(),
+      nonce = randomNonce(),
+      recipient = getAddress(input.recipient ?? account),
       prepared = await this.request<Prepared>("/v1/withdraw/prepare", {
         account,
         amount: input.amount,
-        nonce: randomNonce(),
-        ...(input.recipient ? { recipient: getAddress(input.recipient) } : {}),
+        nonce,
+        recipient,
       });
     return this.request<ActionResult>("/v1/withdraw/execute", {
       intent: prepared.intent,
-      userSignature: await this.sign(prepared),
+      userSignature: await this.sign(prepared, "WithdrawalIntent", account, {
+        kind: "withdraw",
+        recipient,
+        amountMicro: parseUnits(input.amount, 6),
+        nonce,
+      }),
     });
   }
 
@@ -382,12 +542,13 @@ export class RfqClient {
       input.marketIndexes.some((index) => !Number.isInteger(index) || index < 0)
     )
       throw new Error("grantSession needs at least one market index");
+    const nonce = randomNonce();
     const prepared = await this.request<Prepared>("/v1/session/prepare", {
       account,
       session,
       marketMask: mask <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(mask) : mask.toString(),
       ...limits,
-      nonce: randomNonce(),
+      nonce,
     });
     // Sign only the grant asked for: the API must not swap the key, the account or any limit.
     const grant = prepared.grant ?? {},
@@ -404,7 +565,22 @@ export class RfqClient {
       throw new Error("the prepared session grant differs from the one requested");
     return this.request<SessionGrantResult>("/v1/session/execute", {
       grant,
-      userSignature: await this.sign(prepared, "grant"),
+      userSignature: await this.sign(
+        prepared,
+        "SessionGrant",
+        account,
+        {
+          kind: "session",
+          session,
+          marketMask: mask,
+          maxTradeNotional: parseUnits(limits.maxTradeAmount, 6),
+          maxCumulativeNotional: parseUnits(limits.maxCumulativeAmount, 6),
+          maxFee: parseUnits(SESSION_MAX_FEE, 6),
+          durationSeconds: input.durationSeconds,
+          nonce,
+        },
+        "grant",
+      ),
     });
   }
 
@@ -412,17 +588,15 @@ export class RfqClient {
   async revokeSession(sessionKey: string) {
     const account = await this.accountOf(),
       session = getAddress(sessionKey);
-    const prepared = await this.request<Prepared>("/v1/session/revoke/prepare", {
-      account,
-      session,
-      nonce: randomNonce(),
-    });
-    const intent = prepared.intent ?? {};
-    if (getAddress(String(intent.account)) !== account || getAddress(String(intent.session)) !== session)
-      throw new Error("the prepared revocation differs from the one requested");
+    const nonce = randomNonce();
+    const prepared = await this.request<Prepared>("/v1/session/revoke/prepare", { account, session, nonce });
     return this.request<ActionResult>("/v1/session/revoke/execute", {
-      intent,
-      userSignature: await this.sign(prepared),
+      intent: prepared.intent,
+      userSignature: await this.sign(prepared, "SessionRevoke", account, {
+        kind: "session-revoke",
+        session,
+        nonce,
+      }),
     });
   }
 
@@ -442,15 +616,19 @@ export class RfqClient {
     amount: string;
     account?: string;
   }) {
-    const { account, ...move } = input;
-    const prepared = await this.request<Prepared>("/v1/isolated/margin/prepare", {
-      account: await this.accountOf(account),
-      ...move,
-      nonce: randomNonce(),
-    });
+    const { account: requested, ...move } = input;
+    const account = await this.accountOf(requested),
+      nonce = randomNonce(),
+      amount = parseUnits(move.amount, 6);
+    const prepared = await this.request<Prepared>("/v1/isolated/margin/prepare", { account, ...move, nonce });
     return this.request<ActionResult>("/v1/isolated/margin/execute", {
       intent: prepared.intent,
-      userSignature: await this.sign(prepared),
+      userSignature: await this.sign(prepared, "IsolatedMarginIntent", account, {
+        kind: "isolated-margin",
+        market: await this.marketIndex(move.market),
+        amountMicro: move.direction === "add" ? amount : -amount,
+        nonce,
+      }),
     });
   }
 
@@ -458,7 +636,7 @@ export class RfqClient {
 
   /** Names `referrer` as the account that referred the signer. Permanent: an account has one referrer. */
   async setReferrer(referrer: string) {
-    const config = await this.request<{ chainId: string; clearingAddress: string }>("/v1/config"),
+    const { chainId, clearing } = await this.settlement(),
       referral = {
         account: await this.accountOf(),
         referrer: getAddress(referrer),
@@ -468,8 +646,8 @@ export class RfqClient {
         {
           name: "RFQ Markets",
           version: "1",
-          chainId: BigInt(config.chainId),
-          verifyingContract: config.clearingAddress,
+          chainId,
+          verifyingContract: clearing,
         },
         {
           Referral: [

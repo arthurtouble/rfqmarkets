@@ -50,8 +50,16 @@ export type Trader = {
   /** Signs typed data on the settlement chain; the caller has verified it. */
   signTyped(payload: TypedPayload): Promise<Hex>;
   send(call: Call): Promise<{ hash: Hex; blockNumber: bigint }>;
-  /** Sends from the browser wallet on another network (a deposit's source chain) and waits for it. */
-  sendOn(chainId: number, call: Call): Promise<{ hash: Hex; blockNumber: bigint }>;
+  /**
+   * Sends from the browser wallet on another network (a deposit's source chain) and waits for it, then switches
+   * the wallet back to the settlement chain. `stay` keeps it on the source chain after a success, for a step
+   * (an approval) that another send on the same chain follows; a failure always switches back.
+   */
+  sendOn(
+    chainId: number,
+    call: Call,
+    options?: { stay?: boolean },
+  ): Promise<{ hash: Hex; blockNumber: bigint }>;
 };
 
 const TraderContext = createContext<Trader | null>(null);
@@ -150,15 +158,24 @@ export function TraderProvider({
   );
 
   const sendOn = useCallback(
-    async (chainId: number, call: Call) => {
+    async (chainId: number, call: Call, options?: { stay?: boolean }) => {
       if (!walletAddress) throw new Error("Connect a browser wallet to deposit from another network");
       if (getConnection(config).chainId !== chainId) await switchChain(config, { chainId });
-      const hash = await sendTransaction(config, { account: walletAddress, chainId, ...call });
-      const receipt = await waitForTransactionReceipt(config, { hash, chainId });
-      if (receipt.status !== "success") throw new Error("Transaction reverted");
-      return { hash, blockNumber: receipt.blockNumber };
+      let sent = false;
+      try {
+        const hash = await sendTransaction(config, { account: walletAddress, chainId, ...call });
+        const receipt = await waitForTransactionReceipt(config, { hash, chainId });
+        if (receipt.status !== "success") throw new Error("Transaction reverted");
+        sent = true;
+        return { hash, blockNumber: receipt.blockNumber };
+      } finally {
+        // Back to the settlement chain, so the app is not left showing "wrong network" after a deposit from
+        // elsewhere. A wallet that refuses the switch only means the next signature asks for it again.
+        if (!(sent && options?.stay) && chainId !== chain.id && getConnection(config).chainId !== chain.id)
+          await switchChain(config, { chainId: chain.id }).catch(() => undefined);
+      }
     },
-    [walletAddress, config],
+    [walletAddress, config, chain.id],
   );
 
   const send = useCallback(

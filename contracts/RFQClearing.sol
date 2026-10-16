@@ -363,6 +363,12 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         RFQLiquidation.closePosition(msg.sender, market, report, 0, false);
     }
 
+    /// @notice Owner exit for the caller's isolated position in `market` while trading is paused, without
+    /// approvers. Only the owner reaches it: the isolated account is derived from `msg.sender`.
+    function closeIsolatedPosition(uint8 market, bytes calldata report) external payable nonReentrant {
+        RFQLiquidation.closePosition(RFQLedger.isolatedAccount(msg.sender, market), market, report, 0, false);
+    }
+
     /// @notice Gas-sponsored paused-market close authorized by the account owner, at an exit price no worse
     /// than the signed `limitPrice` (zero for none).
     function closePositionWithSignature(

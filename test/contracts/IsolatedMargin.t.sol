@@ -78,6 +78,29 @@ contract IsolatedMarginTest is ClearingFixture {
         clearing.moveIsolatedMargin(0, -1);
     }
 
+    /// @notice While paused, the owner closes an isolated position directly and moves its margin home, so the
+    /// exit page works for Home trades with no API.
+    function test_ownerClosesIsolatedPositionWhilePaused() public {
+        moveMargin(alice, 0, 2_000e6);
+        trade(aliceIsolated, 0, 5e16, false);
+        vm.prank(emergency);
+        clearing.pause();
+
+        vm.prank(mallory.account);
+        vm.expectRevert(InvalidTrade.selector);
+        clearing.closeIsolatedPosition(0, currentReport(0));
+
+        vm.prank(alice.account);
+        clearing.closeIsolatedPosition(0, currentReport(0));
+        assertEq(clearing.positionOf(aliceIsolated.account, 0).size, 0);
+        int256 held = clearing.collateralOf(aliceIsolated.account);
+        assertGt(held, 0);
+        moveMargin(alice, 0, -held);
+        assertEq(clearing.collateralOf(aliceIsolated.account), 0);
+        assertEq(clearing.collateralOf(alice.account), 8_000e6 + held);
+        assertTrue(custodyMatchesBuckets());
+    }
+
     function test_isolatedLossStopsAtItsMargin() public {
         moveMargin(alice, 0, 2_000e6);
         trade(aliceIsolated, 0, 5e16, false);

@@ -5,13 +5,14 @@
 // trade, open or cashed out, can be shared as an image card.
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { useAccount, useIsolatedAccount } from "../account/useAccount.js";
+import { useAccount, useAccountValue, useIsolatedAccount } from "../account/useAccount.js";
 import { useTrading, type ClosedAt } from "../data/actions.js";
-import { useMarketFeed, useNow } from "../data/market-feed.js";
+import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useMarketLeverage, useMarketList } from "../data/markets.js";
+import { useProtocol } from "../data/queries.js";
 import { useTicks } from "../data/ticks.js";
 import { initialMarginAfter } from "../lib/account.js";
-import { parseUsdcInput, signedUsdc, usdc, usdcCompact } from "../lib/format.js";
+import { parseUsdcInput, signedUsdc, usdc, usdcCompact, usdPrice } from "../lib/format.js";
 import { DEFAULT_MARGIN_SCALE_BPS } from "../lib/leverage.js";
 import { closePreview, positionView, type PositionView } from "../lib/positions.js";
 import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
@@ -26,6 +27,7 @@ import {
   ticketProblem,
 } from "../lib/ticket.js";
 import type { AccountState, Market, Side } from "../lib/types.js";
+import { IdleMargin } from "../positions/Positions.js";
 import {
   DEFAULT_MULTIPLIER,
   DEFAULT_STAKE,
@@ -33,6 +35,8 @@ import {
   UP_DOWN,
   betNotional,
   betRecordText,
+  cashOutValue,
+  feeWords,
   homeProblem,
   multiplierChoices,
   onePercentGain,
@@ -41,6 +45,7 @@ import {
   recordMatches,
   type BetRecord,
   lossAt,
+  stakeProblem,
 } from "../lib/updown.js";
 import { load, store, forget } from "../lib/storage.js";
 import { Banner, Down, Segmented, Up, marketName } from "../ui/primitives.js";
@@ -94,6 +99,7 @@ export function UpDownPage({ market }: { market: Market }) {
 
 function UpDown({ market }: { market: Market }) {
   const { account, loading, error } = useAccount();
+  const trading = useTrading();
   const ticks = useTicks(market);
   // Home trades hold their own margin in the market's isolated account; one opened before that (or in Pro) is on
   // the main balance.
@@ -110,7 +116,7 @@ function UpDown({ market }: { market: Market }) {
       <div className="updown__top">
         <MarketSwitcher market={market} to="/updown/$market" />
         <div className="updown__end">
-          <Balance account={account} loading={loading} />
+          <Balance />
           <Link className="rfq-btn rfq-btn--ghost rfq-btn--sm" to="/trade/$market" params={{ market }}>
             Pro
           </Link>
@@ -130,10 +136,16 @@ function UpDown({ market }: { market: Market }) {
         state={ticks.error ? "error" : ticks.loading ? "loading" : "ready"}
       />
       {error && <Banner tone="warning">We can't load your account. {error.message}</Banner>}
+      {trading.busy === null && <IdleMargin />}
       {open ? (
         <OpenBet
           view={open}
           isolated={!!isolatedOpen}
+          worth={
+            isolatedOpen && isolatedAccount
+              ? BigInt(isolatedAccount.equity)
+              : (recordFor(open)?.stake ?? open.margin) + open.pnl + open.funding
+          }
           points={ticks.points}
           onCashedOut={(bet) => setCashedOut({ bet, points: ticks.points })}
         />
@@ -146,12 +158,16 @@ function UpDown({ market }: { market: Market }) {
   );
 }
 
-/** Money available to trade, with Add money and Withdraw one tap away. Phones have no top bar, so this is the way in. */
-function Balance({ account, loading }: { account: AccountState | null; loading: boolean }) {
+/**
+ * The account value (the balance plus open Home trades, the same number as the header and Portfolio), with Add
+ * money and Withdraw one tap away. Phones have no top bar, so this is the way in. A dash until it has loaded.
+ */
+function Balance() {
   const funds = useFunds();
   const trader = useTrader();
+  const { value, loading } = useAccountValue();
   const [open, setOpen] = useState(false);
-  if (!account || trader.wrongChain) return null;
+  if (!trader.address || trader.wrongChain) return null;
   const pick = (mode: "deposit" | "withdraw") => {
     setOpen(false);
     funds.open(mode);
@@ -162,10 +178,11 @@ function Balance({ account, loading }: { account: AccountState | null; loading: 
         type="button"
         className="rfq-btn rfq-btn--ghost rfq-btn--sm tnum"
         aria-expanded={open}
-        aria-label="Balance"
-        onClick={() => setOpen((value) => !value)}
+        aria-label={value === null ? "Account value, loading" : `Account value ${usdc(value)}`}
+        aria-busy={loading}
+        onClick={() => setOpen((shown) => !shown)}
       >
-        {loading ? "…" : usdc(account.equity)}
+        {value === null ? "—" : usdc(value)}
       </button>
       {open && (
         <div className="updown-balance__menu rfq-card">
@@ -195,24 +212,38 @@ const toneOf = (pnl: bigint) => (pnl > 0n ? "rfq-up" : pnl < 0n ? "rfq-down" : "
 function OpenBet({
   view,
   isolated,
+  worth,
   points,
   onCashedOut,
 }: {
   view: PositionView;
   /** The trade holds its own margin, which returns to the balance on cash out. */
   isolated: boolean;
+  /** What the trade is worth now: its isolated account's equity, or its amount plus PnL on the balance. */
+  worth: bigint;
   points: ChartPoint[];
   onCashedOut: (bet: ShareBet) => void;
 }) {
   const trading = useTrading();
+  const { snapshot } = useMarketFeed();
+  const paused = useProtocol().data?.paused ?? false;
   const busy = trading.busy !== null;
+  // While trading is paused a trade on the main balance still closes at the oracle price (as Pro's close sheet
+  // does); a Home trade on its own margin waits for trading to resume.
+  const blocked = paused && isolated;
+  const back = cashOutValue(worth, view.notional, paused ? 0 : (snapshot?.pricing.feeBps ?? 0));
   const [sharing, setSharing] = useState<ShareBet | null>(null);
   const tone = toneOf(view.pnl);
   const record = recordFor(view);
   const bet = shareBet(view, record, null);
   const cashOut = async () => {
     // The position is gone once this resolves, so the result is worked out from the view captured here.
-    const closed = await trading.closePosition(view.market, 10_000, isolated);
+    let closed: ClosedAt | undefined;
+    if (paused) {
+      const mid = snapshot?.markets[view.market]?.mid;
+      if (blocked || !(await trading.emergencyClose(view.market))) return;
+      closed = { price: mid ? BigInt(mid) : view.markPrice, fee: 0n };
+    } else closed = await trading.closePosition(view.market, 10_000, isolated);
     if (!closed) return;
     forget(betKey(view.market));
     onCashedOut(shareBet(view, record, closed));
@@ -231,14 +262,25 @@ function OpenBet({
         <span className="updown-bet__roe">{returnLabel(bet.ret)}</span>
       </div>
       <p className="footnote rfq-faint">
-        Entry {usdc(view.entryPrice)}
+        Entry {usdPrice(view.entryPrice)}
         {view.liquidationPrice !== null &&
-          ` · Auto-closes at ${usdc(view.liquidationPrice)}, losing about ${usdcCompact(lossAt((view.size * view.entryPrice) / 10n ** 18n, view.entryPrice, view.liquidationPrice))}`}
+          ` · Auto-closes at ${usdPrice(view.liquidationPrice)}, losing about ${usdcCompact(lossAt((view.size * view.entryPrice) / 10n ** 18n, view.entryPrice, view.liquidationPrice))}`}
       </p>
+      {blocked ? (
+        <Banner tone="warning">
+          <b>Trading is paused.</b> You can cash out this trade once trading resumes.
+        </Banner>
+      ) : (
+        paused && (
+          <Banner tone="warning">
+            <b>Trading is paused.</b> You can still cash out at the oracle price.
+          </Banner>
+        )
+      )}
       <button
         type="button"
         className="rfq-btn rfq-btn--lg rfq-btn--block rfq-btn--primary"
-        disabled={busy}
+        disabled={busy || blocked}
         aria-busy={busy}
         onClick={() => void cashOut()}
       >
@@ -248,7 +290,8 @@ function OpenBet({
             Cashing out
           </>
         ) : (
-          `Cash out ${signedUsdc(view.pnl)}`
+          // What comes back to the balance, not the PnL (which reads like a fee when negative).
+          `Cash out ${usdc(back)}`
         )}
       </button>
       <button type="button" className="rfq-btn rfq-btn--ghost rfq-btn--block" onClick={() => setSharing(bet)}>
@@ -274,7 +317,7 @@ function CashOutResult({ result, onNext }: { result: CashedOut; onNext: () => vo
         <span className="updown-bet__roe">{returnLabel(bet.ret)}</span>
       </div>
       <p className="footnote rfq-faint">
-        Entry {usdc(bet.entryPrice)} · Out at {usdc(bet.price)}
+        Entry {usdPrice(bet.entryPrice)} · Out at {usdPrice(bet.price)}
       </p>
       <button
         type="button"
@@ -305,7 +348,7 @@ function NewBet({
   const trader = useTrader(),
     trading = useTrading(),
     funds = useFunds();
-  const now = useNow(1_000);
+  const now = useServerNow(1_000);
   const leverageInfo = useMarketLeverage(market);
   const live = snapshot?.markets[market];
   const marketMax = leverageInfo?.maxLeverage ?? live?.maxLeverage ?? 20;
@@ -352,7 +395,7 @@ function NewBet({
         hasQuote: !!quote,
         marginShort: ready && marginAfter !== null && marginAfter > BigInt(account.openingEquity),
       });
-      return homeProblem(problem, side, { multiplier, tradeCapMicro: tradeCap });
+      return stakeProblem(stakeMicro) ?? homeProblem(problem, side, { multiplier, tradeCapMicro: tradeCap });
     };
     return { buy: check("buy"), sell: check("sell") };
   }, [
@@ -446,7 +489,7 @@ function NewBet({
       />
       <p className="footnote rfq-muted center tnum">
         {notional > 0n
-          ? `${usdcCompact(notional)} position, no fees. A 1% move your way: +${usdc(onePercentGain(notional))}`
+          ? `${usdcCompact(notional)} position, ${feeWords(notional, snapshot?.pricing.feeBps ?? 0)}. A 1% move your way: +${usdc(onePercentGain(notional))}`
           : "Pick an amount to see what a move is worth"}
       </p>
 

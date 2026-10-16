@@ -8,9 +8,10 @@ import {
   type ContractTransactionResponse,
 } from "ethers";
 import { sessionGrantedEvents, sessionGrantedFilter } from "../../../packages/shared/src/abi.js";
+import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import { SignedOracleClient } from "../../../packages/shared/src/signed-oracle.js";
 import type { ExitConfig } from "./config.js";
-import type { AccountState, MarketPrice, Position, Resolution } from "./model.js";
+import type { AccountState, IsolatedHolding, MarketPrice, Position, Resolution } from "./model.js";
 import type { Eip1193 } from "./wallet.js";
 
 const CLEARING_ABI = [
@@ -40,6 +41,8 @@ const CLEARING_ABI = [
   "function withdraw(uint256)",
   "function refreshOracle(bytes) payable returns (tuple(uint8 market, uint256 bid, uint256 ask, uint64 observedAt, uint64 validUntil))",
   "function closePosition(uint8, bytes) payable",
+  "function closeIsolatedPosition(uint8, bytes) payable",
+  "function moveIsolatedMargin(uint8, int256)",
   "function cancelNonce(uint256)",
   "function revokeSession(address)",
   "function claimResolution()",
@@ -146,6 +149,33 @@ export class ExitChain {
       }),
     );
     positions.sort((a, b) => a.market - b.market);
+    // Home trades live in one isolated account per market; the address is derived, so no lookup is needed.
+    const isolated = (
+      await Promise.all(
+        markets.map(async (market): Promise<IsolatedHolding | null> => {
+          const address = isolatedAccountAddress(account, market);
+          const [held, position] = await Promise.all([
+            c.collateralOf(address, at) as Promise<bigint>,
+            c.positionOf(address, market, at),
+          ]);
+          if (held === 0n && position.size === 0n) return null;
+          if (position.size !== 0n && !prices.has(market)) {
+            const state = await c.markets(market, at);
+            prices.set(market, { bid: state.lastBid, ask: state.lastAsk, time: Number(state.lastPriceTime) });
+          }
+          return {
+            market,
+            symbol: symbols[market],
+            account: address,
+            collateral: held,
+            position:
+              position.size === 0n
+                ? null
+                : { market, symbol: symbols[market], size: position.size, entryPrice: position.entryPrice },
+          };
+        }),
+      )
+    ).filter((holding): holding is IsolatedHolding => holding !== null);
     const walletUsdc = (await new Contract(usdcAddress, ERC20_ABI, this.provider).balanceOf(
       account,
       at,
@@ -158,6 +188,7 @@ export class ExitChain {
       openingEquity,
       initialMargin,
       positions,
+      isolated,
       prices,
       resolution: required ? await this.readResolution(account, markets, at) : emptyResolution(),
       walletUsdc,

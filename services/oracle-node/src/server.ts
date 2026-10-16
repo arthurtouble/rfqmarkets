@@ -5,6 +5,7 @@ import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
 import { CANDLE_INTERVALS, candleToWire, resampleCandles, type CandleStore } from "./candles.js";
 import { BatchHistory } from "./history.js";
 import type { OracleNode } from "./node.js";
+import { registerErrorHandler } from "../../lib/src/error-codes.js";
 
 const MAX_CANDLES = 1_500;
 const candleQuery = z.object({
@@ -38,6 +39,7 @@ export function buildOracleServer(options: OracleServerOptions) {
     clients = new SseClients(),
     now = options.now ?? Date.now,
     history = options.history ?? new BatchHistory();
+  registerErrorHandler(app, "oracle");
   const current = options.node.latest();
   if (current) history.push(current.wire);
   if (options.corsOrigins?.length) void app.register(cors, { origin: options.corsOrigins, methods: ["GET"] });

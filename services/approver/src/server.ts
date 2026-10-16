@@ -1,5 +1,5 @@
 import Fastify, { type FastifyRequest } from "fastify";
-import { JsonRpcProvider, Wallet } from "ethers";
+import { Wallet } from "ethers";
 import { approverPayloadSchema } from "../../../packages/shared/src/approver-payload.js";
 import {
   marketRefreshIntervalMs,
@@ -11,6 +11,8 @@ import { approve, type ApproverContext } from "./approve.js";
 import { createChainClients } from "./chain-state.js";
 import { ApprovalJournal } from "./journal.js";
 import type { ApproverOptions } from "./options.js";
+import { registerErrorHandler } from "../../lib/src/error-codes.js";
+import { rpcProvider } from "../../lib/src/rpc.js";
 
 export type { ApproverOptions } from "./options.js";
 export const requestSchema = approverPayloadSchema;
@@ -29,10 +31,10 @@ export function buildApprover(options: ApproverOptions) {
   const provider =
     options.provider ??
     (options.rpcUrl
-      ? new JsonRpcProvider(options.rpcUrl, undefined, { batchMaxCount: options.rpcBatchMaxCount ?? 1 })
+      ? rpcProvider(options.rpcUrl, undefined, { batchMaxCount: options.rpcBatchMaxCount ?? 1 })
       : undefined);
   const secondaryProvider = options.secondaryRpcUrl
-    ? new JsonRpcProvider(options.secondaryRpcUrl, undefined, { batchMaxCount: 1 })
+    ? rpcProvider(options.secondaryRpcUrl, undefined, { batchMaxCount: 1 })
     : undefined;
   if (provider && (!options.expectedChainId || !options.expectedVerifyingContract))
     throw new Error("Independent chain signing requires a pinned chain and clearing address");
@@ -55,6 +57,7 @@ export function buildApprover(options: ApproverOptions) {
     bearerMatches(request.headers.authorization, options.transportToken);
 
   const app = Fastify({ logger: false, bodyLimit: 16_384 });
+  registerErrorHandler(app, "approver");
   app.get("/health", async () => ({ ok: !journal.incompleteLegacy, signer: wallet.address }));
   app.get("/internal/recovery", async (request, reply) => {
     if (!authorized(request)) return reply.code(401).send({ error: "unauthorized" });

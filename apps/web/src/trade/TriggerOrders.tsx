@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTrading } from "../data/actions.js";
 import { useMarketFeed } from "../data/market-feed.js";
 import { useOpenOrders, useOrders } from "../data/queries.js";
-import { abs, baseAmount, microToInput, parseUsdcInput, signedUsdc, usdc } from "../lib/format.js";
+import { abs, baseAmount, microToInput, parseUsdcInput, signedUsdc, usdc, usdPrice } from "../lib/format.js";
 import {
   coversLessThan,
   offsetPrice,
@@ -50,12 +50,12 @@ export function ProtectionSummary({
     <span className="tpsl-summary">
       {takeProfit && (
         <span>
-          <span className="rfq-faint">TP</span> {usdc(takeProfit.triggerPrice)}
+          <span className="rfq-faint">TP</span> {usdPrice(takeProfit.triggerPrice)}
         </span>
       )}
       {stopLoss && (
         <span>
-          <span className="rfq-faint">SL</span> {usdc(stopLoss.triggerPrice)}
+          <span className="rfq-faint">SL</span> {usdPrice(stopLoss.triggerPrice)}
         </span>
       )}
       {partial && (
@@ -221,9 +221,9 @@ export function TpslSheet({
         <Rows
           rows={[
             ["Position", `${baseAmount(abs(size))} ${market} · ${usdc(abs(BigInt(position.notional)))}`],
-            ["Entry price", usdc(entry)],
-            ["Current price", usdc(mid)],
-            ["Liq. price", usdc(liquidation)],
+            ["Entry price", usdPrice(entry)],
+            ["Current price", usdPrice(mid)],
+            ["Liq. price", usdPrice(liquidation)],
           ]}
         />
         <PriceField
@@ -349,7 +349,7 @@ export function StopTriggerField({
       </div>
       <span className={`rfq-field__hint${problem ? " is-down" : ""}`}>
         {problem ??
-          `${verb} at market when the price ${side === "buy" ? "rises" : "falls"} to ${trigger ? usdc(trigger) : "this level"}`}
+          `${verb} at market when the price ${side === "buy" ? "rises" : "falls"} to ${trigger ? usdPrice(trigger) : "this level"}`}
       </span>
     </div>
   );
@@ -401,7 +401,7 @@ export function useOrderFillAlerts() {
       notify({
         kind: "success",
         title: `${order.market} ${label.toLowerCase()} filled`,
-        detail: `${order.side === "buy" ? "Bought" : "Sold"} ${baseAmount(abs(BigInt(order.baseDelta)))} ${order.market}${order.triggerPrice ? ` · triggered at ${usdc(order.triggerPrice)}` : ""}`,
+        detail: `${order.side === "buy" ? "Bought" : "Sold"} ${baseAmount(abs(BigInt(order.baseDelta)))} ${order.market}${order.triggerPrice ? ` · triggered at ${usdPrice(order.triggerPrice)}` : ""}`,
         txHash: order.transactionHash,
       });
     }

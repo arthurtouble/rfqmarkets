@@ -180,18 +180,23 @@ test.describe("wallet connect", () => {
     await expectNoHorizontalOverflow(page);
     await page.getByRole("button", { name: /^Account 0x/ }).click();
     await expect(
-      page.getByRole("menu", { name: "Account" }).getByText("Mock Wallet · wrong network"),
+      page.getByRole("group", { name: "Account", exact: true }).getByText("Mock Wallet · wrong network"),
     ).toBeVisible();
-    await page.getByRole("menuitem", { name: "Disconnect" }).click();
+    await page
+      .getByRole("group", { name: "Account", exact: true })
+      .getByRole("button", { name: "Disconnect" })
+      .click();
     await expect(connectButton(page)).toBeVisible();
   });
 
   test("switching accounts inside the wallet follows along", async ({ page }) => {
     await page.goto("/account");
     await connect(page);
-    await expect(page.getByText("0xa0Ee…9720")).toBeVisible();
+    // The header shows the address too until the balance loads, so read the Wallet card.
+    const wallet = page.getByRole("region", { name: "Wallet" });
+    await expect(wallet.getByText("0xa0Ee…9720")).toBeVisible();
     await setWallet(page, { address: OTHER_ACCOUNT.toLowerCase() });
-    await expect(page.getByText("0x14dC…9955")).toBeVisible();
+    await expect(wallet.getByText("0x14dC…9955")).toBeVisible();
   });
 
   test("one-tap trading turns on, pauses after a reload, and revokes", async ({ page }) => {
@@ -221,22 +226,22 @@ test.describe("wallet connect", () => {
     await page.goto("/trade/BTC");
     await connect(page);
     await page.getByRole("button", { name: /^Account 0x/ }).click();
-    const menu = page.getByRole("menu", { name: "Account" });
+    const menu = page.getByRole("group", { name: "Account", exact: true });
     await expect(menu.getByText(CONNECTED)).toBeVisible();
     // The local chain has no block explorer.
-    await expect(menu.getByRole("menuitem", { name: "View on explorer" })).toHaveCount(0);
+    await expect(menu.getByRole("link", { name: "View on explorer" })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(menu).toBeHidden();
     await page.getByRole("button", { name: /^Account 0x/ }).click();
     await page.mouse.click(5, 300);
     await expect(menu).toBeHidden();
     await page.getByRole("button", { name: /^Account 0x/ }).click();
-    await menu.getByRole("menuitem", { name: "Copy address" }).click();
-    await expect(menu.getByRole("menuitem", { name: /Copied/ })).toBeVisible();
+    await menu.getByRole("button", { name: "Copy address" }).click();
+    await expect(menu.getByRole("button", { name: /Copied/ })).toBeVisible();
     expect((await page.evaluate(() => navigator.clipboard.readText())).toLowerCase()).toBe(
       ACCOUNT.toLowerCase(),
     );
-    await menu.getByRole("menuitem", { name: /Account settings/ }).click();
+    await menu.getByRole("link", { name: /Account settings/ }).click();
     await expect(page).toHaveURL(/\/account$/);
   });
 });
@@ -249,9 +254,9 @@ test.describe("local dev wallet", () => {
     // The account button shows the account's equity.
     await expect(page.getByRole("button", { name: /^Account 0x/ })).toHaveText(/\$[\d,]+\.\d\d/);
     await page.getByRole("button", { name: /^Account 0x/ }).click();
-    const menu = page.getByRole("menu", { name: "Account" });
+    const menu = page.getByRole("group", { name: "Account", exact: true });
     await expect(menu.getByText("Local dev wallet · RFQ Local")).toBeVisible();
-    await expect(menu.getByRole("menuitem", { name: "Use Mock Wallet" })).toBeVisible();
+    await expect(menu.getByRole("button", { name: "Use Mock Wallet" })).toBeVisible();
     await page.goto("/account");
     await expect(page.getByText("Local dev wallet · RFQ Local")).toBeVisible();
     await page.getByRole("button", { name: "Disconnect" }).click();

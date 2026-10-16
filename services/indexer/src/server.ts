@@ -1,7 +1,7 @@
 import Fastify, { type FastifyReply } from "fastify";
 import cors from "@fastify/cors";
 import { DatabaseSync } from "node:sqlite";
-import { Contract, Interface, JsonRpcProvider, getAddress, type Log } from "ethers";
+import { Contract, Interface, getAddress, type JsonRpcProvider, type Log } from "ethers";
 import { z } from "zod";
 import { clearingIndexerAbi } from "../../../packages/shared/src/abi.js";
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
@@ -40,7 +40,9 @@ import {
 import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import { validOwnerSignature } from "../../api/src/owner-signature.js";
 import { referralBonus, referralDigest, referralTermsError } from "./referrals.js";
-import { registerErrorCodes } from "../../lib/src/error-codes.js";
+import { registerErrorCodes, registerErrorHandler } from "../../lib/src/error-codes.js";
+import { clientIdentity, type ClientIpHeader } from "../../../packages/shared/src/client-identity.js";
+import { rpcProvider } from "../../lib/src/rpc.js";
 
 export interface IndexerOptions {
   rpcUrl: string;
@@ -70,10 +72,20 @@ export interface IndexerOptions {
   /** Update-stream connection caps (global and per client IP). */
   maxStreamConnections?: number;
   maxStreamConnectionsPerClient?: number;
+  /**
+   * Edge header keyed for the per-client stream budget when the peer is loopback or `trustedProxy`. Without
+   * it every user behind the edge shares one client's stream slots.
+   */
+  clientIpHeader?: ClientIpHeader;
+  trustedProxy?: string | string[];
   /** Where sync failures are reported; defaults to stderr. Each distinct failure is logged once. */
   logError?: (message: string, error: unknown) => void;
   /** Market registry refresh interval (default 60 s; `RFQ_MARKET_REFRESH_MS`). */
   marketRefreshMs?: number;
+  /** How long a computed leaderboard is served before it is recomputed (default 30 s). */
+  leaderboardMaxAgeMs?: number;
+  /** Clock for the leaderboard cache and referral budgets (tests). */
+  now?: () => number;
 }
 
 /** Bumped when the tables change shape; an older database is dropped and reindexed from `startBlock`. */
@@ -196,6 +208,14 @@ const referralBody = z.object({
 });
 /** Replays kept per (account, finality, indexed block); each request after a new block replays again. */
 const PORTFOLIO_CACHE_SIZE = 256;
+/** Referees whose points count toward a referrer's bonus (the earliest referred); bounds /v1/points work. */
+export const MAX_COUNTED_REFEREES = 100;
+/** Referees one referrer may collect; registrations past it are refused. */
+export const MAX_REFEREES_PER_REFERRER = 1_000;
+/** Referral registrations per client: a small burst, then one every five seconds. */
+const REFERRAL_BURST = 5;
+const REFERRAL_REFILL_MS = 5_000;
+const REFERRAL_CLIENTS = 10_000;
 const positionsQuery = z.object({
   limit: pageLimit(50),
   // Finalized unless explicitly asked for included state.
@@ -213,12 +233,14 @@ export function buildIndexer(options: IndexerOptions) {
       options.maxStreamConnections ?? 1_000,
       options.maxStreamConnectionsPerClient ?? 8,
     ),
-    logError = options.logError ?? ((message: string, error: unknown) => console.error(message, error));
+    logError = options.logError ?? ((message: string, error: unknown) => console.error(message, error)),
+    client = clientIdentity(options);
   // The first finalized sync can span the full deployment history and depends
   // on public RPC latency. Keep Fastify's startup watchdog above the ordinary
   // ten-second plugin default while retaining a finite failure boundary.
   const app = Fastify({ logger: false, pluginTimeout: 60_000 });
   registerErrorCodes(app);
+  registerErrorHandler(app, "indexer", (message) => logError(message, undefined));
   app.register(cors, { origin: corsOrigins });
   // staticNetwork: without it ethers sends eth_chainId ahead of every getBlock and getLogs.
   const provider =
@@ -229,7 +251,7 @@ export function buildIndexer(options: IndexerOptions) {
           staticNetwork: true,
           timeoutMs: 10_000,
         })
-      : new JsonRpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1, staticNetwork: true }));
+      : rpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1, staticNetwork: true, timeoutMs: 10_000 }));
   const contract = new Contract(options.clearingAddress, clearingIndexerAbi, provider);
   const readProvider =
       options.readRpcUrl && !options.provider
@@ -739,7 +761,7 @@ export function buildIndexer(options: IndexerOptions) {
     };
   });
   app.get("/v1/updates/stream", async (request, reply) => {
-    const release = streamBudget.acquire(request.ip);
+    const release = streamBudget.acquire(client(request));
     if (!release)
       return reply.code(429).header("retry-after", "5").send({ error: "stream connection limit reached" });
     const response = openSse(reply, corsOrigins);
@@ -1029,12 +1051,22 @@ export function buildIndexer(options: IndexerOptions) {
     }
     return owners;
   }
-  /** Leaderboards are recomputed at most once per (indexed block, finality, window). */
-  const leaderboardCache = new Map<string, Map<string, WindowStats & { accounts: string[] }>>();
+  /**
+   * A leaderboard replays every trader's history, so each (finality, window) board is recomputed at most once
+   * per `leaderboardMaxAgeMs`, not on every new block. A served board says which block it covers.
+   */
+  const leaderboardCache = new Map<
+      string,
+      { computedAtMs: number; throughBlock: number; stats: Map<string, WindowStats & { accounts: string[] }> }
+    >(),
+    leaderboardMaxAgeMs = options.leaderboardMaxAgeMs ?? 30_000,
+    now = options.now ?? Date.now;
   function traderStats(throughBlock: number, finalized: boolean, window: LeaderboardWindow) {
-    const key = `${throughBlock}:${finalized}:${window}`,
+    const key = `${finalized}:${window}`,
       cached = leaderboardCache.get(key);
-    if (cached) return cached;
+    // A board from a block the index no longer has (a reorg) is never served.
+    if (cached && now() - cached.computedAtMs < leaderboardMaxAgeMs && cached.throughBlock <= throughBlock)
+      return cached;
     // Windows end at the newest indexed block's time, so the board only moves when the index does.
     const endMs =
         ((
@@ -1051,25 +1083,22 @@ export function buildIndexer(options: IndexerOptions) {
       stats.set(account, windowStats(portfolio(account, throughBlock, finalized), sinceMs));
     const owners = isolatedOwners(throughBlock),
       merged = mergeByOwner(stats, (account) => owners.get(account));
-    if (leaderboardCache.size >= 16) leaderboardCache.clear();
-    leaderboardCache.set(key, merged);
-    return merged;
+    const board = { computedAtMs: now(), throughBlock, stats: merged };
+    leaderboardCache.set(key, board);
+    return board;
   }
   app.get("/v1/leaderboard", async (request, reply) => {
     await current();
     const query = parse(leaderboardQuery, request.query, reply);
     if (!query) return;
-    const scope = await portfolioScope(query.finalized);
+    const scope = await portfolioScope(query.finalized),
+      board = traderStats(scope.through, query.finalized, query.window);
     return {
       window: query.window,
       sort: query.sort,
       finality: query.finalized ? "finalized" : "included",
-      indexedBlock: scope.through,
-      traders: rankTraders(
-        traderStats(scope.through, query.finalized, query.window),
-        query.sort,
-        query.limit,
-      ),
+      indexedBlock: board.throughBlock,
+      traders: rankTraders(board.stats, query.sort, query.limit),
     };
   });
   /** Weekly points of an owner and its isolated accounts. */
@@ -1083,14 +1112,35 @@ export function buildIndexer(options: IndexerOptions) {
       ...weeklyPoints(accounts.map((account) => portfolio(account, throughBlock, finalized))),
     };
   }
-  const refereesOf = (referrer: string) =>
+  /** A referrer's referees, earliest first, at most `limit`. */
+  const refereesOf = (referrer: string, limit = MAX_REFEREES_PER_REFERRER) =>
     (
       db
-        .prepare("SELECT account FROM referrals WHERE referrer=? ORDER BY created_ms,account")
-        .all(referrer) as Array<{
+        .prepare("SELECT account FROM referrals WHERE referrer=? ORDER BY created_ms,account LIMIT ?")
+        .all(referrer, limit) as Array<{
         account: string;
       }>
     ).map((row) => row.account);
+  const refereeCount = (referrer: string) =>
+    Number(
+      (db.prepare("SELECT count(*) count FROM referrals WHERE referrer=?").get(referrer) as { count: number })
+        .count,
+    );
+  /** Per-client token buckets for referral registrations, which each cost a signature check (maybe an RPC call). */
+  const referralBudgets = new Map<string, { tokens: number; atMs: number }>();
+  function admitReferral(key: string) {
+    const nowMs = now(),
+      bucket = referralBudgets.get(key) ?? { tokens: REFERRAL_BURST, atMs: nowMs };
+    bucket.tokens = Math.min(REFERRAL_BURST, bucket.tokens + (nowMs - bucket.atMs) / REFERRAL_REFILL_MS);
+    bucket.atMs = nowMs;
+    referralBudgets.delete(key);
+    if (referralBudgets.size >= REFERRAL_CLIENTS)
+      referralBudgets.delete(referralBudgets.keys().next().value!);
+    referralBudgets.set(key, bucket);
+    if (bucket.tokens < 1) return false;
+    bucket.tokens -= 1;
+    return true;
+  }
   app.get("/v1/points/:address", async (request, reply) => {
     await current();
     const params = parse(accountParams, request.params, reply),
@@ -1099,7 +1149,8 @@ export function buildIndexer(options: IndexerOptions) {
     const scope = await portfolioScope(query.finalized),
       owners = isolatedOwners(scope.through),
       own = pointsOf(params.address, scope.through, query.finalized, owners),
-      referees = refereesOf(params.address),
+      // Each counted referee is a full replay: only the earliest MAX_COUNTED_REFEREES count.
+      referees = refereesOf(params.address, MAX_COUNTED_REFEREES),
       bonus = referralBonus(
         referees.map((referee) => BigInt(pointsOf(referee, scope.through, query.finalized, owners).total)),
       );
@@ -1108,7 +1159,8 @@ export function buildIndexer(options: IndexerOptions) {
       finality: query.finalized ? "finalized" : "included",
       indexedBlock: scope.through,
       ...own,
-      referees: referees.length,
+      referees: refereeCount(params.address),
+      countedReferees: referees.length,
       referralPoints: bonus.toString(),
       totalWithReferrals: (BigInt(own.total) + bonus).toString(),
     };
@@ -1119,6 +1171,8 @@ export function buildIndexer(options: IndexerOptions) {
     if (!body) return;
     const termsError = referralTermsError(body, Math.floor(Date.now() / 1_000));
     if (termsError) return reply.code(400).send({ error: termsError });
+    if (!admitReferral(client(request)))
+      return reply.code(429).header("retry-after", "5").send({ error: "referral rate limit exceeded" });
     chainId ??= provider.getNetwork().then((network) => network.chainId);
     let digest: string;
     try {
@@ -1130,6 +1184,9 @@ export function buildIndexer(options: IndexerOptions) {
     // An isolated account has no key, so only an EOA or an ERC-1271 wallet can bind a referrer.
     if (!(await validOwnerSignature(body.account, digest, body.signature, readProvider)))
       return reply.code(401).send({ error: "invalid referral signature" });
+    const already = db.prepare("SELECT 1 FROM referrals WHERE account=?").get(body.account);
+    if (!already && refereeCount(body.referrer) >= MAX_REFEREES_PER_REFERRER)
+      return reply.code(409).send({ error: "referrer has reached the referral limit" });
     const inserted = db
       .prepare(
         "INSERT INTO referrals(account,referrer,issued_at,signature,created_ms) VALUES(?,?,?,?,?) ON CONFLICT(account) DO NOTHING",

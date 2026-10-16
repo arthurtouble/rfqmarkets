@@ -17,6 +17,7 @@ import type { OracleSource } from "./oracle.js";
 import { QuoteStore } from "./quote-store.js";
 import { restoreApiCommitments, type RecoveredCommitment } from "./recovery.js";
 import { DurableSender, type SenderOptions } from "./sender.js";
+import { rpcProvider } from "../../lib/src/rpc.js";
 
 export interface ApiOptions {
   senderBudget?: Pick<SenderOptions, "maxFeePerGas" | "maxGasLimit" | "maxValue" | "dailyBudgetWei">;
@@ -77,10 +78,13 @@ export interface ApiOptions {
   /** Per-account sponsored nonce-cancel and session-grant budget (default 1 per 10 s, burst 5). */
   sponsoredActionRatePerSecond?: number;
   sponsoredActionBurst?: number;
+  /** Per-account sponsored isolated-margin move budget (default 1 per second, burst 20). */
+  isolatedMarginRatePerSecond?: number;
+  isolatedMarginBurst?: number;
 }
 
 export type ApiSender = Pick<DurableSender, "submit" | "reconcile" | "status"> &
-  Partial<Pick<DurableSender, "prune">>;
+  Partial<Pick<DurableSender, "prune" | "hasOperation">>;
 
 /** Chain handles exist together: a clearing contract implies a provider, sponsor and sender config. */
 export interface ChainHandles {
@@ -130,6 +134,8 @@ export class ApiContext {
   readonly quotes = new QuoteStore();
   /** Per-account budget for sponsored actions that succeed on chain for any signer (nonce cancel, session grant). */
   readonly sponsoredActions: QuoteAdmission;
+  /** Per-account budget for sponsored isolated margin moves, a step of every isolated trade. */
+  readonly isolatedMarginActions: QuoteAdmission;
   /** Signed commitments restored from the journal; their protocol versions are read on ready. */
   readonly recoveredCommitments: RecoveredCommitment[] = [];
   private readonly pruners: Array<(now: number) => void> = [];
@@ -155,6 +161,13 @@ export class ApiContext {
       1_000,
       1_000,
     );
+    this.isolatedMarginActions = new QuoteAdmission(
+      options.isolatedMarginRatePerSecond ?? 1,
+      options.isolatedMarginBurst ?? 20,
+      10_000,
+      1_000,
+      1_000,
+    );
 
     if (options.journalPath)
       this.journal = openApiJournal(
@@ -167,9 +180,7 @@ export class ApiContext {
 
     this.provider =
       options.provider ??
-      (options.chain
-        ? new JsonRpcProvider(options.chain.rpcUrl, undefined, { batchMaxCount: 1 })
-        : undefined);
+      (options.chain ? rpcProvider(options.chain.rpcUrl, undefined, { batchMaxCount: 1 }) : undefined);
     if (this.provider && this.devFund) this.provider.pollingInterval = 50;
     if (this.provider && options.chain) {
       this.sponsor = new Wallet(options.chain.sponsorPrivateKey, this.provider);

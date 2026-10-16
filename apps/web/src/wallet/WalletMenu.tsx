@@ -1,8 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useConnect, useConnectors } from "wagmi";
 import { addressUrl } from "../lib/explorer.js";
-import { useAccount } from "../account/useAccount.js";
+import { useAccountValue } from "../account/useAccount.js";
 import { shortAddress, usdc } from "../lib/format.js";
 import { useTrading } from "../data/actions.js";
 import { Check } from "../ui/primitives.js";
@@ -11,7 +11,11 @@ import { SwitchNetworkButton } from "./SwitchNetwork.js";
 import { useTrader } from "./trader.js";
 import { walletLabel, walletSections } from "./wallets.js";
 
-/** The header's connect button, or the account button with its menu once a wallet is connected. */
+/**
+ * The header's connect button, or the account button with its popover once a wallet is connected. The popover
+ * holds plain buttons and links (Tab moves through them); Escape or a click outside closes it, and Escape
+ * returns focus to the account button.
+ */
 export function WalletMenu({
   className = "",
   connectLabel = "Connect",
@@ -20,7 +24,8 @@ export function WalletMenu({
   connectLabel?: string;
 }) {
   const trader = useTrader();
-  const { account } = useAccount();
+  // The same account value as Home and Portfolio (the balance plus open Home trades).
+  const { value } = useAccountValue();
   const { quickSession } = useTrading();
   const connectors = useConnectors();
   const { mutate: connect } = useConnect();
@@ -29,16 +34,20 @@ export function WalletMenu({
   const [copied, setCopied] = useState(false);
   const closePicker = useCallback(() => setPicking(false), []);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const popover = useRef<HTMLDivElement>(null);
+  const popoverId = useId();
 
   useEffect(() => {
     if (!open) return;
+    // Keyboard users land on the first action; Tab moves on from there.
+    popover.current?.querySelector<HTMLElement>("button, a[href]")?.focus({ preventScroll: true });
     const close = (event: MouseEvent | KeyboardEvent) => {
-      if (
-        event instanceof KeyboardEvent
-          ? event.key === "Escape"
-          : !root.current?.contains(event.target as Node)
-      )
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") return;
         setOpen(false);
+        trigger.current?.focus();
+      } else if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", close);
@@ -87,18 +96,19 @@ export function WalletMenu({
     <div className="wallet-menu" ref={root}>
       {trader.wrongChain && <SwitchNetworkButton className={className} />}
       <button
+        ref={trigger}
         type="button"
         className={`rfq-account-btn ${trader.wrongChain ? "wallet-btn--compact" : ""} ${className}`}
-        aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={open ? popoverId : undefined}
         aria-label={`Account ${shortAddress(address)}`}
         onClick={() => setOpen((value) => !value)}
       >
         <span className={`rfq-avatar ${trader.source === "dev" ? "dev" : ""}`} aria-hidden="true" />
-        <span className="wallet-btn__label">{account ? usdc(account.equity) : shortAddress(address)}</span>
+        <span className="wallet-btn__label">{value !== null ? usdc(value) : shortAddress(address)}</span>
       </button>
       {open && (
-        <div className="wallet-popover" role="menu" aria-label="Account">
+        <div className="wallet-popover" id={popoverId} ref={popover} role="group" aria-label="Account">
           <div className="wallet-identity">
             {trader.wallet?.icon ? (
               <img src={trader.wallet.icon} alt="" width={32} height={32} />
@@ -112,7 +122,7 @@ export function WalletMenu({
               </span>
             </div>
           </div>
-          <button type="button" role="menuitem" onClick={copy}>
+          <button type="button" onClick={copy}>
             {copied ? (
               <>
                 Copied <Check />
@@ -122,11 +132,11 @@ export function WalletMenu({
             )}
           </button>
           {explorer && (
-            <a role="menuitem" href={explorer} target="_blank" rel="noreferrer">
+            <a href={explorer} target="_blank" rel="noreferrer">
               View on explorer
             </a>
           )}
-          <Link role="menuitem" to="/account" onClick={() => setOpen(false)}>
+          <Link to="/account" onClick={() => setOpen(false)}>
             Account settings{quickSession?.privateKey && <span className="wallet-badge">One tap on</span>}
           </Link>
           {trader.source === "dev" &&
@@ -134,7 +144,7 @@ export function WalletMenu({
               <button
                 key={connector.uid}
                 type="button"
-                role="menuitem"
+
                 onClick={() => connect({ connector, chainId: trader.chain.id })}
               >
                 Use {walletLabel(connector)}
@@ -142,7 +152,7 @@ export function WalletMenu({
             ))}
           <button
             type="button"
-            role="menuitem"
+
             className="danger"
             onClick={() => {
               trader.disconnect();

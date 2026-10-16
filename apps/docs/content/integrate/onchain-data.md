@@ -93,7 +93,7 @@ Oracle reports are passed as raw bytes. Calls that take one must send no ETH. Se
 
 ## Account-owner functions
 
-Sent by the account itself, paying its own gas: `deposit(amount)`, `withdraw(amount)`, `cancelNonce(nonce)`, `revokeSession(session)`, `closePosition(market, report)` (paused only) and `claimResolution()`. These are what the [exit page](../protocol/safety-and-exits.md#the-exit-page) calls.
+Sent by the account itself, paying its own gas: `deposit(amount)`, `withdraw(amount)`, `cancelNonce(nonce)`, `revokeSession(session)`, `closePosition(market, report)` and `closeIsolatedPosition(market, report)` for a Home trade (both paused only), `moveIsolatedMargin(market, amount)` and `claimResolution()`. These are what the [exit page](../protocol/safety-and-exits.md#the-exit-page) calls.
 
 ## Errors
 

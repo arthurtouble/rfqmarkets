@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useMarketList } from "../data/markets.js";
 import { useAccountActivity, useFundingHistory, usePortfolioTrades } from "../data/queries.js";
 import { txUrl } from "../lib/explorer.js";
-import { abs, baseAmount, dateTime, sentence, signedUsdc, usdc } from "../lib/format.js";
+import { abs, baseAmount, dateTime, sentence, signedUsdc, usdc, usdPrice } from "../lib/format.js";
 import { fillAction, fillRealizes } from "../lib/positions.js";
 import type { Activity, Fill, FundingPayment } from "../lib/types.js";
 import { Change, EmptyState, NavIcons } from "../ui/primitives.js";
@@ -124,7 +124,7 @@ export function TradeHistory({ address }: { address: string }) {
                     {baseAmount(abs(BigInt(fill.baseDelta)))} {fill.market}
                     <div className="caption rfq-faint">{usdc(fill.notional)}</div>
                   </td>
-                  <td>{usdc(fill.price)}</td>
+                  <td>{usdPrice(fill.price)}</td>
                   <td>{pnl(fill)}</td>
                 </tr>
               ))}
@@ -144,7 +144,7 @@ export function TradeHistory({ address }: { address: string }) {
               }
               time={<TimeLink ms={fill.timeMs} hash={fill.txHash} />}
               end={fillRealizes(fill) ? pnl(fill) : usdc(fill.notional)}
-              sub={`${baseAmount(abs(BigInt(fill.baseDelta)))} ${fill.market} at ${usdc(fill.price)}`}
+              sub={`${baseAmount(abs(BigInt(fill.baseDelta)))} ${fill.market} at ${usdPrice(fill.price)}`}
             />
           ))}
         </ul>

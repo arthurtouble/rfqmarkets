@@ -55,7 +55,10 @@ test.describe("app shell", () => {
       // Connected, settings live in the wallet menu, not the top bar.
       await expect(page.getByRole("link", { name: "Settings" })).toHaveCount(0);
       await account.click();
-      await page.getByRole("menuitem", { name: /Account settings/ }).click();
+      await page
+        .getByRole("group", { name: "Account", exact: true })
+        .getByRole("link", { name: /Account settings/ })
+        .click();
       await expect(page).toHaveURL(/\/account$/);
       await page.getByRole("link", { name: "RFQ Markets home" }).click();
       await expect(page).toHaveURL(/\/updown\/[A-Z0-9]+$/);

@@ -2,7 +2,7 @@
 // with the image, and where the tick line sits on the card. Drawing lives in
 // updown/ShareCard.tsx; this file stays pure so it can be tested.
 import type { ChartPoint } from "./candles.js";
-import { signedUsdc, usdc } from "./format.js";
+import { signedUsdc, usdPrice } from "./format.js";
 import type { Market } from "./types.js";
 import type { MascotMood } from "../../../../packages/design-system/mascot.js";
 
@@ -48,7 +48,7 @@ export const shareMood = (bet: Pick<ShareBet, "pnl">): MascotMood =>
   bet.pnl > 0n ? "win" : bet.pnl < 0n ? "loss" : "idle";
 
 /** "Entry $2,500.00 → $2,550.00" for the card's footer row. */
-export const sharePrices = (bet: ShareBet) => `Entry ${usdc(bet.entryPrice)} → ${usdc(bet.price)}`;
+export const sharePrices = (bet: ShareBet) => `Entry ${usdPrice(bet.entryPrice)} → ${usdPrice(bet.price)}`;
 
 /** The text posted with the image. */
 export function shareCaption(bet: ShareBet): string {

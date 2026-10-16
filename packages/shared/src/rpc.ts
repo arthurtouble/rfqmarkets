@@ -87,7 +87,8 @@ const isRevert = (error: JsonRpcError["error"]) =>
  * Sends each request to the first RPC and, when it fails, times out or answers with a non-revert RPC
  * error (rate limits, outages), resends it to the next. Lets a polling read path run on a free RPC while
  * a metered one (Alchemy) only takes what the free one drops. Retries are immediate: ethers' own
- * back-off on 429 is turned off for every RPC but the last.
+ * back-off on 429 is turned off for every RPC but the last. The last RPC also gives up after
+ * `lastTimeoutMs` (default 8 s, never below `timeoutMs`) rather than ethers' default of five minutes.
  */
 export class FallbackRpcProvider extends JsonRpcProvider {
   readonly #fallbacks: JsonRpcProvider[];
@@ -100,16 +101,14 @@ export class FallbackRpcProvider extends JsonRpcProvider {
   constructor(
     urls: readonly string[],
     network?: Networkish,
-    options: JsonRpcApiProviderOptions & { timeoutMs?: number } = {},
+    options: JsonRpcApiProviderOptions & { timeoutMs?: number; lastTimeoutMs?: number } = {},
   ) {
-    const { timeoutMs = 1_500, ...providerOptions } = options;
+    const { timeoutMs = 1_500, lastTimeoutMs = Math.max(timeoutMs, 8_000), ...providerOptions } = options;
     if (!urls.length) throw new Error("FallbackRpcProvider needs at least one RPC URL");
     const request = (url: string, last: boolean) => {
       const fetch = new FetchRequest(url);
-      if (!last) {
-        fetch.timeout = timeoutMs;
-        fetch.setThrottleParams({ maxAttempts: 1 });
-      }
+      fetch.timeout = last ? lastTimeoutMs : timeoutMs;
+      if (!last) fetch.setThrottleParams({ maxAttempts: 1 });
       return fetch;
     };
     super(request(urls[0], urls.length === 1), network, providerOptions);

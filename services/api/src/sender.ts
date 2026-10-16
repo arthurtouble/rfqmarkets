@@ -60,6 +60,8 @@ interface StoredTransaction {
   tx_hash: string;
   raw_tx: string;
   status: SenderStatus;
+  /** On a replacement: the operation's daily budget reservation before it, restored if the node refuses it. */
+  budgetBefore?: { day: string; cost: string };
 }
 interface FoundReceipt {
   receipt: Receipt;
@@ -123,6 +125,13 @@ export class DurableSender {
       .all() as Array<{ status: SenderStatus; count: number }>;
   }
 
+  /** True when the journal holds `operationId`: submitting it again resumes it instead of signing anew. */
+  hasOperation(operationId: string) {
+    return !!this.database
+      ?.prepare("SELECT 1 FROM sender_transactions WHERE operation_id=?")
+      .get(operationId);
+  }
+
   /** True when an operation fences new submissions (see UNRESOLVED_SENDER_STATUSES). */
   hasUnresolved() {
     return this.status().some((row) => UNRESOLVED_SENDER_STATUSES.includes(row.status));
@@ -175,8 +184,9 @@ export class DurableSender {
       const found = await this.findReceipt(operationId);
       if (found) return this.settle(operationId, found);
       if (replacement === maxReplacements) break;
+      const previous = stored;
       stored = await this.replace(stored, ++attempt);
-      await this.broadcast(stored.raw_tx);
+      await this.broadcastReplacement(previous, stored);
       this.markSubmitted(operationId);
     }
     throw new Error(`transaction for ${operationId} was not included after ${maxReplacements + 1} attempts`);
@@ -286,6 +296,11 @@ export class DurableSender {
       next: StoredTransaction = { ...current, tx_hash: hash, raw_tx: raw, status: "signed" };
     this.checkBudgetLimits(next);
     this.transaction((database) => {
+      const day = new Date().toISOString().slice(0, 10),
+        before = database
+          .prepare("SELECT cost FROM sender_budget WHERE day=? AND operation_id=?")
+          .get(day, current.operation_id) as { cost: string } | undefined;
+      if (before) next.budgetBefore = { day, cost: before.cost };
       this.reserveBudget(next);
       database
         .prepare("INSERT INTO sender_attempts VALUES(?,?,?,?,?,?)")
@@ -297,6 +312,31 @@ export class DurableSender {
         .run(hash, raw, Date.now(), current.operation_id);
     });
     return next;
+  }
+
+  /**
+   * Broadcasts a replacement journaled by `replace`. If the node refuses it (underpriced, insufficient funds),
+   * the operation's row goes back to `previous` and its daily budget to what `previous` reserved, so later
+   * rebroadcasts send bytes the node accepted. The refused attempt stays in `sender_attempts` (same nonce),
+   * so in the unlikely case it was accepted after all, its receipt is still found.
+   */
+  private async broadcastReplacement(previous: StoredTransaction, next: StoredTransaction) {
+    try {
+      await this.broadcast(next.raw_tx);
+    } catch (error) {
+      this.transaction((database) => {
+        database
+          .prepare(
+            "UPDATE sender_transactions SET tx_hash=?,raw_tx=?,status='submitted',included_block=NULL,included_hash=NULL,updated_ms=? WHERE operation_id=?",
+          )
+          .run(previous.tx_hash, previous.raw_tx, Date.now(), previous.operation_id);
+        if (next.budgetBefore !== undefined)
+          database
+            .prepare("UPDATE sender_budget SET cost=? WHERE day=? AND operation_id=?")
+            .run(next.budgetBefore.cost, next.budgetBefore.day, previous.operation_id);
+      });
+      throw error;
+    }
   }
 
   private checkBudgetLimits(row: StoredTransaction) {
@@ -465,6 +505,26 @@ export class DurableSender {
     });
   }
 
+  /**
+   * Re-signs a stuck submission at the same nonce with bumped fees, when a fee ceiling (`maxFeePerGas`) bounds
+   * how far that can go and its last attempt has waited `replacementWaitMs`. Undefined when it should not be
+   * replaced (or cannot be within the ceiling and daily budget); the caller then rebroadcasts it unchanged.
+   */
+  private async replaceStuck(row: StoredTransaction) {
+    if (this.options.maxFeePerGas === undefined || !this.database) return undefined;
+    const last = this.database
+      .prepare(
+        "SELECT max(attempt) attempt,max(created_ms) created FROM sender_attempts WHERE operation_id=?",
+      )
+      .get(row.operation_id) as { attempt: number | null; created: number | null };
+    if (Date.now() - Number(last.created ?? 0) < (this.options.replacementWaitMs ?? 30_000)) return undefined;
+    try {
+      return await this.replace(row, Number(last.attempt ?? 0) + 1);
+    } catch {
+      return undefined;
+    }
+  }
+
   private async reconcileLocked() {
     if (!this.database) return;
     // Read the mined nonce before any receipt: a nonce below it was consumed before the receipt
@@ -493,6 +553,19 @@ export class DurableSender {
         continue;
       }
       const wasIncluded = row.status === "included" || row.status === "reverted" || row.status === "reorged";
+      // A submission stuck past its in-line replacements (fees rose) would otherwise be rebroadcast as the same
+      // underpriced bytes forever. It is re-signed at the same nonce with a higher fee, journaled as a further
+      // attempt before broadcast like any replacement, so whichever attempt lands is recognized.
+      const replacement = row.status === "submitted" ? await this.replaceStuck(row) : undefined;
+      if (replacement) {
+        try {
+          await this.broadcastReplacement(row, replacement);
+          this.markSubmitted(row.operation_id);
+          continue;
+        } catch {
+          // The node refused the replacement; the row is back on the previous attempt, still valid at this nonce.
+        }
+      }
       try {
         await this.broadcast(row.raw_tx);
         this.setStatus(row.operation_id, wasIncluded ? "reorged" : "submitted");

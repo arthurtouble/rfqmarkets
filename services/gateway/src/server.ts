@@ -17,6 +17,7 @@ import { clientIdentity, type ClientIpHeader } from "../../../packages/shared/sr
 import { ConnectionBudget } from "../../../packages/shared/src/connection-budget.js";
 import { openSse } from "../../lib/src/sse.js";
 import { isMarketSymbol } from "../../../packages/shared/src/markets.js";
+import { registerErrorHandler } from "../../lib/src/error-codes.js";
 
 export interface GatewayOptions {
   upstreamUrl: string;
@@ -65,6 +66,7 @@ export function buildGateway(options: GatewayOptions) {
     candleCache = new Map<string, { second: number; body: unknown }>(),
     fetchImpl = options.fetchImpl ?? fetch,
     corsOrigin = options.corsOrigin ?? "http://127.0.0.1:4173";
+  registerErrorHandler(app, "gateway");
   /** A launch market or one the relayed stream has carried (markets are added by governance, not code). */
   const knownMarket = (market: string) =>
     isMarketSymbol(market) && (candles.has(market) || history.has(market));

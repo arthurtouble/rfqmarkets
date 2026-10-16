@@ -13,6 +13,7 @@ import { marketRegistry } from "../../../packages/shared/src/markets.js";
 import { retentionCutoff } from "../../../packages/shared/src/retention.js";
 import { bearerMatches } from "../../lib/src/auth.js";
 import { SseClients, openSse, sseFrame } from "../../lib/src/sse.js";
+import { registerErrorHandler } from "../../lib/src/error-codes.js";
 
 /**
  * A market symbol as the indexer's exposure reports it. Venues are addressed by venue coin (see
@@ -205,6 +206,7 @@ export function buildHedger(options: HedgeOptions) {
     maxPositionUsdc = options.maxPositionUsdc ?? DEFAULT_MAX_POSITION_USDC;
   if (maxPositionUsdc <= 0n) throw new Error("hedger maxPositionUsdc must be positive");
   const app = Fastify({ logger: false });
+  registerErrorHandler(app, "hedger");
   app.register(cors, { origin: corsOrigin });
   const db = new DatabaseSync(options.databasePath);
   const fetchImpl = options.fetchImpl ?? fetch;

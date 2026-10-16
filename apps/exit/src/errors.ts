@@ -3,6 +3,7 @@ import { Interface } from "ethers";
 
 export type ExitAction =
   | "withdraw"
+  | "move"
   | "close"
   | "refresh"
   | "cancel"
@@ -27,6 +28,7 @@ const ERRORS = new Interface([
 
 const REFUSED: Record<ExitAction, string> = {
   withdraw: "The contract refused the withdrawal. Withdrawals stop once resolution starts.",
+  move: "The contract refused to move that money. Close the trade first, and note that moves stop once resolution starts.",
   close:
     "The contract refused the close. Closing here works only while trading is paused and before resolution.",
   refresh: "The contract refused the price update.",

@@ -65,6 +65,7 @@ export type IndicativeQuote = { quote: Quote } | { error: string };
  * `slippageBps` (1..500) sets the indicative worst price, as POST /v1/quote does;
  * omitted, the launch tolerance applies. A paused market still quotes, since
  * reductions trade while paused; the caller decides whether the trade may go.
+ * `nowMs` is the server's time (`useServerNow`, lib/clock.ts), since prices carry server timestamps.
  */
 export function indicativeQuote(
   snapshot: MarketSnapshot,

@@ -19,6 +19,41 @@ export const scaled = (value: string | bigint, decimals: number) => Number(toBig
 
 export const usdc = (micro?: string | bigint | null) =>
   micro === undefined || micro === null ? "—" : usd.format(scaled(micro, 6));
+/**
+ * Decimals a price shows: cents from $10 up, else about five significant digits ("$3.4567", "$0.12346",
+ * "$0.000012"), never finer than the 1e6 wire precision. Prices only; money amounts use `usdc`.
+ */
+export function priceDecimals(dollars: number): number {
+  const size = Math.abs(dollars);
+  if (!Number.isFinite(size) || size === 0 || size >= 10) return 2;
+  return Math.min(6, Math.max(2, 4 - Math.floor(Math.log10(size))));
+}
+const priceFormats = new Map<string, Intl.NumberFormat>();
+function priceFormat(decimals: number, signed: boolean) {
+  const key = `${decimals}:${signed}`;
+  let format = priceFormats.get(key);
+  if (!format) {
+    format = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+      signDisplay: signed ? "exceptZero" : "negative",
+    });
+    priceFormats.set(key, format);
+  }
+  return format;
+}
+/**
+ * A price in dollars, as a number (charts, scrubbing). `decimals` defaults to what the price itself needs;
+ * pass `priceDecimals(reference)` to keep a set of prices (an axis, a change) at one precision.
+ */
+export const usdPriceNumber = (dollars: number, decimals = priceDecimals(dollars), signed = false) =>
+  priceFormat(decimals, signed).format(dollars);
+/** A wire price (USDC 1e6) for display: "$97,412.50", "$0.12346". For money amounts use `usdc`. */
+export const usdPrice = (micro?: string | bigint | null) =>
+  micro === undefined || micro === null ? "—" : usdPriceNumber(scaled(micro, 6));
+
 /** Like `usdc`, without cents on whole amounts ("$250", "$12.50"). */
 export const usdcCompact = (micro?: string | bigint | null) => usdc(micro).replace(/\.00$/, "");
 /** A trading fee: "None" at zero (trades carry no fee; the platform's charge is in the price). */

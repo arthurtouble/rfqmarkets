@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { useIsolatedAccounts } from "../account/useAccount.js";
+import { useAccountValue, useIsolatedAccounts } from "../account/useAccount.js";
 import { useTrading } from "../data/actions.js";
 import { useOrders } from "../data/queries.js";
 import { openMarkets } from "../lib/account.js";
 import { txUrl } from "../lib/explorer.js";
-import { homeTotals } from "../lib/isolated.js";
-import { abs, baseAmount, parseUsdcInput, sentence, signedUsdc, usdc } from "../lib/format.js";
+import { abs, baseAmount, parseUsdcInput, sentence, signedUsdc, usdc, usdPrice } from "../lib/format.js";
 import { pairedOrder } from "../lib/orders.js";
 import type { AccountState, RestingOrder } from "../lib/types.js";
 import { AccountHistory, FundingHistory, TradeHistory } from "../portfolio/History.js";
@@ -18,31 +17,39 @@ import { useFunds } from "./FundsDialog.js";
 import { ORDER_TYPE_LABELS, TriggerPnl } from "./TriggerOrders.js";
 
 /** Account value and the two funds actions. */
+/** Account value and the two funds actions; dashes until the account has been read. */
 export function AccountCard({ account }: { account: AccountState | null }) {
   const funds = useFunds();
-  const home = homeTotals(useIsolatedAccounts());
-  if (!account) return null;
+  const trader = useTrader();
+  const { value, homeEquity } = useAccountValue();
+  if (!trader.address) return null;
   return (
     <section className="rfq-card rfq-card--pad stack account-card" aria-label="Account">
       <div>
         <div className="footnote rfq-muted">Account value</div>
-        <div className="balance">{usdc(BigInt(account.equity) + home.equity)}</div>
-        {home.equity > 0n && (
-          <div className="caption rfq-faint">Includes {usdc(home.equity)} in Home bets</div>
+        <div className="balance" aria-busy={value === null}>
+          {usdc(value)}
+        </div>
+        {homeEquity > 0n && (
+          <div className="caption rfq-faint">Includes {usdc(homeEquity)} in Home trades</div>
         )}
       </div>
       <Rows
         rows={[
-          ["Available to trade", usdc(account.availableMargin)],
+          ["Available to trade", usdc(account?.availableMargin)],
           [
             "Unrealized PnL",
-            <Change key="pnl" value={BigInt(account.unrealizedPnl)}>
-              {signedUsdc(account.unrealizedPnl)}
-            </Change>,
+            account ? (
+              <Change key="pnl" value={BigInt(account.unrealizedPnl)}>
+                {signedUsdc(account.unrealizedPnl)}
+              </Change>
+            ) : (
+              "—"
+            ),
           ],
         ]}
       />
-      {account.liquidatable && (
+      {account?.liquidatable && (
         <Banner tone="danger">
           <b>Your account can be liquidated.</b> Add funds or close a position now.
         </Banner>
@@ -187,7 +194,9 @@ function OrderCard({
         <div>
           <span>{trigger === null ? "Limit" : "Trigger"}</span>
           <b>
-            {trigger === null ? usdc(order.limitPrice) : `${order.triggerAbove ? "≥" : "≤"} ${usdc(trigger)}`}
+            {trigger === null
+              ? usdPrice(order.limitPrice)
+              : `${order.triggerAbove ? "≥" : "≤"} ${usdPrice(trigger)}`}
           </b>
         </div>
         <div>
@@ -195,7 +204,7 @@ function OrderCard({
           <b>
             {trigger === null
               ? expiry(order.expiresAtMs)
-              : `${order.side === "buy" ? "≤" : "≥"} ${usdc(order.limitPrice)}`}
+              : `${order.side === "buy" ? "≤" : "≥"} ${usdPrice(order.limitPrice)}`}
           </b>
         </div>
       </div>
@@ -283,12 +292,12 @@ function Orders({ orders, account }: { orders: RestingOrder[]; account: AccountS
                 </td>
                 <td>
                   {trigger === null ? (
-                    usdc(order.limitPrice)
+                    usdPrice(order.limitPrice)
                   ) : (
                     <>
-                      {order.triggerAbove ? "≥" : "≤"} {usdc(trigger)}
+                      {order.triggerAbove ? "≥" : "≤"} {usdPrice(trigger)}
                       <div className="caption rfq-faint">
-                        Fills {order.side === "buy" ? "≤" : "≥"} {usdc(order.limitPrice)}
+                        Fills {order.side === "buy" ? "≤" : "≥"} {usdPrice(order.limitPrice)}
                       </div>
                       {live(order) && <TriggerPnl order={order} account={account} />}
                     </>

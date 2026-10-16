@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import Fastify from "fastify";
 import { API_ERROR_CODES, apiErrorCode } from "../../../packages/shared/src/api-errors.js";
-import { registerErrorCodes } from "./error-codes.js";
+import { redactUrls, registerErrorCodes, registerErrorHandler } from "./error-codes.js";
 
 test("every error response carries a stable code and a retryable flag", async () => {
   const app = Fastify();
@@ -48,4 +48,56 @@ test("codes by message and by status stay within the published list", () => {
   assert.equal(apiErrorCode(409, "user authorization rejected"), "session_limit");
   for (const status of [400, 401, 403, 404, 409, 418, 429, 500, 502, 503])
     assert.ok(API_ERROR_CODES.includes(apiErrorCode(status, "something new")));
+});
+
+test("server errors never echo their message; client errors keep theirs", async () => {
+  const app = Fastify(),
+    logged: string[] = [];
+  registerErrorCodes(app);
+  registerErrorHandler(app, "test", (message) => logged.push(message));
+  const rpcFailure = Object.assign(
+    new Error(
+      'server response 500 (request={ }, requestUrl="https://base.example/v2/SECRET-KEY", code=SERVER_ERROR)',
+    ),
+    { code: "SERVER_ERROR" },
+  );
+  app.get("/rpc", async () => {
+    throw rpcFailure;
+  });
+  app.get("/unavailable", async () => {
+    throw Object.assign(new Error("https://rpc.example/key-in-path down"), { statusCode: 503 });
+  });
+  app.post("/json", async () => ({ ok: true }));
+  try {
+    const rpc = await app.inject({ method: "GET", url: "/rpc" });
+    assert.equal(rpc.statusCode, 500);
+    assert.deepEqual(rpc.json(), { error: "internal error", code: "internal", retryable: false });
+    assert.doesNotMatch(rpc.body, /SECRET|base\.example/);
+    const unavailable = await app.inject({ method: "GET", url: "/unavailable" });
+    assert.equal(unavailable.statusCode, 503);
+    assert.deepEqual(unavailable.json(), { error: "internal error", code: "unavailable", retryable: true });
+    assert.equal(logged.length, 2);
+    assert.match(logged[0], /test GET \/rpc failed/);
+    assert.doesNotMatch(logged.join("\n"), /SECRET-KEY|key-in-path/, "logs redact URL paths too");
+    const malformed = await app.inject({
+      method: "POST",
+      url: "/json",
+      headers: { "content-type": "application/json" },
+      payload: "{",
+    });
+    assert.equal(malformed.statusCode, 400);
+    const body = malformed.json();
+    assert.equal(body.code, "invalid_request");
+    assert.equal(body.retryable, false);
+    assert.match(body.message, /JSON/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("URL redaction keeps the origin only", () => {
+  assert.equal(
+    redactUrls('requestUrl="https://mainnet.example/v2/abc?key=1" and wss://ws.example/k'),
+    'requestUrl="https://mainnet.example/…" and wss://ws.example/…',
+  );
 });

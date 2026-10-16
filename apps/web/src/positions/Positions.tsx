@@ -1,10 +1,11 @@
 // Open positions (cards on phones, a table on desktop), the close sheet for one
 // position and the close-all sheet. Math lives in lib/positions.ts.
 import { useState, type ReactNode } from "react";
+import { useIdleMargin } from "../account/useAccount.js";
 import { useTrading } from "../data/actions.js";
-import { useMarketFeed, useNow } from "../data/market-feed.js";
+import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useProtocol } from "../data/queries.js";
-import { baseAmount, signedUsdc, usdc } from "../lib/format.js";
+import { baseAmount, signedUsdc, usdc, usdPrice } from "../lib/format.js";
 import {
   CLOSE_PRESETS,
   closeAllPreview,
@@ -16,7 +17,7 @@ import {
 } from "../lib/positions.js";
 import { indicativeQuote } from "../lib/quote.js";
 import type { AccountState, Market } from "../lib/types.js";
-import { AssetIcon, Banner, Change, Rows, Segmented, Sheet } from "../ui/primitives.js";
+import { AssetIcon, Banner, Change, Rows, Segmented, Sheet, marketName } from "../ui/primitives.js";
 import { useDesktop } from "../ui/prefs.js";
 import { ProtectionSummary, TpslSheet } from "../trade/TriggerOrders.js";
 
@@ -41,7 +42,7 @@ function Pnl({ view }: { view: PositionView }) {
 }
 
 const LiquidationPrice = ({ view }: { view: PositionView }) => (
-  <span className={isNearLiquidation(view) ? "rfq-down" : undefined}>{usdc(view.liquidationPrice)}</span>
+  <span className={isNearLiquidation(view) ? "rfq-down" : undefined}>{usdPrice(view.liquidationPrice)}</span>
 );
 
 function NearLiquidation({ view }: { view: PositionView }) {
@@ -54,7 +55,7 @@ function NearLiquidation({ view }: { view: PositionView }) {
   );
 }
 
-/** Without `onTpsl` (Home bets, which hold their own margin) the TP/SL controls are left out. */
+/** Without `onTpsl` (Home trades, which hold their own margin) the TP/SL controls are left out. */
 type PositionActions = { onClose: (market: Market) => void; onTpsl?: (market: Market) => void };
 
 export function PositionCard({ view, onClose, onTpsl }: { view: PositionView } & PositionActions) {
@@ -75,11 +76,11 @@ export function PositionCard({ view, onClose, onTpsl }: { view: PositionView } &
         </div>
         <div>
           <span>Entry</span>
-          <b>{usdc(view.entryPrice)}</b>
+          <b>{usdPrice(view.entryPrice)}</b>
         </div>
         <div>
           <span>Mark</span>
-          <b>{usdc(view.markPrice)}</b>
+          <b>{usdPrice(view.markPrice)}</b>
         </div>
         <div>
           <span>Margin</span>
@@ -87,7 +88,9 @@ export function PositionCard({ view, onClose, onTpsl }: { view: PositionView } &
         </div>
         <div>
           <span>Liq. price</span>
-          <b className={isNearLiquidation(view) ? "rfq-down" : undefined}>{usdc(view.liquidationPrice)}</b>
+          <b className={isNearLiquidation(view) ? "rfq-down" : undefined}>
+            {usdPrice(view.liquidationPrice)}
+          </b>
         </div>
         <div>
           <span>Funding</span>
@@ -172,8 +175,8 @@ function PositionsTable({
                 </div>
               </td>
               <td>
-                {usdc(view.entryPrice)}
-                <div className="caption rfq-faint">{usdc(view.markPrice)}</div>
+                {usdPrice(view.entryPrice)}
+                <div className="caption rfq-faint">{usdPrice(view.markPrice)}</div>
               </td>
               <td>
                 <LiquidationPrice view={view} />
@@ -278,7 +281,7 @@ type Preset = `${(typeof CLOSE_PRESETS)[number]}`;
 
 /**
  * Close a share of one position at a firm quote, or all of it at the oracle price while trading is paused.
- * `isolated` closes a Home bet on its own margin, which returns to the balance once it is fully closed.
+ * `isolated` closes a Home trade on its own margin, which returns to the balance once it is fully closed.
  */
 export function ClosePositionSheet({
   view,
@@ -292,7 +295,7 @@ export function ClosePositionSheet({
   const trading = useTrading(),
     protocol = useProtocol(),
     { snapshot } = useMarketFeed(),
-    now = useNow(1_000);
+    now = useServerNow(1_000);
   const paused = protocol.data?.paused ?? false;
   const [preset, setPreset] = useState<Preset>("100");
   const fractionBps = paused ? 10_000 : Number(preset) * 100;
@@ -320,17 +323,19 @@ export function ClosePositionSheet({
     : fractionBps === 10_000
       ? `Close ${view.market} ${sideWord(view)}`
       : `Close ${preset}% of ${view.market} ${sideWord(view)}`;
+  // The sheet stays open when the close fails, so the error toast sits beside a way to try again.
   const close = async () => {
-    if (paused) await trading.emergencyClose(view.market);
-    else await trading.closePosition(view.market, fractionBps, isolated);
-    onClose();
+    const closed = paused
+      ? await trading.emergencyClose(view.market)
+      : !!(await trading.closePosition(view.market, fractionBps, isolated));
+    if (closed) onClose();
   };
   return (
     <Sheet open onClose={onClose} title={`Close ${view.market} ${sideWord(view)}`} labelledBy="close-title">
       <div className="sheet-body">
         {blocked ? (
           <Banner tone="warning">
-            <b>Trading is paused.</b> You can cash out this Home bet once trading resumes.
+            <b>Trading is paused.</b> You can cash out this Home trade once trading resumes.
           </Banner>
         ) : paused ? (
           <Banner tone="warning">
@@ -350,7 +355,7 @@ export function ClosePositionSheet({
               "Closing",
               `${baseAmount(preview.closingSize)} ${view.market} · ${usdc(preview.closingNotional)}`,
             ],
-            ["Estimated price", usdc(preview.price)],
+            ["Estimated price", usdPrice(preview.price)],
             [
               "Left open",
               preview.remainingSize > 0n ? `${baseAmount(preview.remainingSize)} ${view.market}` : "Nothing",
@@ -393,9 +398,11 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
   const total = closeAllPreview(positions, snapshot?.markets ?? {});
   const busy = trading.busy !== null;
   const close = async () => {
-    if (paused) for (const view of positions) await trading.emergencyClose(view.market);
-    else await trading.closeAll();
-    onClose();
+    let closedAny = false;
+    if (paused)
+      for (const view of positions) closedAny = (await trading.emergencyClose(view.market)) || closedAny;
+    else closedAny = !!(await trading.closeAll())?.closed.length;
+    if (closedAny) onClose();
   };
   return (
     <Sheet open onClose={onClose} title="Close all positions" labelledBy="close-all-title">
@@ -456,7 +463,39 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
 }
 
 /**
- * Open Home bets: one-tap trades that each hold their own margin in an isolated account, so the stake is the
+ * Money a Home trade set aside in its own isolated account that has no open position (a trade that did not go
+ * through after its amount was moved). The balance and Withdraw don't count it, so it is offered back here.
+ */
+export function IdleMargin() {
+  const idle = useIdleMargin();
+  const trading = useTrading();
+  if (!idle.length) return null;
+  const busy = trading.busy !== null;
+  return (
+    <section className="rfq-card rfq-card--pad stack idle-margin" aria-label="Set aside">
+      {idle.map((item) => (
+        <div key={item.account} className="idle-margin__row">
+          <p className="footnote">
+            <b className="tnum">{usdc(item.heldMicro)}</b> is set aside for a {marketName(item.market)} trade
+            that didn't go through. It isn't in your balance until you return it.
+          </p>
+          <button
+            type="button"
+            className="rfq-btn rfq-btn--sm rfq-btn--secondary"
+            disabled={busy}
+            aria-label={`Return ${usdc(item.heldMicro)} from ${item.market} to your balance`}
+            onClick={() => void trading.returnMargin(item.market)}
+          >
+            Return to balance
+          </button>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/**
+ * Open Home trades: one-tap trades that each hold their own margin in an isolated account, so the stake is the
  * most they can lose. They close in full or in part here; TP/SL and close-all stay with the main account.
  */
 export function HomeBets({ accounts }: { accounts: AccountState[] }) {
@@ -468,9 +507,9 @@ export function HomeBets({ accounts }: { accounts: AccountState[] }) {
   const closingBet = closing ? bets.find((bet) => bet.view.market === closing) : undefined;
   const closingView = closingBet ? positionView(closingBet.account, closingBet.view.market) : null;
   return (
-    <section className="positions home-bets" aria-label="Home bets">
+    <section className="positions home-bets" aria-label="Home trades">
       <div className="positions__bar">
-        <span className="footnote rfq-muted">Home bets, each on its own margin</span>
+        <span className="footnote rfq-muted">Home trades, each on its own margin</span>
       </div>
       {desktop ? (
         <PositionsTable positions={views} onClose={setClosing} />

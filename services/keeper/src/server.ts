@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { DatabaseSync } from "node:sqlite";
-import { Contract, JsonRpcProvider, Wallet, getAddress, type TransactionRequest } from "ethers";
+import { Contract, Wallet, getAddress, type JsonRpcProvider, type TransactionRequest } from "ethers";
 import { z } from "zod";
 import { clearingStateAbi } from "../../../packages/shared/src/abi.js";
 import {
@@ -17,6 +17,8 @@ import { DurableSender, type SenderOptions } from "../../api/src/sender.js";
 import type { OracleSource } from "../../api/src/oracle.js";
 import { bearerMatches } from "../../lib/src/auth.js";
 import { KeeperEngine, type KeeperAction, type KeeperDependencies } from "./engine.js";
+import { registerErrorHandler } from "../../lib/src/error-codes.js";
+import { rpcProvider } from "../../lib/src/rpc.js";
 
 /** Maximum indexer lag, in blocks, before the keeper stops trusting its account scan. */
 const MAX_INDEXER_LAG = 12;
@@ -80,10 +82,11 @@ export function buildKeeper(options: KeeperOptions) {
   )
     throw new Error("keeper requires explicit sponsor budgets and private operations token");
   const app = Fastify({ logger: false }),
-    provider = options.provider ?? new JsonRpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1 }),
+    provider = options.provider ?? rpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1 }),
     wallet = new Wallet(options.sponsorKey, provider),
     clearing = new Contract(options.clearingAddress, keeperAbi, provider),
     db = new DatabaseSync(options.databasePath);
+  registerErrorHandler(app, "keeper");
   db.exec("PRAGMA journal_mode=WAL");
   initializeGrossJournal(db);
   bindGrossContext(

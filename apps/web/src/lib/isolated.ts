@@ -37,3 +37,29 @@ export function homeTotals(accounts: ReadonlyArray<{ equity: string; unrealizedP
     { equity: 0n, unrealizedPnl: 0n },
   );
 }
+
+/** Money left in an isolated account with no open position: margin a Home trade set aside but never used. */
+export type IdleMargin<M extends string = string> = { market: M; account: string; heldMicro: bigint };
+
+/**
+ * The isolated accounts holding collateral with no open position, by market. `marketOf` names the market an
+ * isolated account belongs to (null for an address it does not recognise, which is left out).
+ */
+export function idleIsolated<M extends string>(
+  accounts: ReadonlyArray<{
+    account: string;
+    collateral: string;
+    positions: Record<string, { size: string }>;
+  }>,
+  marketOf: (account: string) => M | null,
+): IdleMargin<M>[] {
+  const idle: IdleMargin<M>[] = [];
+  for (const state of accounts) {
+    const held = BigInt(state.collateral);
+    if (held <= 0n) continue;
+    if (Object.values(state.positions).some((position) => BigInt(position.size) !== 0n)) continue;
+    const market = marketOf(state.account);
+    if (market !== null) idle.push({ market, account: state.account, heldMicro: held });
+  }
+  return idle;
+}

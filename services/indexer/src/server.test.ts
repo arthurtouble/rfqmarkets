@@ -285,18 +285,24 @@ test("update stream connections are capped per client", async () => {
     pollMs: 60_000,
     syncOnRequest: true,
     maxStreamConnectionsPerClient: 1,
+    // Behind the edge every stream arrives from loopback; the edge's client header keys the budget.
+    clientIpHeader: "cf-connecting-ip",
   });
-  const controller = new AbortController();
+  const controller = new AbortController(),
+    as = (ip: string) => ({ signal: controller.signal, headers: { "cf-connecting-ip": ip } });
   try {
     const url = `${await app.listen({ host: "127.0.0.1", port: 0 })}/v1/updates/stream`;
-    const first = await fetch(url, { signal: controller.signal });
+    const first = await fetch(url, as("192.0.2.1"));
     assert.equal(first.status, 200);
     assert.equal(first.headers.get("access-control-allow-origin"), "http://127.0.0.1:4173");
     const reader = first.body!.getReader();
     assert.match(new TextDecoder().decode((await reader.read()).value), /event: indexed/);
-    const second = await fetch(url);
+    const second = await fetch(url, as("192.0.2.1"));
     assert.equal(second.status, 429);
     assert.equal((await app.inject({ method: "GET", url: "/health" })).json().streams.active, 1);
+    const other = await fetch(url, as("192.0.2.2"));
+    assert.equal(other.status, 200, "another user behind the edge has their own slots");
+    assert.equal((await app.inject({ method: "GET", url: "/health" })).json().streams.active, 2);
   } finally {
     controller.abort();
     await app.close();
@@ -748,6 +754,128 @@ test("a shallow reorg rolls back only the replaced blocks and re-reads the accou
     const account = await app.inject({ method: "GET", url: `/v1/account/${alice}` });
     assert.equal(account.json().collateral, "125000000");
     db.close();
+  } finally {
+    await app.close();
+    provider.destroy();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("leaderboards are cached for a time, not per block; referrals are rate limited and capped", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-index-")),
+    path = join(directory, "index.sqlite"),
+    E = 10n ** 18n,
+    intent = "0x" + "33".repeat(32),
+    trader = Wallet.createRandom().address,
+    blockHash = (number: number) => "0x" + number.toString(16).padStart(64, "0");
+  let clock = 1_000_000;
+  const logs: Array<{ block: number; args: unknown[] }> = [
+    { block: 10, args: [intent, account, 0, E, 100_000_000n, 0n] },
+  ];
+  class GrowingChain extends JsonRpcProvider {
+    head = 10;
+    override async getNetwork() {
+      return new Network("test", 31_337n);
+    }
+    override async getCode() {
+      return "0x";
+    }
+    override async getBlockNumber() {
+      return this.head;
+    }
+    override async getBlock(number: unknown) {
+      const height = Number(number);
+      return {
+        number: height,
+        hash: blockHash(height),
+        parentHash: blockHash(height - 1),
+        timestamp: height * 60,
+      } as Block;
+    }
+    override async getLogs(filter: Filter | FilterByBlockHash) {
+      const { fromBlock, toBlock } = filter as { fromBlock: number; toBlock: number };
+      return logs
+        .filter((item) => item.block >= Number(fromBlock) && item.block <= Number(toBlock))
+        .map((item, index) => ({
+          ...iface.encodeEventLog(eventOf("TradeExecuted", item.args), item.args),
+          blockNumber: item.block,
+          blockHash: blockHash(item.block),
+          transactionHash: "0x" + (item.block * 100 + index).toString(16).padStart(64, "0"),
+          index,
+        })) as unknown as Log[];
+    }
+    override async call(request: TransactionRequest) {
+      const decoded = iface.parseTransaction({ data: String(request.data) })!;
+      return iface.encodeFunctionResult(decoded.name, chainResult(decoded.name, decoded.args));
+    }
+  }
+  const provider = new GrowingChain(),
+    app = buildIndexer({
+      rpcUrl: "http://unused",
+      provider,
+      clearingAddress: clearing,
+      databasePath: path,
+      startBlock: 10,
+      confirmations: 0,
+      pollMs: 60_000,
+      syncOnRequest: true,
+      leaderboardMaxAgeMs: 30_000,
+      now: () => clock,
+    });
+  const get = async (url: string) => {
+    const response = await app.inject({ method: "GET", url });
+    assert.equal(response.statusCode, 200, `${url}: ${response.body}`);
+    return response.json();
+  };
+  const board = async () => {
+    const body = await get("/v1/leaderboard?window=all");
+    return { block: body.indexedBlock, traders: body.traders.map((row: { account: string }) => row.account) };
+  };
+  try {
+    await app.ready();
+    assert.deepEqual(await board(), { block: 10, traders: [account] });
+    // A new block with a new trader: the board is served from cache until it is 30 s old.
+    logs.push({ block: 11, args: [intent, trader, 0, 2n * E, 100_000_000n, 0n] });
+    provider.head = 11;
+    clock += 29_000;
+    assert.deepEqual(await board(), { block: 10, traders: [account] });
+    clock += 2_000;
+    assert.deepEqual(await board(), { block: 11, traders: [trader, account] });
+
+    // Referral registrations: a burst per client, then refused before any signature check.
+    const post = async (signer: { address: string; signTypedData: Wallet["signTypedData"] }) => {
+      const referral = {
+        account: signer.address,
+        referrer: account,
+        issuedAt: Math.floor(Date.now() / 1_000),
+      };
+      const signature = await signer.signTypedData(
+        { name: "RFQ Markets", version: "1", chainId: 31_337n, verifyingContract: clearing },
+        referralTypes,
+        referral,
+      );
+      return app.inject({ method: "POST", url: "/v1/referrals", payload: { ...referral, signature } });
+    };
+    for (let i = 0; i < 5; i++) assert.equal((await post(Wallet.createRandom())).statusCode, 200);
+    const limited = await post(Wallet.createRandom());
+    assert.equal(limited.statusCode, 429);
+    assert.equal(limited.json().code, "rate_limited");
+    clock += 5_000;
+
+    // A referrer collects at most MAX_REFEREES_PER_REFERRER referees, and /v1/points counts the earliest 100.
+    const db = new DatabaseSync(path);
+    const insert = db.prepare(
+      "INSERT INTO referrals(account,referrer,issued_at,signature,created_ms) VALUES(?,?,?,?,?)",
+    );
+    for (let i = 0; i < 995; i++)
+      insert.run("0xee" + (i + 1).toString(16).padStart(38, "0"), account, 1, "0x", Date.now() + i);
+    db.close();
+    const points = await get(`/v1/points/${account}`);
+    assert.equal(points.referees, 1_000);
+    assert.equal(points.countedReferees, 100);
+    const full = await post(Wallet.createRandom());
+    assert.equal(full.statusCode, 409);
+    assert.match(full.body, /referral limit/);
   } finally {
     await app.close();
     provider.destroy();

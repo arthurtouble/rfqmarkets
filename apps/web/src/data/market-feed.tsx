@@ -2,6 +2,7 @@
 // holds one connection. Markets are whatever the stream carries (governance can
 // add one at any time). Charts read candles (data/candles.ts), not this feed.
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { serverClock } from "../lib/clock.js";
 import { MARKET_STREAM } from "../lib/env.js";
 import { useEventStream, type StreamStatus } from "../lib/event-stream.js";
 import { priceStatus, type PriceStatus } from "../lib/market-stats.js";
@@ -63,6 +64,8 @@ export function MarketFeedProvider({ children }: { children: ReactNode }) {
     markets: (data) => {
       const next = data as MarketSnapshot;
       if (!next?.markets || typeof next.markets !== "object" || !Object.keys(next.markets).length) return;
+      // Measured on arrival, before the redraw throttle holds the snapshot back.
+      serverClock.observe(next.serverTimeMs, Date.now());
       pending.current = next;
       if (timer.current) return;
       // The first update after a quiet spell shows at once; a burst shows its latest every interval.
@@ -91,6 +94,14 @@ export function useNow(intervalMs = 500) {
     return () => clearInterval(timer);
   }, [intervalMs]);
   return now;
+}
+
+/**
+ * The server's time, re-rendering on an interval: Date.now() corrected by the skew measured from the market
+ * stream. Compare server timestamps (observedAtMs, expiresAtMs) with this, never with Date.now().
+ */
+export function useServerNow(intervalMs = 500) {
+  return serverClock.now(useNow(intervalMs));
 }
 
 /** One market's live state and whether its price is live, delayed, paused or unavailable. */

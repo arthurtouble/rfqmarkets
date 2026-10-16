@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { homeTotals, isolatedAccountOf, marginTopUp, MIN_ISOLATED_OPEN } from "./isolated.js";
+import { homeTotals, idleIsolated, isolatedAccountOf, marginTopUp, MIN_ISOLATED_OPEN } from "./isolated.js";
 
 test("isolated account addresses match the clearing contract's derivation", () => {
   // Same vector as test/contracts/IsolatedMargin.t.sol and packages/shared/src/isolated.test.ts.
@@ -29,4 +29,30 @@ test("homeTotals sums the equity and unrealized PnL of every isolated account", 
     ]),
     { equity: 19_000_000n, unrealizedPnl: -1_000_000n },
   );
+});
+
+test("idle isolated accounts are the ones holding money with no open position", () => {
+  const owner = "0x328809Bc894f92807417D2dAD6b7C998c1aFdac6";
+  const btc = isolatedAccountOf(owner, 0),
+    eth = isolatedAccountOf(owner, 1),
+    sol = isolatedAccountOf(owner, 2);
+  const markets = new Map([
+    [btc.toLowerCase(), "BTC"],
+    [eth.toLowerCase(), "ETH"],
+    [sol.toLowerCase(), "SOL"],
+  ]);
+  const idle = idleIsolated(
+    [
+      // A trade that failed after its amount was set aside.
+      { account: btc.toLowerCase(), collateral: "25000000", positions: { BTC: { size: "0" } } },
+      // An open trade: its margin is in use.
+      { account: eth, collateral: "10000000", positions: { ETH: { size: "-4000000000000000" } } },
+      // Emptied after a cash out.
+      { account: sol, collateral: "0", positions: {} },
+      // Not one of the trader's markets.
+      { account: owner, collateral: "5000000", positions: {} },
+    ],
+    (account) => markets.get(account.toLowerCase()) ?? null,
+  );
+  assert.deepEqual(idle, [{ market: "BTC", account: btc.toLowerCase(), heldMicro: 25_000_000n }]);
 });

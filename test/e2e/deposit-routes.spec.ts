@@ -3,7 +3,15 @@
 // so the test needs no network and shows exactly what a user sees before confirming.
 import { readFile } from "node:fs/promises";
 import type { Page, Route } from "@playwright/test";
-import { decodeFunctionData, encodeAbiParameters, encodeFunctionResult, parseAbi, type Hex } from "viem";
+import {
+  decodeFunctionData,
+  encodeAbiParameters,
+  encodeFunctionData,
+  encodeFunctionResult,
+  parseAbi,
+  type Address,
+  type Hex,
+} from "viem";
 import { expect, expectNoHorizontalOverflow, test } from "./fixtures.js";
 
 const mockWallet = await readFile(new URL("./mock-wallet.js", import.meta.url), "utf8");
@@ -12,6 +20,33 @@ const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const DIAMOND = "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE";
 const NATIVE = "0x0000000000000000000000000000000000000000";
 const ETH_PRICE = 2_500;
+
+// The app checks the receiver inside LI.FI's calldata, so the mock quote carries a real bridge call.
+const lifiAbi = parseAbi([
+  "struct BridgeData { bytes32 transactionId; string bridge; string integrator; address referrer; address sendingAssetId; address receiver; uint256 minAmount; uint256 destinationChainId; bool hasSourceSwaps; bool hasDestinationCall; }",
+  "struct RelayDepositoryData { bytes32 orderId; address depositorAddress; }",
+  "function startBridgeTokensViaRelayDepository(BridgeData _bridgeData, RelayDepositoryData _relayData) payable",
+]);
+const bridgeCall = (receiver: Address, sendingAssetId: Address, minAmount: bigint): Hex =>
+  encodeFunctionData({
+    abi: lifiAbi,
+    functionName: "startBridgeTokensViaRelayDepository",
+    args: [
+      {
+        transactionId: `0x${"ab".repeat(32)}`,
+        bridge: "relay",
+        integrator: "rfq-markets",
+        referrer: NATIVE,
+        sendingAssetId,
+        receiver,
+        minAmount,
+        destinationChainId: 8453n,
+        hasSourceSwaps: false,
+        hasDestinationCall: false,
+      },
+      { orderId: `0x${"cd".repeat(32)}`, depositorAddress: receiver },
+    ],
+  });
 
 const multicall = parseAbi([
   "struct Call { address target; bool allowFailure; bytes callData; }",
@@ -121,7 +156,7 @@ async function lifi(page: Page) {
         },
         transactionRequest: {
           to: DIAMOND,
-          data: "0x1234",
+          data: bridgeCall(query.get("toAddress") as Address, query.get("fromToken") as Address, fromAmount),
           value: `0x${fromAmount.toString(16)}`,
           chainId: Number(query.get("fromChain")),
         },
