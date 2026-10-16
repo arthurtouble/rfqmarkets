@@ -59,9 +59,11 @@ function ShellLayout() {
     ? "markets"
     : pathname.startsWith("/portfolio")
       ? "portfolio"
-      : pathname.startsWith("/account")
-        ? "account"
-        : "home";
+      : pathname.startsWith("/leaderboard")
+        ? "leaderboard"
+        : pathname.startsWith("/account")
+          ? "account"
+          : "home";
   const current = (name: string) => (section === name ? ("page" as const) : undefined);
   return (
     <div className="app">
@@ -85,6 +87,9 @@ function ShellLayout() {
           <Link to="/portfolio" aria-current={current("portfolio")}>
             Portfolio
           </Link>
+          <Link to="/leaderboard" aria-current={current("leaderboard")}>
+            Leaderboard
+          </Link>
         </nav>
         <div className="rfq-topbar__end">
           {trader.address && !trader.wrongChain && (
@@ -95,6 +100,19 @@ function ShellLayout() {
             >
               Deposit
             </button>
+          )}
+          {/* Connected, Account settings is in the wallet menu; before that this is the way to the
+              theme, help and legal links (phones have the Account tab). */}
+          {!trader.address && (
+            <Link
+              to="/account"
+              className="rfq-icon-btn"
+              aria-label="Settings"
+              title="Settings"
+              aria-current={current("account")}
+            >
+              {NavIcons.account}
+            </Link>
           )}
           <WalletMenu />
         </div>
@@ -121,6 +139,10 @@ function ShellLayout() {
         <Link to="/portfolio" aria-current={current("portfolio")}>
           {NavIcons.portfolio}
           <span>Portfolio</span>
+        </Link>
+        <Link to="/leaderboard" aria-current={current("leaderboard")}>
+          {NavIcons.leaderboard}
+          <span>Leaderboard</span>
         </Link>
         <Link to="/account" aria-current={current("account")}>
           {NavIcons.account}
@@ -181,6 +203,11 @@ const portfolioRoute = createRoute({
   path: "/portfolio",
   component: lazyRouteComponent(() => import("./portfolio/PortfolioPage.js"), "PortfolioPage"),
 });
+const leaderboardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/leaderboard",
+  component: lazyRouteComponent(() => import("./leaderboard/LeaderboardPage.js"), "LeaderboardPage"),
+});
 const accountRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/account",
@@ -196,6 +223,7 @@ export const router = createRouter({
     tradeRoute,
     marketsRoute,
     portfolioRoute,
+    leaderboardRoute,
     accountRoute,
   ]),
   defaultNotFoundComponent: () => (

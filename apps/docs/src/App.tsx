@@ -56,6 +56,11 @@ const normalize = (path: string) => {
 function useRoute(initial?: string) {
   const [route, setRoute] = useState(() => normalize(initial ?? window.location.pathname));
   useEffect(() => {
+    // A renamed page or a trailing slash shows the page's own address, as the edge redirect would.
+    if (window.location.pathname !== route && pages.some((page) => page.route === route))
+      history.replaceState(null, "", `${route}${window.location.hash}`);
+  }, []);
+  useEffect(() => {
     const onPop = () => setRoute(normalize(window.location.pathname));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -134,10 +139,11 @@ export function App({ initialRoute }: { initialRoute?: string }) {
     setMenuOpen(false);
     go(target);
   };
-  const link = (target: string, label: React.ReactNode, className?: string) => (
+  const link = (target: string, label: React.ReactNode, className?: string, current?: boolean) => (
     <a
       href={target}
       className={className}
+      aria-current={current ? "page" : undefined}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey) return;
         event.preventDefault();
@@ -193,6 +199,7 @@ export function App({ initialRoute }: { initialRoute?: string }) {
                     key={item.route}
                     href={item.route}
                     onClick={(event) => {
+                      if (event.metaKey || event.ctrlKey) return;
                       event.preventDefault();
                       open(item.route);
                     }}
@@ -214,7 +221,12 @@ export function App({ initialRoute }: { initialRoute?: string }) {
                     .filter((item) => item.path.startsWith(`${section.id}/`))
                     .map((item) => (
                       <React.Fragment key={item.route}>
-                        {link(item.route, item.title, item.route === route ? "active" : undefined)}
+                        {link(
+                          item.route,
+                          item.title,
+                          item.route === route ? "active" : undefined,
+                          item.route === route,
+                        )}
                       </React.Fragment>
                     ))}
                 </section>

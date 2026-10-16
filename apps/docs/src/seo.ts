@@ -4,7 +4,11 @@
 import { pages, plain, resolveLink, sections, type Page } from "./pages.js";
 
 export const SITE_NAME = "RFQ Markets Docs";
-export const APP_URL = "https://dev.rfq-markets.workers.dev";
+// The trading app the docs link to; a build for another environment sets VITE_APP_URL.
+export const APP_URL = (import.meta.env.VITE_APP_URL || "https://dev.rfq-markets.workers.dev").replace(
+  /\/+$/,
+  "",
+);
 const TAGLINE = "Perpetual futures on Base";
 
 export const pageTitle = (page: Page | undefined) =>

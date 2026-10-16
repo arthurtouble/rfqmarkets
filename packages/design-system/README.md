@@ -24,3 +24,6 @@ allows self-hosted fonts). Without a `data-theme` attribute the page follows
 the system light or dark setting; `data-theme="dark"` or `"light"` pins it.
 Never put hex values in app code: add a token here first. Never copy Tick's
 drawing either: change `mascot.json` and run `npm run build:tokens`.
+The trading app's home-screen icons and link-preview image (`apps/web/public`)
+are PNGs drawn from Tick: after changing him or the colors, run
+`npx tsx scripts/app-icons.ts` too.

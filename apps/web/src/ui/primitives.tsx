@@ -132,6 +132,12 @@ export const NavIcons = {
       <path d="M9 6V5a3 3 0 016 0v1" {...stroke} />
     </>,
   ),
+  leaderboard: path(
+    <>
+      <path d="M8 4h8v5a4 4 0 01-8 0V4z" {...stroke} />
+      <path d="M8 6H5v1a3 3 0 003 3M16 6h3v1a3 3 0 01-3 3M12 13v4M8 20h8" {...stroke} />
+    </>,
+  ),
   account: path(
     <>
       <circle cx="12" cy="9" r="4" {...stroke} />

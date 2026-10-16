@@ -203,6 +203,28 @@ dialog.sheet > .rfq-sheet { width: 100%; max-height: 92dvh; overflow-y: auto; ov
   .stat-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
 
+/* Leaderboard ----------------------------------------------------------- */
+.points-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.points-card .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.points-card > p { margin: 0; }
+.leaderboard__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4); }
+.leaderboard__controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.leaderboard__foot { margin: 0; padding: var(--space-3) var(--space-4) var(--space-4); }
+.leaderboard .is-updating { opacity: .6; transition: opacity .15s; }
+.leader__name { display: inline-flex; align-items: center; gap: var(--space-2); }
+.leader__rank { width: 28px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.leader__rank.is-top { color: var(--brand-text); }
+.leaderboard-table tr.is-you td { background: var(--brand-soft); }
+.leaderboard-table th:nth-child(2), .leaderboard-table td:nth-child(2) { width: 100%; text-align: left; }
+.leaderboard-table th:first-child, .leaderboard-table td:first-child { padding-right: 0; }
+.leaderboard-list { margin: 0; padding: 0 var(--space-2) var(--space-2); list-style: none; }
+.leader { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); min-height: 60px; padding: var(--space-2); border-radius: var(--radius-md); }
+.leader.is-you { background: var(--brand-soft); }
+.leader .rfq-row__sub { display: block; }
+@media (max-width: 899px) {
+  .leaderboard__controls, .leaderboard__controls > * { flex: 1 1 100%; }
+}
+
 /* Settings rows (account page) ------------------------------------------ */
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4); color: inherit; text-decoration: none; }
 .setting-row + .setting-row { border-top: 1px solid var(--line); }

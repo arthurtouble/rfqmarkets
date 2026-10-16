@@ -10,7 +10,7 @@ Limit orders are placed from the ticket in **Pro**. Tap **Pro** on Home to open 
 2. Choose **Long** or **Short**, enter what you pay in USDC and pick a leverage.
 3. Set your limit price. For a long, it is the most you will pay. For a short, it is the least you will accept.
 4. Read the hint under the price. "Fills now at the current price" means your limit is already at or through the executable price, so the order will fill as soon as it is placed. "Fills when the price reaches your limit" means it will wait.
-5. Click **Place limit · Long BTC · $20.00** (or the equivalent) and sign the *TradeIntent* in your wallet.
+5. Click **Limit long BTC · $20 at 2×** (or the equivalent) and sign the *TradeIntent* in your wallet.
 
 Limit orders always use your wallet, even when one-tap trading is on. The app places them **good for 24 hours**, after which they expire.
 
