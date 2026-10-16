@@ -94,7 +94,7 @@ These checks refuse service rather than guess. Do not weaken them to make a test
 - The dev runtime refuses to run against a deployment whose approvers are not its own keys.
 - The trading app refuses a `/v1/config` that names a different chain, clearing contract or USDC token, and signs only for the pinned contract.
 - The public edge returns a structured 503 when a service binding or rate limiter is missing, 451 for blocked locations and 404 for unknown service routes. Private pages stay locked if Cloudflare Access is missing or misconfigured.
-- The hedger cannot start on Base mainnet yet. Quotes return 503 there until that path is enabled on purpose.
+- The hedger trades on Hyperliquid mainnet only when its host config switches it on with a per-market position cap, and only from an account that holds nothing outside the hedge markets. Until then it does not start, the markets go reduce-only and quotes return 503.
 
 ## Detailed docs
 

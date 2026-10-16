@@ -6,7 +6,7 @@ import { buildApi } from "../../services/api/src/server.js";
 import { buildApprover } from "../../services/approver/src/server.js";
 import { buildIndexer } from "../../services/indexer/src/server.js";
 import { buildGateway } from "../../services/gateway/src/server.js";
-import { buildHedger } from "../../services/hedger/src/server.js";
+import { buildHedger, loadHedgeCoins } from "../../services/hedger/src/server.js";
 import { HyperliquidVenue } from "../../services/hedger/src/hyperliquid.js";
 import { SignedOracleSource } from "../../services/api/src/oracle.js";
 import { HttpHedgeRiskSource } from "../../services/api/src/hedge-risk.js";
@@ -14,7 +14,7 @@ import { QUOTE_MODEL_VERSION } from "../../packages/shared/src/pricing.js";
 import { buildKeeper } from "../../services/keeper/src/server.js";
 import { validateRuntimeIdentity } from "./runtime-identity.js";
 import { MIN_SERVICE_TOKEN_LENGTH } from "../../services/lib/src/auth.js";
-import { HEDGE_VENUE_API_URL, persistentConfigSchema } from "./persistent-config.js";
+import { hedgerVenueSettings, persistentConfigSchema } from "./persistent-config.js";
 import { clearingStateAbi } from "../../packages/shared/src/abi.js";
 import { syncMarketRegistry } from "../../packages/shared/src/markets-chain.js";
 const role = z.enum(["api", "approver", "indexer", "gateway", "hedger", "keeper"]).parse(process.argv[2]);
@@ -203,11 +203,13 @@ switch (role) {
     });
     break;
   case "hedger": {
+    const settings = hedgerVenueSettings(config);
     const venue = new HyperliquidVenue({
       agentPrivateKey: secrets.agentKey,
       accountAddress: secrets.accountAddress,
       agentName: secrets.agentName,
-      apiUrl: HEDGE_VENUE_API_URL,
+      network: settings.network,
+      coins: [...new Set(Object.values(loadHedgeCoins()))],
       pythonPath: "/opt/hyperliquid/bin/python",
       minimumPerpUsdc: config.hedgeMinOrderUsdc,
     });
@@ -220,7 +222,7 @@ switch (role) {
       bandUsdc: BigInt(config.hedgeBandUsdc),
       maxOrderUsdc: BigInt(config.hedgeMaxOrderUsdc),
       minOrderUsdc: BigInt(config.hedgeMinOrderUsdc),
-      maxPositionUsdc: config.hedgeMaxPositionUsdc ? BigInt(config.hedgeMaxPositionUsdc) : undefined,
+      maxPositionUsdc: settings.maxPositionUsdc,
     });
     break;
   }

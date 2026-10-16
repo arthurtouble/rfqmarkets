@@ -4,6 +4,13 @@ import { resolve } from "node:path";
 import type { HedgeMarket, HedgeVenue, VenueOrder, VenueResult } from "./server.js";
 import type { HedgeExecutionSignal } from "../../../packages/shared/src/hedge-risk.js";
 
+/** The only Hyperliquid API endpoints the adapter and its bridge will talk to. */
+export const HYPERLIQUID_API_URLS = {
+  testnet: "https://api.hyperliquid-testnet.xyz",
+  mainnet: "https://api.hyperliquid.xyz",
+} as const;
+export type HyperliquidNetwork = keyof typeof HYPERLIQUID_API_URLS;
+
 type RpcReply = { id: number; ok: boolean; result?: unknown; error?: string };
 type Pending = {
   resolve(value: unknown): void;
@@ -15,7 +22,14 @@ export interface HyperliquidVenueOptions {
   accountAddress: string;
   agentPrivateKey: string;
   agentName?: string;
-  apiUrl?: string;
+  /** Defaults to testnet. Mainnet must be chosen explicitly and needs `coins`. */
+  network?: HyperliquidNetwork;
+  /**
+   * The venue coins this account may trade (the hedge markets file's coins). The bridge refuses an order in
+   * any other coin and, on mainnet, refuses to run while the account holds a position or an open order in
+   * any other coin: the mainnet hedge account must be dedicated to the hedger.
+   */
+  coins?: readonly string[];
   pythonPath?: string;
   bridgePath?: string;
   requestTimeoutMs?: number;
@@ -52,7 +66,7 @@ function venueResult(value: unknown): VenueResult {
  * The child receives the agent key only through its environment and never logs it.
  */
 export class HyperliquidVenue implements HedgeVenue {
-  readonly mode = "hyperliquid-testnet";
+  readonly mode: `hyperliquid-${HyperliquidNetwork}`;
   private child?: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private pending = new Map<number, Pending>();
@@ -66,9 +80,14 @@ export class HyperliquidVenue implements HedgeVenue {
   constructor(private readonly options: HyperliquidVenueOptions) {
     assertAddress(options.accountAddress, "Hyperliquid account");
     assertPrivateKey(options.agentPrivateKey);
-    this.apiUrl = options.apiUrl ?? "https://api.hyperliquid-testnet.xyz";
-    if (this.apiUrl !== "https://api.hyperliquid-testnet.xyz")
-      throw new Error("live hedge adapter is pinned to Hyperliquid testnet");
+    const network = options.network ?? "testnet";
+    if (!Object.hasOwn(HYPERLIQUID_API_URLS, network)) throw new Error("unknown Hyperliquid network");
+    this.mode = `hyperliquid-${network}`;
+    this.apiUrl = HYPERLIQUID_API_URLS[network];
+    for (const coin of options.coins ?? [])
+      if (!/^[A-Za-z0-9:._-]{1,32}$/.test(coin)) throw new Error(`invalid Hyperliquid coin ${coin}`);
+    if (network === "mainnet" && !options.coins?.length)
+      throw new Error("the mainnet hedge venue needs the coins its account may trade");
     if (!/^\d+(?:\.\d+)?$/.test(options.minimumPerpUsdc ?? "0"))
       throw new Error("minimum Hyperliquid perp USDC must be a non-negative decimal");
     this.pythonPath = options.pythonPath ?? resolve(".local-state/hyperliquid-venv/bin/python");
@@ -91,6 +110,7 @@ export class HyperliquidVenue implements HedgeVenue {
         RFQ_HYPERLIQUID_AGENT_KEY: this.options.agentPrivateKey,
         RFQ_HYPERLIQUID_AGENT_NAME: this.options.agentName ?? "",
         RFQ_HYPERLIQUID_MIN_PERP_USDC: this.options.minimumPerpUsdc ?? "0",
+        RFQ_HYPERLIQUID_COINS: (this.options.coins ?? []).join(","),
       }),
     });
     this.child = child;

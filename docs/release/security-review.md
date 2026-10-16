@@ -43,7 +43,7 @@ Checked and sound: EIP-712 domain binding, signature malleability, approver and 
 
 - **Oracle signing quorum shares an RPC provider.** Covered by the oracle hardening fix (registry allowlist); operators should still run each oracle node against a different RPC provider.
 - **Separate sponsor keys.** Nothing enforces that the API and keeper use different sponsor keys. If they share one, their separate nonce journals fork. Keep them separate (`deploy/host/README.md`).
-- **The hedger cannot start on Base mainnet.** `persistent-service.ts` passes the mainnet Hyperliquid URL but the hedger and bridge only allow testnet. It fails closed (quotes return 503) and blocks a mainnet launch until the mainnet path is enabled deliberately.
+- **Mainnet hedging is opt-in and fenced (fixed).** The hedger and bridge used to allow only the Hyperliquid testnet, so the hedger could not start on Base mainnet. Mainnet now needs `hedgeVenue: "hyperliquid-mainnet"` and an explicit per-market `hedgeMaxPositionUsdc` in the hedger config, and the bridge refuses to run on an account holding positions or open orders outside the hedge markets. A funded, dedicated mainnet account is still required.
 - **Expired vulnerability exception (removed).** The zlib waiver in `security/vulnerability-exceptions.json` expired on 30 September 2026 and has been removed, not renewed. The host image runs `apk upgrade`, so the next release scan either finds the fixed zlib and passes, or fails closed until a fresh, dated waiver is reviewed.
 - **Repository settings.** Put the dev deploy behind a protected GitHub environment and require approval for workflow runs from outside contributors.
 - **WalletConnect project.** Restrict the project ID's allowed domains in the Reown dashboard.

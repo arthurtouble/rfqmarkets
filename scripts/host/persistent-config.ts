@@ -95,7 +95,12 @@ export const persistentConfigSchema = z
     hedgeBandUsdc: z.string().regex(/^[1-9]\d*$/),
     hedgeMaxOrderUsdc: z.string().regex(/^[1-9]\d*$/),
     hedgeMinOrderUsdc: z.string().regex(/^[1-9]\d*$/),
-    /** Maximum absolute venue position per market (USDC units); defaults to the contract's market ceiling. */
+    /**
+     * Turns on live hedging: the hedger role refuses to start without it. The only venue is Hyperliquid
+     * mainnet, so writing it down is the deliberate act that lets the hedger trade there.
+     */
+    hedgeVenue: z.literal("hyperliquid-mainnet").optional(),
+    /** Maximum absolute venue position per market (USDC units); required by the hedger role. */
     hedgeMaxPositionUsdc: z
       .string()
       .regex(/^[1-9]\d*$/)
@@ -130,5 +135,14 @@ export const persistentConfigSchema = z
   });
 
 export type PersistentConfig = z.infer<typeof persistentConfigSchema>;
-/** The production hedge venue; the host runs Base mainnet only. */
-export const HEDGE_VENUE_API_URL = "https://api.hyperliquid.xyz";
+
+/**
+ * The hedger role's venue settings. Live mainnet hedging is opt-in (`hedgeVenue`) and capped: the hedger
+ * will not fall back to the contract's 5,000,000 USDC market ceiling as its per-market position cap.
+ */
+export function hedgerVenueSettings(config: PersistentConfig) {
+  if (config.hedgeVenue !== "hyperliquid-mainnet")
+    throw new Error('hedger needs hedgeVenue "hyperliquid-mainnet" to trade on Hyperliquid mainnet');
+  if (!config.hedgeMaxPositionUsdc) throw new Error("hedger needs hedgeMaxPositionUsdc on mainnet");
+  return { network: "mainnet" as const, maxPositionUsdc: BigInt(config.hedgeMaxPositionUsdc) };
+}

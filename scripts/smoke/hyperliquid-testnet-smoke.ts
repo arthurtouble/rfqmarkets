@@ -16,7 +16,7 @@ const venue = new HyperliquidVenue({
   accountAddress: required("RFQ_HYPERLIQUID_ACCOUNT_ADDRESS"),
   agentPrivateKey: identities.hyperliquidAgent.privateKey,
   agentName: required("RFQ_HYPERLIQUID_AGENT_NAME"),
-  apiUrl: process.env.RFQ_HYPERLIQUID_API_URL,
+  network: "testnet",
   pythonPath: process.env.RFQ_HYPERLIQUID_PYTHON,
 });
 try {

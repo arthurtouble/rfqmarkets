@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { persistentConfigSchema, rpcEndpointsMatch } from "./persistent-config.js";
+import { hedgerVenueSettings, persistentConfigSchema, rpcEndpointsMatch } from "./persistent-config.js";
 
 const address = (digit: string) => `0x${digit.repeat(40)}`;
 const base = {
@@ -80,4 +80,23 @@ test("hedger and approver upstreams must be https unless loopback", () => {
       "http://127.0.0.1:4100",
     );
   }
+});
+
+test("the hedger trades on mainnet only when switched on and capped", () => {
+  assert.throws(() => hedgerVenueSettings(persistentConfigSchema.parse(base)), /hedgeVenue/);
+  assert.throws(
+    () => hedgerVenueSettings(persistentConfigSchema.parse({ ...base, hedgeVenue: "hyperliquid-mainnet" })),
+    /hedgeMaxPositionUsdc/,
+  );
+  assert.throws(() => persistentConfigSchema.parse({ ...base, hedgeVenue: "hyperliquid-testnet" }));
+  assert.deepEqual(
+    hedgerVenueSettings(
+      persistentConfigSchema.parse({
+        ...base,
+        hedgeVenue: "hyperliquid-mainnet",
+        hedgeMaxPositionUsdc: "250000000000",
+      }),
+    ),
+    { network: "mainnet", maxPositionUsdc: 250_000_000_000n },
+  );
 });
