@@ -412,6 +412,8 @@ export type Points = {
   total: string;
   weeks: PointsWeek[];
   referees: number;
+  /** Referees whose points count toward `referralPoints` (the earliest ones, capped by the indexer). */
+  countedReferees?: number;
   referralPoints: string;
   totalWithReferrals: string;
 };

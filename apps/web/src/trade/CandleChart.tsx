@@ -14,9 +14,9 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { candleToNumbers } from "../lib/candles.js";
+import { priceDecimals } from "../lib/format.js";
 import type { Candle } from "../lib/types.js";
 
-const price = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const toSeconds = (ms: number) => Math.floor(ms / 1_000) as UTCTimestamp;
 const local = (time: Time) => new Date((time as number) * 1_000);
 
@@ -87,6 +87,8 @@ export default function CandleChart({
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const fitted = useRef(false);
+  // Axis and crosshair precision, from the latest close: cheap markets need more than cents.
+  const decimals = useRef(2);
 
   useEffect(() => {
     const element = host.current;
@@ -97,7 +99,11 @@ export default function CandleChart({
       ...look.chart,
       crosshair: { mode: CrosshairMode.Normal },
       localization: {
-        priceFormatter: (value: number) => price.format(value),
+        priceFormatter: (value: number) =>
+          value.toLocaleString("en-US", {
+            minimumFractionDigits: decimals.current,
+            maximumFractionDigits: decimals.current,
+          }),
         timeFormatter: (time: Time) =>
           local(time).toLocaleString([], {
             month: "short",
@@ -147,12 +153,16 @@ export default function CandleChart({
 
   useEffect(() => {
     if (!series.current) return;
-    series.current.setData(
-      candles.map((candle) => {
-        const { open, high, low, close } = candleToNumbers(candle);
-        return { time: toSeconds(candle.time), open, high, low, close };
-      }),
-    );
+    const rows = candles.map((candle) => {
+      const { open, high, low, close } = candleToNumbers(candle);
+      return { time: toSeconds(candle.time), open, high, low, close };
+    });
+    const precision = priceDecimals(rows.at(-1)?.close ?? 0);
+    if (precision !== decimals.current) {
+      decimals.current = precision;
+      series.current.applyOptions({ priceFormat: { type: "price", precision, minMove: 10 ** -precision } });
+    }
+    series.current.setData(rows);
     if (!fitted.current && candles.length) {
       chart.current?.timeScale().fitContent();
       fitted.current = true;

@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useMarketFeed, useMarketPrice } from "../data/market-feed.js";
 import { useMarketList } from "../data/markets.js";
 import { useMarketStats } from "../data/market-stats.js";
-import { usdc } from "../lib/format.js";
+import { priceDecimals, usdPrice, usdPriceNumber } from "../lib/format.js";
 import { dayChange, priceChange, searchMarkets, type PriceStatus } from "../lib/market-stats.js";
 import type { Market } from "../lib/types.js";
 import { AssetIcon, Banner, Change, Chevron, Sheet, marketName } from "../ui/primitives.js";
@@ -11,19 +11,6 @@ import { SearchField } from "../ui/SearchField.js";
 
 export const pct = new Intl.NumberFormat("en-US", {
   style: "percent",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-  signDisplay: "exceptZero",
-});
-const usd = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-const dollars = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
   signDisplay: "exceptZero",
@@ -104,7 +91,7 @@ export function MarketSwitcher({
                   <div className="rfq-row__sub">{name}</div>
                 </span>
                 <span className="rfq-row__end">
-                  <span className="rfq-row__price">{usdc(live?.mid)}</span>
+                  <span className="rfq-row__price">{usdPrice(live?.mid)}</span>
                   {change ? (
                     <Change value={change.ratio}>{pct.format(change.ratio)}</Change>
                   ) : (
@@ -152,12 +139,13 @@ export function PriceHeader({
   return (
     <div className="price-header">
       <div className={`price-hero tnum${dim ? " is-stale" : ""}`} aria-live="off">
-        {shownMicro === null ? "—" : usd.format(Number(shownMicro) / 1e6)}
+        {shownMicro === null ? "—" : usdPriceNumber(Number(shownMicro) / 1e6)}
       </div>
       <div className="price-sub">
         {change && (
           <Change value={change.delta}>
-            {dollars.format(change.delta)} ({pct.format(change.ratio)})
+            {usdPriceNumber(change.delta, priceDecimals(Number(shownMicro) / 1e6), true)} (
+            {pct.format(change.ratio)})
           </Change>
         )}
         <span className="footnote rfq-faint">{scrub ? scrub.label : change ? period : ""}</span>

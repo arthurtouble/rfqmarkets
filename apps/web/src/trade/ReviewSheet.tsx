@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTrading, type MarketOrder } from "../data/actions.js";
 import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { emptyAccount, estimateLiquidationPrice } from "../lib/account.js";
+import type { HeldQuote } from "../lib/clock.js";
 import { useAccount } from "../account/useAccount.js";
-import { abs, baseAmount, usdc, usdcCompact } from "../lib/format.js";
+import { abs, baseAmount, usdc, usdcCompact, usdPrice } from "../lib/format.js";
 import { friendlyError } from "../lib/errors.js";
 import { errorMessage } from "../lib/http.js";
 import { leverageLabel, quoteSecondsLeft, quoteUsable, SIDE_WORD } from "../lib/ticket.js";
@@ -36,7 +37,7 @@ export function ReviewSheet({
   const now = useNow(250);
   const offerOneClick = !trading.quickSession?.privateKey;
   const [oneClick, setOneClick] = useState(offerOneClick);
-  const [quote, setQuote] = useState<Quote | null>(null);
+  const [quote, setQuote] = useState<HeldQuote<Quote> | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const busy = trading.busy !== null;
@@ -58,8 +59,9 @@ export function ReviewSheet({
     void refresh();
   }, [refresh]);
 
-  const usable = !!quote && quoteUsable(quote.expiresAtMs, now);
-  const secondsLeft = quote ? quoteSecondsLeft(quote.expiresAtMs, now) : 0;
+  // Judged on this device's clock from when the quote arrived, so a fast or slow clock can't expire it early.
+  const usable = !!quote && quoteUsable(quote.localDeadlineMs, now);
+  const secondsLeft = quote ? quoteSecondsLeft(quote.localDeadlineMs, now) : 0;
   const liquidation = useMemo(() => {
     if (!snapshot) return null;
     const base = account ?? { ...emptyAccount("", snapshot), collateral: payMicro.toString() };
@@ -85,14 +87,17 @@ export function ReviewSheet({
         <p className="body review-sentence">
           {word} <b className="tnum">{base}</b> on {marketName(market)} at{" "}
           <b className="tnum">{leverageLabel(leverage)}</b>, paying{" "}
-          <b className="tnum">{usdcCompact(payMicro)}</b>. If the price moves past your protection, nothing
-          happens.
+          <b className="tnum">{usdcCompact(payMicro)}</b>. If the price moves past your protection before your
+          order fills, it's cancelled and you aren't charged.
         </p>
         <Rows
           rows={[
-            ["Entry price", loading && !quote ? "Getting a firm price…" : usdc(quote?.expectedPrice)],
-            [side === "buy" ? "Price protection (max)" : "Price protection (min)", usdc(quote?.worstPrice)],
-            ["Liquidation price", liquidation === null ? "—" : usdc(liquidation)],
+            ["Entry price", loading && !quote ? "Getting a firm price…" : usdPrice(quote?.expectedPrice)],
+            [
+              side === "buy" ? "Price protection (max)" : "Price protection (min)",
+              usdPrice(quote?.worstPrice),
+            ],
+            ["Liquidation price", liquidation === null ? "—" : usdPrice(liquidation)],
             ["Margin", usdc(payMicro)],
             ["Position size", usdc(amountMicro), "is-total"],
           ]}

@@ -115,6 +115,11 @@ class ExitVenue {
       await this.deposit(signer, USDC(5_000));
       await this.trade(signer, 0, 10n ** 16n); // long 0.01 BTC
       await this.trade(signer, 1, -(5n * 10n ** 17n)); // short 0.5 ETH
+      if (role === "trader") {
+        // A Home trade: 100 USDC in its own isolated account, long 0.01 ETH there.
+        await (await this.clearing.connect(signer).getFunction("moveIsolatedMargin")(1, USDC(100))).wait();
+        await this.trade(signer, 1, 10n ** 16n, await this.clearing.isolatedAccount(signer.address, 1));
+      }
       this.sessionKeys[role] = Wallet.createRandom().address;
       await this.grantSession(signer, this.sessionKeys[role]);
     }
@@ -214,7 +219,8 @@ class ExitVenue {
   }
 
   /** Fills at the oracle price plus exactly the inventory-impact charge, the way approvers quote. */
-  private async trade(signer: JsonRpcSigner, market: number, delta: bigint) {
+  /** `account` defaults to the signer; an isolated account is signed for by its owner. */
+  private async trade(signer: JsonRpcSigner, market: number, delta: bigint, account = signer.address) {
     const proof = await this.report();
     const price = this.prices[market];
     const [aggregateBase] = await this.clearing.markets(market);
@@ -231,7 +237,7 @@ class ExitVenue {
     const deadline = BigInt((await this.now()) + 60);
     const domain = await this.domain();
     const intent = {
-      account: signer.address,
+      account,
       market,
       baseDelta: delta,
       limitPrice: executionPrice,
@@ -402,7 +408,7 @@ test.describe.serial("emergency exit page", () => {
     await expect(page.getByText("Trading open")).toBeVisible();
     // Closing at the oracle unlocks only while paused.
     const locked = page.getByRole("button", { name: "Available while trading is paused" });
-    await expect(locked).toHaveCount(2);
+    await expect(locked).toHaveCount(3); // two positions and the Home trade
     await expect(locked.first()).toBeDisabled();
     await expectNoHorizontalOverflow(page);
     await snap(page, "account-open");
@@ -496,6 +502,21 @@ test.describe.serial("emergency exit page", () => {
     await expectToast(page, "success", /Closed Short ETH/);
     expect((await venue.clearing.positionOf(trader, 1)).size).toBe(0n);
     await expect(page.getByRole("region", { name: "Close a position" })).toHaveCount(0);
+
+    // The Home trade closes from its own card, and its money moves back to the balance.
+    const home = await venue.clearing.isolatedAccount(trader, 1);
+    const homeTrades = page.getByRole("region", { name: "Home trades" });
+    await expect(homeTrades).toBeVisible();
+    await homeTrades.getByRole("button", { name: "Close at oracle price" }).click();
+    await expectToast(page, "success", /Closed Home trade Up ETH/);
+    expect((await venue.clearing.positionOf(home, 1)).size).toBe(0n);
+    const held = await collateral(venue, home);
+    expect(held > 0n).toBe(true);
+    await homeTrades.getByRole("button", { name: /^Move \$.* to your balance$/ }).click();
+    await expectToast(page, "success", /to your balance/);
+    expect(await collateral(venue, home)).toBe(0n);
+    await expect(homeTrades).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
 
     const everything = await collateral(venue, trader);
     const wallet = (await venue.usdc.balanceOf(trader)) as bigint;

@@ -57,7 +57,12 @@ const CLOSE_GAS_LIMIT = 1_500_000n;
 const CLOSE_SLIPPAGE_BPS = 200n;
 
 type SignedIntent = { account: string; deadline: bigint };
-type Sponsor = ChainHandles & { sender: ApiSender };
+/**
+ * `operationId` keys the sponsored transaction in the sender's journal. `resumed` is true when that journal
+ * already holds it (a client retrying an action that was sent): the action then skips its simulation, and the
+ * request skips its admission gates, so the retry gets the stored outcome instead of a fresh refusal.
+ */
+type Sponsor = ChainHandles & { sender: ApiSender; operationId: string; resumed: boolean };
 type Receipt = Awaited<ReturnType<ApiSender["submit"]>>;
 
 const transactionOf = (receipt: Receipt) => ({ hash: receipt.hash, blockNumber: receipt.blockNumber });
@@ -131,6 +136,30 @@ export async function admitSponsoredAction(ctx: ApiContext, account: string): Pr
 }
 
 /**
+ * Gate for isolated margin moves. A move is a routine step of every isolated (Home) trade, often signed by a
+ * session key, so it does not spend the scarce sponsored-action budget; it has its own, looser per-account
+ * bucket instead, and the account it draws from must hold collateral (an unfunded wallet's move would revert).
+ */
+export async function admitIsolatedMargin(
+  ctx: ApiContext,
+  intent: { account: string; market: number; amount: bigint },
+): Promise<Reply | undefined> {
+  const { clearing } = ctx;
+  if (!clearing) return Reply.error(503, "chain unavailable");
+  const source = intent.amount > 0n ? intent.account : isolatedAccountAddress(intent.account, intent.market);
+  let collateral: bigint;
+  try {
+    collateral = BigInt(await clearing.collateralOf(source));
+  } catch {
+    return Reply.error(503, "chain unavailable");
+  }
+  if (collateral <= 0n) return Reply.error(409, "deposit collateral before using sponsored actions");
+  if (!ctx.isolatedMarginActions.allow(intent.account.toLowerCase()))
+    return Reply.error(429, "sponsored action rate limit exceeded");
+  return undefined;
+}
+
+/**
  * A two-step owner action: `prepare` returns EIP-712 typed data for the wallet, `execute` verifies the
  * signature and sponsors the matching clearing call.
  */
@@ -150,12 +179,16 @@ interface SignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I extends
   build(input: z.infer<P>, chainTime: () => Promise<number>): Promise<I>;
   parse(input: z.infer<E>): I;
   toWire(intent: I): unknown;
+  /** The sender journal key of the action's sponsored transaction. */
+  operationId(intent: I): string;
   /** `bySession` is true when a session key signed (see `sessionAllows`) rather than the owner. */
   execute(intent: I, signature: string, sponsor: Sponsor, bySession: boolean): Promise<unknown>;
   /** Also accept a signature from a session key of the account whose on-chain grant allows this intent. */
   sessionAllows?(intent: I, session: SessionView): boolean;
   /** Requires collateral and a per-account budget before sponsoring (see admitSponsoredAction). */
   gated?: boolean;
+  /** An action-specific admission check, run after the signature verified and before sponsoring. */
+  admit?(intent: I): Promise<Reply | undefined>;
 }
 
 function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I extends SignedIntent>(
@@ -205,11 +238,22 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
       const handles = ctx.chain,
         sender = ctx.sender;
       if (!handles || !sender) return reply.code(503).send({ error: "chain unavailable" });
-      if (action.gated) {
-        const refused = await admitSponsoredAction(ctx, intent.account);
+      const operationId = action.operationId(intent),
+        resumed = sender.hasOperation?.(operationId) ?? false;
+      if (!resumed) {
+        if (action.gated) {
+          const refused = await admitSponsoredAction(ctx, intent.account);
+          if (refused) return refused.send(reply);
+        }
+        const refused = await action.admit?.(intent);
         if (refused) return refused.send(reply);
       }
-      const result = await action.execute(intent, signature, { ...handles, sender }, bySession);
+      const result = await action.execute(
+        intent,
+        signature,
+        { ...handles, sender, operationId, resumed },
+        bySession,
+      );
       // Quotes pin a block; the next one must see this action (a new session key or isolated account).
       chain.invalidateQuoteSnapshot();
       return result instanceof Reply ? result.send(reply) : result;
@@ -252,23 +296,27 @@ export function registerSignedActions(
       deadline: BigInt(intent.deadline),
     }),
     toWire: withdrawalToWire,
-    async execute(intent, signature, { sender, clearing, provider, config }) {
+    // An unfunded account's withdrawal can only revert; each account also has a sponsored budget.
+    gated: true,
+    operationId: (intent) => `withdraw:${intent.account}:${intent.nonce}`,
+    async execute(intent, signature, { sender, clearing, provider, config, operationId, resumed }) {
       // The contract needs fresh prices for markets the account holds. Trades keep them fresh; between
       // trades they lapse after 15 seconds. Best effort: a paused venue still lets the withdrawal try.
       await quoting.refreshOpenMarketPrices().catch(() => undefined);
+      const data = clearing.interface.encodeFunctionData("withdrawWithSignature", [
+        intent.account,
+        intent.recipient,
+        intent.amount,
+        intent.nonce,
+        intent.deadline,
+        signature,
+      ]);
+      // Simulate first on live chains: a reverting withdrawal would still spend sponsor gas.
+      if (!ctx.devFund && !resumed)
+        await provider.call({ from: ctx.sponsor!.address, to: config.clearingAddress, data });
       const receipt = await sender.submit(
-        `withdraw:${intent.account}:${intent.nonce}`,
-        {
-          to: config.clearingAddress,
-          data: clearing.interface.encodeFunctionData("withdrawWithSignature", [
-            intent.account,
-            intent.recipient,
-            intent.amount,
-            intent.nonce,
-            intent.deadline,
-            signature,
-          ]),
-        },
+        operationId,
+        { to: config.clearingAddress, data },
         { deadline: Number(intent.deadline) },
       );
       const paid = await settlementEvent(
@@ -324,19 +372,31 @@ export function registerSignedActions(
     // A session key may move margin for one-tap trades: in its markets, adding at most its per-trade cap.
     sessionAllows: (intent, session) =>
       maskAllows(session.marketMask, intent.market) && intent.amount <= BigInt(session.maxTradeNotional),
-    async execute(intent, signature, { sender, clearing, config }, bySession) {
+    admit: (intent) => admitIsolatedMargin(ctx, intent),
+    operationId: (intent) => `isolated:${intent.account}:${intent.nonce}`,
+    async execute(
+      intent,
+      signature,
+      { sender, clearing, provider, config, operationId, resumed },
+      bySession,
+    ) {
       const method = bySession ? "moveIsolatedMarginWithSessionSignature" : "moveIsolatedMarginWithSignature";
-      const receipt = await sender.submit(`isolated:${intent.account}:${intent.nonce}`, {
-        to: config.clearingAddress,
-        data: clearing.interface.encodeFunctionData(method, [
-          intent.account,
-          intent.market,
-          intent.amount,
-          intent.nonce,
-          intent.deadline,
-          signature,
-        ]),
-      });
+      const data = clearing.interface.encodeFunctionData(method, [
+        intent.account,
+        intent.market,
+        intent.amount,
+        intent.nonce,
+        intent.deadline,
+        signature,
+      ]);
+      // Simulate first on live chains: a reverting move would still spend sponsor gas.
+      if (!ctx.devFund && !resumed)
+        await provider.call({ from: ctx.sponsor!.address, to: config.clearingAddress, data });
+      const receipt = await sender.submit(
+        operationId,
+        { to: config.clearingAddress, data },
+        { deadline: Number(intent.deadline) },
+      );
       const isolated = isolatedAccountAddress(intent.account, intent.market);
       const [collateral, isolatedCollateral] = await Promise.all([
         clearing.collateralOf(intent.account),
@@ -375,9 +435,10 @@ export function registerSignedActions(
     }),
     toWire: cancelToWire,
     gated: true,
-    async execute(intent, signature, { sender, clearing, config }) {
+    operationId: (intent) => `cancel:${intent.account}:${intent.nonce}`,
+    async execute(intent, signature, { sender, clearing, config, operationId }) {
       const receipt = await sender.submit(
-        `cancel:${intent.account}:${intent.nonce}`,
+        operationId,
         {
           to: config.clearingAddress,
           data: clearing.interface.encodeFunctionData("cancelNonceWithSignature", [
@@ -451,7 +512,8 @@ export function registerSignedActions(
       deadline: BigInt(intent.deadline),
     }),
     toWire: closeToWire,
-    async execute(intent, signature, { sender, clearing, provider, config }) {
+    operationId: (intent) => `close:${intent.account}:${intent.market}:${intent.nonce}`,
+    async execute(intent, signature, { sender, clearing, provider, config, operationId, resumed }) {
       const report = await closeReport(intent),
         value = ctx.devFund ? 0n : BigInt(await (await chain.oracleAdapter()).updateFee(report)),
         data = clearing.interface.encodeFunctionData("closePositionWithSignature", [
@@ -464,10 +526,10 @@ export function registerSignedActions(
           signature,
         ]);
       // Simulate first on live chains: a reverting close would still spend sponsor gas.
-      if (!ctx.devFund)
+      if (!ctx.devFund && !resumed)
         await provider.call({ from: ctx.sponsor!.address, to: config.clearingAddress, data, value });
       const receipt = await sender.submit(
-        `close:${intent.account}:${intent.market}:${intent.nonce}`,
+        operationId,
         {
           to: config.clearingAddress,
           data,
@@ -542,9 +604,10 @@ export function registerSignedActions(
     }),
     toWire: sessionGrantToWire,
     gated: true,
-    async execute(grant, signature, { sender, clearing, config }) {
+    operationId: (grant) => `session:${grant.account}:${grant.session}:${grant.nonce}`,
+    async execute(grant, signature, { sender, clearing, config, operationId }) {
       const receipt = await sender.submit(
-        `session:${grant.account}:${grant.session}:${grant.nonce}`,
+        operationId,
         {
           to: config.clearingAddress,
           data: clearing.interface.encodeFunctionData("grantSessionWithSignature", [grant, signature]),
@@ -581,9 +644,10 @@ export function registerSignedActions(
     }),
     toWire: sessionRevokeToWire,
     gated: true,
-    async execute(intent, signature, { sender, clearing, config }) {
+    operationId: (intent) => `session-revoke:${intent.account}:${intent.session}:${intent.nonce}`,
+    async execute(intent, signature, { sender, clearing, config, operationId }) {
       const receipt = await sender.submit(
-        `session-revoke:${intent.account}:${intent.session}:${intent.nonce}`,
+        operationId,
         {
           to: config.clearingAddress,
           data: clearing.interface.encodeFunctionData("revokeSessionWithSignature", [

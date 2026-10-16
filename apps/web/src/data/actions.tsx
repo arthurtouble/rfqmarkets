@@ -1,12 +1,13 @@
 // Every user action (trade, order, trigger/TP-SL, close, funds, quick trading)
 // as one async function: prepare with the API, sign, submit, toast the outcome
 // and refresh.
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConfig } from "wagmi";
 import { getPublicClient } from "wagmi/actions";
 import { encodeFunctionData, erc20Abi, parseAbi, parseUnits, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { holdQuote, localDeadline, type HeldQuote } from "../lib/clock.js";
 import { API } from "../lib/env.js";
 import { friendlyError } from "../lib/errors.js";
 import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
@@ -22,7 +23,7 @@ import {
   type SourceToken,
 } from "../lib/bridge.js";
 import { MIN_GAS_FREE_DEPOSIT, plainAccount } from "../lib/funds.js";
-import { abs, baseAmount, microToInput, parseUsdcInput, usdc, usdcCompact } from "../lib/format.js";
+import { abs, baseAmount, microToInput, parseUsdcInput, usdc, usdcCompact, usdPrice } from "../lib/format.js";
 import {
   LIMIT_ORDER_DURATION_SECONDS,
   tpslPrepareBody,
@@ -62,6 +63,8 @@ const clearingAbi = parseAbi([
   "function deposit(uint256 amount)",
   "function collateralOf(address account) view returns (int256)",
   "function accountRegistered(address account) view returns (bool)",
+  "struct Position { int256 size; uint256 entryPrice; int256 lastFundingIndex; }",
+  "function positionOf(address account, uint8 market) view returns (Position)",
 ]);
 type Settled = { transaction?: Transaction; status?: string };
 
@@ -90,8 +93,11 @@ type Trading = {
   quickSession: QuickSession | null;
   /** Whether the quick-trading key can sign a market trade of this size without a wallet prompt. */
   quickCovers(market: Market, amountMicro: bigint | null): boolean;
-  /** A firm quote for the order, without placing it. Throws the API's reason. */
-  firmQuote(order: MarketOrder): Promise<Quote>;
+  /**
+   * A firm quote for the order, without placing it, held against this device's clock (lib/clock.ts). Calls are
+   * spaced at least FIRM_QUOTE_SPACING_MS apart, so no refresh loop can flood POST /v1/quote. Throws the API's reason.
+   */
+  firmQuote(order: MarketOrder): Promise<HeldQuote<Quote>>;
   /** Places a market order at `quote` when given (it must still be valid), else at a fresh firm quote. Resolves true once filled or approved. */
   marketOrder(order: MarketOrder, quote?: Quote): Promise<boolean>;
   /** Places a 24-hour limit order. Resolves true once it is open. */
@@ -109,7 +115,13 @@ type Trading = {
   closePosition(market: Market, fractionBps?: number, isolated?: boolean): Promise<ClosedAt | undefined>;
   /** Closes `fractionBps` of every open position, one quote each. Quick trading signs within its limits without prompts. */
   closeAll(fractionBps?: number): Promise<CloseAllResult | undefined>;
-  emergencyClose(market: Market): Promise<void>;
+  /** Closes the whole position at the oracle price (while trading is paused). Resolves true once closed. */
+  emergencyClose(market: Market): Promise<boolean>;
+  /**
+   * Moves everything held in `market`'s isolated account back to the balance: for a Home trade's margin left
+   * there with no open position (a trade that failed after its amount was set aside). Resolves true once moved.
+   */
+  returnMargin(market: Market): Promise<boolean>;
   /** Deposits Base USDC from the wallet: gas-free (one signature) when the wallet can, else approve and deposit. */
   deposit(amountMicro: bigint): Promise<boolean>;
   /** Sends a LI.FI route from its source network; resolves to the source transaction once it is included. */
@@ -133,12 +145,19 @@ const TRIGGER_LABELS = {
 const triggerLabel = (kind: keyof typeof TRIGGER_LABELS) => TRIGGER_LABELS[kind];
 /** "Closes 0.01 BTC when price ≤ $95,000.00" for TP/SL, "Long $500.00 BTC when price ≥ …" for a stop entry. */
 const triggerLine = ({ summary }: PreparedTrigger) =>
-  `${summary.reduceOnly ? `Closes ${baseAmount(abs(BigInt(summary.baseDelta)))} ${summary.market}` : `${sideLabel(summary.side)} ${usdc(parseUsdcInput(summary.amount))} ${summary.market}`} when price ${summary.triggerAbove ? "≥" : "≤"} ${usdc(summary.triggerPrice)}`;
+  `${summary.reduceOnly ? `Closes ${baseAmount(abs(BigInt(summary.baseDelta)))} ${summary.market}` : `${sideLabel(summary.side)} ${usdc(parseUsdcInput(summary.amount))} ${summary.market}`} when price ${summary.triggerAbove ? "≥" : "≤"} ${usdPrice(summary.triggerPrice)}`;
 const fractionLabel = (fractionBps: number, market: Market) =>
   fractionBps < 10_000 ? `${fractionBps / 100}% of ${market} position` : `${market} position`;
 /** The API refused the signed price because the market moved past it before settlement. */
 const priceMoved = (error: unknown) =>
   error instanceof ApiError && error.status === 409 && error.message.startsWith("price moved");
+
+/** An error whose message is already written for the trader; the error toast shows it as is. */
+class TraderFacingError extends Error {}
+
+/** Firm quote requests from screens are spaced at least this far apart. */
+const FIRM_QUOTE_SPACING_MS = 1_000;
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The approvers refused a one-tap signature: the session's limits don't cover this trade. */
 const sessionRefused = (error: unknown) =>
@@ -152,6 +171,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   const quick = useQuickSession(trader.address);
   const marketList = useMarketList();
   const [busy, setBusy] = useState<string | null>(null);
+  // Set synchronously, so a double tap (or a second action started in the same tick) sees it before React
+  // re-renders: two signing flows must never overlap.
+  const busyRef = useRef<string | null>(null);
+  const lastFirmQuoteAt = useRef(0);
   const api = <T,>(path: string, body: unknown) => postJson<T>(`${API}${path}`, body);
 
   /** Runs one action with a pending toast, then a success or error toast. */
@@ -162,12 +185,13 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       progress: (detail: string) => void,
     ) => Promise<{ title: string; detail?: string; txHash?: string; value: T }>,
   ): Promise<T | undefined> {
-    if (busy) return undefined;
+    if (busyRef.current) return undefined;
     const address = trader.address;
     if (!address) {
       notify({ kind: "error", title: "Connect a wallet first" });
       return undefined;
     }
+    busyRef.current = label;
     setBusy(label);
     const id = notify({ kind: "pending", title: pending });
     try {
@@ -179,12 +203,16 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         {
           kind: "error",
           title: `${label} failed`,
-          detail: friendlyError(errorMessage(error, "Unavailable")),
+          detail:
+            error instanceof TraderFacingError
+              ? error.message
+              : friendlyError(errorMessage(error, "Unavailable")),
         },
         id,
       );
       return undefined;
     } finally {
+      busyRef.current = null;
       setBusy(null);
       // Every account query: the connected account's and those of its isolated accounts.
       void client.invalidateQueries({ queryKey: ["account"] });
@@ -274,7 +302,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         // Past the session's limits (its total, or a winning exit above the per-trade cap) the approvers
         // refuse the session's signature. Nothing was traded, so the wallet signs the same intent instead:
         // getting out must never depend on the one-tap allowance.
-        if (!sessionRefused(error) || !quoteUsable(quote.expiresAtMs, Date.now())) throw error;
+        if (!sessionRefused(error) || !quoteUsable(localDeadline(quote), Date.now())) throw error;
       }
     }
     progress("Confirm in your wallet");
@@ -342,6 +370,23 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     ]);
     return { held, registered };
   };
+  /** Whether the isolated account in `market` holds a position (null when it cannot be read). */
+  const isolatedOpen = async (market: Market): Promise<boolean | null> => {
+    const clearing = trader.settlement?.clearingAddress,
+      reader = getPublicClient(config, { chainId: trader.chain.id });
+    if (!clearing || !reader) return null;
+    return reader
+      .readContract({
+        address: clearing,
+        abi: clearingAbi,
+        functionName: "positionOf",
+        args: [tradeAccount(market, true), marketIndex(market)],
+      })
+      .then(
+        (position) => position.size !== 0n,
+        () => null,
+      );
+  };
 
   /**
    * Moves `amountMicro` into (positive) or out of (negative) the isolated account for `market`. The one-tap key
@@ -366,7 +411,11 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         trader.verified(prepared, "IsolatedMarginIntent", expected) as never,
       );
     } else {
-      progress("Confirm the trade's amount in your wallet");
+      progress(
+        amountMicro > 0n
+          ? "Confirm the trade's amount in your wallet"
+          : "Confirm returning the money to your balance in your wallet",
+      );
       userSignature = await trader.signIntent(prepared, "IsolatedMarginIntent", expected);
     }
     return api<Settled>("/v1/isolated/margin/execute", { intent: prepared.intent, userSignature });
@@ -376,20 +425,28 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     busy,
     quickSession: quick.session,
     quickCovers,
-    firmQuote: requestQuote,
+    firmQuote: async (order) => {
+      const wait = lastFirmQuoteAt.current + FIRM_QUOTE_SPACING_MS - Date.now();
+      if (wait > 0) await pause(wait);
+      lastFirmQuoteAt.current = Date.now();
+      const quote = await requestQuote(order);
+      return holdQuote(quote);
+    },
 
     marketOrder: async (order, reviewed) =>
       (await run(
         "Trade",
         order.reduceOnly ? `Reduce ${order.market}` : `${sideLabel(order.side)} ${order.market}`,
         async (progress) => {
-          if (reviewed && !quoteUsable(reviewed.expiresAtMs, Date.now()))
+          if (reviewed && !quoteUsable(localDeadline(reviewed), Date.now()))
             throw new Error("The quote expired. Review the new price");
           const slippageBps =
             order.slippageBps === undefined ? undefined : clampSlippageBps(order.slippageBps);
-          // Set the trade's own margin aside first, so the trade itself opens on the isolated account. A retry
-          // after a failed trade finds the margin already there and moves nothing.
-          let isolated = false;
+          // Set the trade's own margin aside first, so the trade itself opens on the isolated account. If the trade
+          // then fails, the amount moved goes back (below); margin already there (an earlier attempt whose return
+          // failed) is used, so nothing more moves.
+          let isolated = false,
+            setAside = 0n;
           if (order.isolated && !order.reduceOnly) {
             const { held, registered } = await isolatedState(order.market);
             const move = marginTopUp(order.isolated.payMicro, held, registered);
@@ -397,32 +454,59 @@ export function TradingProvider({ children }: { children: ReactNode }) {
               if (move !== 0n) {
                 progress("Setting the amount aside");
                 await moveMargin(order.market, move, progress);
+                if (move > 0n) setAside = move;
               }
               isolated = true;
             }
           }
-          if (!reviewed) progress("Getting a price");
-          const quote = reviewed ?? (await requestQuote(order));
-          const result = await settleTrade(
-            quote,
-            order.reduceOnly,
-            progress,
-            quickCovers(order.market, order.amountMicro),
-            {
-              market: order.market,
-              side: order.side,
-              amountMicro: order.amountMicro,
-              slippageBps,
-              isolated,
-            },
-          );
+          let quote: Quote, result: Settled;
+          try {
+            if (!reviewed) progress("Getting a price");
+            quote = reviewed ?? (await requestQuote(order));
+            result = await settleTrade(
+              quote,
+              order.reduceOnly,
+              progress,
+              quickCovers(order.market, order.amountMicro),
+              {
+                market: order.market,
+                side: order.side,
+                amountMicro: order.amountMicro,
+                slippageBps,
+                isolated,
+              },
+            );
+          } catch (error) {
+            if (setAside <= 0n) throw error;
+            // The amount was set aside for a trade that did not happen: put it back, so it never sits where
+            // the balance and withdraw cannot see it. Best effort; Home and Portfolio offer it back otherwise.
+            const why = friendlyError(errorMessage(error, "Unavailable"));
+            // A lost response or a timeout can hide a fill that landed: never return the margin of an open trade.
+            const open = await isolatedOpen(order.market);
+            if (open !== false)
+              throw new TraderFacingError(
+                open
+                  ? `The app lost track of this trade, but it went through. Check Your trade on Home.`
+                  : `${why} ${usdc(setAside)} may still be set aside for ${order.market}. Use Return to balance on Home or in Portfolio if it is.`,
+              );
+            progress("Returning the amount to your balance");
+            const returned = await moveMargin(order.market, -setAside, progress).then(
+              () => true,
+              () => false,
+            );
+            throw new TraderFacingError(
+              returned
+                ? `${why} ${usdc(setAside)} went back to your balance.`
+                : `${why} ${usdc(setAside)} is still set aside for ${order.market}. Use Return to balance on Home or in Portfolio to get it back.`,
+            );
+          }
           return {
             title: order.title
               ? order.title
               : order.reduceOnly
                 ? `Reduced ${order.market} by ${usdc(order.amountMicro)}`
                 : `${sideLabel(order.side)} ${order.market} ${usdc(order.amountMicro)} ${result.transaction ? "filled" : "approved"}`,
-            detail: `at ${usdc(quote.expectedPrice)}`,
+            detail: `at ${usdPrice(quote.expectedPrice)}`,
             txHash: result.transaction?.hash,
             value: true,
           };
@@ -456,7 +540,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         await api("/v1/orders", { orderId: prepared.orderId, userSignature });
         return {
           title: `${sideLabel(order.side)} limit open`,
-          detail: `${usdc(order.amountMicro)} ${order.market} at ${usdc((prepared.intent as { limitPrice: string }).limitPrice)}, good for 24 hours`,
+          detail: `${usdc(order.amountMicro)} ${order.market} at ${usdPrice((prepared.intent as { limitPrice: string }).limitPrice)}, good for 24 hours`,
           value: true,
         };
       })) ?? false,
@@ -577,7 +661,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         }
         return {
           title: `${fractionLabel(fractionBps, market)} closed`,
-          detail: `at ${usdc(quote.expectedPrice)}${leftover}`,
+          detail: `at ${usdPrice(quote.expectedPrice)}${leftover}`,
           txHash: result.transaction?.hash,
           value: { price: BigInt(quote.expectedPrice), fee: BigInt(quote.fee) },
         };
@@ -600,7 +684,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             const market = first.market!;
             try {
               // Quotes live seconds; wallet prompts for earlier positions can outlast later quotes.
-              const quote = quoteUsable(first.expiresAtMs, Date.now())
+              const quote = quoteUsable(localDeadline(first), Date.now())
                 ? first
                 : await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps });
               const step = (detail: string) =>
@@ -625,8 +709,8 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         },
       ),
 
-    emergencyClose: (market) =>
-      run("Emergency close", `Close ${market} at oracle`, async (progress) => {
+    emergencyClose: async (market) =>
+      (await run("Emergency close", `Close ${market} at oracle`, async (progress) => {
         const nonce = randomNonce(),
           index = marketIndex(market);
         const prepared = await api<Prepared>("/v1/close/prepare", { account: account(), market, nonce });
@@ -641,9 +725,17 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         return {
           title: `${market} position closed`,
           txHash: result.transaction?.hash,
-          value: undefined,
+          value: true,
         };
-      }),
+      })) ?? false,
+
+    returnMargin: async (market) =>
+      (await run("Return to balance", `Return ${market} money to your balance`, async (progress) => {
+        const { held } = await isolatedState(market);
+        if (held <= 0n) return { title: "Nothing to return", value: true };
+        await moveMargin(market, -held, progress);
+        return { title: `${usdc(held)} is back in your balance`, value: true };
+      })) ?? false,
 
     deposit: async (amount) =>
       (await run("Deposit", `Deposit ${usdc(amount)}`, async (progress) => {
@@ -738,24 +830,32 @@ export function TradingProvider({ children }: { children: ReactNode }) {
               // USDT on Ethereum refuses to change a nonzero allowance without resetting it first.
               if (allowance > 0n) {
                 progress(`Reset the ${source.symbol} approval in your wallet`);
-                await trader.sendOn(route.request.fromChain, {
+                await trader.sendOn(
+                  route.request.fromChain,
+                  {
+                    to: route.request.fromToken,
+                    data: encodeFunctionData({
+                      abi: erc20Abi,
+                      functionName: "approve",
+                      args: [fresh.approval, 0n],
+                    }),
+                  },
+                  { stay: true },
+                );
+              }
+              progress(`Approve ${source.symbol} on ${network} in your wallet`);
+              await trader.sendOn(
+                route.request.fromChain,
+                {
                   to: route.request.fromToken,
                   data: encodeFunctionData({
                     abi: erc20Abi,
                     functionName: "approve",
-                    args: [fresh.approval, 0n],
+                    args: [fresh.approval, route.request.fromAmount],
                   }),
-                });
-              }
-              progress(`Approve ${source.symbol} on ${network} in your wallet`);
-              await trader.sendOn(route.request.fromChain, {
-                to: route.request.fromToken,
-                data: encodeFunctionData({
-                  abi: erc20Abi,
-                  functionName: "approve",
-                  args: [fresh.approval, route.request.fromAmount],
-                }),
-              });
+                },
+                { stay: true },
+              );
             }
           }
           progress(`Confirm the transfer on ${network} in your wallet`);

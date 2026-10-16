@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEV_ORACLE_NODES, readConfig } from "./config.js";
+import { readConfig } from "./config.js";
 import { explain, revertName } from "./errors.js";
 import {
   claimable,
   closePnl,
   exitPrice,
+  formatPrice,
   formatSignedUsd,
   formatSize,
+  idleIsolated,
+  isolatedTotal,
   parseNonce,
   parseUsdc,
   resolutionPhase,
@@ -37,17 +40,28 @@ const resolution = (patch: Partial<Resolution>): Resolution => ({
   ...patch,
 });
 
-test("config needs a chain and a clearing address, and defaults the dev oracle nodes on Base", () => {
+test("config needs a chain and a clearing address, and a Base build must name its nodes and links", () => {
   assert.match(readConfig({}) as string, /without a contract address/);
   assert.match(
     readConfig({ VITE_EXIT_CHAIN_ID: "8453", VITE_EXIT_CLEARING_ADDRESS: "0x123" }) as string,
     /without a contract address/,
   );
-  const base = readConfig({ VITE_EXIT_CHAIN_ID: "8453", VITE_EXIT_CLEARING_ADDRESS: CLEARING.toLowerCase() });
+  assert.match(
+    readConfig({ VITE_EXIT_CHAIN_ID: "8453", VITE_EXIT_CLEARING_ADDRESS: CLEARING }) as string,
+    /without its oracle nodes or links/,
+  );
+  const base = readConfig({
+    VITE_EXIT_CHAIN_ID: "8453",
+    VITE_EXIT_CLEARING_ADDRESS: CLEARING.toLowerCase(),
+    VITE_EXIT_ORACLE_NODES: "https://oracle-1.example,https://oracle-2.example",
+    VITE_EXIT_APP_URL: "https://app.example",
+    VITE_EXIT_DOCS_URL: "https://docs.example/exits",
+  });
   assert.ok(typeof base !== "string");
   assert.equal(base.clearing, CLEARING);
   assert.equal(base.chain.name, "Base");
-  assert.deepEqual(base.oracleNodes, DEV_ORACLE_NODES);
+  assert.deepEqual(base.oracleNodes, ["https://oracle-1.example", "https://oracle-2.example"]);
+  assert.equal(base.appUrl, "https://app.example");
   const local = readConfig({
     VITE_EXIT_CHAIN_ID: "31337",
     VITE_EXIT_CLEARING_ADDRESS: CLEARING,
@@ -201,4 +215,16 @@ test("mobile wallet links open this page in the wallet's browser", () => {
     "https://go.cb-w.com/dapp?cb_url=https%3A%2F%2Fexit.rfq-markets.workers.dev%2F",
   );
   assert.equal(links[1].href, "https://metamask.app.link/dapp/exit.rfq-markets.workers.dev/");
+});
+
+test("prices keep significant digits below $10, and idle Home trades can move home", () => {
+  assert.equal(formatPrice(97_123_456_789n), "$97,123.46");
+  assert.equal(formatPrice(12_345n), "$0.012345");
+  assert.equal(formatPrice(1_234_567n), "$1.2346");
+  const idle = { market: 2, symbol: "SOL", account: CLEARING, collateral: 25_000_000n, position: null };
+  const open = { ...idle, market: 0, position: long };
+  assert.equal(idleIsolated(idle), true);
+  assert.equal(idleIsolated(open), false);
+  assert.equal(idleIsolated({ ...idle, collateral: 0n }), false);
+  assert.equal(isolatedTotal([idle, open]), 50_000_000n);
 });

@@ -65,6 +65,9 @@ function venueResult(value: unknown): VenueResult {
  * A persistent, private JSON-lines bridge to Hyperliquid's official Python SDK.
  * The child receives the agent key only through its environment and never logs it.
  */
+/** Longest reply line read from the bridge before it is treated as broken and restarted. */
+export const MAX_BRIDGE_LINE_BYTES = 1_000_000;
+
 export class HyperliquidVenue implements HedgeVenue {
   readonly mode: `hyperliquid-${HyperliquidNetwork}`;
   private child?: ChildProcessWithoutNullStreams;
@@ -121,6 +124,12 @@ export class HyperliquidVenue implements HedgeVenue {
     child.stderr.on("data", (chunk) => {
       stderr = (stderr + String(chunk)).slice(-2_000);
     });
+    // A bridge that died (EPIPE) or stopped reading fails its pending requests instead of crashing the process.
+    child.stdin.on("error", (error) => {
+      if (this.child === child) this.child = undefined;
+      this.failAll(new Error(`Hyperliquid bridge input closed: ${error.message}`));
+      child.kill();
+    });
     child.stdout.on("data", (chunk) => {
       this.stdout += String(chunk);
       for (;;) {
@@ -143,6 +152,13 @@ export class HyperliquidVenue implements HedgeVenue {
         this.pending.delete(reply.id);
         if (reply.ok) item.resolve(reply.result);
         else item.reject(new Error(reply.error ?? "Hyperliquid bridge request failed"));
+      }
+      // Replies are single small JSON lines; an unterminated flood is a broken bridge, not a slow one.
+      if (this.stdout.length > MAX_BRIDGE_LINE_BYTES) {
+        this.stdout = "";
+        if (this.child === child) this.child = undefined;
+        this.failAll(new Error("Hyperliquid bridge reply exceeds the size limit"));
+        child.kill();
       }
     });
     child.on("exit", (code, signal) => {

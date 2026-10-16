@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { serverFrom, sessionVenue } from "./main.js";
+import { serverFrom, sessionVenue, settlementFrom } from "./main.js";
 import { accountTools, dollars, readTools, toAmount, type Venue } from "./tools.js";
 
 const USDC = 1_000_000n;
@@ -237,4 +237,18 @@ test("with RFQ_ACCOUNT the key trades for that account as a session key", async 
     ["account", owner],
   ]);
   await assert.rejects(venue.tpsl({ market: "ETH" }), /session key cannot/);
+});
+
+test("RFQ_CHAIN_ID and RFQ_CLEARING_ADDRESS pin the settlement the SDK signs for", () => {
+  assert.deepEqual(settlementFrom({}), {});
+  assert.deepEqual(
+    settlementFrom({
+      RFQ_CHAIN_ID: "8453",
+      RFQ_CLEARING_ADDRESS: "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+    }),
+    { chainId: 8453n, clearingAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" },
+  );
+  assert.deepEqual(settlementFrom({ RFQ_CHAIN_ID: "0x2105" }), { chainId: 8453n });
+  assert.throws(() => settlementFrom({ RFQ_CHAIN_ID: "base" }), /RFQ_CHAIN_ID/);
+  assert.throws(() => settlementFrom({ RFQ_CLEARING_ADDRESS: "0x1234" }));
 });

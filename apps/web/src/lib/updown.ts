@@ -2,7 +2,8 @@
 // a market order: the amount is the margin, the multiplier is the leverage, and
 // it stays open until the trader cashes out (or it auto-closes), like any perp.
 import type { ChartPoint } from "./candles.js";
-import { usdcCompact } from "./format.js";
+import { usdc, usdcCompact } from "./format.js";
+import { MIN_ISOLATED_OPEN } from "./isolated.js";
 import { MARGIN_PROBLEM, leverageLabel, positionNotional } from "./ticket.js";
 import type { Side } from "./types.js";
 
@@ -122,8 +123,39 @@ export function homeProblem(
 }
 
 /**
- * What a position of `notional` loses if the price goes from `entry` to `exit`. The whole balance backs a
- * trade, so at the auto-close price this can be more than the amount put in.
+ * What a position of `notional` loses if the price goes from `entry` to `exit`. A Home trade holds only its
+ * amount, so at its auto-close price this is about that amount; a position on the main balance can lose more.
  */
 export const lossAt = (notional: bigint, entry: bigint, exit: bigint) =>
   entry > 0n ? (notional * (entry > exit ? entry - exit : exit - entry)) / entry : 0n;
+
+/**
+ * Why a Home amount can't be traded, or null. Every Home trade holds its amount in its own isolated account,
+ * which the contract opens only with at least MIN_ISOLATED_OPEN; a smaller amount would trade on the whole
+ * balance instead, so Home asks for the minimum rather than quietly risking more than the amount.
+ */
+export function stakeProblem(stakeMicro: bigint | null): string | null {
+  if (stakeMicro !== null && stakeMicro < MIN_ISOLATED_OPEN)
+    return `The smallest trade is ${usdcCompact(MIN_ISOLATED_OPEN)}`;
+  return null;
+}
+
+/** The fee on a position of `notionalMicro` at `feeBps`, in USDC 1e6. */
+export const tradeFee = (notionalMicro: bigint, feeBps: number) =>
+  (notionalMicro * BigInt(Math.max(0, Math.round(feeBps)))) / 10_000n;
+
+/** How Home states the fee on a position: "no fees", or "a $0.05 fee". */
+export const feeWords = (notionalMicro: bigint, feeBps: number) => {
+  const fee = tradeFee(notionalMicro, feeBps);
+  return fee === 0n ? "no fees" : `a ${usdc(fee)} fee`;
+};
+
+/**
+ * What cashing out a Home trade puts back in the balance: what the trade is worth now (`worthMicro`: its
+ * isolated account's equity, or its amount plus PnL and funding on the main balance) less the closing fee,
+ * never below zero.
+ */
+export function cashOutValue(worthMicro: bigint, notionalMicro: bigint, feeBps: number): bigint {
+  const value = worthMicro - tradeFee(notionalMicro, feeBps);
+  return value > 0n ? value : 0n;
+}

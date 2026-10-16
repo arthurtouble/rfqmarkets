@@ -41,6 +41,7 @@ import {
   triggerOrderPrepareSchema,
 } from "./schemas.js";
 import { admitSponsoredAction, verifySignedAction } from "./signed-actions.js";
+import { redactUrls } from "../../lib/src/error-codes.js";
 
 /** A prepared order is awaiting its signature and is never listed; the rest are public statuses. */
 type OrderStatus = "prepared" | PublicOrderStatus;
@@ -90,6 +91,14 @@ const DEFAULT_MAX_PREPARED_ORDERS = 10_000;
  * signature or a failed settlement simulation) is cancelled off chain: each attempt reserves risk.
  */
 export const MAX_CONSECUTIVE_REFUSALS = 5;
+/**
+ * Filled, cancelled and expired orders stay listed (GET /v1/orders/:address, the app's order history and fill
+ * notices) for this long, then leave memory; the journal keeps their rows.
+ */
+export const TERMINAL_ORDER_RETENTION_MS = 24 * 60 * 60 * 1_000;
+/** Most recent terminal orders kept per account, and in total, within the retention window. */
+const MAX_TERMINAL_ORDERS_PER_ACCOUNT = 100;
+const MAX_TERMINAL_ORDERS = 50_000;
 const MARGIN_CANCEL_NOTE =
   "cancelled: the account cannot cover this order's margin; the signed order stays valid on chain until its deadline or a nonce cancel";
 const REFUSED_CANCEL_NOTE =
@@ -111,6 +120,8 @@ const isLive = (order: RestingOrder) =>
   order.status === "prepared" || order.status === "open" || order.status === "executing";
 /** Signed and not yet final: counts toward resting-order capacity. Prepared orders have their own cap. */
 const isResting = (order: RestingOrder) => order.status === "open" || order.status === "executing";
+const isTerminal = (order: RestingOrder) =>
+  order.status === "filled" || order.status === "cancelled" || order.status === "expired";
 const marketable = (order: RestingOrder, price: bigint) =>
   order.side === "buy" ? price <= order.intent.limitPrice : price >= order.intent.limitPrice;
 /** A reduce-only order can still reduce: the position is open and on the other side of the order. */
@@ -193,6 +204,10 @@ function rejectOrder(reply: FastifyReply, error: unknown, fallback: string) {
  */
 export class LimitOrders {
   private readonly orders = new Map<string, RestingOrder>();
+  /** Order IDs per account (every status held in memory), so per-account paths never scan every order. */
+  private readonly byAccount = new Map<string, Set<string>>();
+  /** Orders in the order they became terminal; eviction walks it from the front. May hold stale entries. */
+  private readonly terminalQueue: Array<{ orderId: string; atMs: number }> = [];
   private readonly triggers = new LimitTriggerBook();
   private readonly stops = new StopTriggerBook();
   private readonly preparedExpiries = new ExpiryIndex();
@@ -218,8 +233,11 @@ export class LimitOrders {
       ctx.options.maxPreparedOrders ?? Math.min(this.capacity, DEFAULT_MAX_PREPARED_ORDERS);
     this.restore();
     ctx.onPrune((now) => {
-      for (const id of this.preparedExpiries.takeExpired(now))
-        if (this.orders.get(id)?.status === "prepared") this.orders.delete(id);
+      for (const id of this.preparedExpiries.takeExpired(now)) {
+        const order = this.orders.get(id);
+        if (order?.status === "prepared") this.forget(order);
+      }
+      this.evictTerminal(now);
     });
     ctx.onPositionChange((account, market) => {
       this.positionSweeps.add(positionKey(account, market));
@@ -243,12 +261,59 @@ export class LimitOrders {
     };
   }
 
+  private remember(order: RestingOrder) {
+    this.orders.set(order.orderId, order);
+    const account = order.intent.account;
+    let ids = this.byAccount.get(account);
+    if (!ids) this.byAccount.set(account, (ids = new Set()));
+    ids.add(order.orderId);
+  }
+
+  private forget(order: RestingOrder) {
+    this.orders.delete(order.orderId);
+    const ids = this.byAccount.get(order.intent.account);
+    ids?.delete(order.orderId);
+    if (ids?.size === 0) this.byAccount.delete(order.intent.account);
+  }
+
+  /** Orders of one account held in memory. */
+  private ordersOf(account: string) {
+    const orders: RestingOrder[] = [];
+    for (const id of this.byAccount.get(account) ?? []) {
+      const order = this.orders.get(id);
+      if (order) orders.push(order);
+    }
+    return orders;
+  }
+
   /** Signed live orders held by one account. */
   private restingFor(account: string) {
-    let count = 0;
-    for (const order of this.orders.values())
-      if (isResting(order) && order.intent.account === account) count++;
-    return count;
+    return this.ordersOf(account).filter(isResting).length;
+  }
+
+  /**
+   * Terminal orders leave memory after the retention window, and beyond the per-account and global caps
+   * (oldest first). Their journal rows stay.
+   */
+  private evictTerminal(now = Date.now()) {
+    const cutoff = now - TERMINAL_ORDER_RETENTION_MS;
+    while (this.terminalQueue.length) {
+      const head = this.terminalQueue[0];
+      if (head.atMs > cutoff && this.terminalQueue.length <= MAX_TERMINAL_ORDERS) break;
+      this.terminalQueue.shift();
+      const order = this.orders.get(head.orderId);
+      // Stale entry: the order was evicted already, or became terminal again later (it is queued again).
+      if (order && isTerminal(order) && order.updatedAtMs <= head.atMs) this.forget(order);
+    }
+  }
+
+  /** Keeps an account's most recent terminal orders within MAX_TERMINAL_ORDERS_PER_ACCOUNT. */
+  private capTerminal(account: string) {
+    const terminal = this.ordersOf(account).filter(isTerminal);
+    if (terminal.length <= MAX_TERMINAL_ORDERS_PER_ACCOUNT) return;
+    terminal.sort((a, b) => a.updatedAtMs - b.updatedAtMs);
+    for (const order of terminal.slice(0, terminal.length - MAX_TERMINAL_ORDERS_PER_ACCOUNT))
+      this.forget(order);
   }
 
   /**
@@ -308,7 +373,7 @@ export class LimitOrders {
         lastError: item.last_error ? String(item.last_error) : undefined,
       };
       if (order.type !== "limit" && !order.trigger) continue;
-      this.orders.set(order.orderId, order);
+      this.remember(order);
       this.arm(order);
       if (order.intent.reduceOnly && order.trigger)
         this.positionSweeps.add(positionKey(order.intent.account, order.market));
@@ -345,11 +410,16 @@ export class LimitOrders {
         order.lastError ?? null,
         order.orderId,
       );
+    if (isTerminal(order)) {
+      this.terminalQueue.push({ orderId: order.orderId, atMs: order.updatedAtMs });
+      this.capTerminal(order.intent.account);
+      this.evictTerminal(order.updatedAtMs);
+    }
   }
 
   /** Live orders signed with the same account and nonce (the other leg of a TP/SL pair). */
   private siblings(order: RestingOrder) {
-    return [...this.orders.values()].filter(
+    return this.ordersOf(order.intent.account).filter(
       (other) =>
         other.orderId !== order.orderId &&
         other.userSignature !== undefined &&
@@ -377,7 +447,12 @@ export class LimitOrders {
     if (this.checkTimer) return;
     this.checkTimer = setTimeout(() => {
       this.checkTimer = undefined;
-      void this.checkRestingOrders();
+      // A failed check (a journal write, say) must not become an unhandled rejection; the next check retries.
+      this.checkRestingOrders().catch((error: unknown) =>
+        console.error(
+          redactUrls(`resting order check failed: ${error instanceof Error ? error.stack : String(error)}`),
+        ),
+      );
     }, delay);
     this.checkTimer.unref();
   }
@@ -451,13 +526,9 @@ export class LimitOrders {
     for (const key of keys) {
       this.positionSweeps.delete(key);
       const [account, market] = key.split(":") as [string, Market];
-      const affected = [...this.orders.values()].filter(
+      const affected = this.ordersOf(account).filter(
         (order) =>
-          order.trigger &&
-          order.intent.reduceOnly &&
-          order.status === "open" &&
-          order.intent.account === account &&
-          order.market === market,
+          order.trigger && order.intent.reduceOnly && order.status === "open" && order.market === market,
       );
       if (!affected.length) continue;
       let size: bigint;
@@ -679,7 +750,7 @@ export class LimitOrders {
   }
 
   private stagePrepared(order: RestingOrder) {
-    this.orders.set(order.orderId, order);
+    this.remember(order);
     this.preparedExpiries.schedule(order.orderId, order.createdAtMs + PREPARED_ORDER_TTL_MS);
   }
 
@@ -1010,8 +1081,8 @@ export class LimitOrders {
         return reply.code(400).send({ error: "invalid account" });
       }
       return {
-        items: [...this.orders.values()]
-          .filter((order) => order.intent.account === account && order.status !== "prepared")
+        items: this.ordersOf(account)
+          .filter((order) => order.status !== "prepared")
           .sort((a, b) => b.createdAtMs - a.createdAtMs)
           .map((order) => this.orderView(order)),
       };

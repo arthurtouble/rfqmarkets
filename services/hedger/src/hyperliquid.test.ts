@@ -71,3 +71,38 @@ test("Hyperliquid venue rejects malformed credentials before starting a child", 
     /minimum/,
   );
 });
+
+test("a bridge that stops reading or floods its output fails requests instead of the process", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "rfq-hyperliquid-")),
+    closed = join(directory, "closed.py"),
+    flood = join(directory, "flood.py");
+  // Answers the first request, then closes its input: the next request's write hits a closed pipe (EPIPE).
+  writeFileSync(
+    closed,
+    'import json, os, sys, time\nsys.stdin.readline()\nos.close(0)\nprint(json.dumps({"id":1,"ok":True,"result":{"base":"0"}}), flush=True)\ntime.sleep(5)\n',
+  );
+  // Streams an unterminated reply larger than the buffer limit.
+  writeFileSync(
+    flood,
+    "import sys\nsys.stdin.readline()\nwhile True:\n sys.stdout.write('x' * 65536)\n sys.stdout.flush()\n",
+  );
+  const venue = (bridgePath: string) =>
+    new HyperliquidVenue({
+      accountAddress: `0x${"11".repeat(20)}`,
+      agentPrivateKey: `0x${"33".repeat(32)}`,
+      pythonPath: "python3",
+      bridgePath,
+      requestTimeoutMs: 10_000,
+    });
+  const deaf = venue(closed),
+    noisy = venue(flood);
+  try {
+    assert.equal(await deaf.position("BTC"), 0n);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await assert.rejects(deaf.position("BTC"), /EPIPE|input closed/);
+    await assert.rejects(noisy.position("BTC"), /size limit/);
+  } finally {
+    await Promise.all([deaf.close(), noisy.close()]);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

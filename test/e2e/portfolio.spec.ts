@@ -271,7 +271,9 @@ test.describe("positions and portfolio", () => {
   test("the account page shows the wallet, one-tap trading and help links", async ({ page }) => {
     const { account } = await devWallet();
     await page.goto("/account");
-    await expect(page.getByText(`${account.slice(0, 6)}…${account.slice(-4)}`)).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Wallet" }).getByText(`${account.slice(0, 6)}…${account.slice(-4)}`),
+    ).toBeVisible();
     await expect(page.getByText("Local dev wallet", { exact: false })).toBeVisible();
     await expect(page.getByText(/trades up to \$2,500 fill without a wallet prompt/i)).toBeVisible();
     for (const name of [/Help and docs/, /Emergency exit/])

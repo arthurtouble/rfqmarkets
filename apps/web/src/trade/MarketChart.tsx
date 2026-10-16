@@ -5,7 +5,7 @@ import { useLiveCandles } from "../data/candles.js";
 import { useMarketPrice } from "../data/market-feed.js";
 import { useMarketStats } from "../data/market-stats.js";
 import { CANDLE_INTERVALS } from "../lib/candles.js";
-import { usdc } from "../lib/format.js";
+import { usdPrice } from "../lib/format.js";
 import { CANDLE_PICKER, DEFAULT_CANDLE_INTERVAL, dayRange } from "../lib/market-stats.js";
 import type { CandleInterval, Market } from "../lib/types.js";
 import { store, storedChoice } from "../lib/storage.js";
@@ -47,11 +47,11 @@ export function MarketChart({ market, height }: { market: Market; height: number
           <dl className="day-stats footnote">
             <div>
               <dt>24h high</dt>
-              <dd>{usdc(day?.high)}</dd>
+              <dd>{usdPrice(day?.high)}</dd>
             </div>
             <div>
               <dt>24h low</dt>
-              <dd>{usdc(day?.low)}</dd>
+              <dd>{usdPrice(day?.low)}</dd>
             </div>
           </dl>
         }

@@ -28,8 +28,11 @@ import type {
 import { useTrader } from "../wallet/trader.js";
 import { useMarketList } from "./markets.js";
 
+/** Every account-scoped key starts with this; `keys.account(address)` adds the address. */
+const ACCOUNT_ROOT = ["account"] as const;
+
 export const keys = {
-  account: (address: string) => ["account", address.toLowerCase()] as const,
+  account: (address: string) => [...ACCOUNT_ROOT, address.toLowerCase()] as const,
   indexer: ["indexer"] as const,
   /** Under the account key, so the indexer stream refreshes them on that account's activity. */
   portfolio: (address: string) => [...keys.account(address), "portfolio"] as const,
@@ -161,7 +164,10 @@ export function useIndexerSync() {
     indexed: (data) => {
       const update = data as IndexedEvent;
       if (update.initial || update.reset) {
-        void client.invalidateQueries();
+        // A (re)connect may have missed updates: refresh what the indexer stream drives (every account's reads
+        // and the indexer's own), not every query in the app (markets config, candles, the dev wallet).
+        void client.invalidateQueries({ queryKey: ACCOUNT_ROOT });
+        void client.invalidateQueries({ queryKey: keys.indexer });
         return;
       }
       if (update.changed) void client.invalidateQueries({ queryKey: keys.indexer });

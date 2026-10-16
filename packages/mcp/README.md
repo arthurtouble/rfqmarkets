@@ -7,16 +7,16 @@ contracts check it exactly as they check a trade from the app.
 
 ## Tools
 
-| Tool           | What it does                                                                  | Needs a key |
-| -------------- | ----------------------------------------------------------------------------- | ----------- |
-| `list_markets` | Open markets with the price and the highest multiplier each allows            | No          |
-| `get_price`    | One market's mid, and the prices an up bet buys at and a down bet sells at    | No          |
-| `quote_bet`    | The price a bet would open at, without placing it                             | No          |
-| `get_account`  | Balance, equity, money free for new bets, and open bets with their result     | Yes         |
-| `open_bet`     | Bets `stake` × `multiplier` dollars on a market going `up` or `down`          | Yes         |
-| `close_bet`    | Cashes out a market's bet, all of it or a `percent`                           | Yes         |
-| `close_all`    | Cashes out every open bet                                                     | Yes         |
-| `protect_bet`  | Sets a take-profit price, a stop-loss price or both on a market's open bet    | Yes         |
+| Tool           | What it does                                                               | Needs a key |
+| -------------- | -------------------------------------------------------------------------- | ----------- |
+| `list_markets` | Open markets with the price and the highest multiplier each allows         | No          |
+| `get_price`    | One market's mid, and the prices an up bet buys at and a down bet sells at | No          |
+| `quote_bet`    | The price a bet would open at, without placing it                          | No          |
+| `get_account`  | Balance, equity, money free for new bets, and open bets with their result  | Yes         |
+| `open_bet`     | Bets `stake` × `multiplier` dollars on a market going `up` or `down`       | Yes         |
+| `close_bet`    | Cashes out a market's bet, all of it or a `percent`                        | Yes         |
+| `close_all`    | Cashes out every open bet                                                  | Yes         |
+| `protect_bet`  | Sets a take-profit price, a stop-loss price or both on a market's open bet | Yes         |
 
 Amounts are plain US dollars (USDC). Bets have no expiry and there are no trading fees; the quoted price
 includes the venue's small markup.
@@ -29,13 +29,15 @@ From a checkout of this repository, after `npm ci`:
 RFQ_PRIVATE_KEY=0x... npm run -s mcp
 ```
 
-| Variable                 | Meaning                                                              | Default                               |
-| ------------------------ | -------------------------------------------------------------------- | ------------------------------------- |
-| `RFQ_API_URL`            | API origin                                                           | `https://dev.rfq-markets.workers.dev` |
-| `RFQ_PRIVATE_KEY`        | The agent's wallet key. Without it only the read tools are offered.  | none                                  |
-| `RFQ_ACCOUNT`            | The account `RFQ_PRIVATE_KEY` trades for as a session key            | the key's own wallet                  |
-| `RFQ_MCP_MAX_STAKE`      | Largest stake one bet may put up, in dollars                         | `100`                                 |
-| `RFQ_MCP_MAX_MULTIPLIER` | Highest multiplier; a market's own lower cap still applies           | `10`                                  |
+| Variable                 | Meaning                                                             | Default                               |
+| ------------------------ | ------------------------------------------------------------------- | ------------------------------------- |
+| `RFQ_API_URL`            | API origin                                                          | `https://dev.rfq-markets.workers.dev` |
+| `RFQ_PRIVATE_KEY`        | The agent's wallet key. Without it only the read tools are offered. | none                                  |
+| `RFQ_ACCOUNT`            | The account `RFQ_PRIVATE_KEY` trades for as a session key           | the key's own wallet                  |
+| `RFQ_CHAIN_ID`           | Chain id every signature is bound to (pinning is recommended)       | read from the API's `/v1/config`      |
+| `RFQ_CLEARING_ADDRESS`   | Clearing contract every signature is bound to (pin it too)          | read from the API's `/v1/config`      |
+| `RFQ_MCP_MAX_STAKE`      | Largest stake one bet may put up, in dollars                        | `100`                                 |
+| `RFQ_MCP_MAX_MULTIPLIER` | Highest multiplier; a market's own lower cap still applies          | `10`                                  |
 
 Use a dedicated wallet funded with only what the agent may lose. The limits are checked here before anything
 is signed, on top of the venue's own per-trade and exposure limits.

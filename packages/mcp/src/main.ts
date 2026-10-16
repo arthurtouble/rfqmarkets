@@ -3,6 +3,8 @@
 //   RFQ_PRIVATE_KEY         the agent's wallet key; without it only prices and quotes are offered
 //   RFQ_ACCOUNT             the account RFQ_PRIVATE_KEY trades for as a session key (granted with the SDK's
 //                           `grantSession`); without it the key's own wallet is the account
+//   RFQ_CHAIN_ID            chain id every signature is bound to (recommended; else read from the API)
+//   RFQ_CLEARING_ADDRESS    clearing contract every signature is bound to (recommended; else read from the API)
 //   RFQ_MCP_MAX_STAKE       largest stake per bet in dollars (default 100)
 //   RFQ_MCP_MAX_MULTIPLIER  highest multiplier (default 10)
 // The key never leaves this process: the API prepares typed data and the server signs it locally.
@@ -21,6 +23,21 @@ function limit(env: NodeJS.ProcessEnv, key: string, fallback: number) {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) throw new Error(`${key} must be a positive number`);
   return value;
+}
+
+/**
+ * The settlement every signature is bound to. Pinned, the SDK refuses typed data for any other chain or contract
+ * whatever the API returns; unpinned, it trusts the API's `/v1/config`.
+ */
+export function settlementFrom(env: NodeJS.ProcessEnv): { chainId?: bigint; clearingAddress?: string } {
+  const chainId = env.RFQ_CHAIN_ID?.trim(),
+    clearing = env.RFQ_CLEARING_ADDRESS?.trim();
+  if (chainId && !/^(0x[0-9a-fA-F]+|\d+)$/.test(chainId))
+    throw new Error("RFQ_CHAIN_ID must be a chain id such as 8453");
+  return {
+    ...(chainId ? { chainId: BigInt(chainId) } : {}),
+    ...(clearing ? { clearingAddress: getAddress(clearing) } : {}),
+  };
 }
 
 export function limitsFrom(env: NodeJS.ProcessEnv): Limits {
@@ -52,7 +69,11 @@ export function serverFrom(env: NodeJS.ProcessEnv) {
   if (account && !key)
     throw new Error("RFQ_ACCOUNT needs RFQ_PRIVATE_KEY, the session key that trades for it");
   const signer = key ? new Wallet(key) : undefined;
-  const client = new RfqClient({ baseUrl: env.RFQ_API_URL || DEFAULT_API_URL, signer });
+  const client = new RfqClient({
+    baseUrl: env.RFQ_API_URL || DEFAULT_API_URL,
+    signer,
+    ...settlementFrom(env),
+  });
   const venue = account ? sessionVenue(client, account) : client;
   const tools = signer
     ? [

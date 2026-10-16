@@ -1,13 +1,7 @@
 import { useId, useRef, useState, type PointerEvent } from "react";
 import type { ChartPoint } from "../lib/candles.js";
+import { priceDecimals, usdPriceNumber } from "../lib/format.js";
 import { chartTime } from "../lib/market-stats.js";
-
-const usd = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
 
 /**
  * Price line for Home and the Pro line view. Points are mids in dollars, oldest
@@ -67,6 +61,9 @@ export function PriceChart({
   const y = (value: number) => pad + ((top - value) * (height - pad * 2)) / (top - bottom);
   const path = values.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`);
   const trend = last > first ? "up" : last < first ? "down" : "flat";
+  // One precision for both labels, set by the price level (cheap markets show more digits).
+  const decimals = priceDecimals(high);
+  const usd = (value: number) => usdPriceNumber(value, decimals);
   const at = scrub ?? values.length - 1;
   const left = (index: number) => `${(x(index) / width) * 100}%`;
   // Edge labels hang inward so they never leave the chart.
@@ -108,7 +105,7 @@ export function PriceChart({
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
         role="img"
-        aria-label={`Price chart, ${trend}. High ${usd.format(high)}, low ${usd.format(low)}.`}
+        aria-label={`Price chart, ${trend}. High ${usd(high)}, low ${usd(low)}.`}
       >
         <defs>
           <linearGradient id={gradient} x1="0" y1="0" x2="0" y2="1">
@@ -138,13 +135,13 @@ export function PriceChart({
         className={`chart-extreme is-high ${align(highIndex)}`}
         style={{ left: left(highIndex), top: `${y(high) - 4}px` }}
       >
-        {usd.format(high)}
+        {usd(high)}
       </span>
       <span
         className={`chart-extreme is-low ${align(lowIndex)}`}
         style={{ left: left(lowIndex), top: `${y(low) + 4}px` }}
       >
-        {usd.format(low)}
+        {usd(low)}
       </span>
       {scrub !== null && (
         <span className="chart-crosshair" style={{ left: left(scrub) }} aria-hidden="true" />

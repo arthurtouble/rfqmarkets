@@ -13,6 +13,9 @@ import { RfqClient } from "./packages/sdk/src/client.js";
 const client = new RfqClient({
   baseUrl: "https://dev.rfq-markets.workers.dev",
   signer: new Wallet(process.env.KEY!),
+  // Recommended: pin the settlement every signature is bound to (see "What gets signed" below).
+  chainId: 84532n,
+  clearingAddress: "0x…",
 });
 
 await client.ladder("BTC", ["100", "1000"]);
@@ -26,6 +29,16 @@ await client.trade({ market: "ETH", side: "sell", amount: "20", account: await c
 const stop = client.streamMarkets(({ event, data }) => console.log(event, data));
 stop(); // closes the stream
 ```
+
+## What gets signed
+
+The client does not sign whatever the API prepares. Before every signature it rebuilds the EIP-712 domain
+from the pinned `chainId` and `clearingAddress`, uses the protocol's own bundled types, and checks the message
+against the request: the account, market, side, size (against the quote and the amount asked for), a limit
+price within the requested slippage, the fee cap, a withdrawal's recipient and amount, a margin move's amount
+and a session grant's limits. A mismatch throws `IntentMismatchError` and nothing is signed. Without pins the
+client reads the chain and contract from the API's `/v1/config` once, which trusts the API to name them; pin
+both whenever you know them.
 
 Responses are typed with the shared wire types in `packages/shared/src/api-types.ts` (`Quote`, `TradeResult`,
 `AccountState`, `RestingOrder` and the rest, re-exported from the client).

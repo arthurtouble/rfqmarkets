@@ -14,9 +14,10 @@ import "../RFQTypes.sol";
 /// @dev Linked library run by DELEGATECALL from RFQClearing, which applies the reentrancy guard.
 library RFQSettlement {
     /// @notice Settles an RFQ fill. Authority comes only from the signatures, never from the relayer.
-    /// @dev Order: price and funding first, then signatures and fencing, then the economic and exposure
+    /// @dev Order: price first, then signatures and fencing, then funding, then the economic and exposure
     /// checks, then the fill, fee and margin. A maker that cannot pay funding or the trader's gain moves the
-    /// venue into resolution instead of reverting.
+    /// venue into resolution instead of reverting. Signatures come before funding so a third party cannot
+    /// start resolution through an unsigned trade and skip the maker's incident grace period.
     function executeTrade(
         TradeIntent calldata intent,
         MakerApproval calldata approval,
@@ -27,11 +28,11 @@ library RFQSettlement {
     ) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         IPriceOracle.Observation memory observation = beginTrade(intent, report);
-        if ($.resolutionRequired) return;
-
         (bytes32 intentHash, address sessionSigner) =
             RFQSignatureVerifier.validateIntent(intent, approval, userSignature);
         RFQSignatureVerifier.validateApproval(approval, makerSignatureOne, makerSignatureTwo);
+        RFQLedger.settleAllFunding(intent.account);
+        if ($.resolutionRequired) return;
         settle(intent, approval, observation, report, intentHash, sessionSigner);
     }
 
@@ -49,13 +50,14 @@ library RFQSettlement {
     ) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         IPriceOracle.Observation memory observation = beginTrade(intent, report);
-        if ($.resolutionRequired) return;
         uint256 mid = (observation.bid + observation.ask) / 2;
         if (trigger.triggerAbove ? mid < trigger.triggerPrice : mid > trigger.triggerPrice) revert TriggerNotReached();
 
         (bytes32 intentHash, address sessionSigner) =
             RFQSignatureVerifier.validateTriggeredIntent(intent, trigger, approval, userSignature);
         RFQSignatureVerifier.validateApproval(approval, makerSignatureOne, makerSignatureTwo);
+        RFQLedger.settleAllFunding(intent.account);
+        if ($.resolutionRequired) return;
 
         TradeIntent memory fill = intent;
         int256 size = $.accounts[intent.account].positions[intent.market].size;
@@ -68,7 +70,8 @@ library RFQSettlement {
         settle(fill, approval, observation, report, intentHash, sessionSigner);
     }
 
-    /// @dev Price and funding come first. Funding can move the venue into resolution, which callers check.
+    /// @dev The venue and market checks and the price. Callers settle funding once the signatures hold;
+    /// funding can move the venue into resolution, which they check.
     function beginTrade(TradeIntent calldata intent, bytes calldata report)
         private
         returns (IPriceOracle.Observation memory observation)
@@ -80,7 +83,6 @@ library RFQSettlement {
                 || isolated.owner != address(0) && isolated.market != intent.market
         ) revert InvalidTrade();
         observation = RFQLedger.touchOracle(report, intent.market, MAX_ORACLE_AGE);
-        RFQLedger.settleAllFunding(intent.account);
     }
 
     /// @dev Economic and exposure checks, then the fill, fee and margin, for an authorized intent.

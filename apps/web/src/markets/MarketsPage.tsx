@@ -3,7 +3,16 @@ import { Link } from "@tanstack/react-router";
 import { useMarketFeed, useMarketPrice } from "../data/market-feed.js";
 import { useMarketStats } from "../data/market-stats.js";
 import { useIndexerHealth, usePublicPositions, useRecentTrades, useRisk } from "../data/queries.js";
-import { abs, baseAmount, clockTime, fundingApr, shortAddress, signedBase, usdc } from "../lib/format.js";
+import {
+  abs,
+  baseAmount,
+  clockTime,
+  fundingApr,
+  shortAddress,
+  signedBase,
+  usdc,
+  usdPrice,
+} from "../lib/format.js";
 import { useMarketList } from "../data/markets.js";
 import { dayChange, dayRange, searchMarkets, type DayStats } from "../lib/market-stats.js";
 import type { Market, RiskMarket } from "../lib/types.js";
@@ -58,7 +67,7 @@ function MarketRow({
       <span className="market-row__spark">{spark.length > 1 && <Sparkline values={spark} />}</span>
       <span className="market-row__price">
         <span className={`rfq-row__price tnum${status === "delayed" || (!live && price) ? " is-stale" : ""}`}>
-          {price ? usdc(price) : "—"}
+          {price ? usdPrice(price) : "—"}
         </span>
         {status !== "live" ? (
           <PriceStatusBadge status={status} connecting={stream === "connecting" && !live} />
@@ -76,8 +85,8 @@ function MarketRow({
       <span className="market-row__stat tnum">{fundingApr(live?.fundingApr)}</span>
       {advanced && (
         <>
-          <span className="market-row__stat tnum">{usdc(day?.high)}</span>
-          <span className="market-row__stat tnum">{usdc(day?.low)}</span>
+          <span className="market-row__stat tnum">{usdPrice(day?.high)}</span>
+          <span className="market-row__stat tnum">{usdPrice(day?.low)}</span>
         </>
       )}
     </Link>
@@ -261,7 +270,7 @@ export function MarketsPage() {
                       <td>
                         {baseAmount(abs(delta))} {market ?? ""}
                       </td>
-                      <td>{usdc(trade.payload.price)}</td>
+                      <td>{usdPrice(trade.payload.price)}</td>
                       {advanced && (
                         <>
                           <td className="mono" title={trade.account}>
@@ -316,7 +325,7 @@ export function MarketsPage() {
                         return (
                           <Fragment key={market}>
                             <td className={tone(size)}>{open ? signedBase(size, market) : "—"}</td>
-                            <td>{open ? usdc(entryPrice) : "—"}</td>
+                            <td>{open ? usdPrice(entryPrice) : "—"}</td>
                           </Fragment>
                         );
                       })}

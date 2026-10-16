@@ -39,13 +39,6 @@ export const CHAINS: Record<string, ChainInfo> = {
   "31337": { name: "Local chain" },
 };
 
-/** The dev oracle nodes; a build for another deployment passes VITE_EXIT_ORACLE_NODES. */
-export const DEV_ORACLE_NODES = [
-  "https://oracle-1.rfq-markets.workers.dev",
-  "https://oracle-2.rfq-markets.workers.dev",
-  "https://oracle-3.rfq-markets.workers.dev",
-];
-
 export interface ExitConfig {
   chainId: bigint;
   chain: ChainInfo;
@@ -65,7 +58,13 @@ export function readConfig(env: Env): ExitConfig | string {
   const clearing = env.VITE_EXIT_CLEARING_ADDRESS?.trim() ?? "";
   if (!/^[1-9]\d*$/.test(chainText) || !isAddress(clearing))
     return "This copy of the exit page was built without a contract address, so it cannot do anything. Use the official exit page linked from the docs.";
-  const nodes = (env.VITE_EXIT_ORACLE_NODES ?? (chainText === "8453" ? DEV_ORACLE_NODES.join(",") : ""))
+  // A mainnet build never falls back to another deployment's oracle nodes or links.
+  if (
+    chainText === "8453" &&
+    !(env.VITE_EXIT_ORACLE_NODES && env.VITE_EXIT_APP_URL && env.VITE_EXIT_DOCS_URL)
+  )
+    return "This copy of the exit page was built without its oracle nodes or links. Use the official exit page linked from the docs.";
+  const nodes = (env.VITE_EXIT_ORACLE_NODES ?? "")
     .split(",")
     .map((node) => node.trim().replace(/\/$/, ""))
     .filter((node) => /^https?:\/\//.test(node));

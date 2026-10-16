@@ -121,12 +121,12 @@ test.describe("Up / Down", () => {
     // where it closes on its own margin and the margin goes back to the balance.
     await page.goto("/portfolio");
     await expect(page.getByRole("region", { name: "Account value" })).toContainText(
-      /Includes \$[\d.,]+ in Home bets/,
+      /Includes \$[\d.,]+ in Home trades/,
     );
     await page.getByRole("tab", { name: "Trades" }).click();
     await expect(page.locator(".activity-body").getByText("Home", { exact: true }).first()).toBeVisible();
     await page.getByRole("tab", { name: /Positions/ }).click();
-    const home = page.getByRole("region", { name: "Home bets" });
+    const home = page.getByRole("region", { name: "Home trades" });
     await expect(home).toContainText(MARKET);
     await expectNoHorizontalOverflow(page);
     await home.getByRole("button", { name: `Close ${MARKET} short` }).click();

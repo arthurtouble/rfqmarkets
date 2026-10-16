@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useAccount } from "../account/useAccount.js";
 import { useMarketFeed } from "../data/market-feed.js";
 import { useMarketList } from "../data/markets.js";
-import { fundingApr, usdc } from "../lib/format.js";
+import { fundingApr, usdc, usdPrice } from "../lib/format.js";
 import type { Market, Side } from "../lib/types.js";
 import { Banner, Down, Rows, Sheet, Up } from "../ui/primitives.js";
 import { UnknownMarket } from "../markets/UnknownMarket.js";
@@ -24,8 +24,8 @@ function MarketDetails({ market }: { market: Market }) {
       rows={[
         ["Funding (yearly)", fundingApr(live?.fundingApr)],
         ["Max per trade", usdc(live?.operatingMaxTradeNotional)],
-        ["Bid", usdc(live?.bid)],
-        ["Ask", usdc(live?.ask)],
+        ["Bid", usdPrice(live?.bid)],
+        ["Ask", usdPrice(live?.ask)],
         ["Spread", live ? `${live.spread?.totalBps ?? live.baseSpreadBps} bps` : "—"],
         ["Max open per market", usdc(live?.maxMarketNotional)],
       ]}

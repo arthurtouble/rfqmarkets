@@ -76,8 +76,9 @@ if [ -z "$clearing" ]; then
   clearing=$(read_deployment contracts.clearingProxy)
 fi
 if [ -n "$clearing" ]; then
-  # The oracle nodes default to the dev ones; the deployment block bounds the one-click key search.
+  # Mainnet builds must name their oracle nodes and links; the deployment block bounds the one-click key search.
   VITE_EXIT_CHAIN_ID=8453 VITE_EXIT_CLEARING_ADDRESS="$clearing" VITE_EXIT_DEPLOYMENT_BLOCK="$(read_deployment deploymentBlock)" \
+    VITE_EXIT_ORACLE_NODES="https://oracle-1.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev,https://oracle-2.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev,https://oracle-3.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev" \
     VITE_EXIT_APP_URL="https://dev.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev" \
     VITE_EXIT_DOCS_URL="https://docs.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev/protocol/safety-and-exits" npm run build:exit
   wrangler deploy --config deploy/cloudflare/static/wrangler.exit.dev.jsonc

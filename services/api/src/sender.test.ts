@@ -361,3 +361,92 @@ test("pruning deletes settled operations past retention and keeps unresolved one
   );
   database.close();
 });
+
+test("reconcile re-signs a stuck submission at the same nonce with a higher fee, within the fee ceiling", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    sender = new DurableSender(provider as never, randomWallet(), database, {
+      ...options,
+      // The first attempt bumps the 2 gwei fee 25% (initialFeeBumpBps); one 15% replacement fits, a second does not.
+      initialFeeBumpBps: 2_500,
+      maxFeePerGas: 3_000_000_000n,
+    });
+  provider.holdInMempool = true;
+  await assert.rejects(sender.submit("stuck", request), /was not included/);
+  const first = Transaction.from(provider.broadcasts.at(-1)!);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  await sender.reconcile();
+  const replaced = Transaction.from(provider.broadcasts.at(-1)!);
+  assert.equal(replaced.nonce, first.nonce, "same nonce: at most one attempt can ever be included");
+  assert(replaced.maxFeePerGas! > first.maxFeePerGas!);
+  assert(replaced.maxFeePerGas! <= 3_000_000_000n);
+  const attempts = database.prepare("SELECT count(*) count FROM sender_attempts").get() as { count: number };
+  assert.equal(attempts.count, 2, "the replacement is journaled before it is broadcast");
+  assert.equal(rows(database)[0].status, "submitted");
+  // Past the ceiling the stuck transaction is rebroadcast unchanged instead.
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  await sender.reconcile();
+  assert.equal(provider.broadcasts.at(-1), provider.broadcasts.at(-2));
+  // Too soon after an attempt nothing is re-signed either.
+  const quick = new DurableSender(provider as never, randomWallet(), new DatabaseSync(":memory:"), {
+    ...options,
+    maxFeePerGas: 10n ** 12n,
+    replacementWaitMs: 60_000,
+  });
+  await assert.rejects(quick.submit("quick", request), /was not included/);
+  const before = provider.broadcasts.length;
+  await quick.reconcile();
+  assert.equal(provider.broadcasts.at(-1), provider.broadcasts[before - 1]);
+  // Whichever attempt is mined settles the operation.
+  provider.mine();
+  await sender.reconcile();
+  assert.equal(rows(database)[0].status, "included");
+  database.close();
+});
+
+test("a refused replacement leaves the row and budget on the accepted attempt, never ambiguous", async () => {
+  class RefusingProvider extends DeterministicProvider {
+    refuseAbove: bigint | undefined;
+    override async broadcastTransaction(raw: string) {
+      const fee = Transaction.from(raw).maxFeePerGas ?? 0n;
+      if (this.refuseAbove !== undefined && fee > this.refuseAbove)
+        throw new Error("insufficient funds for gas * price + value");
+      return super.broadcastTransaction(raw);
+    }
+  }
+  const provider = new RefusingProvider(),
+    database = new DatabaseSync(":memory:"),
+    sender = new DurableSender(provider as never, randomWallet(), database, {
+      ...options,
+      initialFeeBumpBps: 2_500,
+      maxFeePerGas: 10n ** 12n,
+      dailyBudgetWei: 10n ** 18n,
+    });
+  const budget = () =>
+    (database.prepare("SELECT cost FROM sender_budget").all() as Array<{ cost: string }>).map(
+      (row) => row.cost,
+    );
+  provider.holdInMempool = true;
+  await assert.rejects(sender.submit("stuck", request), /was not included/);
+  const first = provider.broadcasts.at(-1)!,
+    firstHash = keccak256(first),
+    reserved = budget();
+  provider.refuseAbove = Transaction.from(first).maxFeePerGas!;
+  for (let round = 0; round < 3; round++) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await sender.reconcile();
+    assert.equal(rows(database)[0].status, "submitted", `round ${round}`);
+    assert.equal(rows(database)[0].tx_hash, firstHash, "the row keeps the bytes the node accepted");
+    assert.equal(provider.broadcasts.at(-1), first, "the accepted attempt is rebroadcast");
+    assert.deepEqual(budget(), reserved, "the refused attempt's reservation is released");
+  }
+  // Every attempt shares the nonce; whichever is mined settles the operation.
+  assert.equal(sender.hasOperation("stuck"), true, "a retry of a journaled operation resumes it");
+  assert.equal(sender.hasOperation("never-sent"), false);
+  const attempts = database.prepare("SELECT DISTINCT nonce FROM sender_attempts").all();
+  assert.equal(attempts.length, 1);
+  provider.mine();
+  await sender.reconcile();
+  assert.equal(rows(database)[0].status, "included");
+  database.close();
+});

@@ -155,12 +155,15 @@ export const limitMarketable = (side: Side, expectedMicro: bigint, limitMicro: b
 /** Firm quotes count as expired this long before their deadline, leaving time to sign and submit. */
 export const QUOTE_EXPIRY_MARGIN_MS = 1_500;
 
-/** Whole seconds left on a firm quote (0 once it is too close to its deadline to sign). */
-export const quoteSecondsLeft = (expiresAtMs: number, nowMs: number) =>
-  Math.max(0, Math.floor((expiresAtMs - QUOTE_EXPIRY_MARGIN_MS - nowMs) / 1_000));
+/**
+ * Whole seconds left on a firm quote (0 once it is too close to its deadline to sign). `deadlineMs` and
+ * `nowMs` must be on the same clock: pass `localDeadline(quote)` (lib/clock.ts) with Date.now().
+ */
+export const quoteSecondsLeft = (deadlineMs: number, nowMs: number) =>
+  Math.max(0, Math.floor((deadlineMs - QUOTE_EXPIRY_MARGIN_MS - nowMs) / 1_000));
 
-export const quoteUsable = (expiresAtMs: number, nowMs: number) =>
-  nowMs < expiresAtMs - QUOTE_EXPIRY_MARGIN_MS;
+/** Whether a quote can still be signed; same clock rules as quoteSecondsLeft. */
+export const quoteUsable = (deadlineMs: number, nowMs: number) => nowMs < deadlineMs - QUOTE_EXPIRY_MARGIN_MS;
 
 /** What the ticket remembers per market between visits. */
 export type TicketMemory = { pay: string; leverage: number };

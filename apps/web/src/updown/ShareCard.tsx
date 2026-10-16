@@ -41,7 +41,18 @@ export const shareUrl = (bet: Pick<ShareBet, "market">) =>
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
-  ctx.roundRect(x, y, w, h, r);
+  // Safari before 16 has no roundRect; trace the same shape with arcs there.
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(x, y, w, h, r);
+    return;
+  }
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
 }
 
 /** A rounded label ("Up 3×", "Cashed out") with its left edge at `x`, or its right edge when `alignRight`. */
@@ -235,16 +246,20 @@ export function ShareSheet({
   useEffect(() => {
     let live = true,
       made: Image | null = null;
-    void cardImage(bet, points).then((blob) => {
-      if (!live) return;
-      if (!blob) return setFailed(true);
-      made = {
-        blob,
-        url: URL.createObjectURL(blob),
-        file: new File([blob], shareFileName(bet), { type: "image/png" }),
-      };
-      setImage(made);
-    });
+    cardImage(bet, points)
+      .then((blob) => {
+        if (!live) return;
+        if (!blob) return setFailed(true);
+        made = {
+          blob,
+          url: URL.createObjectURL(blob),
+          file: new File([blob], shareFileName(bet), { type: "image/png" }),
+        };
+        setImage(made);
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
     return () => {
       live = false;
       if (made) URL.revokeObjectURL(made.url);

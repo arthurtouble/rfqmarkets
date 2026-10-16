@@ -6,10 +6,20 @@
 //
 // LI.FI is not trusted to choose where funds go. checkRoute pins the source
 // and destination chains, tokens, amount and wallet, and the contract the
-// wallet sends to and approves.
+// wallet sends to and approves, and reads the receiver out of the calldata
+// itself (routeReceiver), since that, not the quote's summary, is what the
+// router pays.
 //
 // Pure, so bridge.test.ts runs it under Node.
-import { getAddress, isAddress, type Address } from "viem";
+import {
+  decodeAbiParameters,
+  getAddress,
+  isAddress,
+  parseAbiParameters,
+  toFunctionSelector,
+  type Address,
+  type Hex,
+} from "viem";
 
 export const LIFI_API = "https://li.quest/v1";
 /** LI.FI's router (LiFiDiamond), at the same address on every supported source chain. */
@@ -250,6 +260,77 @@ const toBig = (value: unknown) => {
   }
 };
 
+/** ILiFi.BridgeData, the first argument of every LiFiDiamond bridge entry point. */
+const BRIDGE_DATA =
+  "(bytes32 transactionId, string bridge, string integrator, address referrer, address sendingAssetId, address receiver, uint256 minAmount, uint256 destinationChainId, bool hasSourceSwaps, bool hasDestinationCall)";
+/** LibSwap.SwapData. */
+const SWAP_DATA = "(address,address,address,address,uint256,bytes,bool)";
+/**
+ * The facet-specific data of each bridge LI.FI routes deposits to Base through (seen in its quotes), by facet
+ * name. Only the selector depends on it: the receiver is read from BridgeData, which always comes first.
+ */
+const BRIDGE_FACETS: Record<string, string> = {
+  AcrossV4: "(bytes32,bytes32,bytes32,bytes32,uint256,uint128,bytes32,uint32,uint32,uint32,bytes)",
+  RelayDepository: "(bytes32,address)",
+  CelerCircleBridge: "(uint256,uint32)",
+  Squid: "(uint8,string,string,string,address,(uint8,address,uint256,bytes,bytes)[],bytes,uint256,bool)",
+  Mayan: "(bytes32,address,bytes,address,bytes,address,uint256,address,uint256)",
+  Stargate: "(uint16,(uint32,bytes32,uint256,uint256,bytes,bytes,bytes),(uint256,uint256),address)",
+  Symbiosis:
+    "(address,bytes32,bytes,bytes,address,address,address[],address,bytes,bool,address,address,bytes,uint256,uint256,bytes)",
+  Glacis: "(bytes32,address,uint256,bytes32)",
+  NEARIntents: "(bytes32,bytes32,address,bytes32,uint256,uint256,address,bytes)",
+  LiFiIntentEscrowV2: `(bytes32,bytes32,address,uint256,uint32,uint32,address,bytes32,bytes32,bytes32,uint128,${SWAP_DATA}[],bytes)`,
+  PolymerCCTP: "(uint256,uint256,bytes32,bytes32,uint32,address,bytes)",
+};
+/** GenericSwapFacet(V3) swaps (a Base asset into Base USDC): `_receiver` is the fourth argument. */
+const SWAP_FUNCTIONS = [
+  ...["ERC20ToERC20", "ERC20ToNative", "NativeToERC20"].flatMap((kind) => [
+    `swapTokensSingleV3${kind}(bytes32,string,string,address,uint256,${SWAP_DATA})`,
+    `swapTokensMultipleV3${kind}(bytes32,string,string,address,uint256,${SWAP_DATA}[])`,
+  ]),
+  `swapTokensGeneric(bytes32,string,string,address,uint256,${SWAP_DATA}[])`,
+];
+const BRIDGE_DATA_TYPE = `(bytes32,string,string,address,address,address,uint256,uint256,bool,bool)`;
+type LifiFunction = { name: string; kind: "bridge" | "swap" };
+const lifiEntry = (signature: string, kind: LifiFunction["kind"]): [Hex, LifiFunction] => [
+  toFunctionSelector(`function ${signature}`),
+  { name: signature.slice(0, signature.indexOf("(")), kind },
+];
+/** Known LiFiDiamond entry points by selector: how to find who gets paid. */
+export const LIFI_FUNCTIONS: ReadonlyMap<Hex, LifiFunction> = new Map([
+  ...Object.entries(BRIDGE_FACETS).flatMap(([facet, data]) => [
+    lifiEntry(`startBridgeTokensVia${facet}(${BRIDGE_DATA_TYPE},${data})`, "bridge"),
+    lifiEntry(`swapAndStartBridgeTokensVia${facet}(${BRIDGE_DATA_TYPE},${SWAP_DATA}[],${data})`, "bridge"),
+  ]),
+  ...SWAP_FUNCTIONS.map((signature) => lifiEntry(signature, "swap")),
+]);
+const BRIDGE_DATA_PARAMS = parseAbiParameters(`${BRIDGE_DATA} bridgeData`);
+const SWAP_HEAD_PARAMS = parseAbiParameters("bytes32, string, string, address receiver");
+
+/** Who the route's calldata pays, read out of it, and where: the destination chain and any destination call. */
+export type RouteTarget = { receiver: Address; destinationChainId: bigint | null; destinationCall: boolean };
+
+/**
+ * Decodes the receiver from LiFiDiamond calldata: BridgeData.receiver for bridges, `_receiver` for same-chain
+ * swaps. Throws for a selector this app has not verified, so an unknown entry point fails closed.
+ */
+export function routeTarget(data: Hex): RouteTarget {
+  const entry = LIFI_FUNCTIONS.get(data.slice(0, 10).toLowerCase() as Hex);
+  if (!entry) throw new Error("unrecognised router call");
+  const args = `0x${data.slice(10)}` as Hex;
+  if (entry.kind === "swap") {
+    const [, , , receiver] = decodeAbiParameters(SWAP_HEAD_PARAMS, args);
+    return { receiver, destinationChainId: null, destinationCall: false };
+  }
+  const [bridgeData] = decodeAbiParameters(BRIDGE_DATA_PARAMS, args);
+  return {
+    receiver: bridgeData.receiver,
+    destinationChainId: bridgeData.destinationChainId,
+    destinationCall: bridgeData.hasDestinationCall,
+  };
+}
+
 /** Checks a LI.FI quote against what the user asked for; throws with the reason when it does not match. */
 export function checkRoute(quote: LifiQuote, request: RouteRequest, decimals: number): Route {
   const { action, estimate, transactionRequest: tx } = quote;
@@ -269,7 +350,20 @@ export function checkRoute(quote: LifiQuote, request: RouteRequest, decimals: nu
   if (!native && !same(estimate!.approvalAddress, LIFI_DIAMOND)) fail("approval");
   const value = toBig(tx!.value ?? "0");
   if (value === null || value !== (native ? request.fromAmount : 0n)) fail("value");
-  if (typeof tx!.data !== "string" || !/^0x[0-9a-fA-F]*$/.test(tx!.data)) fail("calldata");
+  if (typeof tx!.data !== "string" || !/^0x(?:[0-9a-fA-F]{2})*$/.test(tx!.data) || tx!.data.length < 10)
+    fail("calldata");
+  // The quote's summary is LI.FI's word; the calldata is what the router acts on.
+  let target: RouteTarget | null = null;
+  try {
+    target = routeTarget(tx!.data as Hex);
+  } catch {
+    fail("calldata cannot be verified");
+  }
+  if (!same(target!.receiver, request.account)) fail("recipient in calldata");
+  const crossChain = request.fromChain !== BASE_CHAIN_ID;
+  if (crossChain ? target!.destinationChainId !== BigInt(BASE_CHAIN_ID) : target!.destinationChainId !== null)
+    fail("destination network in calldata");
+  if (target!.destinationCall) fail("destination call");
   const toAmount = toBig(estimate!.toAmount),
     toAmountMin = toBig(estimate!.toAmountMin);
   if (toAmount === null || toAmountMin === null || toAmountMin <= 0n || toAmountMin > toAmount)

@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTrading } from "../data/actions.js";
-import { useMarketFeed, useNow } from "../data/market-feed.js";
+import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useMarketLeverage } from "../data/markets.js";
 import { emptyAccount, estimateLiquidationPrice, initialMarginAfter } from "../lib/account.js";
-import { abs, baseAmount, microToInput, parseUsdcInput, usdc, usdcCompact } from "../lib/format.js";
+import {
+  abs,
+  baseAmount,
+  microToInput,
+  parseUsdcInput,
+  priceDecimals,
+  usdc,
+  usdcCompact,
+  usdPrice,
+} from "../lib/format.js";
 import { DEFAULT_MARGIN_SCALE_BPS, leveragePresets } from "../lib/leverage.js";
 import { triggerProblem } from "../lib/orders.js";
 import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
@@ -33,7 +42,11 @@ import { StopTriggerField } from "./TriggerOrders.js";
 type OrderType = "market" | "limit" | "stop";
 const PAY_PRESETS = [25, 50, 75, 100] as const;
 const DEFAULT_LEVERAGE = 5;
-const midDollars = (micro: string) => (Number(BigInt(micro)) / 1e6).toFixed(2);
+/** A limit price input prefilled from the mid, at the precision the price displays with. */
+const midDollars = (micro: string) => {
+  const dollars = Number(BigInt(micro)) / 1e6;
+  return dollars.toFixed(priceDecimals(dollars));
+};
 
 /** The trade form. `onTraded` runs after an order fills or opens (the mobile sheet closes on it). */
 export function OrderTicket({
@@ -53,7 +66,7 @@ export function OrderTicket({
   const trader = useTrader(),
     trading = useTrading(),
     funds = useFunds();
-  const now = useNow(500);
+  const now = useServerNow(500);
   const leverageInfo = useMarketLeverage(market);
   const memory = useTicketMemory(market);
   const [slippageBps, setSlippageBps] = useSlippage();
@@ -401,13 +414,13 @@ export function OrderTicket({
 
       <Rows
         rows={[
-          [orderType === "market" ? "Entry price" : "Current price", usdc(quote?.expectedPrice)],
-          ["Liquidation price", liquidation === null ? "—" : usdc(liquidation)],
+          [orderType === "market" ? "Entry price" : "Current price", usdPrice(quote?.expectedPrice)],
+          ["Liquidation price", liquidation === null ? "—" : usdPrice(liquidation)],
           ...(orderType === "market"
             ? ([
                 [
                   side === "buy" ? "Price protection (max)" : "Price protection (min)",
-                  usdc(quote?.worstPrice),
+                  usdPrice(quote?.worstPrice),
                 ],
               ] as Array<[string, string]>)
             : []),
@@ -422,6 +435,12 @@ export function OrderTicket({
 
       {!trader.address ? (
         <WalletMenu className="rfq-btn--lg rfq-btn--block" connectLabel="Connect to trade" />
+      ) : !account ? (
+        // Until the balance is read, neither "Add funds" nor a trade button would be honest.
+        <button type="button" className="rfq-btn rfq-btn--lg rfq-btn--block" disabled aria-busy="true">
+          <span className="rfq-spinner" />
+          Loading your balance
+        </button>
       ) : noFunds ? (
         <button
           type="button"

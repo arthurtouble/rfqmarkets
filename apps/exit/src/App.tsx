@@ -10,9 +10,12 @@ import {
   closePnl,
   exitPrice,
   formatEth,
+  formatPrice,
   formatSignedUsd,
   formatSize,
   formatUsd,
+  idleIsolated,
+  isolatedTotal,
   parseNonce,
   parseUsdc,
   resolutionPhase,
@@ -23,6 +26,7 @@ import {
   withdrawMax,
   withdrawable,
   type AccountState,
+  type IsolatedHolding,
   type Position,
 } from "./model.js";
 import { ActionButton, Banner, Card, ExternalIcon, Toast, WalletIcon, type ToastState } from "./ui.js";
@@ -138,14 +142,20 @@ export function App({ config }: { config: ExitConfig }) {
   }, [connection?.wallet]);
 
   const account = connection?.account;
+  // The account and network a read belongs to; a read that finishes after the wallet switched is dropped.
+  const current = useRef<{ chain: ExitChain | null; account?: string }>({ chain, account });
+  current.current = { chain, account };
   const reload = useCallback(async () => {
     if (!chain || !account) return;
+    const stillCurrent = () => current.current.chain === chain && current.current.account === account;
     try {
       await chain.checkDeployment();
-      setState(await chain.read(account));
+      const next = await chain.read(account);
+      if (!stillCurrent()) return;
+      setState(next);
       setLoadError(null);
     } catch (error) {
-      setLoadError(explain(error, "connect"));
+      if (stillCurrent()) setLoadError(explain(error, "connect"));
     }
   }, [chain, account]);
 
@@ -276,6 +286,36 @@ export function App({ config }: { config: ExitConfig }) {
       );
       if (result.ok)
         succeed(`Closed ${label}`, "The result is in your balance. Withdraw it below.", result.href);
+    });
+
+  const closeHome = (holding: IsolatedHolding) =>
+    run(`close-home:${holding.market}`, async () => {
+      const position = holding.position!;
+      setToast({ kind: "pending", title: "Getting the current price", body: "Asking the oracle nodes." });
+      const fresh = await report([holding.market]);
+      const label = `Home trade ${position.size > 0n ? "Up" : "Down"} ${position.symbol}`;
+      const result = await send(
+        `Close ${label}`,
+        "close",
+        (clearing) => clearing.closeIsolatedPosition(holding.market, fresh.report),
+        { expiresAt: fresh.validUntil },
+      );
+      if (result.ok) succeed(`Closed ${label}`, "Move what is left back to your balance below.", result.href);
+    });
+
+  const moveHome = (holding: IsolatedHolding) =>
+    run(`move-home:${holding.market}`, async () => {
+      const latest = await chain!.read(account!);
+      const held = latest.isolated.find((item) => item.market === holding.market);
+      if (!held || !idleIsolated(held)) {
+        setToast({ kind: "success", title: "Nothing to move", body: "That Home trade holds no money now." });
+        return;
+      }
+      const result = await send(`Move ${formatUsd(held.collateral)} to your balance`, "move", (clearing) =>
+        clearing.moveIsolatedMargin(held.market, -held.collateral),
+      );
+      if (result.ok)
+        succeed(`Moved ${formatUsd(held.collateral)} to your balance`, "Withdraw it below.", result.href);
     });
 
   const claim = () =>
@@ -445,6 +485,13 @@ export function App({ config }: { config: ExitConfig }) {
             {resolutionPhase(state.resolution) === "none" ? (
               <>
                 <PositionsCard state={state} busy={busy} appUrl={config.appUrl} onClose={close} />
+                <HomeTradesCard
+                  state={state}
+                  busy={busy}
+                  appUrl={config.appUrl}
+                  onClose={closeHome}
+                  onMove={moveHome}
+                />
                 <WithdrawCard state={state} busy={busy} onWithdraw={withdraw} />
               </>
             ) : null}
@@ -603,8 +650,14 @@ function BalanceCard({ state }: { state: AccountState }) {
         )}
         <div>
           <dt>Open positions</dt>
-          <dd>{state.positions.length}</dd>
+          <dd>{state.positions.length + state.isolated.filter((holding) => holding.position).length}</dd>
         </div>
+        {state.isolated.length ? (
+          <div>
+            <dt>In Home trades</dt>
+            <dd>{formatUsd(isolatedTotal(state.isolated))}</dd>
+          </div>
+        ) : null}
         <div>
           <dt>In your wallet</dt>
           <dd>
@@ -677,11 +730,11 @@ function PositionsCard({
               <div className="rfq-pos__grid">
                 <div>
                   <span>Entry</span>
-                  <b>{formatUsd(position.entryPrice)}</b>
+                  <b>{formatPrice(position.entryPrice)}</b>
                 </div>
                 <div>
                   <span>Last price</span>
-                  <b>{price ? formatUsd(at) : "—"}</b>
+                  <b>{price ? formatPrice(at) : "—"}</b>
                 </div>
                 <div>
                   <span>Value</span>
@@ -705,6 +758,107 @@ function PositionsCard({
       <p className="footnote rfq-faint">
         PnL uses the last price on chain, before funding. The close uses a fresh price from the oracle nodes.
       </p>
+    </Card>
+  );
+}
+
+function HomeTradesCard({
+  state,
+  busy,
+  appUrl,
+  onClose,
+  onMove,
+}: {
+  state: AccountState;
+  busy: string | null;
+  appUrl: string;
+  onClose: (holding: IsolatedHolding) => void;
+  onMove: (holding: IsolatedHolding) => void;
+}) {
+  if (!state.isolated.length) return null;
+  return (
+    <Card
+      id="home-trades"
+      title="Home trades"
+      intro={
+        <>
+          Each Home trade keeps its own money, apart from your balance. Close an open one while trading is
+          paused
+          {state.paused ? (
+            ""
+          ) : (
+            <>
+              {" "}
+              (or in the <a href={appUrl}>app</a> now)
+            </>
+          )}
+          , then move what is left back to your balance and withdraw it.
+        </>
+      }
+    >
+      <div className="positions">
+        {state.isolated.map((holding) => {
+          const position = holding.position;
+          const price = position ? state.prices.get(holding.market) : undefined;
+          const at = position && price ? exitPrice(position, price) : 0n;
+          const pnl = position && price ? closePnl(position, at) : 0n;
+          const label = position
+            ? `Home trade ${position.size > 0n ? "Up" : "Down"} ${holding.symbol}`
+            : `Home trade ${holding.symbol}`;
+          return (
+            <article key={holding.market} className="rfq-pos" aria-label={label}>
+              <div className="rfq-pos__head">
+                {position ? (
+                  <span
+                    className={`rfq-badge ${position.size > 0n ? "rfq-badge--long" : "rfq-badge--short"}`}
+                  >
+                    {position.size > 0n ? "Up" : "Down"}
+                  </span>
+                ) : (
+                  <span className="rfq-badge">Closed</span>
+                )}
+                <b>{position ? formatSize(position.size, holding.symbol) : holding.symbol}</b>
+                {position ? (
+                  <span className={`rfq-pos__pnl tnum ${pnl > 0n ? "rfq-up" : pnl < 0n ? "rfq-down" : ""}`}>
+                    {formatSignedUsd(pnl)}
+                  </span>
+                ) : null}
+              </div>
+              <div className="rfq-pos__grid">
+                <div>
+                  <span>Money in this trade</span>
+                  <b>{formatUsd(holding.collateral)}</b>
+                </div>
+                {position ? (
+                  <div>
+                    <span>Last price</span>
+                    <b>{price ? formatPrice(at) : "—"}</b>
+                  </div>
+                ) : null}
+              </div>
+              {position ? (
+                <ActionButton
+                  tone="secondary"
+                  busy={busy === `close-home:${holding.market}`}
+                  disabled={!state.paused || busy !== null}
+                  onClick={() => onClose(holding)}
+                >
+                  {state.paused ? "Close at oracle price" : "Available while trading is paused"}
+                </ActionButton>
+              ) : idleIsolated(holding) ? (
+                <ActionButton
+                  tone="secondary"
+                  busy={busy === `move-home:${holding.market}`}
+                  disabled={busy !== null}
+                  onClick={() => onMove(holding)}
+                >
+                  Move {formatUsd(holding.collateral)} to your balance
+                </ActionButton>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
     </Card>
   );
 }

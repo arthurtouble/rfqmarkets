@@ -7,8 +7,11 @@ import {
   fundingApr,
   microToInput,
   parseUsdcInput,
+  priceDecimals,
   signedUsdc,
   usdc,
+  usdPrice,
+  usdPriceNumber,
 } from "./format.js";
 
 test("parses user-typed USDC amounts exactly", () => {
@@ -60,4 +63,23 @@ test("a zero fee reads as none", () => {
   assert.equal(feeLabel("0"), "None");
   assert.equal(feeLabel(20_000n), "$0.02");
   assert.equal(feeLabel(undefined), "—");
+});
+
+test("prices keep about five significant digits below $10 and cents above", () => {
+  assert.equal(usdPrice(97_412_500_000n), "$97,412.50");
+  assert.equal(usdPrice("12345678"), "$12.35");
+  assert.equal(usdPrice(3_456_700n), "$3.4567");
+  assert.equal(usdPrice(123_456n), "$0.12346");
+  assert.equal(usdPrice(1_234n), "$0.001234");
+  // PEPE-like prices sit at the wire's 1e6 precision rather than reading $0.00.
+  assert.equal(usdPrice(12n), "$0.000012");
+  assert.equal(usdPrice(0n), "$0.00");
+  assert.equal(usdPrice(null), "—");
+  assert.equal(priceDecimals(9.99), 4);
+  assert.equal(priceDecimals(10), 2);
+  // A set of prices (an axis, a change) can share the precision of its level.
+  assert.equal(usdPriceNumber(0.000123, priceDecimals(0.1234), true), "+$0.00012");
+  assert.equal(usdPriceNumber(-12.5, 2, true), "-$12.50");
+  // Money amounts keep cents.
+  assert.equal(usdc(123_456n), "$0.12");
 });

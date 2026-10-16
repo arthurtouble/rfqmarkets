@@ -151,6 +151,7 @@ switch (role) {
       startBlock: config.startBlock,
       confirmations: 12,
       corsOrigin: config.corsOrigin,
+      clientIpHeader: config.clientIpHeader,
     });
     break;
   case "gateway":

@@ -1,34 +1,44 @@
 import { useState } from "react";
-import { useAccount, useIsolatedAccounts } from "../account/useAccount.js";
+import { useAccount, useAccountValue, useIsolatedAccounts } from "../account/useAccount.js";
 import { usePortfolio, usePortfolioHistory } from "../data/queries.js";
 import { bpsLeverage, signedUsdc, usdc } from "../lib/format.js";
 import { homeTotals } from "../lib/isolated.js";
 import { PNL_RANGES, RANGE_INTERVAL, pnlSeries, seriesChange, type PnlRange } from "../lib/portfolio.js";
 import type { AccountState } from "../lib/types.js";
+import { IdleMargin } from "../positions/Positions.js";
 import { ActivityTabs } from "../trade/AccountPanel.js";
 import { useFunds } from "../trade/FundsDialog.js";
 import { Banner, Change, EmptyState, NavIcons, Rows, Segmented } from "../ui/primitives.js";
+import { useTrader } from "../wallet/trader.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
 import { PnlChart } from "./PnlChart.js";
 
 type Home = ReturnType<typeof homeTotals>;
 
-function ValueCard({ account, home }: { account: AccountState; home: Home }) {
+/** Account value and PnL; dashes until the account (and its Home trades) have been read. */
+function ValueCard({ account, home }: { account: AccountState | null; home: Home }) {
   const funds = useFunds();
-  const pnl = BigInt(account.unrealizedPnl) + home.unrealizedPnl;
+  const { value } = useAccountValue();
+  const pnl = account && value !== null ? BigInt(account.unrealizedPnl) + home.unrealizedPnl : null;
   return (
     <section className="rfq-card rfq-card--pad stack" aria-label="Account value">
       <div>
         <div className="footnote rfq-muted">Account value</div>
-        <div className="balance">{usdc(BigInt(account.equity) + home.equity)}</div>
-        <Change value={pnl}>
-          {signedUsdc(pnl)} <span className="rfq-faint">unrealized</span>
-        </Change>
+        <div className="balance" aria-busy={value === null}>
+          {usdc(value)}
+        </div>
+        {pnl === null ? (
+          <span className="rfq-faint">—</span>
+        ) : (
+          <Change value={pnl}>
+            {signedUsdc(pnl)} <span className="rfq-faint">unrealized</span>
+          </Change>
+        )}
         {home.equity > 0n && (
-          <div className="caption rfq-faint">Includes {usdc(home.equity)} in Home bets</div>
+          <div className="caption rfq-faint">Includes {usdc(home.equity)} in Home trades</div>
         )}
       </div>
-      {account.liquidatable && (
+      {account?.liquidatable && (
         <Banner tone="danger">
           <b>Your account can be liquidated.</b> Add funds or close a position now.
         </Banner>
@@ -45,31 +55,39 @@ function ValueCard({ account, home }: { account: AccountState; home: Home }) {
   );
 }
 
-function MarginCard({ account }: { account: AccountState }) {
+function MarginCard({ account }: { account: AccountState | null }) {
   return (
     <section className="rfq-card rfq-card--pad" aria-label="Margin">
       <Rows
         rows={[
-          ["Cash balance", usdc(account.collateral)],
-          ["Available to trade", usdc(account.availableMargin)],
-          ["Margin in use", usdc(account.initialMargin)],
-          ["Maintenance margin", usdc(account.maintenanceMargin)],
-          ["Leverage", bpsLeverage(account.effectiveLeverageBps)],
+          ["Cash balance", usdc(account?.collateral)],
+          ["Available to trade", usdc(account?.availableMargin)],
+          ["Margin in use", usdc(account?.initialMargin)],
+          ["Maintenance margin", usdc(account?.maintenanceMargin)],
+          ["Leverage", account ? bpsLeverage(account.effectiveLeverageBps) : "—"],
         ]}
       />
     </section>
   );
 }
 
-function PerformanceCard({ account, home }: { account: AccountState; home: Home }) {
+function PerformanceCard({
+  address,
+  account,
+  home,
+}: {
+  address: string;
+  account: AccountState | null;
+  home: Home;
+}) {
   const [range, setRange] = useState<PnlRange>("all");
-  const summary = usePortfolio(account.account);
-  const history = usePortfolioHistory(account.account, RANGE_INTERVAL[range]);
+  const summary = usePortfolio(address);
+  const history = usePortfolioHistory(address, RANGE_INTERVAL[range]);
   const series = pnlSeries(
     history.data?.points ?? [],
     range,
     Date.now(),
-    BigInt(account.unrealizedPnl) + home.unrealizedPnl,
+    BigInt(account?.unrealizedPnl ?? 0) + home.unrealizedPnl,
   );
   const change = seriesChange(series);
   const data = summary.data;
@@ -134,9 +152,10 @@ function PerformanceCard({ account, home }: { account: AccountState; home: Home 
 }
 
 export function PortfolioPage() {
+  const { address } = useTrader();
   const { account, error } = useAccount();
   const home = homeTotals(useIsolatedAccounts());
-  if (!account)
+  if (!address)
     return (
       <div className="page narrow">
         <h1 className="title-1 page-title">Portfolio</h1>
@@ -155,7 +174,8 @@ export function PortfolioPage() {
         <ValueCard account={account} home={home} />
         <MarginCard account={account} />
       </div>
-      <PerformanceCard account={account} home={home} />
+      <IdleMargin />
+      <PerformanceCard address={address} account={account} home={home} />
       <ActivityTabs account={account} full />
     </div>
   );

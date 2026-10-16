@@ -3,10 +3,14 @@ import { test } from "node:test";
 import {
   appendTick,
   betNotional,
+  cashOutValue,
+  feeWords,
   lossAt,
   multiplierChoices,
   onePercentGain,
   pickMultiplier,
+  stakeProblem,
+  tradeFee,
 } from "./updown.js";
 
 const USDC = 1_000_000n;
@@ -53,4 +57,25 @@ test("the loss at the auto-close price follows the move, either way", () => {
   assert.equal(lossAt(1_000n * USDC, 2_000n * USDC, 1_800n * USDC), 100n * USDC);
   assert.equal(lossAt(1_000n * USDC, 2_000n * USDC, 2_200n * USDC), 100n * USDC);
   assert.equal(lossAt(1_000n * USDC, 0n, 1_800n * USDC), 0n);
+});
+
+test("Home asks for at least the isolated account's opening amount", () => {
+  // Below it the trade would quietly use the whole balance, so it could lose more than the amount.
+  assert.equal(stakeProblem(9_990_000n), "The smallest trade is $10");
+  assert.equal(stakeProblem(10n * USDC), null);
+  assert.equal(stakeProblem(null), null);
+});
+
+test("the fee line follows the venue's fee", () => {
+  assert.equal(feeWords(20n * USDC, 0), "no fees");
+  assert.equal(tradeFee(20n * USDC, 5), 10_000n);
+  assert.equal(feeWords(20n * USDC, 5), "a $0.01 fee");
+  assert.equal(feeWords(1_000n * USDC, 2.5), "a $0.30 fee");
+});
+
+test("cash out shows what comes back to the balance, not the PnL", () => {
+  // $25 in, down $3.20: $21.80 comes back.
+  assert.equal(cashOutValue(21_800_000n, 75n * USDC, 0), 21_800_000n);
+  assert.equal(cashOutValue(21_800_000n, 100n * USDC, 10), 21_700_000n);
+  assert.equal(cashOutValue(-2n * USDC, 100n * USDC, 0), 0n);
 });
