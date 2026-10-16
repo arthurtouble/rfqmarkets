@@ -173,9 +173,14 @@ export function Markdown({
       while (index < lines.length && lines[index].startsWith(">"))
         body.push(lines[index++].replace(/^>\s?/, ""));
       const text = body.join("\n");
-      const tone = text.match(/^\*\*(Warning|Note|Tip)\b/)?.[1].toLowerCase() ?? "note";
+      const label = text.match(/^\*\*(Warning|Note|Tip)\b/)?.[1] ?? "Note";
       blocks.push(
-        <aside className={`note-box ${tone}`} key={blocks.length}>
+        <aside
+          className={`note-box ${label.toLowerCase()}`}
+          role="note"
+          aria-label={label}
+          key={blocks.length}
+        >
           <Markdown source={text} resolve={resolve} go={go} />
         </aside>,
       );

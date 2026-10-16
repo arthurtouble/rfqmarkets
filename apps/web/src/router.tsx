@@ -96,6 +96,19 @@ function ShellLayout() {
               Deposit
             </button>
           )}
+          {/* Connected, Account settings is in the wallet menu; before that this is the way to the
+              theme, help and legal links (phones have the Account tab). */}
+          {!trader.address && (
+            <Link
+              to="/account"
+              className="rfq-icon-btn"
+              aria-label="Settings"
+              title="Settings"
+              aria-current={current("account")}
+            >
+              {NavIcons.account}
+            </Link>
+          )}
           <WalletMenu />
         </div>
       </header>
