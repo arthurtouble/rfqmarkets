@@ -7,6 +7,7 @@ import {
   getAddress,
   type ContractTransactionResponse,
 } from "ethers";
+import { sessionGrantedEvents, sessionGrantedFilter } from "../../../packages/shared/src/abi.js";
 import { SignedOracleClient } from "../../../packages/shared/src/signed-oracle.js";
 import type { ExitConfig } from "./config.js";
 import type { AccountState, MarketPrice, Position, Resolution } from "./model.js";
@@ -44,7 +45,7 @@ const CLEARING_ABI = [
   "function claimResolution()",
   "function submitResolutionObservation(bytes) payable",
   "function processResolution(uint256)",
-  "event SessionGranted(address indexed account, address indexed session, uint64 validUntil, uint128 maxCumulativeNotional)",
+  ...sessionGrantedEvents,
 ];
 const ORACLE_ABI = [
   "function signers() view returns (address[])",
@@ -261,7 +262,8 @@ export class ExitChain {
    */
   async sessions(account: string, maxChunks = 40, chunk = 9_000): Promise<Session[] | null> {
     const latest = await this.provider.getBlockNumber();
-    const filter = this.clearing.filters.SessionGranted(account);
+    // Both forms: grants logged before the October 2026 upgrade carry fewer fields.
+    const filter = sessionGrantedFilter(account);
     const keys = new Set<string>();
     let to = latest;
     try {

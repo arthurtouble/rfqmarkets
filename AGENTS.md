@@ -25,8 +25,10 @@
 - Run `npm run test:services` for service and script unit tests and
   `npm run test:web` for trading app logic. `npm run test:coverage` runs them
   with a per-area coverage summary.
-- Run `npm run test:e2e` after UI changes. It drives every app on desktop and
-  phone viewports against the local stack; see `test/e2e/README.md`.
+- While iterating on UI changes, run only the affected specs, for example
+  `npm run test:e2e -- exit`. Run the full `npm run test:e2e`
+  (every app on desktop and phone viewports against the local stack, about 20
+  minutes) once before a deploy; see `test/e2e/README.md`.
 - Run `npm run test:python` for simulator changes.
 - Run `npm run test:cloudflare-edge` for Cloudflare edge/runtime changes.
 - Run `npm run check:docs` after moving or renaming Markdown files.
