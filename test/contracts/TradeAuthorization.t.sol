@@ -73,7 +73,7 @@ contract TradeAuthorizationTest is ClearingFixture {
 
     function test_priceWorseThanTheLimitIsRejected() public {
         approval.executionPrice = intent.limitPrice + 1;
-        submit(approverKeys[0], approverKeys[1], InvalidTrade.selector);
+        submit(approverKeys[0], approverKeys[1], PriceLimit.selector);
     }
 
     function test_feeAboveTheTraderCeilingIsRejected() public {

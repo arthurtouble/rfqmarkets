@@ -195,17 +195,17 @@ contract OwnerExitsTest is ClearingFixture {
         uint256 nonce = 77;
         uint64 deadline = uint64(vm.getBlockTimestamp() + 60);
         bytes memory signature = signDigest(
-            alice.key, typedDigest(keccak256(abi.encode(CLOSE_TYPEHASH, alice.account, uint8(0), nonce, deadline)))
+            alice.key, typedDigest(keccak256(abi.encode(CLOSE_TYPEHASH, alice.account, uint8(0), uint256(0), nonce, deadline)))
         );
         bytes memory proof = currentReport(0);
         vm.prank(relayer);
-        clearing.closePositionWithSignature(alice.account, 0, nonce, deadline, proof, signature);
+        clearing.closePositionWithSignature(alice.account, 0, 0, nonce, deadline, proof, signature);
         assertEq(clearing.positionOf(alice.account, 0).size, 0);
         assertTrue(clearing.nonceUsed(alice.account, nonce));
 
         vm.prank(relayer);
         vm.expectRevert(Replay.selector);
-        clearing.closePositionWithSignature(alice.account, 0, nonce, deadline, proof, signature);
+        clearing.closePositionWithSignature(alice.account, 0, 0, nonce, deadline, proof, signature);
     }
 
     // ---- Nonces and sessions ----

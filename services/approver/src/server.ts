@@ -96,7 +96,7 @@ export function buildApprover(options: ApproverOptions) {
       chain.secondaryProvider?.getBlock("latest"),
       chain.clearing.leaderEpoch(latest),
       chain.clearing.markets(0, latest),
-      chain.clearing.exposureState(0, latest),
+      chain.clearing.exposure(0, latest),
       chain.clearing.positionOf(wallet.address, 0, latest),
       chain.clearing.makerBacking(latest),
     ]);

@@ -14,8 +14,8 @@ export interface ExposureMarket {
 export interface ExposureBook {
   longBase: bigint;
   shortBase: bigint;
+  /** Gross limit in the low 128 bits, per-side limit in the high 128 (see `toExposureBook`). */
   limits: bigint;
-  ready: boolean;
 }
 export interface PositionState {
   size: bigint;
@@ -111,7 +111,6 @@ export function exposureAdmission(input: {
     market >= markets.length
   )
     return reject("invalid_policy");
-  if (!books.every((book) => book.ready)) return reject("exposure_migration_required");
   const selected = markets[market],
     cap = high128(netLimits[market]);
   if (cap === 0n || selected.fundingTime > timestamp) return reject("invalid_policy");

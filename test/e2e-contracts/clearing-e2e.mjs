@@ -252,6 +252,7 @@ const closeTypes = {
   CloseIntent: [
     { name: "account", type: "address" },
     { name: "market", type: "uint8" },
+    { name: "limitPrice", type: "uint256" },
     { name: "nonce", type: "uint256" },
     { name: "deadline", type: "uint64" },
   ],
@@ -350,10 +351,9 @@ assert.equal(await ethers.provider.send("evm_revert", [epochSnapshot]), true);
 
 // Market policy changes invalidate outstanding approvals. Emergency authority can only tighten or disable.
 const policySnapshot = await ethers.provider.send("evm_snapshot", []);
-const initialLimitWord = await clearing.marketLimitWord(0),
-  mask = (1n << 128n) - 1n;
-assert.equal(initialLimitWord & mask, 1_000_000_000_000n);
-assert.equal(initialLimitWord >> 128n, 5_000_000_000_000n);
+const initialLimits = await clearing.marketLimits(0);
+assert.equal(initialLimits.maxTradeNotional, 1_000_000_000_000n);
+assert.equal(initialLimits.maxMarketNotional, 5_000_000_000_000n);
 await (await clearing.connect(emergency).setMarketPolicy(0, false, 25_000_000_000n, 250_000_000_000n)).wait();
 assert.equal((await clearing.markets(0)).enabled, false);
 assert.equal(await clearing.policyVersion(), 2n);
@@ -739,6 +739,7 @@ const closeBlock = await ethers.provider.getBlock("latest");
 const closeIntent = {
   account: user.address,
   market: 0,
+  limitPrice: 0n,
   nonce: 93n,
   deadline: BigInt(closeBlock.timestamp + 60),
 };
@@ -750,6 +751,7 @@ await (
     .closePositionWithSignature(
       user.address,
       0,
+      closeIntent.limitPrice,
       closeIntent.nonce,
       closeIntent.deadline,
       closeReport.report,

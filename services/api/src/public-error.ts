@@ -2,7 +2,6 @@
 export function publicError(error: unknown, fallback: string): string {
   const safeMessages = new Set([
     "market is paused",
-    "exposure migration required",
     "firm quote capacity reached",
     "order capacity reached",
     "account open order limit reached",
@@ -21,6 +20,11 @@ export function publicError(error: unknown, fallback: string): string {
     Insolvent: "Settlement requires resolution",
     OracleInvalid: "Oracle proof rejected",
     TriggerNotReached: "Trigger price not reached",
+    SessionLimit: "Session key limit reached",
+    ReduceOnly: "Reduce-only trade would not reduce the position",
+    MarketDisabled: "Market is closing only",
+    TradeTooLarge: "Trade above the market's per-trade limit",
+    PriceLimit: "Price worse than the signed limit",
   };
   const value = error as { revert?: { name?: string }; data?: unknown } | null;
   if (value?.revert?.name && Object.hasOwn(names, value.revert.name)) return names[value.revert.name];
@@ -32,6 +36,11 @@ export function publicError(error: unknown, fallback: string): string {
     "0x8baa579f": "InvalidSignature",
     "0x82b42900": "Unauthorized",
     "0xdccfcae2": "TriggerNotReached",
+    "0x0e6692d8": "SessionLimit",
+    "0x5b0f71a2": "ReduceOnly",
+    "0x52a422f7": "MarketDisabled",
+    "0x04213078": "TradeTooLarge",
+    "0x4b3eeb24": "PriceLimit",
   };
   if (typeof value?.data === "string") {
     const name = selectors[value.data.slice(0, 10).toLowerCase()];

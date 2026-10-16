@@ -18,7 +18,7 @@ library RFQLiquidation {
     function liquidate(address account, uint8 market, bytes calldata report, address keeper) public {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if ($.resolutionRequired || market >= $.marketCount) revert InvalidTrade();
-        RFQLedger.touchOracle(report, market);
+        RFQLedger.touchOracle(report, market, MAX_RELAYED_ORACLE_AGE);
         RFQLedger.requireFreshPositions(account);
         RFQLedger.settleAllFunding(account);
         if ($.resolutionRequired) return;
@@ -54,11 +54,15 @@ library RFQLiquidation {
         emit IRFQClearingEvents.Liquidated(account, market, closed, penalty, reward);
     }
 
-    /// @notice Closes one leg at the oracle side while trading is paused (not during resolution).
-    function closePosition(address account, uint8 market, bytes calldata report) public {
+    /// @notice Closes one leg at the oracle side while trading is paused (not during resolution). A relayed close
+    /// (`relayed`) needs a report at most MAX_RELAYED_ORACLE_AGE old; a non-zero `limitPrice` is the lowest bid
+    /// a long may close at, or the highest ask for a short.
+    function closePosition(address account, uint8 market, bytes calldata report, uint256 limitPrice, bool relayed)
+        public
+    {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         if (!$.paused || $.resolutionRequired || market >= $.marketCount) revert InvalidTrade();
-        RFQLedger.touchOracle(report, market);
+        RFQLedger.touchOracle(report, market, relayed ? MAX_RELAYED_ORACLE_AGE : MAX_ORACLE_AGE);
         RFQLedger.settleAllFunding(account);
         if ($.resolutionRequired) return;
 
@@ -66,6 +70,7 @@ library RFQLiquidation {
         int256 size = owner.positions[market].size;
         if (size == 0) revert InvalidTrade();
         uint256 price = RFQRiskMath.exitPrice($.markets[market], size);
+        if (limitPrice != 0 && (size > 0 ? price < limitPrice : price > limitPrice)) revert PriceLimit();
         RFQLedger.applyPosition(account, market, -size, price);
         if ($.resolutionRequired) return;
         if (owner.openMarkets == 0) RFQLedger.absorbDeficit(account);

@@ -82,6 +82,7 @@ const EXIT_WRITES = [
   /^\/v1\/close\/all\/quote$/,
   /^\/v1\/(withdraw|session)\/(prepare|execute)$/,
   /^\/v1\/nonce\/cancel\/(prepare|execute)$/,
+  /^\/v1\/session\/revoke\/(prepare|execute)$/,
   /^\/v1\/orders\/[A-Za-z0-9_-]{1,128}\/cancel(?:\/prepare)?$/,
 ];
 

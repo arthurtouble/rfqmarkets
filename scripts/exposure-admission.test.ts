@@ -27,9 +27,8 @@ function fixture() {
       longBase: BASE / 10n,
       shortBase: BASE / 10n,
       limits: word(25_000_000_000n, 20_000_000_000n),
-      ready: true,
     },
-    { longBase: 0n, shortBase: 0n, limits: word(max), ready: true },
+    { longBase: 0n, shortBase: 0n, limits: word(max) },
   ];
   return {
     markets: [btc, eth] as [ExposureMarket, ExposureMarket],
@@ -56,9 +55,6 @@ test("independent exposure model rejects netting bypasses, stale gross and incom
   input.delta = BASE;
   input.timestamp = 116n;
   assert.equal(exposureAdmission(input).reason, "stale_gross_price");
-  input = fixture();
-  input.books[0].ready = false;
-  assert.equal(exposureAdmission(input).reason, "exposure_migration_required");
 });
 test("tightened caps permit improvements and disabled markets permit safe owner reductions", () => {
   const input = fixture();

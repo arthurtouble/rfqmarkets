@@ -28,14 +28,15 @@ contract LaunchTest is ClearingFixture {
         assertEq(clearing.leaderEpoch(), 1);
         assertEq(clearing.makerIncidentGracePeriod(), DEFAULT_INCIDENT_GRACE_PERIOD);
 
-        assertEq(clearing.marketLimitWord(0), uint256(25_000e6) | (uint256(250_000e6) << 128));
+        assertEq(clearing.marketLimits(0).maxTradeNotional, 25_000e6);
+        assertEq(clearing.marketLimits(0).maxMarketNotional, 250_000e6);
         (,,,,,, bool btcEnabled) = clearing.markets(0);
         (,,,,,, bool ethEnabled) = clearing.markets(1);
         assertTrue(btcEnabled);
         assertFalse(ethEnabled);
-        (,, uint256 limits,, bool ready) = clearing.exposureState(1);
-        assertEq(limits, uint256(200_000e6) | (uint256(150_000e6) << 128));
-        assertTrue(ready);
+        ExposureBook memory book = clearing.exposure(1);
+        assertEq(book.grossLimit, 200_000e6);
+        assertEq(book.sideLimit, 150_000e6);
         assertEq(proxyAdmin.owner(), governance);
         assertEq(clearing.marketCount(), 2);
         assertEq(clearing.marketId("ETH"), 1);
@@ -70,10 +71,10 @@ contract LaunchTest is ClearingFixture {
         Trader memory alice = newTrader("alice", 50_000e6);
         refreshAll();
         // 0.3 BTC is 30k notional, above the 25k per-trade cap.
-        vm.expectRevert(InvalidTrade.selector);
+        vm.expectRevert(TradeTooLarge.selector);
         this.tradeExternal(alice, 0, 3e17);
         // ETH launched disabled.
-        vm.expectRevert(Margin.selector);
+        vm.expectRevert(MarketDisabled.selector);
         this.tradeExternal(alice, 1, 1e18);
         trade(alice, 0, 2e17, false);
     }

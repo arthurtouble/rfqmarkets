@@ -151,7 +151,6 @@ export class GrossReservationBook {
     if (blockNumber < this.finalizedBlock) return false;
     if (books.length !== asks.length || item.market >= books.length) return false;
     if (risk && (risk.net.length !== books.length || risk.netLimits.length !== books.length)) return false;
-    if (!books.every((book) => book.ready)) return false;
     const old = this.items.get(id);
     if (
       old &&

@@ -8,8 +8,18 @@ interface IRFQClearingEvents {
     event Withdrawn(address indexed account, uint256 amount);
     event NonceCancelled(address indexed account, uint256 indexed nonce);
     event PositionClosed(address indexed account, uint8 indexed market, int256 baseDelta, uint256 price);
+    /// @notice A fill. `realizedPnl` is the PnL the fill realized against the maker (before fee and funding), and
+    /// `sizeAfter` and `entryPriceAfter` are the account's position in `market` after it.
     event TradeExecuted(
-        bytes32 indexed intentHash, address indexed account, uint8 market, int256 baseDelta, uint256 price, uint256 fee
+        bytes32 indexed intentHash,
+        address indexed account,
+        uint8 indexed market,
+        int256 baseDelta,
+        uint256 price,
+        uint256 fee,
+        int256 realizedPnl,
+        int256 sizeAfter,
+        uint256 entryPriceAfter
     );
     event FundingSettled(address indexed account, uint8 indexed market, int256 payment);
     event Liquidated(address indexed account, uint8 market, uint256 closedBase, uint256 penalty, uint256 keeperReward);
@@ -18,7 +28,13 @@ interface IRFQClearingEvents {
     /// `amount` is the change to `account`'s collateral and `counterparty` is the other side.
     event MarginTransferred(address indexed account, address indexed counterparty, uint8 indexed market, int256 amount);
     event SessionGranted(
-        address indexed account, address indexed session, uint64 validUntil, uint128 maxCumulativeNotional
+        address indexed account,
+        address indexed session,
+        uint256 marketMask,
+        uint128 maxTradeNotional,
+        uint128 maxCumulativeNotional,
+        uint128 maxFee,
+        uint64 validUntil
     );
     event SessionRevoked(address indexed account, address indexed session);
 

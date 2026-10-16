@@ -129,7 +129,7 @@ export function buildKeeper(options: KeeperOptions) {
           clearing.resolutionCursor(tag),
           Promise.all(indexes.map((index) => clearing.resolutionSampleCount(index, tag))),
           Promise.all(indexes.map((index) => clearing.markets(index, tag))),
-          Promise.all(indexes.map((index) => clearing.exposureState(index, tag))),
+          Promise.all(indexes.map((index) => clearing.exposure(index, tag))),
         ]);
         return {
           resolutionRequired: required,

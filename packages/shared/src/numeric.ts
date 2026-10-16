@@ -18,7 +18,7 @@ export const low128 = (word: bigint) => word & MASK;
 export const high128 = (word: bigint) => word >> 128n;
 
 /**
- * `marketLimitWord(market)` packs the per-trade notional cap in the low 128 bits
+ * A market limit word (see `toLimitWord`) packs the per-trade notional cap in the low 128 bits
  * and the market net-notional cap in the high 128 bits.
  */
 export function decodeMarketLimitWord(word: bigint | number | string) {

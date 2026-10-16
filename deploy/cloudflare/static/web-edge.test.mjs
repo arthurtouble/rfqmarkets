@@ -274,6 +274,8 @@ test("lets restricted and unverified locations reduce risk and withdraw but not 
     "/v1/withdraw/execute",
     "/v1/session/prepare",
     "/v1/session/execute",
+    "/v1/session/revoke/prepare",
+    "/v1/session/revoke/execute",
     "/v1/nonce/cancel/prepare",
     "/v1/nonce/cancel/execute",
     "/v1/orders/abc_1/cancel/prepare",

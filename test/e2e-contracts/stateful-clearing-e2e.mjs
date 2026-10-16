@@ -120,7 +120,7 @@ async function assertAccounting() {
       `market ${market} aggregate drifted`,
     );
   for (let market = 0; market < 2; market++) {
-    const book = await clearing.exposureState(market);
+    const book = await clearing.exposure(market);
     assert.equal(book.longBase, longs[market]);
     assert.equal(book.shortBase, shorts[market]);
   }
@@ -311,7 +311,7 @@ for (let i = 0; i < traders.length; i++)
     "keeper batching/time changed resolution claim",
   );
 for (let market = 0; market < 2; market++) {
-  const book = await clearing.exposureState(market);
+  const book = await clearing.exposure(market);
   assert.equal(book.longBase, 0n);
   assert.equal(book.shortBase, 0n);
 }

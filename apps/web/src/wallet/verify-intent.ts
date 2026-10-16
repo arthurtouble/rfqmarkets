@@ -61,6 +61,13 @@ export const SIGNABLE_TYPES = {
   CloseIntent: [
     { name: "account", type: "address" },
     { name: "market", type: "uint8" },
+    { name: "limitPrice", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint64" },
+  ],
+  SessionRevoke: [
+    { name: "account", type: "address" },
+    { name: "session", type: "address" },
     { name: "nonce", type: "uint256" },
     { name: "deadline", type: "uint64" },
   ],
@@ -154,6 +161,7 @@ export type Expectation =
   | { kind: "isolated-margin"; market: number; amountMicro: bigint; nonce: string }
   | { kind: "cancel"; nonce: string }
   | { kind: "close"; market: number; nonce: string }
+  | { kind: "session-revoke"; session: string; nonce: string }
   | {
       kind: "session";
       session: string;
@@ -173,6 +181,7 @@ const EXPECTED_TYPE: Record<Expectation["kind"], PrimaryType> = {
   "isolated-margin": "IsolatedMarginIntent",
   cancel: "CancelIntent",
   close: "CloseIntent",
+  "session-revoke": "SessionRevoke",
   session: "SessionGrant",
 };
 
@@ -320,6 +329,13 @@ function verifyFields(message: Record<string, unknown>, expectation: Expectation
       return;
     case "close":
       check(Number(integer(message.market, "market")) === expectation.market, "market changed");
+      check(integer(message.limitPrice, "limitPrice") >= 0n, "close price limit is negative");
+      return;
+    case "session-revoke":
+      check(
+        address(message.session, "session") === getAddress(expectation.session),
+        "session key is not the one this tab holds",
+      );
       return;
     case "session": {
       check(

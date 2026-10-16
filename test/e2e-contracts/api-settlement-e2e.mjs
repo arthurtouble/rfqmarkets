@@ -171,7 +171,10 @@ try {
   assert((await clearing.positionOf(user.address, 0)).size > 0n);
   await (await clearing.pause()).wait();
   const close = await post("/v1/close/prepare", { account: user.address, market: "BTC", nonce: "101" }),
-    closeSignature = await user.signTypedData(close.domain, close.types, close.intent);
+    closeSignature = await user.signTypedData(close.domain, close.types, close.intent),
+    closeBid = (await clearing.markets(0)).lastBid;
+  // A long's close carries a floor below the current bid, so a relayer cannot fill it at any worse price.
+  assert(BigInt(close.intent.limitPrice) > 0n && BigInt(close.intent.limitPrice) < closeBid);
   await post("/v1/close/execute", { intent: close.intent, userSignature: closeSignature });
   assert.equal((await clearing.positionOf(user.address, 0)).size, 0n);
   const withdrawn = await post("/v1/withdraw/prepare", { account: user.address, amount: "1", nonce: "102" }),
@@ -260,7 +263,7 @@ try {
     0n,
     "API must permit genuine full reductions above tightened limits",
   );
-  assert.equal((await clearing.exposureState(0)).longBase, 0n);
+  assert.equal((await clearing.exposure(0)).longBase, 0n);
   await (await clearing.setMarketPolicy(0, true, 1_000_000_000_000n, 5_000_000_000_000n)).wait();
   await new Promise((resolve) => setTimeout(resolve, 250));
   const reopenedQuote = await post("/v1/quote", { market: "BTC", side: "buy", amount: "10000" }),

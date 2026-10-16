@@ -359,8 +359,7 @@ export class RfqClient {
    * a trade and `maxCumulativeAmount` in total, for `durationSeconds` (at most 30 days). The clearing contract
    * enforces every limit, and a session key can never withdraw, cancel or grant. The owner signs once and the
    * venue pays the gas. Then trade with an `RfqClient` whose signer is the session key, passing `account`.
-   * This is the safe way to hand an agent a budget. Revoke early with `revokeSession(session)` on the clearing
-   * contract from the owner's wallet.
+   * This is the safe way to hand an agent a budget. Revoke early, without gas, with `revokeSession(session)`.
    */
   async grantSession(input: {
     session: string;
@@ -406,6 +405,24 @@ export class RfqClient {
     return this.request<SessionGrantResult>("/v1/session/execute", {
       grant,
       userSignature: await this.sign(prepared, "grant"),
+    });
+  }
+
+  /** Revokes a session key the signer granted. The owner signs and the venue pays the gas. */
+  async revokeSession(sessionKey: string) {
+    const account = await this.accountOf(),
+      session = getAddress(sessionKey);
+    const prepared = await this.request<Prepared>("/v1/session/revoke/prepare", {
+      account,
+      session,
+      nonce: randomNonce(),
+    });
+    const intent = prepared.intent ?? {};
+    if (getAddress(String(intent.account)) !== account || getAddress(String(intent.session)) !== session)
+      throw new Error("the prepared revocation differs from the one requested");
+    return this.request<ActionResult>("/v1/session/revoke/execute", {
+      intent,
+      userSignature: await this.sign(prepared),
     });
   }
 

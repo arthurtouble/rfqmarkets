@@ -1,3 +1,4 @@
+import { toLimitWord } from "../../../packages/shared/src/clearing-structs.js";
 import { AbiCoder, Contract, type Block } from "ethers";
 import { DEFAULT_MARGIN_SCALE_BPS } from "../../../packages/shared/src/pricing.js";
 import type { ApiContext } from "./context.js";
@@ -183,7 +184,7 @@ export class ChainReader {
       ] = await Promise.all([
         provider.getBlock(blockNumber),
         Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
-        Promise.all(indexes.map((index) => clearing.marketLimitWord(index, blockTag))),
+        Promise.all(indexes.map(async (index) => toLimitWord(await clearing.marketLimits(index, blockTag)))),
         clearing.leaderEpoch(blockTag),
         clearing.signerSetVersion(blockTag),
         clearing.policyVersion(blockTag),

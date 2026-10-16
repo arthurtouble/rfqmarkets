@@ -48,7 +48,10 @@ library RFQRiskMath {
         }
 
         bool reduction = isReduction(previous, next);
-        if (!reduction && (!$.markets[intent.market].enabled || backing < $.baseRiskCapitalTarget)) revert Margin();
+        if (!reduction) {
+            if (!$.markets[intent.market].enabled) revert MarketDisabled();
+            if (backing < $.baseRiskCapitalTarget) revert Margin();
+        }
 
         uint256 stressBefore;
         uint8 count = $.marketCount;
@@ -58,7 +61,9 @@ library RFQRiskMath {
             uint256 longs = book.longBase;
             uint256 shorts = book.shortBase;
             if (longs + shorts == 0 && i != intent.market) continue;
-            if (longs + shorts != 0 && !isFresh(market)) revert Stale();
+            // A stale price in another market does not block a reduction: that market's terms are the same
+            // before and after, so its last price only has to be consistent, not current.
+            if (longs + shorts != 0 && !isFresh(market) && !(reduction && i != intent.market)) revert Stale();
 
             uint256 mark = (market.lastBid + market.lastAsk) / 2;
             int256 delta = i == intent.market ? intent.baseDelta : int256(0);
@@ -104,15 +109,15 @@ library RFQRiskMath {
             bid,
             ask
         );
-        if (!reduces && notional > $.limits[intent.market].maxTradeNotional) revert InvalidTrade();
+        if (!reduces && notional > $.limits[intent.market].maxTradeNotional) revert TradeTooLarge();
         if (sessionSigner != address(0)) {
             Session storage session = $.sessions[sessionSigner];
             if (
                 notional > session.maxTradeNotional
                     || uint256(session.usedNotional) + notional > session.maxCumulativeNotional
-            ) revert Unauthorized();
+            ) revert SessionLimit();
         }
-        if (intent.reduceOnly && !reduces) revert InvalidTrade();
+        if (intent.reduceOnly && !reduces) revert ReduceOnly();
         // Approvers cannot sign below the convex inventory charge, and the price must deliver that charge.
         if (approval.impactCharge < requiredImpact) revert InvalidTrade();
         if (deliveredImpact < approval.impactCharge) revert InvalidTrade();

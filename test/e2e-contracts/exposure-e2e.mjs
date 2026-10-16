@@ -141,11 +141,11 @@ await refresh();
 await trade(long, BASE / 10n);
 await trade(short, -BASE / 10n);
 assert.equal((await clearing.markets(0)).aggregateBase, 0n);
-let book = await clearing.exposureState(0);
+let book = await clearing.exposure(0);
 assert.equal(book.longBase, BASE / 10n);
 assert.equal(book.shortBase, BASE / 10n);
 await assert.rejects(trade(short, -BASE / 10n), "opposing positions must not bypass gross cap");
-assert.equal((await clearing.exposureState(0)).shortBase, BASE / 10n);
+assert.equal((await clearing.exposure(0)).shortBase, BASE / 10n);
 await configure(50_000_000_000n, 15_000_000_000n);
 await refresh();
 await assert.rejects(trade(third, (6n * BASE) / 100n), "side cap must bind independently of gross cap");
@@ -158,7 +158,7 @@ const branch = await ethers.provider.send("evm_snapshot", []);
 await configure(10_000_000_000n, 5_000_000_000n);
 await refresh();
 await trade(long, -BASE / 20n, 0, true);
-book = await clearing.exposureState(0);
+book = await clearing.exposure(0);
 assert.equal(book.longBase, BASE / 20n);
 assert.equal(book.shortBase, BASE / 10n);
 await assert.rejects(trade(long, BASE / 100n), "opening above tightened cap must fail");
@@ -169,14 +169,14 @@ await (await clearing.setMarketPolicy(0, false, 100_000_000n, 1_000_000_000n)).w
 await refresh();
 await trade(long, -BASE / 20n, 0, true);
 assert.equal(
-  (await clearing.exposureState(0)).longBase,
+  (await clearing.exposure(0)).longBase,
   BASE / 20n,
   "reduction above tightened net/trade caps must remain available",
 );
 await assert.rejects(trade(third, BASE / 1000n), "disabled market must reject new exposure");
 await trade(long, -BASE / 20n, 0, true);
-assert.equal((await clearing.exposureState(0)).longBase, 0n);
-assert.equal((await clearing.exposureState(0)).shortBase, 0n);
+assert.equal((await clearing.exposure(0)).longBase, 0n);
+assert.equal((await clearing.exposure(0)).shortBase, 0n);
 await (await clearing.setMarketPolicy(0, true, 1_000_000_000_000n, 5_000_000_000_000n)).wait();
 await configure(50_000_000_000n, 20_000_000_000n);
 await refresh();

@@ -281,14 +281,38 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
             0,
             grant.maxFee
         );
-        emit SessionGranted(grant.account, grant.session, grant.validUntil, grant.maxCumulativeNotional);
+        emit SessionGranted(
+            grant.account,
+            grant.session,
+            grant.marketMask,
+            grant.maxTradeNotional,
+            grant.maxCumulativeNotional,
+            grant.maxFee,
+            grant.validUntil
+        );
     }
 
     function revokeSession(address session) external {
-        RFQClearingNamespace.Layout storage $ = _s();
-        if ($.sessions[session].account != msg.sender) revert Unauthorized();
-        delete $.sessions[session];
-        emit SessionRevoked(msg.sender, session);
+        _revokeSession(msg.sender, session);
+    }
+
+    /// @notice Gas-sponsored session revocation authorized by the account owner, so turning off one-tap trading
+    /// needs no ETH.
+    function revokeSessionWithSignature(
+        address account,
+        address session,
+        uint256 nonce,
+        uint64 deadline,
+        bytes calldata signature
+    ) external {
+        RFQSignatureVerifier.consumeOwnerAuthorization(
+            account,
+            nonce,
+            deadline,
+            keccak256(abi.encode(SESSION_REVOKE_TYPEHASH, account, session, nonce, deadline)),
+            signature
+        );
+        _revokeSession(account, session);
     }
 
     // =======================================================================
@@ -331,27 +355,33 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         returns (IPriceOracle.Observation memory observation)
     {
         if (_s().resolutionRequired) revert InvalidTrade();
-        observation = RFQLedger.touchOracle(report, type(uint8).max);
+        observation = RFQLedger.touchOracle(report, type(uint8).max, MAX_ORACLE_AGE);
     }
 
     /// @notice Owner exit at the oracle side while trading is paused, without approvers.
     function closePosition(uint8 market, bytes calldata report) external payable nonReentrant {
-        RFQLiquidation.closePosition(msg.sender, market, report);
+        RFQLiquidation.closePosition(msg.sender, market, report, 0, false);
     }
 
-    /// @notice Gas-sponsored paused-market close authorized by the account owner.
+    /// @notice Gas-sponsored paused-market close authorized by the account owner, at an exit price no worse
+    /// than the signed `limitPrice` (zero for none).
     function closePositionWithSignature(
         address account,
         uint8 market,
+        uint256 limitPrice,
         uint256 nonce,
         uint64 deadline,
         bytes calldata report,
         bytes calldata signature
     ) external payable nonReentrant {
         RFQSignatureVerifier.consumeOwnerAuthorization(
-            account, nonce, deadline, keccak256(abi.encode(CLOSE_TYPEHASH, account, market, nonce, deadline)), signature
+            account,
+            nonce,
+            deadline,
+            keccak256(abi.encode(CLOSE_TYPEHASH, account, market, limitPrice, nonce, deadline)),
+            signature
         );
-        RFQLiquidation.closePosition(account, market, report);
+        RFQLiquidation.closePosition(account, market, report, limitPrice, true);
     }
 
     // =======================================================================
@@ -667,25 +697,9 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         return _s().limits[market];
     }
 
-    /// @notice Per-trade limit in the low 128 bits, net market limit in the high 128 bits.
-    function marketLimitWord(uint8 market) external view returns (uint256) {
-        MarketLimits storage limits = _s().limits[market];
-        return uint256(limits.maxTradeNotional) | (uint256(limits.maxMarketNotional) << 128);
-    }
-
-    /// @return longBase Gross customer long base.
-    /// @return shortBase Gross customer short base.
-    /// @return limits Gross limit in the low 128 bits, per-side limit in the high 128 bits.
-    /// @return cursor Always 0; kept for interface compatibility with the pre-v1 migration cursor.
-    /// @return ready Always true; v1 tracks exposure from the first trade.
-    function exposureState(uint8 market)
-        external
-        view
-        returns (uint256 longBase, uint256 shortBase, uint256 limits, uint256 cursor, bool ready)
-    {
-        if (market >= _s().marketCount) revert InvalidTrade();
-        ExposureBook storage book = _s().exposure[market];
-        return (book.longBase, book.shortBase, uint256(book.grossLimit) | (uint256(book.sideLimit) << 128), 0, true);
+    /// @notice A market's gross customer book (long and short base) and its gross and per-side limits.
+    function exposure(uint8 market) external view returns (ExposureBook memory) {
+        return _s().exposure[market];
     }
 
     function makerBacking() external view returns (uint256) {
@@ -809,6 +823,13 @@ contract RFQClearing is IRFQClearingEvents, RFQClearingNamespace, Initializable,
         RFQClearingNamespace.Layout storage $ = _s();
         if (amount == 0 || $.resolutionRequired) revert InvalidTrade();
         RFQRiskMath.pullExact($.usdc, msg.sender, amount);
+    }
+
+    function _revokeSession(address account, address session) private {
+        RFQClearingNamespace.Layout storage $ = _s();
+        if ($.sessions[session].account != account) revert Unauthorized();
+        delete $.sessions[session];
+        emit SessionRevoked(account, session);
     }
 
     function _creditDeposit(address account, uint256 amount) private {

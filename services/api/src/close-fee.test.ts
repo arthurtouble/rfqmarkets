@@ -69,7 +69,13 @@ test("sponsored paused close simulates and forwards a nonzero proof verification
     });
   try {
     await app.ready();
-    const intent = { account: user.address, market: 0, nonce: 1n, deadline: BigInt(now + 120) },
+    const intent = {
+        account: user.address,
+        market: 0,
+        limitPrice: 0n,
+        nonce: 1n,
+        deadline: BigInt(now + 120),
+      },
       signature = await user.signTypedData(
         { name: DOMAIN_NAME, version: DOMAIN_VERSION, chainId: 84532n, verifyingContract: clearing },
         closeTypes,
@@ -79,7 +85,7 @@ test("sponsored paused close simulates and forwards a nonzero proof verification
       method: "POST",
       url: "/v1/close/execute",
       payload: {
-        intent: { ...intent, nonce: "1", deadline: String(intent.deadline) },
+        intent: { ...intent, limitPrice: "0", nonce: "1", deadline: String(intent.deadline) },
         userSignature: signature,
       },
     });

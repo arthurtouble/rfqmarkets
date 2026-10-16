@@ -9,6 +9,8 @@ import {
   intentTypes,
   sessionGrantToWire,
   sessionGrantTypes,
+  sessionRevokeToWire,
+  sessionRevokeTypes,
   triggeredIntentToWire,
   triggeredIntentTypes,
   withdrawalToWire,
@@ -72,6 +74,7 @@ test("bundled types and domain match the protocol's (packages/shared, contracts/
     ...isolatedMarginTypes,
     ...cancelTypes,
     ...closeTypes,
+    ...sessionRevokeTypes,
     ...sessionGrantTypes,
   });
 });
@@ -597,7 +600,10 @@ test("cancels and emergency closes name the requested nonce and market", () => {
       }),
     /nonce changed/,
   );
-  const close = prepared(closeTypes, closeToWire({ account: ACCOUNT, market: 1, nonce: 13n, deadline: 1n }));
+  const close = prepared(
+    closeTypes,
+    closeToWire({ account: ACCOUNT, market: 1, limitPrice: 99_000_000_000n, nonce: 13n, deadline: 1n }),
+  );
   verifyPrepared(close, "CloseIntent", context, { kind: "close", market: 1, nonce: "13" });
   refused(
     () =>
@@ -616,6 +622,24 @@ test("cancels and emergency closes name the requested nonce and market", () => {
         nonce: "13",
       }),
     /another account/,
+  );
+});
+
+test("a gas-free revocation names the session key this tab holds", () => {
+  const session = "0x00000000000000000000000000000000000000aa";
+  const revoke = prepared(
+    sessionRevokeTypes,
+    sessionRevokeToWire({ account: ACCOUNT, session, nonce: 14n, deadline: 1n }),
+  );
+  verifyPrepared(revoke, "SessionRevoke", context, { kind: "session-revoke", session, nonce: "14" });
+  refused(
+    () =>
+      verifyPrepared(tamper(revoke, { session: OTHER }), "SessionRevoke", context, {
+        kind: "session-revoke",
+        session,
+        nonce: "14",
+      }),
+    /session key/,
   );
 });
 

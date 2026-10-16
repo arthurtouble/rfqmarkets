@@ -143,7 +143,7 @@ contract TriggeredOrdersTest is ClearingFixture {
         Trigger memory stop = Trigger({triggerPrice: 101_000e6, triggerAbove: false});
         (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
             triggeredQuote(-1e18, -1e18, true, stop, 902);
-        fireReverts(intent, stop, approval, proof, InvalidTrade.selector);
+        fireReverts(intent, stop, approval, proof, ReduceOnly.selector);
     }
 
     function test_stopEntryOpensAPositionAboveTheTrigger() public {
@@ -207,7 +207,7 @@ contract TriggeredOrdersTest is ClearingFixture {
 
         // A second stop for the closed short clamps to zero and is refused rather than opening a long.
         (intent, approval, proof) = triggeredQuote(1e17, 1e17, true, stop, 911);
-        fireReverts(intent, stop, approval, proof, InvalidTrade.selector);
+        fireReverts(intent, stop, approval, proof, ReduceOnly.selector);
         assertEq(clearing.positionOf(alice.account, 0).size, 0);
     }
 
@@ -219,7 +219,7 @@ contract TriggeredOrdersTest is ClearingFixture {
         moveBtc(98_000e6);
         (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
             triggeredQuote(-1e17, -1e17, true, stop, 912);
-        fireReverts(intent, stop, approval, proof, InvalidTrade.selector);
+        fireReverts(intent, stop, approval, proof, ReduceOnly.selector);
         assertEq(clearing.positionOf(alice.account, 0).size, -1e17);
     }
 
@@ -232,7 +232,7 @@ contract TriggeredOrdersTest is ClearingFixture {
         // The 1% slippage band floors the sell at 94,050; a fill at about 90,000 is worse than the signed limit.
         intent.limitPrice = 94_050e6;
         approval.intentHash = triggeredDigest(intent, stop);
-        fireReverts(intent, stop, approval, proof, InvalidTrade.selector);
+        fireReverts(intent, stop, approval, proof, PriceLimit.selector);
         assertEq(clearing.positionOf(alice.account, 0).size, 1e17);
     }
 

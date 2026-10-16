@@ -16,12 +16,17 @@ export interface ClearingMarketStruct {
   lastAsk: BigNumberish;
   enabled: unknown;
 }
-/** `exposureState(uint8)` */
+/** `exposure(uint8)` */
 export interface ClearingBookStruct {
   longBase: BigNumberish;
   shortBase: BigNumberish;
-  limits: BigNumberish;
-  ready: unknown;
+  grossLimit: BigNumberish;
+  sideLimit: BigNumberish;
+}
+/** `marketLimits(uint8)` */
+export interface ClearingLimitsStruct {
+  maxTradeNotional: BigNumberish;
+  maxMarketNotional: BigNumberish;
 }
 /** `positionOf(address,uint8)` */
 export interface ClearingPositionStruct {
@@ -60,12 +65,16 @@ export const toExposureMarket = (value: ClearingMarketStruct): ExposureMarket =>
   enabled: Boolean(value.enabled),
 });
 
+/** The risk model packs the gross limit in the low 128 bits of `limits` and the per-side limit in the high 128. */
 export const toExposureBook = (value: ClearingBookStruct): ExposureBook => ({
   longBase: BigInt(value.longBase),
   shortBase: BigInt(value.shortBase),
-  limits: BigInt(value.limits),
-  ready: Boolean(value.ready),
+  limits: BigInt(value.grossLimit) | (BigInt(value.sideLimit) << 128n),
 });
+
+/** `marketLimits(market)` as the packed word the risk code reads: per-trade cap low, net market cap high. */
+export const toLimitWord = (value: ClearingLimitsStruct) =>
+  BigInt(value.maxTradeNotional) | (BigInt(value.maxMarketNotional) << 128n);
 
 export const toPosition = (value: ClearingPositionStruct): PositionState => ({
   size: BigInt(value.size),

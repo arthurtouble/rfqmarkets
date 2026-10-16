@@ -81,13 +81,10 @@ test("markedMarkets re-marks only the intent market", async () => {
 test("checkExposure surfaces the model's reason and enforces reduce-only intents", async () => {
   const context = await setup();
   assert.equal(checkExposure(context), undefined);
-  const notReady: ChainSnapshot = {
-    ...context.snapshot,
-    books: [{ ...context.snapshot.books[0], ready: false }, context.snapshot.books[1]],
-  };
-  const rejection = checkExposure({ ...context, snapshot: notReady })!;
+  const noBacking: ChainSnapshot = { ...context.snapshot, backing: 0n };
+  const rejection = checkExposure({ ...context, snapshot: noBacking })!;
   assert.equal(rejection.body.error, "independent exposure check rejected");
-  assert.equal(rejection.body.reason, "exposure_migration_required");
+  assert.ok(rejection.body.reason);
   assert.equal(
     error(checkExposure({ ...context, intent: { ...context.intent, reduceOnly: true } })),
     "reduce-only intent does not reduce position",

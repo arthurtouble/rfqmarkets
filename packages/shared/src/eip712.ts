@@ -72,6 +72,15 @@ export const closeTypes: Record<string, Array<{ name: string; type: string }>> =
   CloseIntent: [
     { name: "account", type: "address" },
     { name: "market", type: "uint8" },
+    { name: "limitPrice", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint64" },
+  ],
+};
+export const sessionRevokeTypes: Record<string, Array<{ name: string; type: string }>> = {
+  SessionRevoke: [
+    { name: "account", type: "address" },
+    { name: "session", type: "address" },
     { name: "nonce", type: "uint256" },
     { name: "deadline", type: "uint64" },
   ],
@@ -144,6 +153,14 @@ export interface CancelIntent {
 export interface CloseIntent {
   account: string;
   market: number;
+  /** Worst exit price accepted, in USDC micro-units: a floor for a long, a ceiling for a short. 0 is none. */
+  limitPrice: bigint;
+  nonce: bigint;
+  deadline: bigint;
+}
+export interface SessionRevoke {
+  account: string;
+  session: string;
   nonce: bigint;
   deadline: bigint;
 }
@@ -206,6 +223,8 @@ export const recoverCancelSigner = (domain: SigningDomain, intent: CancelIntent,
   getAddress(verifyTypedData(domain, cancelTypes, intent, signature));
 export const recoverCloseSigner = (domain: SigningDomain, intent: CloseIntent, signature: string) =>
   getAddress(verifyTypedData(domain, closeTypes, intent, signature));
+export const recoverSessionRevokeSigner = (domain: SigningDomain, intent: SessionRevoke, signature: string) =>
+  getAddress(verifyTypedData(domain, sessionRevokeTypes, intent, signature));
 export const recoverSessionGrantSigner = (domain: SigningDomain, grant: SessionGrant, signature: string) =>
   getAddress(verifyTypedData(domain, sessionGrantTypes, grant, signature));
 
@@ -288,6 +307,12 @@ export const cancelToWire = (intent: CancelIntent) => ({
   deadline: intent.deadline.toString(),
 });
 export const closeToWire = (intent: CloseIntent) => ({
+  ...intent,
+  limitPrice: intent.limitPrice.toString(),
+  nonce: intent.nonce.toString(),
+  deadline: intent.deadline.toString(),
+});
+export const sessionRevokeToWire = (intent: SessionRevoke) => ({
   ...intent,
   nonce: intent.nonce.toString(),
   deadline: intent.deadline.toString(),

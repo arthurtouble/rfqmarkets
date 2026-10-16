@@ -34,7 +34,7 @@ One node can be down, slow or wrong without affecting the price. Two nodes would
 | --- | --- |
 | Venue quote used by a node | at most 2 seconds old |
 | Report used by an approver to co-sign a trade | at most 8 seconds old |
-| Report accepted by the contract | at most 15 seconds old |
+| Report accepted by the contract | at most 15 seconds old; 5 seconds for liquidations, relayed closes and resolution samples |
 | Bid-ask width accepted by the contract | at most 1% |
 
 The contract also only ever moves stored prices forward in time: a report older than the one already recorded is ignored. That stops anyone from settling against an older, more favourable price that happens to still be within its validity window.

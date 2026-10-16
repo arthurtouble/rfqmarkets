@@ -60,7 +60,6 @@ import { keys } from "./queries.js";
 
 const clearingAbi = parseAbi([
   "function deposit(uint256 amount)",
-  "function revokeSession(address session)",
   "function collateralOf(address account) view returns (int256)",
   "function accountRegistered(address account) view returns (bool)",
 ]);
@@ -848,23 +847,31 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     revokeQuickTrading: () =>
       run("Revoke", "Turn off one-tap trading", async (progress) => {
-        const session = quick.session,
-          clearing = trader.settlement?.clearingAddress;
-        if (!session || !clearing) throw new Error("No active session");
+        const session = quick.session;
+        if (!session) throw new Error("No active session");
+        const nonce = randomNonce();
+        // Gas-free: the wallet signs the revocation and the API relays it.
+        const prepared = await api<Prepared>("/v1/session/revoke/prepare", {
+          account: account(),
+          session: session.sessionAddress,
+          nonce,
+        });
         progress("Confirm the revocation in your wallet");
-        const receipt = await trader.send({
-          to: clearing,
-          data: encodeFunctionData({
-            abi: clearingAbi,
-            functionName: "revokeSession",
-            args: [session.sessionAddress as Address],
-          }),
+        const userSignature = await trader.signIntent(prepared, "SessionRevoke", {
+          kind: "session-revoke",
+          session: session.sessionAddress,
+          nonce,
+        });
+        progress("Turning off one tap");
+        const result = await api<Settled>("/v1/session/revoke/execute", {
+          intent: prepared.intent,
+          userSignature,
         });
         quick.clear();
         return {
           title: "One-tap trading off",
-          detail: `Block ${receipt.blockNumber}`,
-          txHash: receipt.hash,
+          detail: result.transaction ? `Block ${result.transaction.blockNumber}` : undefined,
+          txHash: result.transaction?.hash,
           value: undefined,
         };
       }),

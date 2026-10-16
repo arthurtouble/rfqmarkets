@@ -19,6 +19,9 @@ uint8 constant MAX_MARKETS = 128;
 
 /// @dev Oracle reports older than this are rejected, and open legs must have a price this fresh.
 uint256 constant MAX_ORACLE_AGE = 15;
+/// @dev Reports a third party submits on someone else's account (liquidations, relayed closes, resolution samples)
+/// must be this fresh, so the submitter cannot pick a favourable price from the full freshness window.
+uint256 constant MAX_RELAYED_ORACLE_AGE = 5;
 /// @dev Maximum bid/ask width accepted from the oracle, in basis points of mid.
 uint256 constant MAX_ORACLE_WIDTH_BPS = 100;
 
@@ -76,10 +79,15 @@ bytes32 constant MAKER_APPROVAL_TYPEHASH = keccak256(
 bytes32 constant WITHDRAWAL_TYPEHASH =
     keccak256("WithdrawalIntent(address account,address recipient,uint256 amount,uint256 nonce,uint64 deadline)");
 bytes32 constant CANCEL_TYPEHASH = keccak256("CancelIntent(address account,uint256 nonce,uint64 deadline)");
-bytes32 constant CLOSE_TYPEHASH = keccak256("CloseIntent(address account,uint8 market,uint256 nonce,uint64 deadline)");
+/// @dev `limitPrice` bounds the exit price a relayer may close at: the lowest bid for a long, the highest ask for
+/// a short. Zero leaves it unbounded.
+bytes32 constant CLOSE_TYPEHASH =
+    keccak256("CloseIntent(address account,uint8 market,uint256 limitPrice,uint256 nonce,uint64 deadline)");
 /// @dev Moves collateral into (positive `amount`) or out of (negative) the account's isolated account for `market`.
 bytes32 constant ISOLATED_MARGIN_TYPEHASH =
     keccak256("IsolatedMarginIntent(address account,uint8 market,int256 amount,uint256 nonce,uint64 deadline)");
+bytes32 constant SESSION_REVOKE_TYPEHASH =
+    keccak256("SessionRevoke(address account,address session,uint256 nonce,uint64 deadline)");
 bytes32 constant SESSION_GRANT_TYPEHASH = keccak256(
     "SessionGrant(address account,address session,uint256 marketMask,uint128 maxTradeNotional,uint128 maxCumulativeNotional,uint128 maxFee,uint64 validUntil,uint256 nonce,uint64 deadline)"
 );
@@ -256,3 +264,13 @@ error InvalidConfiguration();
 error IncidentGracePeriod();
 error NoSurplus();
 error TriggerNotReached();
+/// @dev A session key's market, per-trade, cumulative, fee or expiry limit refuses the trade.
+error SessionLimit();
+/// @dev A reduce-only intent would open or flip a position.
+error ReduceOnly();
+/// @dev The market only accepts reductions.
+error MarketDisabled();
+/// @dev The opening trade is above the market's per-trade limit.
+error TradeTooLarge();
+/// @dev The execution or exit price is worse than the signed limit price.
+error PriceLimit();

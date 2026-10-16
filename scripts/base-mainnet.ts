@@ -665,23 +665,22 @@ export async function verifyCore(
       oracleClearing === ZeroAddress && bindingPending,
       "oracle binding to the clearing proxy is a recorded pending owner step (the oracle refuses reports until then)",
     );
-  const mask = (1n << 128n) - 1n,
-    state = {
-      paused: (await clearing.paused()) as boolean,
-      pendingGovernance: (await clearing.pendingGovernance()) as string,
-      oracleBound: same(oracleClearing, contracts.clearingProxy),
-      markets: [] as {
-        symbol: string;
-        enabled: boolean;
-        maxTradeNotional: string;
-        maxMarketNotional: string;
-        grossLimit: string;
-        sideLimit: string;
-        impactK: number;
-        shockBps: number;
-        marginScaleBps: number;
-      }[],
-    };
+  const state = {
+    paused: (await clearing.paused()) as boolean,
+    pendingGovernance: (await clearing.pendingGovernance()) as string,
+    oracleBound: same(oracleClearing, contracts.clearingProxy),
+    markets: [] as {
+      symbol: string;
+      enabled: boolean;
+      maxTradeNotional: string;
+      maxMarketNotional: string;
+      grossLimit: string;
+      sideLimit: string;
+      impactK: number;
+      shockBps: number;
+      marginScaleBps: number;
+    }[],
+  };
   const symbols = manifestMarkets(manifest);
   check(
     Number(await clearing.marketCount()) === symbols.length,
@@ -690,17 +689,17 @@ export async function verifyCore(
   for (let market = 0; market < symbols.length; market++) {
     const [info, limits, exposure, params] = await Promise.all([
       clearing.markets(market),
-      clearing.marketLimitWord(market),
-      clearing.exposureState(market),
+      clearing.marketLimits(market),
+      clearing.exposure(market),
       clearing.marketParams(market),
     ]);
     state.markets.push({
       symbol: decodeBytes32String(params.symbol),
       enabled: info.enabled,
-      maxTradeNotional: (limits & mask).toString(),
-      maxMarketNotional: (limits >> 128n).toString(),
-      grossLimit: (exposure.limits & mask).toString(),
-      sideLimit: (exposure.limits >> 128n).toString(),
+      maxTradeNotional: limits.maxTradeNotional.toString(),
+      maxMarketNotional: limits.maxMarketNotional.toString(),
+      grossLimit: exposure.grossLimit.toString(),
+      sideLimit: exposure.sideLimit.toString(),
       impactK: Number(params.impactK),
       shockBps: Number(params.shockBps),
       marginScaleBps: Number(params.marginScaleBps),
