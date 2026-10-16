@@ -124,4 +124,22 @@ test.describe("app shell", () => {
     await page.getByRole("link", { name: "Go to trading" }).click();
     await expect(page).toHaveURL(/\/updown\/BTC$/);
   });
+
+  test("installs as an app and previews when shared", async ({ page, request }) => {
+    await page.goto("/markets");
+    const href = await page.locator('link[rel="manifest"]').getAttribute("href");
+    const manifest = (await (await request.get(href!)).json()) as {
+      display: string;
+      icons: Array<{ src: string }>;
+    };
+    expect(manifest.display).toBe("standalone");
+    for (const icon of manifest.icons) {
+      const response = await request.get(icon.src);
+      expect(response.headers()["content-type"], icon.src).toContain("image/png");
+    }
+    const image = await page.locator('meta[property="og:image"]').getAttribute("content");
+    expect(image).toMatch(/^https:\/\/[^/]+\/og-image\.png$/);
+    expect((await request.get(new URL(image!).pathname)).headers()["content-type"]).toContain("image/png");
+    await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute("content", "summary_large_image");
+  });
 });
