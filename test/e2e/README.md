@@ -31,7 +31,7 @@ matching browser with `npx playwright install --with-deps chromium`.
 
 - One file per feature, named after it: `wallet-connect.spec.ts`,
   `funds.spec.ts`, `trading.spec.ts`, `orders.spec.ts`, `portfolio.spec.ts`,
-  `markets.spec.ts`, `exit.spec.ts`, `admin.spec.ts`, `terms.spec.ts`, `shell.spec.ts`
+  `markets.spec.ts`, `leaderboard.spec.ts`, `exit.spec.ts`, `admin.spec.ts`, `terms.spec.ts`, `shell.spec.ts`
   (navigation, top bar, tab bar, theme) and `docs.spec.ts` (the public docs site). `smoke.spec.ts` only
   checks that every page loads and fits the screen.
 - Import `test` and `expect` from `./fixtures.js`. Every test then fails on an

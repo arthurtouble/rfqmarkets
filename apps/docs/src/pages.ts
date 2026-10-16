@@ -23,6 +23,7 @@ export const sections = [
       "positions",
       "one-tap-trading",
       "deposits-and-withdrawals",
+      "leaderboard",
     ],
   },
   { id: "risk", title: "Margin and risk", pages: ["margin", "funding", "liquidation", "pricing-and-fees"] },

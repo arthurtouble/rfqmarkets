@@ -384,6 +384,38 @@ export type FundingPage = {
   indexedBlock: number;
 };
 
+// Indexer leaderboard and points (services/indexer/src/leaderboard.ts). Isolated accounts count towards
+// their owner; amounts are USDC 1e6 strings and points are whole numbers (1 per 100 USDC traded).
+export type LeaderboardWindow = "1d" | "7d" | "30d" | "all";
+export type LeaderboardSort = "volume" | "pnl";
+export type LeaderboardEntry = {
+  rank: number;
+  account: string;
+  volume: string;
+  netPnl: string;
+  tradeCount: number;
+  points: string;
+};
+export type Leaderboard = {
+  window: LeaderboardWindow;
+  sort: LeaderboardSort;
+  finality: Finality;
+  indexedBlock: number;
+  traders: LeaderboardEntry[];
+};
+export type PointsWeek = { weekStartMs: number; volume: string; points: string };
+export type Points = {
+  account: string;
+  finality: Finality;
+  indexedBlock: number;
+  accounts: string[];
+  total: string;
+  weeks: PointsWeek[];
+  referees: number;
+  referralPoints: string;
+  totalWithReferrals: string;
+};
+
 // Market gateway candles (services/gateway/src/candles.ts). Prices are USDC 1e6 strings of the mid.
 export type CandleInterval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 export type Candle = {

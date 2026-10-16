@@ -35,7 +35,13 @@ test.describe("app shell", () => {
     await expect(nav).toHaveCount(1);
     const account = page.getByRole("button", { name: `Account ${wallet.account.slice(0, 6)}` });
     if (isMobile) {
-      await expect(nav.getByRole("link")).toHaveText(["Home", "Markets", "Portfolio", "Account"]);
+      await expect(nav.getByRole("link")).toHaveText([
+        "Home",
+        "Markets",
+        "Portfolio",
+        "Leaderboard",
+        "Account",
+      ]);
       // The top bar, with the logo, Deposit and the wallet button, is desktop only.
       await expect(page.getByRole("link", { name: "RFQ Markets home" })).toBeHidden();
       await expect(account).toBeHidden();
@@ -43,7 +49,7 @@ test.describe("app shell", () => {
       await expect(page).toHaveURL(/\/account$/);
       await expect(nav.getByRole("link", { name: "Account" })).toHaveAttribute("aria-current", "page");
     } else {
-      await expect(nav.getByRole("link")).toHaveText(["Home", "Markets", "Portfolio"]);
+      await expect(nav.getByRole("link")).toHaveText(["Home", "Markets", "Portfolio", "Leaderboard"]);
       await expect(page.getByRole("button", { name: "Deposit" })).toBeVisible();
       await expect(account).toBeVisible();
       // Connected, settings live in the wallet menu, not the top bar.
