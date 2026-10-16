@@ -13,7 +13,7 @@ import {
   type TradeIntent,
   type Trigger,
 } from "../../../packages/shared/src/eip712.js";
-import { maskAllows } from "../../../packages/shared/src/clearing-structs.js";
+import { maskAllows, toExposureBook, toLimitWord } from "../../../packages/shared/src/clearing-structs.js";
 import type { ExposureBook, ExposureMarket } from "../../../packages/shared/src/exposure-admission.js";
 import { pendingMakerDebit } from "../../../packages/shared/src/exposure-admission.js";
 import { finalizedClock } from "../../../packages/shared/src/finalized-clock.js";
@@ -457,9 +457,9 @@ export class ExecutionService {
     const indexes = marketRegistry.all().map((market) => market.index);
     const [books, rawStates, limitWords, positionRaw, backing, floor, clock, capital, params] =
       await Promise.all([
-        Promise.all(indexes.map((index) => clearing.exposureState(index, blockTag))),
+        Promise.all(indexes.map((index) => clearing.exposure(index, blockTag))),
         Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
-        Promise.all(indexes.map((index) => clearing.marketLimitWord(index, blockTag))),
+        Promise.all(indexes.map((index) => clearing.marketLimits(index, blockTag))),
         clearing.positionOf(intent.account, intent.market, blockTag),
         clearing.makerBacking(blockTag),
         clearing.baseRiskCapitalTarget(blockTag),
@@ -474,12 +474,7 @@ export class ExecutionService {
     return {
       blockNumber,
       blockTimestamp: block.timestamp,
-      books: books.map((book) => ({
-        longBase: BigInt(book.longBase),
-        shortBase: BigInt(book.shortBase),
-        limits: BigInt(book.limits),
-        ready: Boolean(book.ready),
-      })),
+      books: books.map(toExposureBook),
       states: rawStates.map(toExposureMarket),
       position: {
         size: BigInt(positionRaw.size),
@@ -492,7 +487,7 @@ export class ExecutionService {
         initialMargin: BigInt(capital[2]),
       },
       marginScaleBps: Number(params.marginScaleBps),
-      netLimits: limitWords.map((word) => BigInt(word)),
+      netLimits: limitWords.map(toLimitWord),
       backing: BigInt(backing),
       floor: BigInt(floor),
       clock,

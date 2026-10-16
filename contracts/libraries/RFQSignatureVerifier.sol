@@ -128,7 +128,7 @@ library RFQSignatureVerifier {
         bool worseThanLimit = intent.baseDelta > 0
             ? approval.executionPrice > intent.limitPrice
             : approval.executionPrice < intent.limitPrice;
-        if (worseThanLimit) revert InvalidTrade();
+        if (worseThanLimit) revert PriceLimit();
 
         digest = _hashTypedData(structHash);
         if (approval.intentHash != digest) revert InvalidSignature();
@@ -141,10 +141,11 @@ library RFQSignatureVerifier {
         // Otherwise the signer must be a live session key of this account, scoped to this market and fee.
         sessionSigner = ECDSA.recoverCalldata(digest, signature);
         Session storage session = $.sessions[sessionSigner];
+        if (session.account != signer) revert Unauthorized();
         if (
-            session.account != signer || block.timestamp > session.validUntil || intent.deadline > session.validUntil
+            block.timestamp > session.validUntil || intent.deadline > session.validUntil
                 || session.marketMask & (uint256(1) << intent.market) == 0 || approval.fee > session.maxFee
-        ) revert Unauthorized();
+        ) revert SessionLimit();
     }
 
     /// @notice Requires two distinct current approvers to have signed the same approval.

@@ -1,3 +1,4 @@
+import { toLimitWord, type ClearingLimitsStruct } from "../../../packages/shared/src/clearing-structs.js";
 import { getAddress, keccak256, type JsonRpcProvider } from "ethers";
 import type { FastifyInstance } from "fastify";
 import { isPositionReduction } from "../../../packages/shared/src/exposure-admission.js";
@@ -212,7 +213,7 @@ export class QuoteEngine {
         clearing,
         registered.flatMap(({ index }): ViewCall[] => [
           ["markets", index],
-          ["marketLimitWord", index],
+          ["marketLimits", index],
           ["marketParams", index],
         ]),
         blockNumber,
@@ -222,7 +223,7 @@ export class QuoteEngine {
       blockNumber,
       block,
       chainMarkets: registered.map((_, index) => at(index, 0) as ChainMarketState),
-      limitWords: registered.map((_, index) => at(index, 1)),
+      limitWords: registered.map((_, index) => toLimitWord(at(index, 1) as ClearingLimitsStruct)),
       marginScales: Object.fromEntries(
         registered.map(({ symbol }, index) => [
           symbol,
@@ -409,15 +410,12 @@ export class QuoteEngine {
     const blockTag = { blockTag: snapshot.blockNumber },
       reserved = ctx.grossReservations.bounds(undefined, snapshot.markets.length);
     const books = await Promise.all(
-      snapshot.markets.map((_, index) =>
-        index === selected ? null : clearing.exposureState(index, blockTag),
-      ),
+      snapshot.markets.map((_, index) => (index === selected ? null : clearing.exposure(index, blockTag))),
     );
     let refreshed = false;
     for (const [otherIndex, otherState] of snapshot.markets.entries()) {
       const otherBook = books[otherIndex];
       if (otherIndex === selected || !otherBook) continue;
-      if (!otherBook.ready) throw new Error("exposure migration required");
       const gross =
         BigInt(otherBook.longBase) +
         BigInt(otherBook.shortBase) +

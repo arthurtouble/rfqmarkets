@@ -87,7 +87,7 @@ Base USDC deposits can be gas-free: the wallet signs a USDC transfer authorizati
 
 These checks refuse service rather than guess. Do not weaken them to make a test pass.
 
-- The contract rejects a trade if any market with open positions has a price older than 15 seconds. A market without a fresh agreed price cannot trade.
+- The contract rejects a trade if any market with open positions has a price older than 15 seconds, except that reductions ignore stale prices in other markets. A market without a fresh agreed price cannot trade. Liquidations, relayed closes and resolution samples need a report at most 5 seconds old.
 - Approvers refuse quotes older than 8 seconds and check exposure and hedge state themselves, so a compromised API cannot get past them.
 - A large hedge gap, an unhealthy hedger or a stale hedge snapshot puts the market into reduce-only.
 - Oracle nodes answer 503 until the deployment record names their adapter and lists their address as a signer.

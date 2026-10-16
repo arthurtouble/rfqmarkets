@@ -1,11 +1,13 @@
 import { Contract, Interface, JsonRpcProvider, getAddress, toBeHex, toQuantity, type BlockTag } from "ethers";
-import { clearingApproverAbi } from "../../../packages/shared/src/abi.js";
+import { clearingApproverAbi, sessionGrantedFilter } from "../../../packages/shared/src/abi.js";
 import {
   toExposureBook,
   toExposureMarket,
   toPosition,
   toSession,
+  toLimitWord,
   type ClearingBookStruct,
+  type ClearingLimitsStruct,
   type ClearingMarketStruct,
   type ClearingPositionStruct,
   type ClearingSessionStruct,
@@ -42,8 +44,8 @@ export interface ClearingReader {
     at?: At,
   ): Promise<{ symbol: string; impactK: bigint; shockBps: bigint; marginScaleBps: bigint }>;
   markets(market: number, at?: At): Promise<ClearingMarketStruct>;
-  marketLimitWord(market: number, at: At): Promise<bigint>;
-  exposureState(market: number, at: At): Promise<ClearingBookStruct>;
+  marketLimits(market: number, at: At): Promise<ClearingLimitsStruct>;
+  exposure(market: number, at: At): Promise<ClearingBookStruct>;
   positionOf(account: string, market: number, at: At): Promise<ClearingPositionStruct>;
   sessions(signer: string, at: At): Promise<ClearingSessionStruct>;
   /** Owner and market of an isolated account; a zero owner for an ordinary account. */
@@ -120,10 +122,11 @@ export function createChainClients(
     secondaryProvider,
     clearing: clearing as unknown as ClearingReader,
     latestSession: sessionGrantTracker(async (account, fromBlock, toBlock) => {
-      const logs = await clearing.queryFilter(clearing.filters.SessionGranted(account), fromBlock, toBlock);
-      return logs.flatMap((log) =>
-        "args" in log ? [{ session: getAddress(log.args.session as string), block: log.blockNumber }] : [],
-      );
+      const logs = await clearing.queryFilter(sessionGrantedFilter(account), fromBlock, toBlock);
+      return logs.flatMap((log) => {
+        const parsed = clearing.interface.parseLog(log);
+        return parsed ? [{ session: getAddress(parsed.args.session as string), block: log.blockNumber }] : [];
+      });
     }),
     isValidSignature: (account, hash, signature, blockNumber) =>
       new Contract(account, ["function isValidSignature(bytes32,bytes) view returns(bytes4)"], provider)
@@ -147,7 +150,7 @@ export interface ChainSnapshot {
   /** Every registered market at this block, by index. */
   markets: ExposureMarket[];
   books: ExposureBook[];
-  /** Packed `marketLimitWord` per market index. */
+  /** `marketLimits` per market index, packed by `toLimitWord`. */
   limitWords: bigint[];
   /** The intent account's position in the intent market. */
   position: PositionState;
@@ -241,7 +244,7 @@ export async function readChainState(
     clearing.resolutionRequired(at),
     enrolment.get(chain),
     Promise.all(indexes.map((index) => clearing.markets(index, at))),
-    Promise.all(indexes.map(async (index) => BigInt(await clearing.marketLimitWord(index, at)))),
+    Promise.all(indexes.map(async (index) => toLimitWord(await clearing.marketLimits(index, at)))),
     signedByAccount
       ? Promise.resolve(true)
       : chain.isValidSignature(signingAccount, request.intentHash, request.userSignature, blockNumber),
@@ -252,7 +255,7 @@ export async function readChainState(
       ? Promise.resolve(undefined)
       : chain.latestSession(signingAccount, blockNumber),
     clearing.positionOf(intent.account, market, at),
-    Promise.all(indexes.map((index) => clearing.exposureState(index, at))),
+    Promise.all(indexes.map((index) => clearing.exposure(index, at))),
     clearing.makerBacking(at),
     clearing.baseRiskCapitalTarget(at),
   ]);

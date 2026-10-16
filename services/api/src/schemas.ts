@@ -76,11 +76,13 @@ export const cancelExecuteSchema = signedActionSchema.extend({
   intent: z.object({ account: z.string(), nonce: integer, deadline: integer }),
 });
 
-export const closePrepareSchema = actionBaseSchema.extend({ market });
+/** `limitPrice` is the worst exit price to accept in USDC; left out, the API sets one 2% from the current price. */
+export const closePrepareSchema = actionBaseSchema.extend({ market, limitPrice: usdcAmount.optional() });
 export const closeExecuteSchema = signedActionSchema.extend({
   intent: z.object({
     account: z.string(),
     market: marketId,
+    limitPrice: integer,
     nonce: integer,
     deadline: integer,
   }),
@@ -106,6 +108,11 @@ export const sessionExecuteSchema = signedActionSchema.extend({
     nonce: integer,
     deadline: integer,
   }),
+});
+
+export const sessionRevokePrepareSchema = actionBaseSchema.extend({ session: address });
+export const sessionRevokeExecuteSchema = signedActionSchema.extend({
+  intent: z.object({ account: z.string(), session: z.string(), nonce: integer, deadline: integer }),
 });
 
 export const orderPrepareSchema = z.object({

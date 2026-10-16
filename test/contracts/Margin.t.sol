@@ -70,6 +70,22 @@ contract MarginTest is ClearingFixture {
         assertTrue(custodyMatchesBuckets());
     }
 
+    function test_liquidationNeedsARecentReport() public {
+        alice = newTrader("alice", 2_100e6);
+        trade(alice, 0, 1e17, false);
+        moveBtc(89_000e6);
+        // A keeper report may be at most MAX_RELAYED_ORACLE_AGE old, tighter than the owner's own paths.
+        bytes memory late = report(0, prices[0], vm.getBlockTimestamp());
+        vm.warp(vm.getBlockTimestamp() + MAX_RELAYED_ORACLE_AGE + 1);
+        vm.prank(keeper);
+        vm.expectRevert(Stale.selector);
+        clearing.liquidate(alice.account, 0, late);
+
+        vm.prank(keeper);
+        clearing.liquidate(alice.account, 0, currentReport(0));
+        assertEq(clearing.positionOf(alice.account, 0).size, 0);
+    }
+
     function test_solventLiquidationEmitsNoDeficit() public {
         alice = newTrader("alice", 2_100e6);
         trade(alice, 0, 1e17, false);

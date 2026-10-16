@@ -8,6 +8,11 @@ test("public action errors cannot expose transport credentials or provider reque
   assert.equal(publicError({ message, revert: { name: "Replay" } }, "action failed"), "Nonce already used");
   assert.equal(publicError({ revert: { name: message } }, "action failed"), "action failed");
   assert.equal(publicError({ message, data: "0xdccfcae2" }, "action failed"), "Trigger price not reached");
+  assert.equal(publicError({ message, data: "0x0e6692d8" }, "action failed"), "Session key limit reached");
+  assert.equal(
+    publicError({ message, data: "0x4b3eeb24" }, "action failed"),
+    "Price worse than the signed limit",
+  );
 });
 
 const rejected = (status: number, error: string): PromiseSettledResult<unknown> => ({

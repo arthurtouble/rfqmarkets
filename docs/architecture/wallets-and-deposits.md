@@ -12,7 +12,7 @@ Wallets connect through wagmi 3 with our own connect sheet (`ConnectDialog.tsx`)
 
 The Base Account and WalletConnect SDKs are loaded only when picked, or on reload when one was the last wallet used (`lazyConnector` in `chain.ts`). No hosted-wallet provider (Privy, Dynamic) is used, and the protocol never accepts a provider's identity as authority: the recovered EVM signature, or ERC-1271 for smart wallets, and the on-chain account remain authoritative.
 
-One-click trading is a contract session key (`grantSessionWithSignature`), generated in the tab and held only in memory (`quick-session.ts`). The grant is sponsored; revoking it is the owner's own transaction (`revokeSession`), so a wallet with no ETH cannot revoke until the grant expires. Disconnecting drops the key from the tab.
+One-click trading is a contract session key (`grantSessionWithSignature`), generated in the tab and held only in memory (`quick-session.ts`). The grant is sponsored, and so is revoking it: the owner signs a `SessionRevoke` and the API relays `revokeSessionWithSignature`, so a wallet with no ETH can still turn one-tap trading off. The exit page keeps the direct `revokeSession` transaction for when the API is down. Disconnecting drops the key from the tab.
 
 ## Deposit invariant
 

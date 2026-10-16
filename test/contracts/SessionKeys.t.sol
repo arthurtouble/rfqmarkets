@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.34;
 
+import {IRFQClearingEvents} from "../../contracts/interfaces/IRFQClearingEvents.sol";
 import {ClearingFixture} from "./ClearingFixture.sol";
 import "../../contracts/RFQTypes.sol";
 
@@ -76,12 +77,18 @@ contract SessionKeysTest is ClearingFixture {
 
     /// @notice Like `sessionTrade`, but expects the session signature to be refused.
     function sessionTradeRefused(Trader memory owner, uint8 market, int256 delta, bool reduceOnly) internal {
+        sessionTradeRefused(owner, market, delta, reduceOnly, SessionLimit.selector);
+    }
+
+    function sessionTradeRefused(Trader memory owner, uint8 market, int256 delta, bool reduceOnly, bytes4 expected)
+        internal
+    {
         (TradeIntent memory intent, MakerApproval memory approval, bytes memory proof) =
             quote(owner.account, market, delta, reduceOnly);
         bytes memory userSig = signDigest(sessionPrivateKey, intentDigest(intent));
         bytes memory sigA = signApproval(approverKeys[0], approval);
         bytes memory sigB = signApproval(approverKeys[1], approval);
-        vm.expectRevert(Unauthorized.selector);
+        vm.expectRevert(expected);
         clearing.executeTrade(intent, approval, proof, userSig, sigA, sigB);
     }
 
@@ -166,7 +173,7 @@ contract SessionKeysTest is ClearingFixture {
         sessionTrade(alice, 1e16);
         vm.prank(alice.account);
         clearing.revokeSession(sessionKey);
-        sessionTradeRefused(alice, 0, 1e16, false);
+        sessionTradeRefused(alice, 0, 1e16, false, Unauthorized.selector);
         assertEq(clearing.positionOf(alice.account, 0).size, 1e16);
     }
 
@@ -195,7 +202,7 @@ contract SessionKeysTest is ClearingFixture {
         bytes memory userSig = signDigest(sessionPrivateKey, intentDigest(intent));
         bytes memory sigA = signApproval(approverKeys[0], approval);
         bytes memory sigB = signApproval(approverKeys[1], approval);
-        vm.expectRevert(Unauthorized.selector);
+        vm.expectRevert(SessionLimit.selector);
         clearing.executeTrade(intent, approval, proof, userSig, sigA, sigB);
 
         approval.fee = 10e6;
@@ -210,5 +217,71 @@ contract SessionKeysTest is ClearingFixture {
         // Opening and closing both count: about 10,000 USDC each, plus the inventory charge.
         uint256 used = clearing.sessions(sessionKey).usedNotional;
         assertApproxEqRel(used, 20_000e6, 1e15);
+    }
+
+    function revokeDigest(address account, address session, uint256 nonce, uint64 deadline)
+        internal
+        view
+        returns (bytes32)
+    {
+        return typedDigest(keccak256(abi.encode(SESSION_REVOKE_TYPEHASH, account, session, nonce, deadline)));
+    }
+
+    function test_grantEventCarriesTheWholeGrant() public {
+        vm.expectEmit(true, true, false, true, address(clearing));
+        emit IRFQClearingEvents.SessionGranted(
+            alice.account, sessionKey, grantMask, 50_000e6, 100_000e6, 10e6, uint64(vm.getBlockTimestamp() + 1 days)
+        );
+        grant(alice, sessionKey);
+    }
+
+    function test_ownerRevokesWithoutGasThroughARelayer() public {
+        grant(alice, sessionKey);
+        uint64 deadline = uint64(vm.getBlockTimestamp() + 60);
+        bytes memory signature = signDigest(alice.key, revokeDigest(alice.account, sessionKey, 500, deadline));
+
+        // The session key itself, or another account, cannot sign the revocation.
+        vm.expectRevert(InvalidSignature.selector);
+        clearing.revokeSessionWithSignature(
+            alice.account,
+            sessionKey,
+            500,
+            deadline,
+            signDigest(mallory.key, revokeDigest(alice.account, sessionKey, 500, deadline))
+        );
+        vm.expectRevert(InvalidSignature.selector);
+        clearing.revokeSessionWithSignature(
+            alice.account,
+            sessionKey,
+            500,
+            deadline,
+            signDigest(sessionPrivateKey, revokeDigest(alice.account, sessionKey, 500, deadline))
+        );
+        // Mallory cannot revoke alice's key with her own signature either.
+        uint64 malloryDeadline = deadline;
+        vm.expectRevert(Unauthorized.selector);
+        clearing.revokeSessionWithSignature(
+            mallory.account,
+            sessionKey,
+            501,
+            malloryDeadline,
+            signDigest(mallory.key, revokeDigest(mallory.account, sessionKey, 501, malloryDeadline))
+        );
+
+        vm.expectEmit(true, true, false, false, address(clearing));
+        emit IRFQClearingEvents.SessionRevoked(alice.account, sessionKey);
+        clearing.revokeSessionWithSignature(alice.account, sessionKey, 500, deadline, signature);
+        assertEq(clearing.sessions(sessionKey).account, address(0));
+        sessionTradeRefused(alice, 0, 1e16, false, Unauthorized.selector);
+
+        // The signature is single use, and an expired one is refused.
+        grant(alice, sessionKey);
+        vm.expectRevert(Replay.selector);
+        clearing.revokeSessionWithSignature(alice.account, sessionKey, 500, deadline, signature);
+        bytes memory late = signDigest(alice.key, revokeDigest(alice.account, sessionKey, 502, deadline));
+        vm.warp(deadline + 1);
+        vm.expectRevert(Replay.selector);
+        clearing.revokeSessionWithSignature(alice.account, sessionKey, 502, deadline, late);
+        assertEq(clearing.sessions(sessionKey).account, alice.account);
     }
 }

@@ -20,6 +20,8 @@ import {
   orderPrepareSchema,
   sessionExecuteSchema,
   sessionPrepareSchema,
+  sessionRevokeExecuteSchema,
+  sessionRevokePrepareSchema,
   tpslPrepareSchema,
   triggerOrderPrepareSchema,
   withdrawalExecuteSchema,
@@ -199,7 +201,7 @@ export const OPERATIONS: Operation[] = [
   ),
   ...signedAction(
     "/v1/close",
-    "Close a position at the oracle price",
+    "Close a position at the oracle price, no worse than a signed limit",
     closePrepareSchema,
     closeExecuteSchema,
   ),
@@ -208,6 +210,12 @@ export const OPERATIONS: Operation[] = [
     "Grant a session key bounded trading authority",
     sessionPrepareSchema,
     sessionExecuteSchema,
+  ),
+  ...signedAction(
+    "/v1/session/revoke",
+    "Revoke a session key without gas",
+    sessionRevokePrepareSchema,
+    sessionRevokeExecuteSchema,
   ),
   {
     method: "post",

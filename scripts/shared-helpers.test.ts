@@ -6,6 +6,7 @@ import {
   marketMid,
   marketNotional,
   toExposureBook,
+  toLimitWord,
   toExposureMarket,
   toPosition,
   toSession,
@@ -193,12 +194,12 @@ test("clearing struct converters normalize ethers results to bigint models", () 
   assert.equal(marketMid(market), 100n);
   assert.equal(marketNotional(market), -200n);
   assert.equal(marketNotional(market, 50n), -100n);
-  assert.deepEqual(toExposureBook({ longBase: 1, shortBase: "2", limits: 3n, ready: false }), {
+  assert.deepEqual(toExposureBook({ longBase: 1, shortBase: "2", grossLimit: 3n, sideLimit: 4n }), {
     longBase: 1n,
     shortBase: 2n,
-    limits: 3n,
-    ready: false,
+    limits: 3n | (4n << 128n),
   });
+  assert.equal(toLimitWord({ maxTradeNotional: 5n, maxMarketNotional: 9n }), 5n | (9n << 128n));
   assert.deepEqual(toPosition({ size: -1, entryPrice: 2, lastFundingIndex: -3 }), {
     size: -1n,
     entryPrice: 2n,

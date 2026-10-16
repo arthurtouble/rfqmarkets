@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  EventFragment,
   Interface,
   JsonRpcProvider,
   Network,
@@ -59,6 +60,13 @@ class Chain extends JsonRpcProvider {
     return iface.encodeFunctionResult(decoded.name, chainResult(decoded.name, decoded.args));
   }
 }
+
+/** The event `name` with as many inputs as `args`: TradeExecuted and SessionGranted each have two forms. */
+const eventOf = (name: string, args: unknown[]) =>
+  iface.fragments.find(
+    (fragment): fragment is EventFragment =>
+      fragment instanceof EventFragment && fragment.name === name && fragment.inputs.length === args.length,
+  )!;
 
 test("failed account reads cannot advance indexer checkpoint; restart recovers the deposit", async () => {
   const directory = mkdtempSync(join(tmpdir(), "rfq-index-")),
@@ -349,7 +357,7 @@ test("portfolio endpoints replay realized PnL, fees, funding and deposits from i
     usdc = (value: bigint) => value * 1_000_000n,
     blockHash = (number: number) => "0x" + number.toString(16).padStart(64, "0"),
     log = (number: number, index: number, name: string, args: unknown[]) => ({
-      ...iface.encodeEventLog(iface.getEvent(name)!, args),
+      ...iface.encodeEventLog(eventOf(name, args), args),
       blockNumber: number,
       blockHash: blockHash(number),
       transactionHash: "0x" + (number * 100 + index).toString(16).padStart(64, "0"),
@@ -372,9 +380,20 @@ test("portfolio endpoints replay realized PnL, fees, funding and deposits from i
     override async getLogs() {
       return [
         log(10, 0, "Deposited", [account, usdc(1_000n)]),
+        // A fill from before the October 2026 upgrade, then one in the current form.
         log(11, 0, "TradeExecuted", [intent, account, 0, E, usdc(100n), usdc(1n)]),
         log(12, 0, "FundingSettled", [account, 0, usdc(2n)]),
-        log(12, 1, "TradeExecuted", [intent, account, 0, -E / 2n, usdc(120n), usdc(1n)]),
+        log(12, 1, "TradeExecuted", [
+          intent,
+          account,
+          0,
+          -E / 2n,
+          usdc(120n),
+          usdc(1n),
+          usdc(10n),
+          E / 2n,
+          usdc(100n),
+        ]),
         log(12, 2, "Liquidated", [account, 0, E / 4n, usdc(3n), 0n]),
         log(12, 3, "Withdrawn", [account, usdc(100n)]),
       ] as unknown as Log[];
@@ -500,7 +519,7 @@ test("leaderboard ranks owners with their isolated accounts, and points sum trad
     isolated = isolatedAccountAddress(account, 0),
     blockHash = (number: number) => "0x" + number.toString(16).padStart(64, "0"),
     log = (number: number, index: number, name: string, args: unknown[]) => ({
-      ...iface.encodeEventLog(iface.getEvent(name)!, args),
+      ...iface.encodeEventLog(eventOf(name, args), args),
       blockNumber: number,
       blockHash: blockHash(number),
       transactionHash: "0x" + (number * 100 + index).toString(16).padStart(64, "0"),

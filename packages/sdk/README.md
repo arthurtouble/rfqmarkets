@@ -50,8 +50,8 @@ await bot.trade({ market: "BTC", side: "buy", amount: "25", account: ownerAddres
 ```
 
 A session key can also move isolated margin, adding at most its per-trade cap at a time, so a bot can keep each
-position isolated without prompts: pass the owner as `account` to `moveIsolatedMargin`. Revoke a session early
-with `revokeSession(session)` on the clearing contract from the owner's wallet.
+position isolated without prompts: pass the owner as `account` to `moveIsolatedMargin`. Revoke a session early,
+without gas, with `client.revokeSession(session)`.
 
 ### Errors
 

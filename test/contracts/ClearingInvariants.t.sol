@@ -174,7 +174,7 @@ contract ClearingHandler is ClearingFixture {
 interface IClearingView {
     function positionOf(address account, uint8 market) external view returns (Position memory);
     function markets(uint256 market) external view returns (int256, int256, uint64, uint64, uint256, uint256, bool);
-    function exposureState(uint8 market) external view returns (uint256, uint256, uint256, uint256, bool);
+    function exposure(uint8 market) external view returns (ExposureBook memory);
     function accountCount() external view returns (uint256);
     function collateralOf(address account) external view returns (int256);
     function maintenanceEquity(address account) external view returns (int256);
@@ -222,10 +222,10 @@ contract ClearingInvariantsTest is Test {
                 else shorts += uint256(-size);
             }
             (int256 aggregateBase,,,,,,) = clearing.markets(market);
-            (uint256 longBase, uint256 shortBase,,,) = clearing.exposureState(market);
+            ExposureBook memory book = clearing.exposure(market);
             assertEq(aggregateBase, net, "aggregate base");
-            assertEq(longBase, longs, "long book");
-            assertEq(shortBase, shorts, "short book");
+            assertEq(book.longBase, longs, "long book");
+            assertEq(book.shortBase, shorts, "short book");
         }
     }
 

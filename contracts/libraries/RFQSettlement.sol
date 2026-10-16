@@ -79,7 +79,7 @@ library RFQSettlement {
             $.paused || $.resolutionRequired || intent.market >= $.marketCount || intent.baseDelta == 0
                 || isolated.owner != address(0) && isolated.market != intent.market
         ) revert InvalidTrade();
-        observation = RFQLedger.touchOracle(report, intent.market);
+        observation = RFQLedger.touchOracle(report, intent.market, MAX_ORACLE_AGE);
         RFQLedger.settleAllFunding(intent.account);
     }
 
@@ -99,8 +99,10 @@ library RFQSettlement {
             RFQRiskMath.validateEconomics(intent, approval, observation.bid, observation.ask, sessionSigner);
         uint256 stress = RFQRiskMath.checkExposureTrade(intent, approval.executionPrice);
 
-        int256 previousSize = $.accounts[intent.account].positions[intent.market].size;
-        RFQLedger.applyPosition(intent.account, intent.market, intent.baseDelta, approval.executionPrice);
+        Position storage position = $.accounts[intent.account].positions[intent.market];
+        int256 previousSize = position.size;
+        int256 realizedPnl =
+            RFQLedger.applyPosition(intent.account, intent.market, intent.baseDelta, approval.executionPrice);
         if ($.resolutionRequired) return;
 
         $.nonceUsed[intent.account][intent.nonce] = true;
@@ -113,7 +115,15 @@ library RFQSettlement {
             RFQLedger.requireInitialMargin(intent.account);
         }
         emit IRFQClearingEvents.TradeExecuted(
-            intentHash, intent.account, intent.market, intent.baseDelta, approval.executionPrice, approval.fee
+            intentHash,
+            intent.account,
+            intent.market,
+            intent.baseDelta,
+            approval.executionPrice,
+            approval.fee,
+            realizedPnl,
+            position.size,
+            position.entryPrice
         );
     }
 

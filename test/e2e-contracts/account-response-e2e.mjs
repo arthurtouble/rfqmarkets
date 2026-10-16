@@ -342,8 +342,28 @@ try {
   assert.equal((await sessionMove("ETH", "add", "50", "908")).statusCode, 401);
   const sessionRemoved = await sessionMove("BTC", "remove", "250", "909");
   assert.equal(sessionRemoved.statusCode, 200, sessionRemoved.body);
+  // Turning the key off costs the owner no gas: the owner signs and the API relays the revocation.
+  const revoke = await post("/v1/session/revoke/prepare", {
+    account: user.address,
+    session: sessionKey.address,
+    nonce: "910",
+  });
+  const forgedRevoke = await app.inject({
+    method: "POST",
+    url: "/v1/session/revoke/execute",
+    payload: {
+      intent: revoke.intent,
+      userSignature: await sessionKey.signTypedData(revoke.domain, revoke.types, revoke.intent),
+    },
+  });
+  assert.equal(forgedRevoke.statusCode, 401, "the session key cannot revoke on the owner's behalf");
+  await post("/v1/session/revoke/execute", {
+    intent: revoke.intent,
+    userSignature: await user.signTypedData(revoke.domain, revoke.types, revoke.intent),
+  });
+  assert.equal((await sessionMove("BTC", "add", "10", "911")).statusCode, 401, "a revoked key cannot act");
   console.log(
-    "Runtime identity and account response E2E passed: dual RPC/code/feed/authority rejection, mixed winner/loser opening margin and separate-leg rounding match canonical clearing at a pinned block; isolated margin move, owner-signed isolated trade, isolated account views and session-signed isolated margin",
+    "Runtime identity and account response E2E passed: dual RPC/code/feed/authority rejection, mixed winner/loser opening margin and separate-leg rounding match canonical clearing at a pinned block; isolated margin move, owner-signed isolated trade, isolated account views, session-signed isolated margin and a gas-free revocation",
   );
 } finally {
   await app.close();

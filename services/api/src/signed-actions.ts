@@ -10,15 +10,19 @@ import {
   isolatedMarginTypes,
   sessionGrantToWire,
   sessionGrantTypes,
+  sessionRevokeToWire,
+  sessionRevokeTypes,
   withdrawalToWire,
   withdrawalTypes,
   type CancelIntent,
   type CloseIntent,
   type IsolatedMarginIntent,
   type SessionGrant,
+  type SessionRevoke,
   type WithdrawalIntent,
 } from "../../../packages/shared/src/eip712.js";
 import { maskAllows } from "../../../packages/shared/src/clearing-structs.js";
+import { ceilDiv } from "../../../packages/shared/src/numeric.js";
 import type { PriceSnapshot } from "../../../packages/shared/src/policy.js";
 import { encodeLocalReport, type ChainReader } from "./chain.js";
 import type { ApiContext, ApiSender, ChainHandles } from "./context.js";
@@ -38,6 +42,8 @@ import {
   isolatedMarginPrepareSchema,
   sessionExecuteSchema,
   sessionPrepareSchema,
+  sessionRevokeExecuteSchema,
+  sessionRevokePrepareSchema,
   withdrawalExecuteSchema,
   withdrawalPrepareSchema,
 } from "./schemas.js";
@@ -47,6 +53,8 @@ import { settlementEvent } from "./settlement-event.js";
 const ACTION_TTL_SECONDS = 120;
 const LOCAL_REPORT_TTL_SECONDS = 60;
 const CLOSE_GAS_LIMIT = 1_500_000n;
+/** Room a prepared close leaves, by default, between the price when it is signed and the price it exits at. */
+const CLOSE_SLIPPAGE_BPS = 200n;
 
 type SignedIntent = { account: string; deadline: bigint };
 type Sponsor = ChainHandles & { sender: ApiSender };
@@ -406,6 +414,19 @@ export function registerSignedActions(
     );
   }
 
+  /** The worst exit price a close accepts when the caller names none: the current side less the slippage room. */
+  async function defaultCloseLimit(account: string, market: number) {
+    if (!ctx.chain) return 0n;
+    const size = BigInt((await ctx.chain.clearing.positionOf(account, market)).size);
+    if (size === 0n) return 0n;
+    const name = marketName(market),
+      price = ctx.options.oracleSource ? (await quoting.settlementOracle(name)).snapshot : ctx.prices[name];
+    if (!price) throw new Error(`no price for ${name}`);
+    return size > 0n
+      ? (price.bid * (10_000n - CLOSE_SLIPPAGE_BPS)) / 10_000n
+      : ceilDiv(price.ask * (10_000n + CLOSE_SLIPPAGE_BPS), 10_000n);
+  }
+
   registerSignedAction(app, ctx, chain, {
     path: "/v1/close",
     label: "close",
@@ -413,15 +434,19 @@ export function registerSignedActions(
     messageKey: "intent",
     prepareSchema: closePrepareSchema,
     executeSchema: closeExecuteSchema,
-    build: async (input, chainTime): Promise<CloseIntent> => ({
-      account: getAddress(input.account),
-      market: marketIndex(input.market),
-      nonce: BigInt(input.nonce),
-      deadline: await deadline(chainTime),
-    }),
+    build: async (input, chainTime): Promise<CloseIntent> => {
+      const account = getAddress(input.account),
+        market = marketIndex(input.market),
+        limitPrice =
+          input.limitPrice === undefined
+            ? await defaultCloseLimit(account, market)
+            : parseUnits(input.limitPrice, 6);
+      return { account, market, limitPrice, nonce: BigInt(input.nonce), deadline: await deadline(chainTime) };
+    },
     parse: ({ intent }): CloseIntent => ({
       account: getAddress(intent.account),
       market: intent.market,
+      limitPrice: BigInt(intent.limitPrice),
       nonce: BigInt(intent.nonce),
       deadline: BigInt(intent.deadline),
     }),
@@ -432,6 +457,7 @@ export function registerSignedActions(
         data = clearing.interface.encodeFunctionData("closePositionWithSignature", [
           intent.account,
           intent.market,
+          intent.limitPrice,
           intent.nonce,
           intent.deadline,
           report,
@@ -531,6 +557,46 @@ export function registerSignedActions(
         validUntil: grant.validUntil.toString(),
         transaction: transactionOf(receipt),
       };
+    },
+  });
+  // Turning one-tap trading off costs the owner no gas: the API relays the owner's signed revocation.
+  registerSignedAction(app, ctx, chain, {
+    path: "/v1/session/revoke",
+    label: "session revocation",
+    types: sessionRevokeTypes,
+    messageKey: "intent",
+    prepareSchema: sessionRevokePrepareSchema,
+    executeSchema: sessionRevokeExecuteSchema,
+    build: async (input, chainTime): Promise<SessionRevoke> => ({
+      account: getAddress(input.account),
+      session: getAddress(input.session),
+      nonce: BigInt(input.nonce),
+      deadline: await deadline(chainTime),
+    }),
+    parse: ({ intent }): SessionRevoke => ({
+      account: getAddress(intent.account),
+      session: getAddress(intent.session),
+      nonce: BigInt(intent.nonce),
+      deadline: BigInt(intent.deadline),
+    }),
+    toWire: sessionRevokeToWire,
+    gated: true,
+    async execute(intent, signature, { sender, clearing, config }) {
+      const receipt = await sender.submit(
+        `session-revoke:${intent.account}:${intent.session}:${intent.nonce}`,
+        {
+          to: config.clearingAddress,
+          data: clearing.interface.encodeFunctionData("revokeSessionWithSignature", [
+            intent.account,
+            intent.session,
+            intent.nonce,
+            intent.deadline,
+            signature,
+          ]),
+        },
+        { deadline: Number(intent.deadline) },
+      );
+      return { status: "revoked", session: intent.session, transaction: transactionOf(receipt) };
     },
   });
 }

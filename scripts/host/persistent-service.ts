@@ -16,7 +16,6 @@ import { validateRuntimeIdentity } from "./runtime-identity.js";
 import { MIN_SERVICE_TOKEN_LENGTH } from "../../services/lib/src/auth.js";
 import { HEDGE_VENUE_API_URL, persistentConfigSchema } from "./persistent-config.js";
 import { clearingStateAbi } from "../../packages/shared/src/abi.js";
-import { marketRegistry } from "../../packages/shared/src/markets.js";
 import { syncMarketRegistry } from "../../packages/shared/src/markets-chain.js";
 const role = z.enum(["api", "approver", "indexer", "gateway", "hedger", "keeper"]).parse(process.argv[2]);
 const config = persistentConfigSchema.parse(JSON.parse(readFileSync(process.argv[3], "utf8")));
@@ -97,11 +96,6 @@ if (String(await clearing.usdc()).toLowerCase() !== config.tokenAddress.toLowerC
 // The market list comes from the clearing registry (markets governance added included); every
 // service then refreshes it while running.
 if (role !== "gateway" && role !== "hedger") await syncMarketRegistry(clearing);
-if (role === "api" || role === "approver") {
-  for (let market = 0; market < marketRegistry.count; market++)
-    if (!(await clearing.exposureState(market)).ready)
-      throw new Error("Exposure migration must finish before starting financial admission services");
-}
 if (role === "api" || role === "keeper") {
   const sponsor = new Wallet(secrets.sponsorKey).address;
   if (

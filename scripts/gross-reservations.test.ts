@@ -22,8 +22,8 @@ const BASE = 10n ** 18n,
   });
 const books = () =>
   [
-    { longBase: 0n, shortBase: 0n, limits: word(20_000_000_000n), ready: true },
-    { longBase: 0n, shortBase: 0n, limits: word(20_000_000_000n), ready: true },
+    { longBase: 0n, shortBase: 0n, limits: word(20_000_000_000n) },
+    { longBase: 0n, shortBase: 0n, limits: word(20_000_000_000n) },
   ] as const;
 test("opposing approvals reserve gross independently; retries bind inputs and never double count", () => {
   const book = new GrossReservationBook(),
@@ -71,8 +71,8 @@ test("an unsigned reservation can be released durably and is not restored", () =
 });
 test("escaped approvals reserve every net/stress execution subset and maker floor", () => {
   const baseBooks = [
-      { longBase: 0n, shortBase: 0n, limits: word(100_000_000n), ready: true },
-      { longBase: 0n, shortBase: 0n, limits: word(100_000_000n), ready: true },
+      { longBase: 0n, shortBase: 0n, limits: word(100_000_000n) },
+      { longBase: 0n, shortBase: 0n, limits: word(100_000_000n) },
     ] as [ReturnType<typeof books>[number], ReturnType<typeof books>[number]],
     asks: [bigint, bigint] = [100_000_000n, 4_000_000n],
     netLimits: [bigint, bigint] = [word(15_000_000n), word(15_000_000n)];

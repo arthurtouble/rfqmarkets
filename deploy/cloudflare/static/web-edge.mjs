@@ -19,6 +19,7 @@ const WRITES = [
   /^\/v1\/(deposit|withdraw|session)\/(prepare|execute)$/,
   /^\/v1\/isolated\/margin\/(prepare|execute)$/,
   /^\/v1\/nonce\/cancel\/(prepare|execute)$/,
+  /^\/v1\/session\/revoke\/(prepare|execute)$/,
   /^\/v1\/close\/(prepare|execute|quote)$/,
   /^\/v1\/close\/all\/quote$/,
   /^\/v1\/orders\/(?:(?:trigger|tpsl)\/)?prepare$/,

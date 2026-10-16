@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Contract, Wallet } from "ethers";
-import { clearingApproverAbi } from "../../../packages/shared/src/abi.js";
+import { clearingApproverAbi, sessionGrantedFilter } from "../../../packages/shared/src/abi.js";
 import {
   SESSION_LOOKBACK_BLOCKS,
   checkChainPolicy,
@@ -39,7 +39,7 @@ test("readChainState returns a typed snapshot pinned to one block", async () => 
   assert.equal(snapshot.leaderEpoch, 1n);
   assert.deepEqual(snapshot.limitWords, [word(1n, 2n), word(3n, 4n)]);
   assert.equal(snapshot.markets[0].enabled, true);
-  assert.equal(snapshot.books[1].ready, true);
+  assert.equal(snapshot.books[1].limits, state.books[1].limits);
   assert.equal(snapshot.accountSignatureValid, true);
   assert.equal(snapshot.session, undefined);
   const eth = buildFixture({ market: "ETH" });
@@ -97,9 +97,12 @@ test("readChainState resolves ERC-1271 accounts and session signers", async () =
   assert.equal(contract.session, undefined, "no session lookup without a recovered signer");
 });
 
-test("the approver's clearing ABI can filter session grants by account", () => {
-  const clearing = new Contract(CLEARING, clearingApproverAbi);
-  assert.equal(clearing.filters.SessionGranted(signer).fragment.name, "SessionGranted");
+test("the approver reads both forms of a session grant, filtered by account", () => {
+  const clearing = new Contract(CLEARING, clearingApproverAbi),
+    [topics, account] = sessionGrantedFilter(signer) as [string[], string];
+  assert.equal(topics.length, 2);
+  assert.equal(BigInt(account), BigInt(signer));
+  for (const topic of topics) assert.equal(clearing.interface.getEvent(topic)?.name, "SessionGranted");
 });
 
 test("session grants are found newest first in bounded ranges and remembered per account", async () => {

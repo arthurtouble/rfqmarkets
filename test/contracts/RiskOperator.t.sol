@@ -150,7 +150,7 @@ contract RiskOperatorTest is ClearingFixture {
         trade(alice, 0, 1e17, false);
         vm.prank(operator);
         clearing.setMarketPolicy(0, false, 100_000e6, 1_000_000e6);
-        tradeReverts(alice, 0, 1e17, Margin.selector);
+        tradeReverts(alice, 0, 1e17, MarketDisabled.selector);
         trade(alice, 0, -5e16, true);
         vm.prank(operator);
         clearing.setMarketPolicy(0, true, 100_000e6, 1_000_000e6);

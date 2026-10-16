@@ -24,7 +24,7 @@ export const CLEARING_ABI = [
   "function marketParams(uint8) view returns((bytes32 symbol,uint32 impactK,uint16 shockBps,uint16 marginScaleBps))",
   "function markets(uint256) view returns(int256 aggregateBase,int256 fundingIndex,uint64 fundingTime,uint64 lastPriceTime,uint256 lastBid,uint256 lastAsk,bool enabled)",
   "function marketLimits(uint8) view returns((uint128 maxTradeNotional,uint128 maxMarketNotional))",
-  "function exposureState(uint8) view returns(uint256 longBase,uint256 shortBase,uint256 limits,uint256 cursor,bool ready)",
+  "function exposure(uint8) view returns((uint256 longBase,uint256 shortBase,uint128 grossLimit,uint128 sideLimit))",
   "function marketSpread(uint8) view returns(uint16)",
   "function defaultSpread() view returns(uint16)",
   "function riskOperatorBounds() view returns((uint128 maxTradeNotional,uint128 maxMarketNotional,uint128 maxGrossLimit,uint32 minImpactK,uint16 minShockBps,uint16 minMarginScaleBps))",
@@ -53,8 +53,6 @@ export async function loadVenueConfig(signal?: AbortSignal): Promise<VenueConfig
     throw new Error("The API's venue config has no clearing contract");
   return config;
 }
-
-const LOW = (1n << 128n) - 1n;
 
 /** Read everything the console shows. A deployment without the risk operator views reads as `legacy`. */
 export async function readConsole(provider: Provider, clearingAddress: string): Promise<ConsoleState> {
@@ -103,18 +101,17 @@ export async function readConsole(provider: Provider, clearingAddress: string): 
         clearing.marketParams(index),
         clearing.markets(index),
         clearing.marketLimits(index),
-        clearing.exposureState(index),
+        clearing.exposure(index),
         legacy ? 0n : clearing.marketSpread(index),
       ]);
-      const word = BigInt(exposure.limits);
       return {
         index,
         symbol: decodeBytes32String(params.symbol),
         enabled: Boolean(state.enabled),
         maxTradeNotional: BigInt(limits.maxTradeNotional),
         maxMarketNotional: BigInt(limits.maxMarketNotional),
-        grossLimit: word & LOW,
-        sideLimit: word >> 128n,
+        grossLimit: BigInt(exposure.grossLimit),
+        sideLimit: BigInt(exposure.sideLimit),
         impactK: Number(params.impactK),
         shockBps: Number(params.shockBps),
         marginScaleBps: Number(params.marginScaleBps),

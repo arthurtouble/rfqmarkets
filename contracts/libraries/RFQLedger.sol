@@ -37,11 +37,14 @@ library RFQLedger {
     }
 
     /// @notice Applies a fill to a position, realizing PnL against the maker. No-op if resolution starts.
-    function applyPosition(address account, uint8 market, int256 delta, uint256 price) internal {
+    /// @return pnl The PnL the fill realized.
+    function applyPosition(address account, uint8 market, int256 delta, uint256 price) internal returns (int256 pnl) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Position storage p = $.accounts[account].positions[market];
-        (int256 next, uint256 entry, int256 pnl) = RFQRiskMath.positionTransition(p.size, p.entryPrice, delta, price);
-        if (!transferPnl(account, pnl)) return;
+        int256 next;
+        uint256 entry;
+        (next, entry, pnl) = RFQRiskMath.positionTransition(p.size, p.entryPrice, delta, price);
+        if (!transferPnl(account, pnl)) return pnl;
         RFQRiskMath.moveLeg(market, p.size, p.entryPrice, next, entry);
         p.size = next;
         p.entryPrice = entry;
@@ -133,12 +136,13 @@ library RFQLedger {
     /// funding in those markets.
     /// @dev Stored prices never move backwards in time, so a keeper cannot pick an older, more adverse price
     /// that is still inside the freshness window. Returns the report's observation for `expectedMarket`
-    /// (or its first observation when `expectedMarket` is `type(uint8).max`).
-    function touchOracle(bytes calldata report, uint8 expectedMarket)
+    /// (or its first observation when `expectedMarket` is `type(uint8).max`). Every observation must be at most
+    /// `maxAge` seconds old.
+    function touchOracle(bytes calldata report, uint8 expectedMarket, uint256 maxAge)
         internal
         returns (IPriceOracle.Observation memory expected)
     {
-        IPriceOracle.Observation[] memory observations = verifyReport(report);
+        IPriceOracle.Observation[] memory observations = verifyReport(report, maxAge);
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         bool found = expectedMarket == type(uint8).max;
         for (uint256 i; i < observations.length; ++i) {
@@ -157,8 +161,12 @@ library RFQLedger {
     }
 
     /// @notice Verifies a report through the oracle and checks every observation in it: a registered market,
-    /// strictly ascending ids, a sane bid/ask and a fresh timestamp. An empty report is invalid.
-    function verifyReport(bytes calldata report) internal returns (IPriceOracle.Observation[] memory observations) {
+    /// strictly ascending ids, a sane bid/ask and a timestamp at most `maxAge` (<= MAX_ORACLE_AGE) seconds old.
+    /// An empty report is invalid.
+    function verifyReport(bytes calldata report, uint256 maxAge)
+        internal
+        returns (IPriceOracle.Observation[] memory observations)
+    {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         observations = $.oracle.verify{value: msg.value}(report);
         if (observations.length == 0) revert OracleInvalid();
@@ -171,7 +179,7 @@ library RFQLedger {
             ) revert OracleInvalid();
             if (
                 block.timestamp < o.observedAt || block.timestamp > o.validUntil
-                    || block.timestamp - o.observedAt > MAX_ORACLE_AGE
+                    || block.timestamp - o.observedAt > maxAge
             ) revert Stale();
             uint256 mid = (o.bid + o.ask) / 2;
             if ((o.ask - o.bid) * 10_000 > mid * MAX_ORACLE_WIDTH_BPS) revert OracleInvalid();

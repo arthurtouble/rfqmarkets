@@ -36,7 +36,7 @@ Market ids are 0 for BTC and 1 for ETH. Requirements and profit are rounded down
 | `markets(market)` | Traders' net position, the funding index and when it last moved, the last stored oracle bid and ask and their time, and whether the market is enabled. |
 | `marketCount()` / `marketId(symbol)` | How many markets exist, and a market's id from its symbol. |
 | `marketLimits(market)` | The maximum trade and the net limit. |
-| `exposureState(market)` | Traders' total long and short in base units, and the gross limit (low 128 bits) and side limit (high 128 bits). |
+| `exposure(market)` | Traders' total long and short in base units, and the gross and per-side limits. |
 | `marketParams(market)` | Inventory pricing coefficient, stress shock and margin multiplier. |
 | `portfolioStress()` | The maker's estimated loss under the stress shocks. |
 | `customerUnrealizedGain()` | Traders' total unrealized gains at mid. |
@@ -54,13 +54,13 @@ Trading and accounts:
 | --- | --- |
 | `Deposited(account, amount)` | Collateral is deposited. |
 | `Withdrawn(account, amount)` | Collateral is withdrawn. |
-| `TradeExecuted(intentHash, account, market, baseDelta, price, fee)` | A trade settles. `intentHash` and `account` are indexed. |
+| `TradeExecuted(intentHash, account, market, baseDelta, price, fee, realizedPnl, sizeAfter, entryPriceAfter)` | A trade settles. `intentHash`, `account` and `market` are indexed. Logs before the October 2026 upgrade have only the first six fields, with `market` not indexed. |
 | `FundingSettled(account, market, payment)` | Funding is settled into collateral. A positive payment was paid by the account. |
 | `PositionClosed(account, market, baseDelta, price)` | A position is closed at the oracle price: a paused close, or a bankrupt account's full close. |
 | `Liquidated(account, market, closedBase, penalty, keeperReward)` | A liquidation. |
 | `DeficitAbsorbed(account, insuranceUsed, makerUsed, unresolved)` | A bankrupt account's loss is covered. |
 | `NonceCancelled(account, nonce)` | A nonce is cancelled. |
-| `SessionGranted(account, session, validUntil, maxCumulativeNotional)` / `SessionRevoked(account, session)` | Quick-trading sessions. |
+| `SessionGranted(account, session, marketMask, maxTradeNotional, maxCumulativeNotional, maxFee, validUntil)` / `SessionRevoked(account, session)` | Quick-trading sessions. Grants before the October 2026 upgrade log only `validUntil` and `maxCumulativeNotional`. |
 
 Capital and governance:
 
@@ -83,7 +83,7 @@ These need no special role. Anyone can call them:
 | Function | Purpose |
 | --- | --- |
 | `refreshOracle(report)` | Records a fresh oracle report and accrues funding. Useful before a direct withdrawal with open positions. |
-| `liquidate(account, market, report)` | Liquidates a qualifying account and pays the caller a reward. |
+| `liquidate(account, market, report)` | Liquidates a qualifying account and pays the caller a reward. The report must be at most 5 seconds old. |
 | `fundMaker(amount)` / `fundInsurance(amount)` | Adds capital. |
 | `reportMakerIncident()` / `clearMakerIncident()` | Starts or clears the grace period. |
 | `declareResolution()` | After an incident's grace period. |
@@ -94,3 +94,7 @@ Oracle reports are passed as raw bytes. Calls that take one must send no ETH. Se
 ## Account-owner functions
 
 Sent by the account itself, paying its own gas: `deposit(amount)`, `withdraw(amount)`, `cancelNonce(nonce)`, `revokeSession(session)`, `closePosition(market, report)` (paused only) and `claimResolution()`. These are what the [exit page](../protocol/safety-and-exits.md#the-exit-page) calls.
+
+## Errors
+
+Besides the general `InvalidTrade`, `Margin`, `Stale`, `Replay`, `InvalidSignature` and `Unauthorized`, a refused trade names its reason: `TradeTooLarge` (over the market's per-trade limit), `MarketDisabled` (the market only takes reductions), `ReduceOnly` (a reduce-only trade that would not reduce), `SessionLimit` (past a session key's limits) and `PriceLimit` (a fill or close worse than its signed limit).

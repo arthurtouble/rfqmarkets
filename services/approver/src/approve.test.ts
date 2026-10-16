@@ -143,7 +143,6 @@ test("chain mode maps each chain-state rejection", async () => {
     [(s) => (s.blockTimestamp += 40), "chain-time expiry rejected"],
     [(s) => (s.markets[0].enabled = false), "market disabled"],
     [(s) => (s.blockTimestamp += 9), "chain-time oracle rejected"],
-    [(s) => (s.books[0].ready = false), "independent exposure check rejected"],
     [(s) => (s.backing = 0n), "independent exposure check rejected"],
   ];
   for (const [mutate, error] of cases) {
@@ -217,7 +216,7 @@ test("chain mode applies hedge risk and fails closed when the hedger is unavaila
 test("chain mode turns read failures into 503 and rejects excess gross capacity", async () => {
   const fixture = buildFixture(),
     failing = chainState(fixture.nowMs);
-  failing.failing = ["exposureState"];
+  failing.failing = ["exposure"];
   const unavailable = rejected(await approve(context({}, failing), fixture.payload));
   assert.equal(unavailable?.status, 503);
   assert.equal(unavailable?.body.error, "independent chain read unavailable");

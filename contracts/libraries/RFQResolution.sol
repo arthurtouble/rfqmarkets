@@ -62,7 +62,7 @@ library RFQResolution {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         ResolutionState storage r = $.resolution;
         if (!$.resolutionRequired || r.pricesReady) revert InvalidTrade();
-        IPriceOracle.Observation[] memory observations = RFQLedger.verifyReport(report);
+        IPriceOracle.Observation[] memory observations = RFQLedger.verifyReport(report, MAX_RELAYED_ORACLE_AGE);
         bool recorded;
         for (uint256 i; i < observations.length; ++i) {
             if (recordSample(r, observations[i])) recorded = true;

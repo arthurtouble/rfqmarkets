@@ -109,7 +109,8 @@ Withdrawals, nonce cancellations, one-tap trading grants and paused closes follo
 | `/v1/withdraw/prepare` → `/v1/withdraw/execute` | `{account, nonce, amount}` |
 | `/v1/nonce/cancel/prepare` → `/v1/nonce/cancel/execute` | `{account, nonce}` |
 | `/v1/session/prepare` → `/v1/session/execute` | `{account, nonce, session, marketMask, maxTradeAmount, maxCumulativeAmount, maxFee, durationSeconds}` |
-| `/v1/close/prepare` → `/v1/close/execute` | `{account, nonce, market}`; only while trading is paused |
+| `/v1/session/revoke/prepare` → `/v1/session/revoke/execute` | `{account, nonce, session}` |
+| `/v1/close/prepare` → `/v1/close/execute` | `{account, nonce, market, limitPrice?}`; only while trading is paused. `limitPrice` defaults to 2% from the current price. |
 
 `execute` takes `{intent, userSignature}` (or `{grant, userSignature}` for sessions).
 

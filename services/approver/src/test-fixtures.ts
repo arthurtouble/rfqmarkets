@@ -2,6 +2,8 @@
 import { Interface, Wallet, getAddress, keccak256, toBeHex, type BaseWallet, type BlockTag } from "ethers";
 import type { ApproverPayload } from "../../../packages/shared/src/approver-payload.js";
 import type { ClearingSessionStruct } from "../../../packages/shared/src/clearing-structs.js";
+import type { ExposureBook } from "../../../packages/shared/src/exposure-admission.js";
+import { high128, low128 } from "../../../packages/shared/src/numeric.js";
 import {
   DOMAIN_NAME,
   DOMAIN_VERSION,
@@ -151,7 +153,7 @@ export interface FakeChainState {
   isApprover: boolean;
   /** One entry per registered market (the launch fixture has BTC and ETH). */
   markets: Array<Record<string, bigint | boolean>>;
-  books: Array<Record<string, bigint | boolean>>;
+  books: ExposureBook[];
   limitWords: bigint[];
   position: { size: bigint; entryPrice: bigint; lastFundingIndex: bigint };
   sessions: Record<string, ClearingSessionStruct>;
@@ -184,7 +186,7 @@ export function chainState(nowMs: number): FakeChainState {
       lastAsk: price,
       enabled: true,
     }),
-    book = () => ({ longBase: 0n, shortBase: 0n, limits: word(LARGE), cursor: 0n, ready: true });
+    book = () => ({ longBase: 0n, shortBase: 0n, limits: word(LARGE) });
   return {
     chainId: CHAIN_ID,
     blockNumber: 100,
@@ -261,8 +263,18 @@ export function fakeChain(state: FakeChainState): ChainClients & { calls: string
         };
       }),
     markets: (index: number) => read("markets", () => state.markets[index] as never),
-    marketLimitWord: (index: number) => read("marketLimitWord", () => state.limitWords[index]),
-    exposureState: (index: number) => read("exposureState", () => state.books[index] as never),
+    marketLimits: (index: number) =>
+      read("marketLimits", () => ({
+        maxTradeNotional: low128(state.limitWords[index]),
+        maxMarketNotional: high128(state.limitWords[index]),
+      })),
+    exposure: (index: number) =>
+      read("exposure", () => ({
+        longBase: state.books[index].longBase,
+        shortBase: state.books[index].shortBase,
+        grossLimit: low128(state.books[index].limits),
+        sideLimit: high128(state.books[index].limits),
+      })),
     positionOf: () => read("positionOf", () => state.position),
     sessions: (signer: string) => read("sessions", () => state.sessions[signer]),
     isolatedOwner: (account: string) =>

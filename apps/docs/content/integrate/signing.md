@@ -84,10 +84,18 @@ Burns `nonce` so that nothing signed with it can execute. Submitted with `cancel
 ## CloseIntent
 
 ```
-CloseIntent(address account,uint8 market,uint256 nonce,uint64 deadline)
+CloseIntent(address account,uint8 market,uint256 limitPrice,uint256 nonce,uint64 deadline)
 ```
 
-Closes the account's whole position in `market` at the oracle price. Only valid while trading is paused. Submitted with `closePositionWithSignature`, together with a fresh oracle report.
+Closes the account's whole position in `market` at the oracle price. Only valid while trading is paused. Submitted with `closePositionWithSignature`, together with an oracle report at most 5 seconds old. `limitPrice` is the worst exit price accepted, in USDC with 6 decimals: a floor for a long (which sells at the bid) and a ceiling for a short (which buys at the ask). Zero accepts any price. The API's `/v1/close/prepare` sets it 2% from the current price unless you pass `limitPrice` in USDC.
+
+## SessionRevoke
+
+```
+SessionRevoke(address account,address session,uint256 nonce,uint64 deadline)
+```
+
+Revokes `session`, a key `account` granted. Submitted with `revokeSessionWithSignature`, so turning off one-tap trading needs no ETH.
 
 ## SessionGrant
 
@@ -110,7 +118,8 @@ Rules the contract applies:
 - Granting the same key again from the same account replaces the session and resets its cumulative usage to zero.
 - A session's trade intents must have a `deadline` no later than `validUntil`.
 - Sessions can only sign trades. They cannot withdraw, cancel, close, grant or revoke.
-- Revocation is `revokeSession(session)`, sent by the account itself. There is no signed revocation.
+- Revocation is `revokeSession(session)` sent by the account itself, or a signed `SessionRevoke` that anyone can relay.
+- A session trade past its key's limits (expiry, markets, per-trade, total or fee cap) reverts with `SessionLimit`.
 
 ## Deposits
 
