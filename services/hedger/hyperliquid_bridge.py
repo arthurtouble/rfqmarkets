@@ -28,9 +28,16 @@ def required(name: str) -> str:
     return value
 
 
+TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
+MAINNET_URL = "https://api.hyperliquid.xyz"
 API_URL = required("RFQ_HYPERLIQUID_API_URL")
-if API_URL != "https://api.hyperliquid-testnet.xyz":
-    raise RuntimeError("bridge is pinned to Hyperliquid testnet")
+if API_URL not in (TESTNET_URL, MAINNET_URL):
+    raise RuntimeError("bridge only talks to the Hyperliquid testnet or mainnet API")
+MAINNET = API_URL == MAINNET_URL
+# The coins the hedger may trade. On mainnet the list is required and the account must hold nothing else.
+COINS = frozenset(coin for coin in os.environ.get("RFQ_HYPERLIQUID_COINS", "").split(",") if coin)
+if MAINNET and not COINS:
+    raise RuntimeError("mainnet bridge needs RFQ_HYPERLIQUID_COINS")
 ACCOUNT = required("RFQ_HYPERLIQUID_ACCOUNT_ADDRESS").lower()
 AGENT_NAME = required("RFQ_HYPERLIQUID_AGENT_NAME")
 MIN_PERP_USDC = Decimal(os.environ.get("RFQ_HYPERLIQUID_MIN_PERP_USDC", "0"))
@@ -68,6 +75,27 @@ def venue_price(market: str, limit: Decimal, is_buy: bool) -> Decimal:
     return limit.quantize(quantum, rounding=ROUND_DOWN if is_buy else ROUND_UP)
 
 
+def ensure_dedicated_positions(state):
+    """On mainnet the hedge account holds only the hedger's coins; anything else means it is shared."""
+    if not MAINNET:
+        return
+    foreign = sorted(
+        coin
+        for coin in (wrapped.get("position", {}).get("coin") for wrapped in state.get("assetPositions", []))
+        if coin and coin not in COINS
+    )
+    if foreign:
+        raise RuntimeError(f"hedge account holds positions outside the hedge markets: {', '.join(foreign)}")
+
+
+def ensure_dedicated_orders():
+    if not MAINNET:
+        return
+    foreign = sorted({order.get("coin", "") for order in info.open_orders(ACCOUNT)} - COINS)
+    if foreign:
+        raise RuntimeError(f"hedge account has open orders outside the hedge markets: {', '.join(foreign)}")
+
+
 def ensure_authorized(force=False):
     now = time.monotonic()
     if force or now - authorization_cache["at"] > 60:
@@ -75,6 +103,7 @@ def ensure_authorized(force=False):
         match = next((item for item in agents if item.get("address", "").lower() == wallet.address.lower()), None)
         if not match or match.get("name") != AGENT_NAME:
             raise RuntimeError("configured named agent authorization was not found")
+        ensure_dedicated_orders()
         authorization_cache.update(at=now, match=match)
     match = authorization_cache["match"]
     if match is None or match["validUntil"] <= int(time.time() * 1000) + 60_000:
@@ -100,6 +129,7 @@ def current_position(market: str) -> str:
     now = time.monotonic()
     if now - position_cache["at"] > 0.25:
         state = info.user_state(ACCOUNT)
+        ensure_dedicated_positions(state)
         position_cache["values"] = {wrapped.get("position", {}).get("coin"): fixed_18(wrapped.get("position", {}).get("szi", "0")) for wrapped in state.get("assetPositions", [])}
         position_cache["at"] = now
     return position_cache["values"].get(market, "0")
@@ -170,6 +200,7 @@ def verify():
         raise RuntimeError("configured signer is not an agent of the configured account")
     match = ensure_authorized(force=True)
     perp = info.user_state(ACCOUNT)
+    ensure_dedicated_positions(perp)
     usable = usable_perp_usdc(force=True)
     spot = info.spot_user_state(ACCOUNT)
     usdc = next((item.get("total", "0") for item in spot.get("balances", []) if item.get("coin") == "USDC"), "0")
@@ -180,9 +211,9 @@ def submit(params):
     ensure_authorized()
     usable_perp_usdc(force=True)
     market = params["market"]
-    # The hedger sends venue coins from its data map (services/hedger/hedge-markets.json); accept any
-    # listed perp and refuse anything else.
-    if market not in sz_decimals:
+    # The hedger sends venue coins from its data map (services/hedger/hedge-markets.json); accept a
+    # listed perp in RFQ_HYPERLIQUID_COINS (any listed perp on testnet when unset) and refuse anything else.
+    if market not in sz_decimals or (COINS and market not in COINS):
         raise ValueError(f"unsupported market {market}")
     signed_base = Decimal(params["baseDelta"]) / ONE_E18
     quantum = Decimal(1).scaleb(-sz_decimals[market])
