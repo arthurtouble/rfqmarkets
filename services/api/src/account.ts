@@ -7,6 +7,7 @@ import {
   legMargin,
   marketMarginView,
 } from "../../../packages/shared/src/policy.js";
+import { readViews } from "../../../packages/shared/src/rpc.js";
 import { isolatedAccountAddress } from "../../../packages/shared/src/isolated.js";
 import type { ApiContext } from "./context.js";
 import { abs, marketIndex, marketRegistry, type Market } from "./markets.js";
@@ -156,49 +157,58 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
       return reply.code(400).send({ error: "invalid account" });
     }
     try {
-      const snapshot = await quoting.readMarkets(),
-        blockTag = { blockTag: snapshot.blockNumber };
+      const snapshot = await quoting.readMarkets();
       const symbols = marketRegistry.symbols();
       const isolatedAddresses = symbols.map((symbol) => isolatedAccountAddress(account, marketIndex(symbol)));
-      const [
-        collateral,
-        rawPositions,
-        maintenanceEquity,
-        openingEquity,
-        initialMargin,
-        maintenanceMargin,
-        isolatedOwner,
-        isolatedRegistered,
-      ] = await Promise.all([
-        clearing.collateralOf(account, blockTag),
-        Promise.all(symbols.map((symbol) => clearing.positionOf(account, marketIndex(symbol), blockTag))),
-        clearing.maintenanceEquity(account, blockTag),
-        clearing.openingEquity(account, blockTag),
-        clearing.initialMargin(account, blockTag),
-        clearing.maintenanceMargin(account, blockTag),
-        clearing.isolatedOwner(account, blockTag),
-        Promise.all(isolatedAddresses.map((isolated) => clearing.accountRegistered(isolated, blockTag))),
-      ]);
+      // One multicall for the owner and one for its isolated accounts: a read RPC that rate-limits
+      // separate calls (about twenty per account) made the balance take seconds to load.
+      const count = symbols.length,
+        views = await readViews(
+          clearing,
+          [
+            ["collateralOf", account],
+            ...symbols.map((symbol) => ["positionOf", account, marketIndex(symbol)] as const),
+            ["maintenanceEquity", account],
+            ["openingEquity", account],
+            ["initialMargin", account],
+            ["maintenanceMargin", account],
+            ["isolatedOwner", account],
+            ...isolatedAddresses.map((isolated) => ["accountRegistered", isolated] as const),
+          ],
+          snapshot.blockNumber,
+        );
+      const collateral = views[0] as bigint,
+        rawPositions = views.slice(1, 1 + count) as AccountPosition[],
+        [maintenanceEquity, openingEquity, initialMargin, maintenanceMargin] = views.slice(
+          1 + count,
+          5 + count,
+        ) as bigint[],
+        isolatedOwner = views[5 + count] as { owner: string },
+        isolatedRegistered = views.slice(6 + count) as boolean[];
       // Isolated accounts this owner has opened; each has its own collateral and margin (see its own
       // /v1/account view).
-      const isolated = await Promise.all(
-        symbols
-          .map((symbol, index) => ({ symbol, address: isolatedAddresses[index] }))
-          .filter((_, index) => isolatedRegistered[index])
-          .map(async ({ symbol, address }) => {
-            const [isolatedCollateral, raw] = await Promise.all([
-              clearing.collateralOf(address, blockTag),
-              clearing.positionOf(address, marketIndex(symbol), blockTag),
-            ]);
-            return {
-              market: symbol,
-              account: address,
-              collateral: isolatedCollateral.toString(),
-              size: raw.size.toString(),
-              entryPrice: raw.entryPrice.toString(),
-            };
-          }),
+      const opened = symbols
+        .map((symbol, index) => ({ symbol, address: isolatedAddresses[index] }))
+        .filter((_, index) => isolatedRegistered[index]);
+      const isolatedViews = await readViews(
+        clearing,
+        opened.flatMap(({ symbol, address }) => [
+          ["collateralOf", address] as const,
+          ["positionOf", address, marketIndex(symbol)] as const,
+        ]),
+        snapshot.blockNumber,
       );
+      const isolated = opened.map(({ symbol, address }, index) => {
+        const isolatedCollateral = isolatedViews[2 * index] as bigint,
+          raw = isolatedViews[2 * index + 1] as AccountPosition;
+        return {
+          market: symbol,
+          account: address,
+          collateral: isolatedCollateral.toString(),
+          size: raw.size.toString(),
+          entryPrice: raw.entryPrice.toString(),
+        };
+      });
       const ownerOfIsolated = BigInt(isolatedOwner.owner) === 0n ? null : getAddress(isolatedOwner.owner);
       const position = (raw: AccountPosition): AccountPosition => ({
         size: BigInt(raw.size),

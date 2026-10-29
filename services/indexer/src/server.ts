@@ -727,13 +727,20 @@ export function buildIndexer(options: IndexerOptions) {
   async function readExposure(blockTag: number) {
     // Every market the chain has at this block. One the registry has not loaded yet is reported as
     // `market #i`, which the hedger cannot map and so does not hedge.
-    const count = Number(await readContract.marketCount({ blockTag }));
+    // marketCount rides in the same multicall as the markets it expects, so the hedger's poll costs one
+    // eth_call; only a market listed since the registry last loaded takes a second read.
+    const read = (from: number, to: number) =>
+      readViews(
+        readContract,
+        [["marketCount"], ...Array.from({ length: to - from }, (_, index) => ["markets", from + index] as const)],
+        blockTag,
+      );
+    const [first, ...known] = await read(0, marketRegistry.count),
+      count = Number(first);
     if (count > marketRegistry.count) await marketRegistry.ensureCount(count).catch(() => {});
-    const states = (await readViews(
-      readContract,
-      Array.from({ length: count }, (_, index) => ["markets", index] as const),
-      blockTag,
-    )) as Array<{ aggregateBase: bigint; lastBid: bigint; lastAsk: bigint }>;
+    const states = (
+      count > known.length ? [...known, ...(await read(known.length, count)).slice(1)] : known.slice(0, count)
+    ) as Array<{ aggregateBase: bigint; lastBid: bigint; lastAsk: bigint }>;
     const market = (state: { aggregateBase: bigint; lastBid: bigint; lastAsk: bigint }) => ({
       aggregateBase: state.aggregateBase.toString(),
       bid: state.lastBid.toString(),
