@@ -89,10 +89,12 @@ export function useFunds() {
 
 /**
  * Follows a sent route until LI.FI reports it delivered (or not), across reloads. When Base USDC
- * arrives the sheet reopens with that amount, ready for the gas-free deposit.
+ * arrives it is deposited at once (one wallet signature); if that does not finish, the sheet reopens
+ * with that amount, ready to deposit.
  */
 function useRouteTracking(reopen: () => void): Tracking {
   const { address } = useTrader(),
+    trading = useTrading(),
     { notify } = useToasts();
   const [sent, setSent] = useState<SentRoute | null>(() => loadSentRoute(address));
   const [arrived, setArrived] = useState<Tracking["arrived"]>(null);
@@ -128,12 +130,18 @@ function useRouteTracking(reopen: () => void): Tracking {
         {
           kind: "success",
           title: `${usdc(result.received)} arrived in your Base wallet`,
-          detail: "Deposit it to start trading",
+          detail: "Depositing it into your trading balance",
         },
         toast.current,
       );
-      setArrived({ amount: result.received, network: sent.network });
-      reopen();
+      // Deposit straight away; if that cannot finish (declined, or another action is running) the
+      // sheet reopens with the amount filled in.
+      const arrival = { amount: result.received, network: sent.network };
+      void trading.deposit(result.received).then((done) => {
+        if (done) return;
+        setArrived(arrival);
+        reopen();
+      });
     } else
       notify(
         {
@@ -234,7 +242,7 @@ function FundsForm({
       {mode === "deposit" && tracking.sent && (
         <Banner>
           Bridging <b>{tracking.sent.sent}</b> from {tracking.sent.network}. About{" "}
-          {usdc(tracking.sent.toAmount)} lands in your Base wallet, then you deposit it here.{" "}
+          {usdc(tracking.sent.toAmount)} lands in your Base wallet, then your wallet asks you to deposit it.{" "}
           <a href={explorerUrl(tracking.sent.hash)} target="_blank" rel="noreferrer">
             Track it
           </a>

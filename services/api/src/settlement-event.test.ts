@@ -41,3 +41,22 @@ test("inclusion and unrelated logs cannot establish an authorized fill", async (
     false,
   );
 });
+
+test("a receipt the sender saw but the next RPC node lacks is asked for again", async () => {
+  const address = "0x0000000000000000000000000000000000000001",
+    account = "0x0000000000000000000000000000000000000002",
+    iface = new Interface(clearingApiAbi),
+    event = iface.encodeEventLog("Deposited(address,uint256)", [account, 5n]);
+  let calls = 0;
+  const lagging = { send: async () => (++calls < 3 ? null : { status: "0x1", logs: [{ address, ...event }] }) };
+  assert.equal(
+    await settlementEvent(lagging, address, iface, "0xhash", "Deposited", () => true, { pollMs: 1 }),
+    true,
+  );
+  assert.equal(calls, 3);
+  const missing = { send: async () => null };
+  assert.equal(
+    await settlementEvent(missing, address, iface, "0xhash", "Deposited", () => true, { waitMs: 20, pollMs: 1 }),
+    false,
+  );
+});

@@ -334,7 +334,7 @@ dialog.sheet { text-align: start; }
 .connect-sheet a { color: var(--brand-text); }
 
 /* Toasts ---------------------------------------------------------------- */
-.toasts { position: fixed; left: 50%; top: calc(var(--space-3) + env(safe-area-inset-top, 0px)); z-index: 60; display: grid; gap: var(--space-2); width: min(380px, calc(100vw - 2 * var(--space-4))); transform: translateX(-50%); }
+.toasts { inset: auto; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; overflow: visible; position: fixed; left: 50%; top: calc(var(--space-3) + env(safe-area-inset-top, 0px)); z-index: 60; display: grid; gap: var(--space-2); width: min(380px, calc(100vw - 2 * var(--space-4))); transform: translateX(-50%); }
 .toast-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 @media (min-width: 900px) {
   .toasts { left: auto; right: var(--space-6); top: auto; bottom: var(--space-6); transform: none; }

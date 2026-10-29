@@ -177,6 +177,8 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   const lastFirmQuoteAt = useRef(0);
   const api = <T,>(path: string, body: unknown) => postJson<T>(`${API}${path}`, body);
 
+  /** When account reads repeat after an action, for RPC nodes a block or two behind. */
+  const REFRESH_AGAIN_MS = 4_000;
   /** Runs one action with a pending toast, then a success or error toast. */
   async function run<T>(
     label: string,
@@ -214,8 +216,17 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     } finally {
       busyRef.current = null;
       setBusy(null);
-      // Every account query: the connected account's and those of its isolated accounts.
-      void client.invalidateQueries({ queryKey: ["account"] });
+      // Every account query (the connected account's and its isolated accounts') and the wallet's
+      // balances on other networks; again a few seconds later, since a load-balanced RPC can answer
+      // the first read from a node that has not seen the transaction yet.
+      const refresh = () =>
+        Promise.all(
+          [["account"], ["source-balance"], ["lifi", "holdings"]].map((queryKey) =>
+            client.invalidateQueries({ queryKey }),
+          ),
+        );
+      void refresh();
+      setTimeout(() => void refresh(), REFRESH_AGAIN_MS);
     }
   }
 
