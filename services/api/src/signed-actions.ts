@@ -386,6 +386,9 @@ export function registerSignedActions(
       { sender, clearing, provider, config, operationId, resumed },
       bySession,
     ) {
+      // Like a withdrawal, the move needs fresh prices for every market the source account holds, and a
+      // Home trade's margin move runs before its quote, so nothing else has refreshed them. Best effort.
+      await quoting.refreshOpenMarketPrices().catch(() => undefined);
       const method = bySession ? "moveIsolatedMarginWithSessionSignature" : "moveIsolatedMarginWithSignature";
       const data = clearing.interface.encodeFunctionData(method, [
         intent.account,
