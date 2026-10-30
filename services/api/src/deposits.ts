@@ -11,7 +11,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import type { ApiContext } from "./context.js";
 import { QuoteAdmission } from "./admission.js";
-import { publicError } from "./public-error.js";
+import { failureReason, publicError } from "./public-error.js";
 import { depositExecuteSchema, depositPrepareSchema } from "./schemas.js";
 import { settlementEvent } from "./settlement-event.js";
 
@@ -202,7 +202,7 @@ export function registerSponsoredDeposits(app: FastifyInstance, ctx: ApiContext)
       };
     } catch (error) {
       console.error("api deposit execute failed", error);
-      return reply.code(409).send({ error: publicError(error, "deposit failed") });
+      return reply.code(409).send({ error: publicError(error, "deposit failed"), reason: failureReason(error) });
     }
   });
 }

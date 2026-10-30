@@ -157,7 +157,13 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
       return reply.code(400).send({ error: "invalid account" });
     }
     try {
-      const snapshot = await quoting.readMarkets();
+      // Marks come from the market snapshot, whose chain half may be cached for seconds; balances and
+      // positions are read at the head, or a deposit would keep showing the old balance after a refresh.
+      const [snapshot, head] = await Promise.all([
+          quoting.readMarkets(),
+          ctx.provider!.send("eth_blockNumber", []).then((value: string) => Number(BigInt(value))),
+        ]),
+        blockNumber = Math.max(snapshot.blockNumber, head);
       const symbols = marketRegistry.symbols();
       const isolatedAddresses = symbols.map((symbol) => isolatedAccountAddress(account, marketIndex(symbol)));
       // One multicall for the owner and one for its isolated accounts: a read RPC that rate-limits
@@ -175,7 +181,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
             ["isolatedOwner", account],
             ...isolatedAddresses.map((isolated) => ["accountRegistered", isolated] as const),
           ],
-          snapshot.blockNumber,
+          blockNumber,
         );
       const collateral = views[0] as bigint,
         rawPositions = views.slice(1, 1 + count) as AccountPosition[],
@@ -196,7 +202,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
           ["collateralOf", address] as const,
           ["positionOf", address, marketIndex(symbol)] as const,
         ]),
-        snapshot.blockNumber,
+        blockNumber,
       );
       const isolated = opened.map(({ symbol, address }, index) => {
         const isolatedCollateral = isolatedViews[2 * index] as bigint,
@@ -222,7 +228,7 @@ export function registerAccountRoutes(app: FastifyInstance, ctx: ApiContext, quo
       );
       return {
         account,
-        blockNumber: snapshot.blockNumber,
+        blockNumber,
         ...summary,
         positions,
         /** Margin mode: an isolated account holds one market's position with its own collateral. */

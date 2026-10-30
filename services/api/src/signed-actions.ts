@@ -31,7 +31,7 @@ import { Reply } from "./http.js";
 import { marketIndex, marketName, unixSeconds } from "./markets.js";
 import { isolatedAccountAddress, type IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
 import { signingAccount, validOwnerSignature } from "./owner-signature.js";
-import { publicError } from "./public-error.js";
+import { failureReason, publicError } from "./public-error.js";
 import type { QuoteEngine } from "./quoting.js";
 import {
   cancelExecuteSchema,
@@ -259,7 +259,9 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
       return result instanceof Reply ? result.send(reply) : result;
     } catch (error) {
       console.error(`api ${action.label} execute failed`, error);
-      return reply.code(409).send({ error: publicError(error, `${action.label} failed`) });
+      return reply
+        .code(409)
+        .send({ error: publicError(error, `${action.label} failed`), reason: failureReason(error) });
     }
   });
 }
