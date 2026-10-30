@@ -10,6 +10,8 @@ const usd = new Intl.NumberFormat("en-US", {
   signDisplay: "negative",
 });
 const qty = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
+// Below one unit, four significant digits, so a small position reads 0.00002183 BTC instead of 0.
+const smallQty = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 4 });
 
 const toBig = (value: string | bigint) => (typeof value === "bigint" ? value : BigInt(value));
 export const abs = (value: bigint) => (value < 0n ? -value : value);
@@ -63,8 +65,11 @@ export const signedUsdc = (micro?: string | bigint | null) => {
   if (micro === undefined || micro === null) return "—";
   return `${toBig(micro) >= 5_000n ? "+" : ""}${usdc(micro)}`;
 };
-export const baseAmount = (value?: string | bigint | null) =>
-  value === undefined || value === null ? "—" : qty.format(scaled(value, 18));
+export const baseAmount = (value?: string | bigint | null) => {
+  if (value === undefined || value === null) return "—";
+  const amount = scaled(value, 18);
+  return (Math.abs(amount) < 1 ? smallQty : qty).format(amount);
+};
 export const signedBase = (value: string | bigint, market: Market) =>
   `${toBig(value) > 0n ? "+" : ""}${baseAmount(value)} ${market}`;
 

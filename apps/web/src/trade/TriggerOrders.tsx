@@ -220,7 +220,7 @@ export function TpslSheet({
       <div className="sheet-body">
         <Rows
           rows={[
-            ["Position", `${baseAmount(abs(size))} ${market} · ${usdc(abs(BigInt(position.notional)))}`],
+            ["Position", `${usdc(abs(BigInt(position.notional)))} · ${baseAmount(abs(size))} ${market}`],
             ["Entry price", usdPrice(entry)],
             ["Current price", usdPrice(mid)],
             ["Liq. price", usdPrice(liquidation)],
