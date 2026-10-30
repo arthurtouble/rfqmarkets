@@ -199,20 +199,19 @@ test.describe("wallet connect", () => {
     await expect(wallet.getByText("0x14dC…9955")).toBeVisible();
   });
 
-  test("one-tap trading turns on, pauses after a reload, and revokes", async ({ page }) => {
+  test("one-tap trading turns on, survives a reload, and turns off", async ({ page }) => {
     await page.goto("/account");
     await connect(page);
     await page.getByRole("button", { name: "Turn on" }).click();
     await expect(toast(page, "One-tap trading on")).toBeVisible();
-    await expect(
-      page.getByText(/^On until .+\. Trades up to \$2,500 fill without a wallet prompt\.$/),
-    ).toBeVisible();
+    const on = page.getByText(/^On until .+\. Trades up to \$[\d,.KM]+ fill without a wallet prompt\.$/);
+    await expect(on).toBeVisible();
     await expect(page.getByRole("button", { name: "Turn on" })).toHaveCount(0);
 
+    // The key is kept in this browser for the week it lasts.
     await page.reload();
-    await expect(page.getByText(/^Off since you reloaded the page/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Turn on again" })).toBeVisible();
-    await page.getByRole("button", { name: "Revoke" }).click();
+    await expect(on).toBeVisible();
+    await page.getByRole("button", { name: "Turn off" }).click();
     await expect(toast(page, "One-tap trading off")).toBeVisible();
     await expect(page.getByRole("button", { name: "Turn on", exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);

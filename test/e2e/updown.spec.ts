@@ -49,12 +49,11 @@ test.describe("Up / Down", () => {
     await expect(newBet.getByText("$20 position, no fees. A 1% move your way: +$0.20")).toBeVisible();
 
     await newBet.getByRole("button", { name: "Up", exact: true }).click();
-    // The first trade in a tab signs through the confirm step, which turns one tap on for the next ones.
-    const confirm = page.getByRole("dialog", { name: "Up on Ethereum" });
-    await expect(confirm).toBeVisible();
-    await expect(confirm.getByText(/^\$10 at 2×, a \$20 position\./)).toBeVisible();
-    await expect(confirm.getByRole("checkbox", { name: /Skip this next time/ })).toBeChecked();
-    await confirm.getByRole("button", { name: "Confirm Up" }).click();
+    // The first trade in a browser turns one tap on with one signature and fills with no confirm step.
+    await expect(
+      page.getByRole("status", { name: "Notifications" }).filter({ hasText: "One-tap trading on" }),
+    ).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Up on Ethereum" })).toHaveCount(0);
     await expect(
       page
         .getByRole("status", { name: "Notifications" })

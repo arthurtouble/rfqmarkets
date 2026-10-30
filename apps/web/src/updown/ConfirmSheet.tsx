@@ -17,7 +17,7 @@ import { UP_DOWN, lossAt } from "../lib/updown.js";
 import type { ReviewOrder } from "../trade/ReviewSheet.js";
 import { Banner, Down, Rows, Sheet, Up, marketName } from "../ui/primitives.js";
 import { useQuickLimits } from "../data/quick-limits.js";
-import { QUICK_HOURS } from "../wallet/quick-session.js";
+import { QUICK_DAYS } from "../wallet/quick-session.js";
 
 export function ConfirmSheet({
   order,
@@ -144,7 +144,7 @@ export function ConfirmSheet({
               Skip this next time
               <span className="footnote rfq-faint">
                 {" "}
-                (up to {usdcCompact(quickLimits.maxTradeMicro)} a trade, for {QUICK_HOURS} hours)
+                (up to {usdcCompact(quickLimits.maxTradeMicro)} a trade, for {QUICK_DAYS} days)
               </span>
             </span>
           </label>

@@ -71,21 +71,23 @@ export interface ChainClients {
 }
 
 /**
- * How far back an approver looks for an account's newest session grant: about five hours of Base blocks,
- * longer than the app's four-hour keys. A key is honoured only while it is the newest one its account
- * granted in this window, so keys left behind by old tabs, or granted long ago, stop signing trades.
+ * How far back an approver looks for an account's newest session grant: a little over seven days of Base
+ * blocks, longer than the app's week-long keys. A key is honoured only while it is the newest one its
+ * account granted in this window, so keys left behind on another device, or granted long ago, stop signing trades.
  */
-export const SESSION_LOOKBACK_BLOCKS = 9_000;
+export const SESSION_LOOKBACK_BLOCKS = 310_000;
 /** Blocks per `eth_getLogs` call: the smallest cap among the free RPCs the dev runtime uses. */
 const GRANT_LOG_CHUNK = 1_000;
+/** `eth_getLogs` calls in flight at once while scanning back, so a cold scan of a week stays a few seconds. */
+const GRANT_LOG_PARALLEL = 16;
 /** Accounts whose newest grant is remembered; past this the memory starts over. */
 const GRANT_CACHE_ACCOUNTS = 10_000;
 
 type GrantLog = { session: string; block: number };
 
 /**
- * `latestSession` over a log reader. Scans newest blocks first in {@link GRANT_LOG_CHUNK} ranges and
- * stops at the first grant, and remembers each account's newest grant and how far it has scanned, so a
+ * `latestSession` over a log reader. Scans newest blocks first in {@link GRANT_LOG_CHUNK} ranges,
+ * {@link GRANT_LOG_PARALLEL} at a time, and stops at the first wave with a grant, and remembers each account's newest grant and how far it has scanned, so a
  * key in steady use costs one small range per check.
  */
 export function sessionGrantTracker(
@@ -98,9 +100,12 @@ export function sessionGrantTracker(
       usable = cached && cached.through >= floor && cached.through <= toBlock ? cached : undefined;
     let found: GrantLog | undefined;
     for (let end = toBlock, from = usable ? usable.through + 1 : floor; end >= from && !found;) {
-      const start = Math.max(from, end - GRANT_LOG_CHUNK + 1);
-      found = (await grantsOf(account, start, end)).at(-1);
-      end = start - 1;
+      const ranges: Array<[number, number]> = [];
+      for (; end >= from && ranges.length < GRANT_LOG_PARALLEL; end -= GRANT_LOG_CHUNK)
+        ranges.push([Math.max(from, end - GRANT_LOG_CHUNK + 1), end]);
+      // Newest range first, so the first range with a grant holds the newest one.
+      const waves = await Promise.all(ranges.map(([start, stop]) => grantsOf(account, start, stop)));
+      found = waves.find((logs) => logs.length > 0)?.at(-1);
     }
     const grant = found ?? (usable?.grant && usable.grant.block >= floor ? usable.grant : undefined);
     if (known.size >= GRANT_CACHE_ACCOUNTS && !known.has(account)) known.clear();

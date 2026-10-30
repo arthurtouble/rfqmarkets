@@ -56,18 +56,19 @@ export function generateDevIdentities(
     approvers: [make(), make(), make()] as const,
     createdAt: new Date().toISOString(),
   };
+  // Dev runs at its ceilings (DEV_CEILINGS); the maker capital floor still bounds what the house takes on.
   const market = {
-    maxTradeUsdc: "25000000",
-    netUsdc: "100000000",
-    grossUsdc: "200000000",
-    sideUsdc: "150000000",
+    maxTradeUsdc: "1000000000",
+    netUsdc: "5000000000",
+    grossUsdc: "10000000000",
+    sideUsdc: "7500000000",
     marginScaleBps: 2_500,
   };
   const listing = {
-    maxTradeUsdc: "25000000",
-    netUsdc: "50000000",
-    grossUsdc: "100000000",
-    sideUsdc: "75000000",
+    maxTradeUsdc: "1000000000",
+    netUsdc: "2500000000",
+    grossUsdc: "5000000000",
+    sideUsdc: "3750000000",
   };
   const manifest = {
     version: 1,
@@ -85,7 +86,7 @@ export function generateDevIdentities(
         BTC: market,
         ETH: market,
         // Later listings, in index order (2, 3, ...): every one has a Hyperliquid perp to hedge on and at
-        // least three oracle venues. They use LISTING_RISK's defaults and half the launch caps.
+        // least three oracle venues. They use LISTING_RISK's defaults and half the launch market caps.
         ...Object.fromEntries(DEV_LISTINGS.map((symbol) => [symbol, listing])),
       },
     },
