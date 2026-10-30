@@ -258,6 +258,7 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
       chain.invalidateQuoteSnapshot();
       return result instanceof Reply ? result.send(reply) : result;
     } catch (error) {
+      console.error(`api ${action.label} execute failed`, error);
       return reply.code(409).send({ error: publicError(error, `${action.label} failed`) });
     }
   });
@@ -329,6 +330,7 @@ export function registerSignedActions(
           String(args.account).toLowerCase() === intent.account.toLowerCase() &&
           BigInt(String(args.amount)) === intent.amount,
       );
+      if (!paid) console.error(`api withdrawal ${receipt.hash} not paid (receipt block ${receipt.blockNumber})`);
       if (!paid)
         return new Reply(409, {
           status: "resolution_required",

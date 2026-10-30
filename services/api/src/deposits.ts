@@ -191,13 +191,17 @@ export function registerSponsoredDeposits(app: FastifyInstance, ctx: ApiContext)
           String(args.account).toLowerCase() === authorization.from.toLowerCase() &&
           BigInt(String(args.amount)) === authorization.value,
       );
-      if (!credited) return reply.code(409).send({ error: "deposit not credited" });
+      if (!credited) {
+        console.error(`api deposit ${receipt.hash} not credited (receipt block ${receipt.blockNumber})`);
+        return reply.code(409).send({ error: "deposit not credited" });
+      }
       return {
         status: "included",
         transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
         collateral: (await chain.clearing.collateralOf(authorization.from)).toString(),
       };
     } catch (error) {
+      console.error("api deposit execute failed", error);
       return reply.code(409).send({ error: publicError(error, "deposit failed") });
     }
   });
