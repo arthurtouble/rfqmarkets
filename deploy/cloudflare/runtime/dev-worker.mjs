@@ -144,7 +144,7 @@ export class RFQDevRuntime extends Container {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, context) {
     const url = new URL(request.url),
       hedger = hedgerOpsPath(url.pathname, request.method);
     // Only the admin worker (deploy/cloudflare/static/private-edge.mjs, behind Access) forwards /ops/ paths;
@@ -159,11 +159,13 @@ export default {
     // The container's own output does not reach Workers Logs: record why a write failed (the API's
     // error and reason fields, never request bodies).
     if (request.method === "POST" && response.status >= 400)
-      response
-        .clone()
-        .text()
-        .then((body) => console.log(`${url.pathname} ${response.status} ${body.slice(0, 400)}`))
-        .catch(() => {});
+      context?.waitUntil(
+        response
+          .clone()
+          .text()
+          .then((body) => console.log(`${url.pathname} ${response.status} ${body.slice(0, 400)}`))
+          .catch(() => {}),
+      );
     return response;
   },
   async scheduled(_event, env, context) {
