@@ -48,7 +48,9 @@ test("a receipt the sender saw but the next RPC node lacks is asked for again", 
     iface = new Interface(clearingApiAbi),
     event = iface.encodeEventLog("Deposited(address,uint256)", [account, 5n]);
   let calls = 0;
-  const lagging = { send: async () => (++calls < 3 ? null : { status: "0x1", logs: [{ address, ...event }] }) };
+  const lagging = {
+    send: async () => (++calls < 3 ? null : { status: "0x1", logs: [{ address, ...event }] }),
+  };
   assert.equal(
     await settlementEvent(lagging, address, iface, "0xhash", "Deposited", () => true, { pollMs: 1 }),
     true,
@@ -56,7 +58,10 @@ test("a receipt the sender saw but the next RPC node lacks is asked for again", 
   assert.equal(calls, 3);
   const missing = { send: async () => null };
   assert.equal(
-    await settlementEvent(missing, address, iface, "0xhash", "Deposited", () => true, { waitMs: 20, pollMs: 1 }),
+    await settlementEvent(missing, address, iface, "0xhash", "Deposited", () => true, {
+      waitMs: 20,
+      pollMs: 1,
+    }),
     false,
   );
 });
@@ -73,7 +78,10 @@ test("a refused receipt read is retried, and only a persistent refusal is thrown
       return { status: "0x1", logs: [{ address, ...event }] };
     },
   };
-  assert.equal(await settlementEvent(flaky, address, iface, "0xhash", "Withdrawn", () => true, { pollMs: 1 }), true);
+  assert.equal(
+    await settlementEvent(flaky, address, iface, "0xhash", "Withdrawn", () => true, { pollMs: 1 }),
+    true,
+  );
   const refusing = {
     send: async () => {
       throw new Error("server response 403 Forbidden");

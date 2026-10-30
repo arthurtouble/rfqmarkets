@@ -332,7 +332,8 @@ export function registerSignedActions(
           String(args.account).toLowerCase() === intent.account.toLowerCase() &&
           BigInt(String(args.amount)) === intent.amount,
       );
-      if (!paid) console.error(`api withdrawal ${receipt.hash} not paid (receipt block ${receipt.blockNumber})`);
+      if (!paid)
+        console.error(`api withdrawal ${receipt.hash} not paid (receipt block ${receipt.blockNumber})`);
       if (!paid)
         return new Reply(409, {
           status: "resolution_required",

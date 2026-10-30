@@ -167,7 +167,9 @@ test("keeps the sheet open with an error toast when a withdrawal fails", async (
   // The open sheet is a modal in the browser's top layer, which no z-index reaches: the toast stack
   // must be in that layer too (a popover raised after the dialog), not behind the sheet's backdrop.
   expect(
-    await page.getByRole("status", { name: "Notifications" }).evaluate((element) => element.matches(":popover-open")),
+    await page
+      .getByRole("status", { name: "Notifications" })
+      .evaluate((element) => element.matches(":popover-open")),
     "the toast shows above the sheet",
   ).toBe(true);
   await expect(sheet, "a failure leaves the sheet open to retry").toBeVisible();

@@ -203,7 +203,9 @@ export function registerSponsoredDeposits(app: FastifyInstance, ctx: ApiContext)
       };
     } catch (error) {
       console.error("api deposit execute failed", error);
-      return reply.code(409).send({ error: publicError(error, "deposit failed"), reason: failureReason(error) });
+      return reply
+        .code(409)
+        .send({ error: publicError(error, "deposit failed"), reason: failureReason(error) });
     }
   });
 }

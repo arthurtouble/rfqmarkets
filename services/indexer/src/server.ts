@@ -732,7 +732,10 @@ export function buildIndexer(options: IndexerOptions) {
     const read = (from: number, to: number) =>
       readViews(
         readContract,
-        [["marketCount"], ...Array.from({ length: to - from }, (_, index) => ["markets", from + index] as const)],
+        [
+          ["marketCount"],
+          ...Array.from({ length: to - from }, (_, index) => ["markets", from + index] as const),
+        ],
         blockTag,
       );
     const [first, ...known] = await read(0, marketRegistry.count),

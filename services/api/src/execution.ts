@@ -938,7 +938,10 @@ export class ExecutionService {
         });
       }
       const [collateral, position] = await afterSettlement(() =>
-        Promise.all([clearing.collateralOf(intent.account), clearing.positionOf(intent.account, intent.market)]),
+        Promise.all([
+          clearing.collateralOf(intent.account),
+          clearing.positionOf(intent.account, intent.market),
+        ]),
       );
       ctx.notifyPositionChange(intent.account, quote.market);
       journal

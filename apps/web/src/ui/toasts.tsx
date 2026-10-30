@@ -1,6 +1,15 @@
 // Transient feedback for wallet and settlement actions. A pending toast is
 // replaced in place by its result so each action shows exactly one card.
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { txUrl } from "../lib/explorer.js";
 import { useTrader } from "../wallet/trader.js";
 import { Check, Close } from "./primitives.js";
@@ -78,7 +87,14 @@ function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number
   const stack = useRef<HTMLDivElement>(null);
   useAboveDialogs(stack, toasts);
   return (
-    <div ref={stack} popover="manual" className="toasts" role="status" aria-live="polite" aria-label="Notifications">
+    <div
+      ref={stack}
+      popover="manual"
+      className="toasts"
+      role="status"
+      aria-live="polite"
+      aria-label="Notifications"
+    >
       {toasts.map((toast) => {
         const link = toast.txHash ? txUrl(chain.id, toast.txHash) : undefined;
         const kind = toast.kind === "pending" ? "pending" : toast.kind === "success" ? "success" : "error";
