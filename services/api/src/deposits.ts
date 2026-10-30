@@ -198,7 +198,8 @@ export function registerSponsoredDeposits(app: FastifyInstance, ctx: ApiContext)
       return {
         status: "included",
         transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
-        collateral: (await chain.clearing.collateralOf(authorization.from)).toString(),
+        // Informational: the settlement already landed, so a refused read must not turn it into a failure.
+        collateral: await chain.clearing.collateralOf(authorization.from).then(String, () => undefined),
       };
     } catch (error) {
       console.error("api deposit execute failed", error);

@@ -48,7 +48,7 @@ import type { OracleReport, ProtocolVersions } from "./quote-store.js";
 import type { CreatedQuote, QuoteEngine } from "./quoting.js";
 import { archiveApiCommitments } from "./recovery.js";
 import { approvalRequestSchema, intentRequestSchema, type ApprovalRequest } from "./schemas.js";
-import { settlementEvent } from "./settlement-event.js";
+import { afterSettlement, settlementEvent } from "./settlement-event.js";
 
 /** The wallet signs a short execution interval; oracle proof freshness is bound separately at approval. */
 const INTENT_EXECUTION_WINDOW_SECONDS = 30;
@@ -937,8 +937,9 @@ export class ExecutionService {
           transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
         });
       }
-      const collateral = await clearing.collateralOf(intent.account);
-      const position = await clearing.positionOf(intent.account, intent.market);
+      const [collateral, position] = await afterSettlement(() =>
+        Promise.all([clearing.collateralOf(intent.account), clearing.positionOf(intent.account, intent.market)]),
+      );
       ctx.notifyPositionChange(intent.account, quote.market);
       journal
         ?.prepare("UPDATE commitments SET status='included', updated_ms=? WHERE quote_id=?")

@@ -402,7 +402,9 @@ export class DurableSender {
   private async wait(hash: string, timeoutMs: number) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const receipt = await this.readReceipt(hash);
+      // The transaction is already broadcast: a public RPC refusing one of these fast polls (403, 429,
+      // a timeout) must not fail an operation that is landing anyway, so poll again until the deadline.
+      const receipt = await this.readReceipt(hash).catch(() => null);
       if (receipt) return receipt;
       await new Promise((resolve) => setTimeout(resolve, this.options.pollMs ?? 100));
     }

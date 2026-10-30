@@ -47,7 +47,7 @@ import {
   withdrawalExecuteSchema,
   withdrawalPrepareSchema,
 } from "./schemas.js";
-import { settlementEvent } from "./settlement-event.js";
+import { afterSettlement, settlementEvent } from "./settlement-event.js";
 
 /** Owner-signed actions are valid for two minutes after preparation. */
 const ACTION_TTL_SECONDS = 120;
@@ -342,7 +342,8 @@ export function registerSignedActions(
       return {
         status: "included",
         transaction: transactionOf(receipt),
-        collateral: (await clearing.collateralOf(intent.account)).toString(),
+        // Informational: the withdrawal already landed, so a refused read must not turn it into a failure.
+        collateral: await clearing.collateralOf(intent.account).then(String, () => undefined),
       };
     },
   });
@@ -402,10 +403,9 @@ export function registerSignedActions(
         { deadline: Number(intent.deadline) },
       );
       const isolated = isolatedAccountAddress(intent.account, intent.market);
-      const [collateral, isolatedCollateral] = await Promise.all([
-        clearing.collateralOf(intent.account),
-        clearing.collateralOf(isolated),
-      ]);
+      const [collateral, isolatedCollateral] = await afterSettlement(() =>
+        Promise.all([clearing.collateralOf(intent.account), clearing.collateralOf(isolated)]),
+      );
       ctx.notifyPositionChange(intent.account, marketName(intent.market));
       return {
         status: "included",
