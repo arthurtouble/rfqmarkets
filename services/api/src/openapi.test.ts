@@ -62,6 +62,6 @@ test("the OpenAPI document lists every public route the API registers", async ()
 
 test("jsonSchema maps defaults and rejects kinds it can't describe", () => {
   assert.deepEqual(jsonSchema(z.boolean().default(false)), { type: "boolean", default: false });
-  assert.throws(() => jsonSchema(z.date()), /unsupported schema kind: ZodDate/);
-  assert.throws(() => jsonSchema(z.string().email()), /unsupported string check: email/);
+  assert.throws(() => jsonSchema(z.date()), /unsupported schema kind: date/);
+  assert.throws(() => jsonSchema(z.email()), /unsupported string check: email/);
 });

@@ -37,7 +37,7 @@ const oracleParams = z
     jumpWindow: int(0, 86_400).default(0),
   })
   .strict()
-  .default({});
+  .prefault({});
 const oracleSigners = z.array(address).min(3).max(16);
 
 /** Majority threshold, distinct signers, and a jump guard that is either fully on or fully off. */
