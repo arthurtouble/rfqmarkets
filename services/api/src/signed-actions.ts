@@ -31,7 +31,7 @@ import { Reply } from "./http.js";
 import { marketIndex, marketName, unixSeconds } from "./markets.js";
 import { isolatedAccountAddress, type IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
 import { signingAccount, validOwnerSignature } from "./owner-signature.js";
-import { publicError } from "./public-error.js";
+import { failureReason, publicError } from "./public-error.js";
 import type { QuoteEngine } from "./quoting.js";
 import {
   cancelExecuteSchema,
@@ -47,7 +47,7 @@ import {
   withdrawalExecuteSchema,
   withdrawalPrepareSchema,
 } from "./schemas.js";
-import { settlementEvent } from "./settlement-event.js";
+import { afterSettlement, settlementEvent } from "./settlement-event.js";
 
 /** Owner-signed actions are valid for two minutes after preparation. */
 const ACTION_TTL_SECONDS = 120;
@@ -258,7 +258,10 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
       chain.invalidateQuoteSnapshot();
       return result instanceof Reply ? result.send(reply) : result;
     } catch (error) {
-      return reply.code(409).send({ error: publicError(error, `${action.label} failed`) });
+      console.error(`api ${action.label} execute failed`, error);
+      return reply
+        .code(409)
+        .send({ error: publicError(error, `${action.label} failed`), reason: failureReason(error) });
     }
   });
 }
@@ -330,6 +333,8 @@ export function registerSignedActions(
           BigInt(String(args.amount)) === intent.amount,
       );
       if (!paid)
+        console.error(`api withdrawal ${receipt.hash} not paid (receipt block ${receipt.blockNumber})`);
+      if (!paid)
         return new Reply(409, {
           status: "resolution_required",
           error: "withdrawal not paid; inspect resolution state",
@@ -338,7 +343,8 @@ export function registerSignedActions(
       return {
         status: "included",
         transaction: transactionOf(receipt),
-        collateral: (await clearing.collateralOf(intent.account)).toString(),
+        // Informational: the withdrawal already landed, so a refused read must not turn it into a failure.
+        collateral: await clearing.collateralOf(intent.account).then(String, () => undefined),
       };
     },
   });
@@ -380,6 +386,9 @@ export function registerSignedActions(
       { sender, clearing, provider, config, operationId, resumed },
       bySession,
     ) {
+      // Like a withdrawal, the move needs fresh prices for every market the source account holds, and a
+      // Home trade's margin move runs before its quote, so nothing else has refreshed them. Best effort.
+      await quoting.refreshOpenMarketPrices().catch(() => undefined);
       const method = bySession ? "moveIsolatedMarginWithSessionSignature" : "moveIsolatedMarginWithSignature";
       const data = clearing.interface.encodeFunctionData(method, [
         intent.account,
@@ -398,10 +407,9 @@ export function registerSignedActions(
         { deadline: Number(intent.deadline) },
       );
       const isolated = isolatedAccountAddress(intent.account, intent.market);
-      const [collateral, isolatedCollateral] = await Promise.all([
-        clearing.collateralOf(intent.account),
-        clearing.collateralOf(isolated),
-      ]);
+      const [collateral, isolatedCollateral] = await afterSettlement(() =>
+        Promise.all([clearing.collateralOf(intent.account), clearing.collateralOf(isolated)]),
+      );
       ctx.notifyPositionChange(intent.account, marketName(intent.market));
       return {
         status: "included",

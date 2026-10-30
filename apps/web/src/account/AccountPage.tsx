@@ -5,7 +5,7 @@ import { shortAddress, usdcCompact } from "../lib/format.js";
 import { NavIcons, EmptyState, Segmented } from "../ui/primitives.js";
 import { usePrefs } from "../ui/prefs.js";
 import { useQuickLimits } from "../data/quick-limits.js";
-import { QUICK_CEILING, QUICK_HOURS } from "../wallet/quick-session.js";
+import { LEGACY_MAX_TRADE_MICRO, QUICK_DAYS } from "../wallet/quick-session.js";
 import { useTrader } from "../wallet/trader.js";
 import { WrongNetworkBanner } from "../wallet/SwitchNetwork.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
@@ -16,15 +16,22 @@ function OneClickRow() {
     busy = trading.busy !== null,
     limits = useQuickLimits();
   const until =
-    session && new Date(session.validUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    session &&
+    new Date(session.validUntil).toLocaleString([], {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   const limit = usdcCompact(
-    session ? BigInt(session.maxTradeNotional ?? QUICK_CEILING.maxTradeMicro) : limits.maxTradeMicro,
+    session ? BigInt(session.maxTradeNotional ?? LEGACY_MAX_TRADE_MICRO) : limits.maxTradeMicro,
   );
   const detail = !session
-    ? `Approve once, then trades up to ${limit} fill without a wallet prompt for ${QUICK_HOURS} hours.`
+    ? `Approve once, then trades up to ${limit} fill without a wallet prompt for ${QUICK_DAYS} days.`
     : session.privateKey
       ? `On until ${until}. Trades up to ${limit} fill without a wallet prompt.`
-      : `Off since you reloaded the page. Turn it on again, or revoke the old key (it ends at ${until} anyway).`;
+      : `Off in this browser. Turn it on again, or revoke the old key (it ends ${until} anyway).`;
   return (
     <div className="setting-row">
       <div>

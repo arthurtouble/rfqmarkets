@@ -11,7 +11,7 @@ import { leverageLabel, quoteSecondsLeft, quoteUsable, SIDE_WORD } from "../lib/
 import type { Quote } from "../lib/types.js";
 import { Banner, Rows, marketName, Sheet } from "../ui/primitives.js";
 import { useQuickLimits } from "../data/quick-limits.js";
-import { QUICK_HOURS } from "../wallet/quick-session.js";
+import { QUICK_DAYS } from "../wallet/quick-session.js";
 
 /** A market order as the ticket built it: the position (`amountMicro`) and what the trader pays for it. */
 export type ReviewOrder = MarketOrder & { payMicro: bigint; leverage: number };
@@ -114,8 +114,8 @@ export function ReviewSheet({
               Skip this step next time
               <span className="footnote rfq-faint">
                 {" "}
-                · trades up to {usdcCompact(quickLimits.maxTradeMicro)} sign in this tab for {QUICK_HOURS}{" "}
-                hours (one more signature now)
+                · trades up to {usdcCompact(quickLimits.maxTradeMicro)} sign in this browser for {QUICK_DAYS}{" "}
+                days (one more signature now)
               </span>
             </span>
           </label>

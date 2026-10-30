@@ -11,7 +11,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import type { ApiContext } from "./context.js";
 import { QuoteAdmission } from "./admission.js";
-import { publicError } from "./public-error.js";
+import { failureReason, publicError } from "./public-error.js";
 import { depositExecuteSchema, depositPrepareSchema } from "./schemas.js";
 import { settlementEvent } from "./settlement-event.js";
 
@@ -191,14 +191,21 @@ export function registerSponsoredDeposits(app: FastifyInstance, ctx: ApiContext)
           String(args.account).toLowerCase() === authorization.from.toLowerCase() &&
           BigInt(String(args.amount)) === authorization.value,
       );
-      if (!credited) return reply.code(409).send({ error: "deposit not credited" });
+      if (!credited) {
+        console.error(`api deposit ${receipt.hash} not credited (receipt block ${receipt.blockNumber})`);
+        return reply.code(409).send({ error: "deposit not credited" });
+      }
       return {
         status: "included",
         transaction: { hash: receipt.hash, blockNumber: receipt.blockNumber },
-        collateral: (await chain.clearing.collateralOf(authorization.from)).toString(),
+        // Informational: the settlement already landed, so a refused read must not turn it into a failure.
+        collateral: await chain.clearing.collateralOf(authorization.from).then(String, () => undefined),
       };
     } catch (error) {
-      return reply.code(409).send({ error: publicError(error, "deposit failed") });
+      console.error("api deposit execute failed", error);
+      return reply
+        .code(409)
+        .send({ error: publicError(error, "deposit failed"), reason: failureReason(error) });
     }
   });
 }

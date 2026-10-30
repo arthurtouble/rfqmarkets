@@ -11,7 +11,8 @@
     "class_name": "RFQDevRuntime",
     "image": "../Dockerfile.dev",
     "max_instances": 1,
-    "instance_type": "basic"
+    "instance_type": "standard-2",
+    "observability": {"logs": {"enabled": true}}
   }],
   "durable_objects": {"bindings": [{"name": "RFQ_DEV_RUNTIME", "class_name": "RFQDevRuntime"}]},
   "migrations": [{"tag": "v1", "new_sqlite_classes": ["RFQDevRuntime"]}],

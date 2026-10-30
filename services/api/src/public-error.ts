@@ -91,3 +91,17 @@ export function approverPolicyRejection(
   for (const [reason, count] of counts) if (count > approverCount - quorum) return reason;
   return undefined;
 }
+
+/**
+ * A short, safe description of why an operation failed, for the response's `reason` (support and
+ * logs): the ethers short message or the error's first clause, without URLs or long hex payloads.
+ */
+export function failureReason(error: unknown): string {
+  const value = error as { shortMessage?: unknown; message?: unknown; code?: unknown } | null;
+  const text = String(value?.shortMessage ?? value?.message ?? error)
+    .split(" (")[0]
+    .replace(/https?:\/\/\S+/g, "<url>")
+    .replace(/0x[0-9a-fA-F]{66,}/g, "<data>");
+  const code = typeof value?.code === "string" ? `${value.code}: ` : "";
+  return `${code}${text}`.slice(0, 200);
+}

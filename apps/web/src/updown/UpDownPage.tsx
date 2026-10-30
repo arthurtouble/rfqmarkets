@@ -10,6 +10,7 @@ import { useTrading, type ClosedAt } from "../data/actions.js";
 import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useMarketLeverage, useMarketList } from "../data/markets.js";
 import { useProtocol } from "../data/queries.js";
+import { useQuickLimits } from "../data/quick-limits.js";
 import { useTicks } from "../data/ticks.js";
 import { initialMarginAfter } from "../lib/account.js";
 import { parseUsdcInput, signedUsdc, usdc, usdcCompact, usdPrice } from "../lib/format.js";
@@ -347,6 +348,7 @@ function NewBet({
   const { snapshot, status } = useMarketFeed();
   const trader = useTrader(),
     trading = useTrading(),
+    quickLimits = useQuickLimits(),
     funds = useFunds();
   const now = useServerNow(1_000);
   const leverageInfo = useMarketLeverage(market);
@@ -443,10 +445,11 @@ function NewBet({
       title: `You're ${word} on ${marketName(market)} with ${usdcCompact(stakeMicro)}`,
       isolated: { payMicro: stakeMicro },
     };
-    // One tap once quick trading covers the size; otherwise the confirm step signs (and offers one tap).
-    if (trading.quickCovers(market, notional)) {
+    // One tap: the first trade in this browser grants a week's one-tap key (one wallet signature). Only a
+    // size past the key's limits goes through the confirm step and the wallet.
+    if (await trading.readyQuick(market, notional, quickLimits)) {
       if (await trading.marketOrder(order)) remember(order);
-    } else setReview(order);
+    } else if (notional > quickLimits.maxTradeMicro) setReview(order);
   };
 
   // Why a button is off, once under both (no amount, no price) or for the one side that is closed.

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useMarketLeverage } from "../data/markets.js";
+import { useQuickLimits } from "../data/quick-limits.js";
 import { emptyAccount, estimateLiquidationPrice, initialMarginAfter } from "../lib/account.js";
 import {
   abs,
@@ -13,13 +14,17 @@ import {
   usdcCompact,
   usdPrice,
 } from "../lib/format.js";
-import { DEFAULT_MARGIN_SCALE_BPS, leveragePresets } from "../lib/leverage.js";
+import {
+  DEFAULT_MARGIN_SCALE_BPS,
+  leveragePresets,
+  marginFromLeverage,
+  maxLeverageAt,
+} from "../lib/leverage.js";
 import { triggerProblem } from "../lib/orders.js";
 import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
 import { SLIPPAGE_PRESETS_BPS, slippageToPercent } from "../lib/slippage.js";
 import {
   isDecimalDraft,
-  leverageCeiling,
   leverageLabel,
   limitMarketable,
   MARGIN_PROBLEM,
@@ -65,6 +70,7 @@ export function OrderTicket({
   const { snapshot, status } = useMarketFeed();
   const trader = useTrader(),
     trading = useTrading(),
+    quickLimits = useQuickLimits(),
     funds = useFunds();
   const now = useServerNow(500);
   const leverageInfo = useMarketLeverage(market);
@@ -94,8 +100,10 @@ export function OrderTicket({
   const isStop = orderType === "stop";
   const effectiveSlippage = slippageBps;
 
-  const payMicro = parseUsdcInput(pay);
-  const notional = payMicro ? positionNotional(payMicro, lev) : 0n;
+  // The amount box holds the position size; the margin it takes follows from the leverage.
+  const sizeMicro = parseUsdcInput(pay);
+  const notional = sizeMicro ?? 0n;
+  const payMicro = sizeMicro === null ? null : marginFromLeverage(sizeMicro, lev);
   const signedNotional = side === "buy" ? notional : -notional;
   const limitMicro = parseUsdcInput(limitPrice);
   const stopMicro = parseUsdcInput(stopPrice);
@@ -116,7 +124,7 @@ export function OrderTicket({
       ? null
       : maxPay({ availableMicro: available, leverage: lev, feeBps, tradeCapMicro: tradeCap, scaleBps });
   const overCap = tradeCap > 0n && notional > tradeCap;
-  const ceiling = payMicro ? leverageCeiling(payMicro, marketMax, scaleBps) : marketMax;
+  const ceiling = sizeMicro ? Math.min(marketMax, maxLeverageAt(sizeMicro, scaleBps)) : marketMax;
 
   const marginAfter =
     account && snapshot && notional > 0n
@@ -226,18 +234,17 @@ export function OrderTicket({
       }
       return;
     }
-    if (oneClick) {
+    // A market order places at once: the first one in this browser grants a week's one-tap key (one
+    // wallet signature), so no price is held open while a wallet asks. Only a size past the key's limits
+    // goes through the review step and the wallet.
+    if (await trading.readyQuick(market, notional, quickLimits)) {
       if (await trading.marketOrder(order())) traded();
-      return;
-    }
-    setReview(order());
+    } else if (notional > quickLimits.maxTradeMicro) setReview(order());
   };
 
   const sideClass = side === "buy" ? "long" : "short";
   const meta = overCap ? (
-    <span>
-      Up to {usdc((tradeCap * 100n) / BigInt(Math.round(lev * 100)))} at {leverageLabel(lev)} per trade
-    </span>
+    <span>Up to {usdc(tradeCap)} per trade</span>
   ) : account ? (
     <span>Available {usdc(account.availableMargin)}</span>
   ) : (
@@ -282,7 +289,7 @@ export function OrderTicket({
             inputMode="decimal"
             placeholder="0"
             autoComplete="off"
-            aria-label="Amount to pay in USDC"
+            aria-label="Position size in USDC"
             value={pay}
             onChange={(event) => choosePay(event.target.value)}
           />
@@ -291,13 +298,13 @@ export function OrderTicket({
         {account && (
           <div className="rfq-chips" aria-label="Amount presets">
             {PAY_PRESETS.map((step) => {
-              const value = payCeiling === null ? 0n : presetPay(payCeiling, step);
+              const value = payCeiling === null ? 0n : positionNotional(presetPay(payCeiling, step), lev);
               return (
                 <button
                   key={step}
                   type="button"
                   className="rfq-chip"
-                  aria-pressed={payMicro !== null && value > 0n && payMicro === value}
+                  aria-pressed={sizeMicro !== null && value > 0n && sizeMicro === value}
                   disabled={value <= 0n}
                   onClick={() => choosePay(microToInput(value))}
                 >
@@ -314,9 +321,9 @@ export function OrderTicket({
         <div className="ticket-leverage__head">
           <span className="callout rfq-muted">Leverage</span>
           <span className="footnote rfq-faint tnum" aria-live="polite">
-            {notional > 0n ? (
+            {notional > 0n && payMicro ? (
               <>
-                Position {usdcCompact(notional)}
+                Margin {usdcCompact(payMicro)}
                 {quote?.baseDelta ? ` · ${baseAmount(abs(BigInt(quote.baseDelta)))} ${market}` : ""}
               </>
             ) : (
@@ -472,7 +479,7 @@ export function OrderTicket({
             </>
           ) : (
             (problem ??
-            `${isStop ? "Place stop · " : ""}${submitLabel({ side, market, pay: usdcCompact(payMicro), leverage: lev, isLimit })}`)
+            `${isStop ? "Place stop · " : ""}${submitLabel({ side, market, pay: usdcCompact(notional), leverage: lev, isLimit })}`)
           )}
         </button>
       )}

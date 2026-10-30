@@ -310,7 +310,7 @@ assert.deepEqual(
 );
 assert.ok(
   devLive.state.markets.every(
-    (item, index) => item.enabled && item.grossLimit === (index < 2 ? "200000000" : "100000000"),
+    (item, index) => item.enabled && item.grossLimit === (index < 2 ? "10000000000" : "5000000000"),
   ),
 );
 await assert.rejects(

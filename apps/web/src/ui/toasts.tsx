@@ -1,6 +1,15 @@
 // Transient feedback for wallet and settlement actions. A pending toast is
 // replaced in place by its result so each action shows exactly one card.
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { txUrl } from "../lib/explorer.js";
 import { useTrader } from "../wallet/trader.js";
 import { Check, Close } from "./primitives.js";
@@ -47,10 +56,45 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Keeps the stack above modal dialogs: a modal sits in the browser's top layer, which no z-index
+ * reaches, so the stack is a manual popover re-shown (moved to the top of that layer) whenever a
+ * toast changes or a dialog opens.
+ */
+function useAboveDialogs(stack: RefObject<HTMLDivElement | null>, toasts: Toast[]) {
+  useEffect(() => {
+    const element = stack.current;
+    if (!element || typeof element.showPopover !== "function") return;
+    const raise = () => {
+      if (element.matches(":popover-open")) element.hidePopover();
+      element.showPopover();
+    };
+    if (!toasts.length) {
+      if (element.matches(":popover-open")) element.hidePopover();
+      return;
+    }
+    raise();
+    const observer = new MutationObserver((changes) => {
+      if (changes.some((change) => change.target instanceof HTMLDialogElement && change.target.open)) raise();
+    });
+    observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["open"] });
+    return () => observer.disconnect();
+  }, [stack, toasts]);
+}
+
 function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) => void }) {
   const { chain } = useTrader();
+  const stack = useRef<HTMLDivElement>(null);
+  useAboveDialogs(stack, toasts);
   return (
-    <div className="toasts" role="status" aria-live="polite" aria-label="Notifications">
+    <div
+      ref={stack}
+      popover="manual"
+      className="toasts"
+      role="status"
+      aria-live="polite"
+      aria-label="Notifications"
+    >
       {toasts.map((toast) => {
         const link = toast.txHash ? txUrl(chain.id, toast.txHash) : undefined;
         const kind = toast.kind === "pending" ? "pending" : toast.kind === "success" ? "success" : "error";

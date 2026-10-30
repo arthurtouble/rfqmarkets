@@ -275,7 +275,7 @@ test.describe("positions and portfolio", () => {
       page.getByRole("region", { name: "Wallet" }).getByText(`${account.slice(0, 6)}…${account.slice(-4)}`),
     ).toBeVisible();
     await expect(page.getByText("Local dev wallet", { exact: false })).toBeVisible();
-    await expect(page.getByText(/trades up to \$2,500 fill without a wallet prompt/i)).toBeVisible();
+    await expect(page.getByText(/trades up to \$[\d,.KM]+ fill without a wallet prompt/i)).toBeVisible();
     for (const name of [/Help and docs/, /Emergency exit/])
       await expect(page.getByRole("link", { name })).toHaveAttribute("target", "_blank");
     await expectNoHorizontalOverflow(page);

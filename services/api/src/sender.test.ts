@@ -450,3 +450,22 @@ test("a refused replacement leaves the row and budget on the accepted attempt, n
   assert.equal(rows(database)[0].status, "included");
   database.close();
 });
+
+test("a refused receipt poll after broadcast keeps polling instead of failing the operation", async () => {
+  class RefusesFirstReceipt extends DeterministicProvider {
+    refusals = 2;
+    override async send(method: string, params: unknown[]) {
+      if (method === "eth_getTransactionReceipt" && this.refusals-- > 0)
+        throw new Error("server response 403 Forbidden");
+      return super.send(method, params);
+    }
+  }
+  const provider = new RefusesFirstReceipt(),
+    database = new DatabaseSync(":memory:");
+  const sender = new DurableSender(provider as never, randomWallet(), database, options);
+  const receipt = await sender.submit("refused-poll", request);
+  assert.equal(receipt.status, 1);
+  assert.equal(provider.broadcasts.length, 1, "no replacement was sent");
+  assert.equal(rows(database)[0].status, "included");
+  database.close();
+});

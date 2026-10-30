@@ -48,10 +48,10 @@ test("the dev manifest combines the owner with the runtime's published keys and 
   assert.deepEqual(
     { ...validated.policy.markets.SOL },
     {
-      maxTradeUsdc: 25_000_000n,
-      netUsdc: 50_000_000n,
-      grossUsdc: 100_000_000n,
-      sideUsdc: 75_000_000n,
+      maxTradeUsdc: 1_000_000_000n,
+      netUsdc: 2_500_000_000n,
+      grossUsdc: 5_000_000_000n,
+      sideUsdc: 3_750_000_000n,
       ...LISTING_RISK,
     },
     "later listings take the listing risk defaults",

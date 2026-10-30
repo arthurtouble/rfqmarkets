@@ -203,6 +203,9 @@ export function buildHedger(options: HedgeOptions) {
   const corsOrigin = options.corsOrigin ?? "http://127.0.0.1:4174",
     band = options.bandUsdc ?? 25_000n * 1_000_000n,
     riskStaleMs = options.riskStaleMs ?? 3_000,
+    // A read slower than 2 s is still worth waiting for while it leaves time for one more poll before
+    // the risk snapshot goes stale; abandoning it would leave every market reduce-only.
+    exposureTimeoutMs = Math.max(2_000, Math.min(5_000, riskStaleMs / 2)),
     maxPositionUsdc = options.maxPositionUsdc ?? DEFAULT_MAX_POSITION_USDC;
   if (maxPositionUsdc <= 0n) throw new Error("hedger maxPositionUsdc must be positive");
   const app = Fastify({ logger: false });
@@ -315,7 +318,7 @@ export function buildHedger(options: HedgeOptions) {
     let exposure: ExposureResponse;
     try {
       const response = await fetchImpl(`${options.indexerUrl}/v1/exposure?finalized=true`, {
-        signal: AbortSignal.timeout(2_000),
+        signal: AbortSignal.timeout(exposureTimeoutMs),
       });
       if (!response.ok) throw new Error(String(response.status));
       exposure = exposureResponse.parse(await response.json());
