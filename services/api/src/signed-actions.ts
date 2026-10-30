@@ -226,7 +226,7 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
   app.post(`${action.path}/execute`, async (request, reply) => {
     const parsed = action.executeSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: `invalid signed ${action.label}` });
-    const signature: string = parsed.data.userSignature;
+    const signature = (parsed.data as { userSignature: string }).userSignature;
     try {
       const intent = action.parse(parsed.data);
       const byOwner = await verifySignedAction(ctx, action.types, intent, signature);

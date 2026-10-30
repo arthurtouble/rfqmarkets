@@ -112,7 +112,10 @@ test("the dev manifest combines the owner with the runtime's published keys and 
     /distinct/,
     "the owner cannot double as an oracle signer",
   );
-  assert.throws(() => devManifestFor(owner, runtime, signers.slice(0, 2)), /at least 3/);
+  assert.throws(
+    () => devManifestFor(owner, runtime, signers.slice(0, 2)),
+    /expected array to have >=3 items/,
+  );
   const five = [...signers, Wallet.createRandom().address, Wallet.createRandom().address];
   assert.equal(
     validateDevManifest(devManifestFor(owner, runtime, five)).oracleThreshold,

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { ZodTypeAny } from "zod";
+import type { ZodType } from "zod";
 import { API_ERROR_CODES } from "../../../packages/shared/src/api-errors.js";
 import { quoteRequestSchema } from "../../../packages/shared/src/policy.js";
 import { ladderQuerySchema } from "./ladder.js";
@@ -35,50 +35,67 @@ type JsonSchema = Record<string, unknown>;
  * new kind fails the OpenAPI test rather than publishing a loose schema. Refinements (known market, valid
  * address) can't be expressed and are checked by the API at request time.
  */
-export function jsonSchema(schema: ZodTypeAny): JsonSchema {
-  const def = schema._def as Record<string, unknown> & { typeName: string };
-  switch (def.typeName) {
-    case "ZodString": {
+export function jsonSchema(schema: ZodType): JsonSchema {
+  const def = schema._zod.def as unknown as Record<string, unknown> & { type: string },
+    checks = (
+      (def.checks ?? []) as Array<{ _zod: { def: Record<string, unknown> & { check: string } } }>
+    ).map((check) => check._zod.def);
+  switch (def.type) {
+    case "string": {
       const out: JsonSchema = { type: "string" };
-      for (const check of def.checks as Array<{ kind: string; regex?: RegExp }>) {
-        if (check.kind === "regex") out.pattern = check.regex!.source;
-        else if (check.kind === "uuid") out.format = "uuid";
-        else throw new Error(`unsupported string check: ${check.kind}`);
+      // A format schema (z.uuid(), z.email()) carries its format on the schema itself.
+      if (def.format === "uuid") out.format = "uuid";
+      else if (def.format !== undefined) throw new Error(`unsupported string check: ${String(def.format)}`);
+      for (const check of checks) {
+        if (check.check === "custom") continue;
+        const format = check.check === "string_format" ? (check.format as string) : check.check;
+        if (format === "regex") out.pattern = (check.pattern as RegExp).source;
+        else if (format === "uuid") out.format = "uuid";
+        else throw new Error(`unsupported string check: ${format}`);
       }
       return out;
     }
-    case "ZodNumber": {
+    case "number": {
       const out: JsonSchema = { type: "number" };
-      for (const check of def.checks as Array<{ kind: string; value?: number; inclusive?: boolean }>) {
-        if (check.kind === "int") out.type = "integer";
-        else if (check.kind === "min") out[check.inclusive ? "minimum" : "exclusiveMinimum"] = check.value;
-        else if (check.kind === "max") out[check.inclusive ? "maximum" : "exclusiveMaximum"] = check.value;
-        else throw new Error(`unsupported number check: ${check.kind}`);
+      for (const check of checks) {
+        if (check.check === "custom") continue;
+        if (check.check === "number_format") out.type = "integer";
+        else if (check.check === "greater_than")
+          out[check.inclusive ? "minimum" : "exclusiveMinimum"] = check.value;
+        else if (check.check === "less_than")
+          out[check.inclusive ? "maximum" : "exclusiveMaximum"] = check.value;
+        else throw new Error(`unsupported number check: ${check.check}`);
       }
       return out;
     }
-    case "ZodBoolean":
+    case "boolean":
       return { type: "boolean" };
-    case "ZodEnum":
-      return { type: "string", enum: [...(def.values as string[])] };
-    case "ZodLiteral":
-      return { const: def.value };
-    case "ZodOptional":
-    case "ZodNullable":
-      return jsonSchema(def.innerType as ZodTypeAny);
-    case "ZodDefault":
-      return { ...jsonSchema(def.innerType as ZodTypeAny), default: (def.defaultValue as () => unknown)() };
-    case "ZodEffects":
-      return jsonSchema(def.schema as ZodTypeAny);
-    case "ZodUnion":
-      return { anyOf: (def.options as ZodTypeAny[]).map(jsonSchema) };
-    case "ZodObject": {
-      const shape = (def.shape as () => Record<string, ZodTypeAny>)(),
+    case "enum":
+      return { type: "string", enum: Object.values(def.entries as Record<string, string>) };
+    case "literal": {
+      const values = def.values as unknown[];
+      return values.length === 1 ? { const: values[0] } : { enum: values };
+    }
+    case "optional":
+    case "nullable":
+      return jsonSchema(def.innerType as ZodType);
+    case "default":
+    case "prefault":
+      return { ...jsonSchema(def.innerType as ZodType), default: def.defaultValue };
+    case "pipe": {
+      // A transform describes the input it reads; a preprocess, the schema it feeds.
+      const input = def.in as ZodType;
+      return jsonSchema(input._zod.def.type === "transform" ? (def.out as ZodType) : input);
+    }
+    case "union":
+      return { anyOf: (def.options as ZodType[]).map(jsonSchema) };
+    case "object": {
+      const shape = def.shape as Record<string, ZodType>,
         properties: Record<string, JsonSchema> = {},
         required: string[] = [];
       for (const [key, field] of Object.entries(shape)) {
         properties[key] = jsonSchema(field);
-        if (!field.isOptional()) required.push(key);
+        if (field._zod.optin !== "optional") required.push(key);
       }
       return {
         type: "object",
@@ -88,7 +105,7 @@ export function jsonSchema(schema: ZodTypeAny): JsonSchema {
       };
     }
     default:
-      throw new Error(`unsupported schema kind: ${def.typeName}`);
+      throw new Error(`unsupported schema kind: ${def.type}`);
   }
 }
 
@@ -97,8 +114,8 @@ type Operation = {
   path: string;
   summary: string;
   tag: string;
-  body?: ZodTypeAny;
-  query?: ZodTypeAny;
+  body?: ZodType;
+  query?: ZodType;
   /** The shared wire type (packages/shared/src/api-types.ts) the response follows, when there is one. */
   response?: string;
 };
@@ -270,7 +287,7 @@ export const OPERATIONS: Operation[] = [
   },
 ];
 
-function signedAction(path: string, summary: string, prepare: ZodTypeAny, execute: ZodTypeAny): Operation[] {
+function signedAction(path: string, summary: string, prepare: ZodType, execute: ZodType): Operation[] {
   return [
     {
       method: "post",

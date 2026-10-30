@@ -93,7 +93,7 @@ test("mainnet manifest rejects role reuse, wrong USDC, weak insurance and loose 
 test("mainnet manifest rejects a weak or malformed oracle configuration", () => {
   assert.throws(
     () => validateMainnetManifest({ ...valid(), oracleSigners: [address("1"), address("2")] }),
-    /at least 3/,
+    /expected array to have >=3 items/,
   );
   assert.throws(
     () =>
@@ -105,7 +105,7 @@ test("mainnet manifest rejects a weak or malformed oracle configuration", () => 
         ),
         oracleThreshold: 9,
       }),
-    /at most 16/,
+    /expected array to have <=16 items/,
   );
   assert.throws(
     () => validateMainnetManifest({ ...valid(), oracleSigners: [address("1"), address("1"), address("3")] }),

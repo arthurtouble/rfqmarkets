@@ -133,7 +133,7 @@ const activityCursor = z
   .regex(/^\d+:\d+$/, "invalid cursor")
   .transform((value) => value.split(":").map(Number) as [number, number])
   .refine((parts) => parts.every(Number.isSafeInteger), "invalid cursor")
-  .default(`${Number.MAX_SAFE_INTEGER}:${Number.MAX_SAFE_INTEGER}`);
+  .prefault(`${Number.MAX_SAFE_INTEGER}:${Number.MAX_SAFE_INTEGER}`);
 const isTrue = z
   .string()
   .optional()
