@@ -9,7 +9,7 @@ test.describe("trading app", () => {
     await expect(page).toHaveURL(/\/updown\/[A-Z0-9]+$/);
     await expect(
       page
-        .getByRole("button", { name: "Up", exact: true })
+        .getByRole("button", { name: "Long", exact: true })
         .or(page.getByRole("region", { name: "Your trade" })),
     ).toBeVisible();
     await expectNoHorizontalOverflow(page);
