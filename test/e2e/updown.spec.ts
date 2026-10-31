@@ -79,7 +79,7 @@ test.describe("Up / Down", () => {
       // The API reads at its latest priced block, which can trail the fill by a moment.
       await expect.poll(async () => BigInt((await held()).positions[MARKET].size)).toBeGreaterThan(0n);
       expect(BigInt((await held()).collateral)).toBeLessThanOrEqual(10_000_000n);
-      await expect(bet).toContainText(/losing about \$(10|\d(\.\d\d)?)\b/);
+      await expect(bet).toContainText(/Liquidation \$[\d,.]+/);
 
       // The open bet shares as a card that says what it is, and the image saves as a PNG.
       await bet.getByRole("button", { name: "Share", exact: true }).click();
