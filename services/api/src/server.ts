@@ -81,8 +81,12 @@ export function buildApi(options: ApiOptions = {}) {
       });
     }
     if (ctx.recoveredCommitments.length) {
-      const versions = await chain.readProtocolVersions();
-      for (const { quote } of ctx.recoveredCommitments) ctx.quotes.versions.set(quote.quoteId, versions);
+      // Recovered quotes without versions are refused like expired ones; an RPC failure must not stop the API.
+      const versions = await chain
+        .readProtocolVersions()
+        .catch((error: unknown) => console.error("recovered quote versions unavailable", error));
+      if (versions)
+        for (const { quote } of ctx.recoveredCommitments) ctx.quotes.versions.set(quote.quoteId, versions);
     }
     const sender = ctx.sender;
     // A failed first pass must not stop the API from starting: the timer below retries every few seconds.

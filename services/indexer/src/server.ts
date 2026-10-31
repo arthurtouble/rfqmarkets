@@ -63,6 +63,11 @@ export interface IndexerOptions {
   /** How often the index follows the chain (default 500 ms). */
   pollMs?: number;
   /**
+   * Blocks to stay behind the RPC's reported head (default 0). A load-balanced public RPC can report a head
+   * that the node answering the next eth_getLogs has not reached, which fails the read every pass.
+   */
+  headLagBlocks?: number;
+  /**
    * Sync before answering each request instead of serving the last pass (default false). Requests then
    * wait for an RPC round trip; tests use it to read their own writes without a poll timer.
    */
@@ -525,7 +530,7 @@ export function buildIndexer(options: IndexerOptions) {
     return { rebuilt: false, accounts: touched };
   }
   async function syncPass() {
-    const head = await provider.getBlockNumber();
+    const head = (await provider.getBlockNumber()) - (options.headLagBlocks ?? 0);
     let row = db.prepare("SELECT number,hash FROM blocks ORDER BY number DESC LIMIT 1").get() as
       { number: number; hash: string } | undefined;
     let rebuilt = false;

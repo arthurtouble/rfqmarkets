@@ -69,7 +69,15 @@ const stack = await startServiceStack({
   indexerRpcUrl: secrets.indexerRpcUrl,
   indexerFallbackRpcUrls: secrets.indexerFallbackRpcUrls,
   maxLogRange: secrets.maxLogRange,
+  indexerHeadLagBlocks: 1,
+  // Base makes a block every 2 s: a 1 s poll still sees each one, at half the RPC calls.
+  indexerPollMs: 1_000,
   readRpcUrls: secrets.readRpcUrls,
+  // Calls, transactions and receipts fail over too: first the archive RPCs (a free primary refuses old blocks),
+  // then the approvers' second RPC.
+  rpcFallbackUrls: [...new Set([...(secrets.indexerFallbackRpcUrls ?? []), secrets.secondaryRpcUrl])].filter(
+    (url) => url !== secrets.rpcUrl,
+  ),
   // Every refresh is an RPC read per service; markets change rarely, and a request naming a market the
   // registry has not loaded yet refreshes it at once.
   marketRefreshMs: 300_000,

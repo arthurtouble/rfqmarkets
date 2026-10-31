@@ -39,6 +39,11 @@ export interface ApiOptions {
      * (which sends and reconciles transactions) then only takes the requests they all fail.
      */
     readRpcUrls?: string[];
+    /**
+     * RPCs that take a request rpcUrl fails or times out on (outage, rate limit, a free RPC refusing an old
+     * block), in order. Without them a single RPC outage stops trading.
+     */
+    fallbackRpcUrls?: string[];
     sponsorPrivateKey: string;
     clearingAddress: string;
     tokenAddress: string;
@@ -180,7 +185,14 @@ export class ApiContext {
 
     this.provider =
       options.provider ??
-      (options.chain ? rpcProvider(options.chain.rpcUrl, undefined, { batchMaxCount: 1 }) : undefined);
+      (options.chain
+        ? options.chain.fallbackRpcUrls?.length
+          ? new FallbackRpcProvider([options.chain.rpcUrl, ...options.chain.fallbackRpcUrls], undefined, {
+              batchMaxCount: 1,
+              timeoutMs: 5_000,
+            })
+          : rpcProvider(options.chain.rpcUrl, undefined, { batchMaxCount: 1 })
+        : undefined);
     if (this.provider && this.devFund) this.provider.pollingInterval = 50;
     if (this.provider && options.chain) {
       this.sponsor = new Wallet(options.chain.sponsorPrivateKey, this.provider);

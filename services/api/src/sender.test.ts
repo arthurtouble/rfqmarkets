@@ -500,3 +500,32 @@ test("a new submission never reuses the journal's last nonce when the RPC's pend
   assert.deepEqual(nonces.sort(), [0, 1]);
   database.close();
 });
+
+test("one unreadable receipt does not stop reconcile from settling the other operations", async () => {
+  class RefusesOldReceipt extends DeterministicProvider {
+    refused = "";
+    override async send(method: string, params: unknown[]) {
+      if (method === "eth_getTransactionReceipt" && String(params[0]) === this.refused)
+        throw new Error("Archive requests require a personal token");
+      return super.send(method, params);
+    }
+  }
+  const provider = new RefusesOldReceipt(),
+    database = new DatabaseSync(":memory:"),
+    wallet = randomWallet();
+  provider.failBeforeAccept = true;
+  const sender = new DurableSender(provider as never, wallet, database, options);
+  await assert.rejects(sender.submit("old", request));
+  provider.minedNonce = 1;
+  await sender.reconcile();
+  provider.refused = rows(database)[0].tx_hash;
+  provider.holdInMempool = true;
+  const pending = sender.submit("new", { ...request, data: "0x5678" });
+  await new Promise((done) => setTimeout(done, 5));
+  provider.mine();
+  await sender.reconcile();
+  await pending;
+  assert.equal(rows(database).find((row) => row.operation_id === "old")?.status, "ambiguous");
+  assert.equal(rows(database).find((row) => row.operation_id === "new")?.status, "included");
+  database.close();
+});
