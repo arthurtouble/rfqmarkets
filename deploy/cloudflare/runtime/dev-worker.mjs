@@ -67,6 +67,8 @@ export class RFQDevRuntime extends Container {
     };
     await this.startAndWaitForPorts(CONTROL);
     let status = await this.status();
+    if (status.phase === "exited")
+      console.log(`runtime exited ${JSON.stringify({ exitCode: status.exitCode, tail: status.tail })}`);
     if (needsRestart(status, deployment)) {
       // A crashed stack, a new deployment or new oracle signers: keep the journals of what ran, then start clean.
       await this.snapshot();
