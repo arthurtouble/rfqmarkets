@@ -9,7 +9,17 @@ const usd = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
   signDisplay: "negative",
 });
+// Amounts under a cent keep two significant digits ("$0.0025"), so a small trade's result never reads $0.00;
+// below a hundredth of a cent it is dust and reads $0.00.
+const subCent = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumSignificantDigits: 2,
+  signDisplay: "negative",
+});
 const qty = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
+// Below one unit, four significant digits, so a small position reads 0.00002183 BTC instead of 0.
+const smallQty = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 4 });
 
 const toBig = (value: string | bigint) => (typeof value === "bigint" ? value : BigInt(value));
 export const abs = (value: bigint) => (value < 0n ? -value : value);
@@ -17,8 +27,12 @@ export const abs = (value: bigint) => (value < 0n ? -value : value);
 /** Fixed-point integer to a JS number, for display only. */
 export const scaled = (value: string | bigint, decimals: number) => Number(toBig(value)) / 10 ** decimals;
 
-export const usdc = (micro?: string | bigint | null) =>
-  micro === undefined || micro === null ? "—" : usd.format(scaled(micro, 6));
+export const usdc = (micro?: string | bigint | null) => {
+  if (micro === undefined || micro === null) return "—";
+  const dollars = scaled(micro, 6);
+  const size = Math.abs(dollars);
+  return (size >= 0.0001 && size < 0.01 ? subCent : usd).format(dollars);
+};
 /**
  * Decimals a price shows: cents from $10 up, else about five significant digits ("$3.4567", "$0.12346",
  * "$0.000012"), never finer than the 1e6 wire precision. Prices only; money amounts use `usdc`.
@@ -61,10 +75,13 @@ export const feeLabel = (micro?: string | bigint | null) =>
   micro === undefined || micro === null ? "—" : toBig(micro) === 0n ? "None" : usdc(micro);
 export const signedUsdc = (micro?: string | bigint | null) => {
   if (micro === undefined || micro === null) return "—";
-  return `${toBig(micro) >= 5_000n ? "+" : ""}${usdc(micro)}`;
+  return `${toBig(micro) >= 100n ? "+" : ""}${usdc(micro)}`;
 };
-export const baseAmount = (value?: string | bigint | null) =>
-  value === undefined || value === null ? "—" : qty.format(scaled(value, 18));
+export const baseAmount = (value?: string | bigint | null) => {
+  if (value === undefined || value === null) return "—";
+  const amount = scaled(value, 18);
+  return (Math.abs(amount) < 1 ? smallQty : qty).format(amount);
+};
 export const signedBase = (value: string | bigint, market: Market) =>
   `${toBig(value) > 0n ? "+" : ""}${baseAmount(value)} ${market}`;
 

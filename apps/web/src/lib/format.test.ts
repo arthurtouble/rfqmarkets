@@ -38,8 +38,10 @@ test("formats money and rates", () => {
   assert.equal(signedUsdc("-5000000"), "-$5.00");
   // Amounts that round to zero carry no sign.
   assert.equal(signedUsdc("-5"), "$0.00");
-  assert.equal(signedUsdc("4999"), "$0.00");
-  assert.equal(signedUsdc("5000"), "+$0.01");
+  assert.equal(signedUsdc("99"), "$0.00");
+  assert.equal(signedUsdc("2500"), "+$0.0025");
+  assert.equal(signedUsdc("-2500"), "-$0.0025");
+  assert.equal(signedUsdc("5000"), "+$0.005");
   assert.equal(fundingApr("100000000000"), "10.00%");
 });
 

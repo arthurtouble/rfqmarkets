@@ -3,7 +3,6 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   cancelToWire,
   cancelTypes,
-  intentDigest,
   intentToWire,
   intentTypes,
   triggerToWire,
@@ -29,8 +28,6 @@ import type { HttpGuards } from "./http.js";
 import { LimitTriggerBook, StopTriggerBook } from "./limit-book.js";
 import type { OrderStatus as PublicOrderStatus } from "../../../packages/shared/src/api-types.js";
 import { abs, marketIndex, marketSymbols, type Market, type Side } from "./markets.js";
-import type { IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
-import { signingAccount, validOwnerSignature } from "./owner-signature.js";
 import { publicError } from "./public-error.js";
 import type { QuoteEngine } from "./quoting.js";
 import {
@@ -1017,15 +1014,9 @@ export class LimitOrders {
           triggerPrice: order.trigger.triggerPrice,
           triggerAbove: order.trigger.triggerAbove,
         };
-      if (
-        !(await validOwnerSignature(
-          // An isolated account's orders are signed by its owner.
-          await signingAccount(ctx.clearing as IsolatedOwnerReader | undefined, order.intent.account),
-          intentDigest(ctx.domain, order.intent, trigger),
-          userSignature,
-          ctx.provider,
-        ))
-      )
+      // The owner (an isolated account's owner) signs, or one of its session keys whose market scope, fee cap and
+      // expiry cover the order: the same rule the contract applies when the order executes.
+      if (!(await this.execution.authorized(order.intent, userSignature, undefined, trigger)))
         return reply.code(401).send({ error: "invalid order signature" });
       try {
         await this.assertFunded(order);

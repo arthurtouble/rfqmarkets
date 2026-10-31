@@ -26,6 +26,8 @@ import { MIN_GAS_FREE_DEPOSIT, plainAccount } from "../lib/funds.js";
 import { abs, baseAmount, microToInput, parseUsdcInput, usdc, usdcCompact, usdPrice } from "../lib/format.js";
 import {
   LIMIT_ORDER_DURATION_SECONDS,
+  MIN_ORDER_DURATION_SECONDS,
+  TRIGGER_ORDER_DURATION_SECONDS,
   tpslPrepareBody,
   triggerPrepareBody,
   type TpslInput,
@@ -54,7 +56,12 @@ import {
 } from "../wallet/quick-session.js";
 import { useTrader } from "../wallet/trader.js";
 import { verifyDeposit, type PreparedDeposit } from "../wallet/verify-deposit.js";
-import { IntentMismatchError, quoteTerms, verifyTpslPair } from "../wallet/verify-intent.js";
+import {
+  IntentMismatchError,
+  quoteTerms,
+  verifyTpslPair,
+  type Expectation,
+} from "../wallet/verify-intent.js";
 import { useToasts } from "../ui/toasts.js";
 import { useMarketList } from "./markets.js";
 import { keys } from "./queries.js";
@@ -148,9 +155,9 @@ const TRIGGER_LABELS = {
   "stop-entry": "Stop",
 } as const;
 const triggerLabel = (kind: keyof typeof TRIGGER_LABELS) => TRIGGER_LABELS[kind];
-/** "Closes 0.01 BTC when price ≤ $95,000.00" for TP/SL, "Long $500.00 BTC when price ≥ …" for a stop entry. */
+/** "Closes $950.00 of BTC when price ≤ $95,000.00" for TP/SL, "Long $500.00 BTC when price ≥ …" for a stop entry. */
 const triggerLine = ({ summary }: PreparedTrigger) =>
-  `${summary.reduceOnly ? `Closes ${baseAmount(abs(BigInt(summary.baseDelta)))} ${summary.market}` : `${sideLabel(summary.side)} ${usdc(parseUsdcInput(summary.amount))} ${summary.market}`} when price ${summary.triggerAbove ? "≥" : "≤"} ${usdPrice(summary.triggerPrice)}`;
+  `${summary.reduceOnly ? `Closes ${usdc((abs(BigInt(summary.baseDelta)) * BigInt(summary.triggerPrice)) / 10n ** 18n)} of ${summary.market}` : `${sideLabel(summary.side)} ${usdc(parseUsdcInput(summary.amount))} ${summary.market}`} when price ${summary.triggerAbove ? "≥" : "≤"} ${usdPrice(summary.triggerPrice)}`;
 const fractionLabel = (fractionBps: number, market: Market) =>
   fractionBps < 10_000 ? `${fractionBps / 100}% of ${market} position` : `${market} position`;
 /** The API refused the signed price because the market moved past it before settlement. */
@@ -160,6 +167,8 @@ const priceMoved = (error: unknown) =>
 /** An error whose message is already written for the trader; the error toast shows it as is. */
 class TraderFacingError extends Error {}
 
+/** A session-signed resting order expires this long before its key. */
+const SESSION_ORDER_MARGIN_SECONDS = 600;
 /** Firm quote requests from screens are spaced at least this far apart. */
 const FIRM_QUOTE_SPACING_MS = 1_000;
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -282,6 +291,51 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       ? (session as QuickSession & { privateKey: Hex })
       : null;
   };
+
+  /**
+   * How long a resting order may live when the one-tap key signs it: the contract only executes a session-signed
+   * order whose deadline is within the key's validity, so it ends a little before the key does. Null when the key
+   * is missing, does not cover the market, or has too little time left (the wallet signs then).
+   */
+  const sessionOrderSeconds = (market: Market) => {
+    const session = liveSession();
+    if (!session || !quickCovers(market, 0n)) return null;
+    const seconds = Math.min(
+      TRIGGER_ORDER_DURATION_SECONDS,
+      Math.floor((session.validUntil - Date.now()) / 1000) - SESSION_ORDER_MARGIN_SECONDS,
+    );
+    return seconds >= MIN_ORDER_DURATION_SECONDS ? seconds : null;
+  };
+
+  /**
+   * Places a prepared resting order. The one-tap key signs when `viaSession` and it covers the order's notional at
+   * the trigger; if the API refuses that signature, or otherwise, the wallet signs (`prompt` is the wallet step).
+   */
+  async function placeResting(
+    prepared: PreparedTrigger,
+    expected: Expectation,
+    viaSession: boolean,
+    progress: (detail: string) => void,
+    prompt: string,
+  ) {
+    const { summary } = prepared,
+      notional = (abs(BigInt(summary.baseDelta)) * BigInt(summary.triggerPrice)) / 10n ** 18n,
+      session = viaSession && quickCovers(summary.market, notional) ? liveSession() : null;
+    const place = (userSignature: Hex) => api("/v1/orders", { orderId: prepared.orderId, userSignature });
+    if (session) {
+      try {
+        return await place(
+          await privateKeyToAccount(session.privateKey).signTypedData(
+            trader.verified(prepared, "TriggeredTradeIntent", expected) as never,
+          ),
+        );
+      } catch (error) {
+        if (!(error instanceof ApiError && /invalid order signature/i.test(error.message))) throw error;
+      }
+    }
+    progress(prompt);
+    return place(await trader.signIntent(prepared, "TriggeredTradeIntent", expected));
+  }
 
   async function settleTrade(
     quote: Quote,
@@ -569,25 +623,35 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         };
       })) ?? false,
 
-    // POST /v1/orders verifies the owner's signature (EOA or ERC-1271) only, so resting trigger
-    // orders are always signed with the wallet, never the quick-trading key.
+    // The one-tap key signs trigger orders when it can (they then expire before the key does); else the wallet.
     triggerOrder: (order) =>
       run("Trigger order", `Place ${triggerLabel(order.kind).toLowerCase()}`, async (progress) => {
-        const body = triggerPrepareBody(order, account(), randomNonce());
+        const sessionSeconds = sessionOrderSeconds(order.market);
+        const body = triggerPrepareBody(
+          sessionSeconds
+            ? { ...order, durationSeconds: Math.min(sessionSeconds, order.durationSeconds ?? sessionSeconds) }
+            : order,
+          account(),
+          randomNonce(),
+        );
         const prepared = await api<PreparedTrigger>("/v1/orders/trigger/prepare", body);
-        progress("Confirm in your wallet");
-        const userSignature = await trader.signIntent(prepared, "TriggeredTradeIntent", {
-          kind: "trigger",
-          market: marketIndex(order.market),
-          triggerKind: order.kind,
-          triggerPrice: order.triggerPriceMicro,
-          slippageBps: body.slippageBps,
-          nonce: body.nonce,
-          reduceOnly: body.reduceOnly,
-          side: body.side,
-          amountMicro: order.sizing === "position" ? undefined : order.amountMicro,
-        });
-        await api("/v1/orders", { orderId: prepared.orderId, userSignature });
+        await placeResting(
+          prepared,
+          {
+            kind: "trigger",
+            market: marketIndex(order.market),
+            triggerKind: order.kind,
+            triggerPrice: order.triggerPriceMicro,
+            slippageBps: body.slippageBps,
+            nonce: body.nonce,
+            reduceOnly: body.reduceOnly,
+            side: body.side,
+            amountMicro: order.sizing === "position" ? undefined : order.amountMicro,
+          },
+          sessionSeconds !== null,
+          progress,
+          "Confirm in your wallet",
+        );
         return {
           title: `${triggerLabel(prepared.type)} set`,
           detail: triggerLine(prepared),
@@ -597,20 +661,24 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
     placeTpsl: (input) =>
       run("TP/SL", `Protect ${input.market}`, async (progress) => {
-        const body = tpslPrepareBody(input, account(), randomNonce()),
+        const sessionSeconds = sessionOrderSeconds(input.market);
+        const body = tpslPrepareBody(
+            sessionSeconds
+              ? {
+                  ...input,
+                  durationSeconds: Math.min(sessionSeconds, input.durationSeconds ?? sessionSeconds),
+                }
+              : input,
+            account(),
+            randomNonce(),
+          ),
           market = marketIndex(input.market);
         const pair = await api<PreparedTpsl>("/v1/orders/tpsl/prepare", body);
         verifyTpslPair(pair.orders, { takeProfit: input.takeProfitMicro, stopLoss: input.stopLossMicro });
-        // Sign every leg before placing any, so a rejected prompt leaves nothing half-placed.
-        const signatures: Hex[] = [];
-        for (const [index, leg] of pair.orders.entries()) {
-          progress(
-            pair.orders.length > 1
-              ? `Confirm the ${triggerLabel(leg.type).toLowerCase()} in your wallet (${index + 1} of ${pair.orders.length})`
-              : "Confirm in your wallet",
-          );
-          signatures.push(
-            await trader.signIntent(leg, "TriggeredTradeIntent", {
+        for (const [index, leg] of pair.orders.entries())
+          await placeResting(
+            leg,
+            {
               kind: "trigger",
               market,
               triggerKind: leg.type,
@@ -618,12 +686,13 @@ export function TradingProvider({ children }: { children: ReactNode }) {
               slippageBps: body.slippageBps,
               nonce: body.nonce,
               reduceOnly: true,
-            }),
+            },
+            sessionSeconds !== null,
+            progress,
+            pair.orders.length > 1
+              ? `Confirm the ${triggerLabel(leg.type).toLowerCase()} in your wallet (${index + 1} of ${pair.orders.length})`
+              : "Confirm in your wallet",
           );
-        }
-        progress("Placing orders");
-        for (const [index, leg] of pair.orders.entries())
-          await api("/v1/orders", { orderId: leg.orderId, userSignature: signatures[index] });
         return {
           title: `${input.market} ${pair.orders.map((leg) => triggerLabel(leg.type).toLowerCase()).join(" and ")} set`,
           detail: pair.orders.map(triggerLine).join(" · "),

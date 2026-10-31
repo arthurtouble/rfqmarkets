@@ -1,5 +1,6 @@
 // The Up / Down screen's sizing, wording and live tick line. A trade there is
-// a market order: the amount is the margin, the multiplier is the leverage, and
+// a market order: the amount is the position size, the multiplier is the leverage (the margin is size over
+// multiplier), and
 // it stays open until the trader cashes out (or it auto-closes), like any perp.
 import type { ChartPoint } from "./candles.js";
 import { usdc, usdcCompact } from "./format.js";
@@ -10,11 +11,11 @@ import type { Side } from "./types.js";
 /** The words Home uses for the two sides. */
 export const UP_DOWN: Record<Side, string> = { buy: "Up", sell: "Down" };
 
-/** Stake presets in whole dollars. */
-export const STAKE_PRESETS = [10, 25, 50, 100] as const;
+/** Position size presets in whole dollars. */
+export const SIZE_PRESETS = [50, 100, 250, 500] as const;
 /** Multiplier presets; the market's own maximum caps them. */
 export const MULTIPLIER_PRESETS = [2, 3, 5, 10] as const;
-export const DEFAULT_STAKE = 25;
+export const DEFAULT_SIZE = 100;
 export const DEFAULT_MULTIPLIER = 3;
 /** How far back the tick line reaches. */
 export const TICK_WINDOW_MS = 5 * 60_000;
@@ -104,7 +105,7 @@ export const recordMatches = (record: BetRecord, entryNotional: bigint) => {
 export function homeProblem(
   problem: string | null,
   side: Side,
-  { multiplier, tradeCapMicro }: { multiplier: number; tradeCapMicro: bigint },
+  { tradeCapMicro }: { multiplier?: number; tradeCapMicro: bigint },
 ): string | null {
   if (problem === null || problem === MARGIN_PROBLEM) return problem;
   const word = UP_DOWN[side];
@@ -112,12 +113,10 @@ export function homeProblem(
   if (/is closed right now$/.test(problem) || problem.startsWith("Only exposure-reducing"))
     return `${word} is paused for now`;
   if (problem.startsWith("Waiting for")) return "Prices are catching up";
-  if (problem === "Over the per-trade limit" || problem.startsWith("Max per trade")) {
-    const hundredths = BigInt(Math.round(multiplier * 100));
-    return tradeCapMicro > 0n && hundredths > 0n
-      ? `Max at ${leverageLabel(multiplier)} is ${usdcCompact((tradeCapMicro * 100n) / hundredths)}`
+  if (problem === "Over the per-trade limit" || problem.startsWith("Max per trade"))
+    return tradeCapMicro > 0n
+      ? `Max per trade is ${usdcCompact(tradeCapMicro)}`
       : "That's more than one trade allows";
-  }
   if (problem.endsWith("at this size")) return problem.replace("at this size", "at this amount");
   return problem;
 }
@@ -134,10 +133,21 @@ export const lossAt = (notional: bigint, entry: bigint, exit: bigint) =>
  * which the contract opens only with at least MIN_ISOLATED_OPEN; a smaller amount would trade on the whole
  * balance instead, so Home asks for the minimum rather than quietly risking more than the amount.
  */
-export function stakeProblem(stakeMicro: bigint | null): string | null {
+export function stakeProblem(stakeMicro: bigint | null, multiplier?: number): string | null {
   if (stakeMicro !== null && stakeMicro < MIN_ISOLATED_OPEN)
-    return `The smallest trade is ${usdcCompact(MIN_ISOLATED_OPEN)}`;
+    return multiplier
+      ? `The smallest trade at ${leverageLabel(multiplier)} is ${usdcCompact(betNotional(MIN_ISOLATED_OPEN, multiplier))}`
+      : `The smallest trade is ${usdcCompact(MIN_ISOLATED_OPEN)}`;
   return null;
+}
+
+/**
+ * The biggest position the balance can open at `multiplier`: the margin free to use times the multiplier,
+ * capped by the per-trade limit when one is set.
+ */
+export function buyingPower(availableMicro: bigint, multiplier: number, tradeCapMicro: bigint): bigint {
+  const power = availableMicro > 0n ? betNotional(availableMicro, multiplier) : 0n;
+  return tradeCapMicro > 0n && power > tradeCapMicro ? tradeCapMicro : power;
 }
 
 /** The fee on a position of `notionalMicro` at `feeBps`, in USDC 1e6. */

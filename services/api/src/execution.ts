@@ -340,8 +340,11 @@ export class ExecutionService {
     }
   }
 
-  /** EOA signature, ERC-1271 wallet, or an active session key whose limits cover this intent. */
-  private async authorized(intent: TradeIntent, signature: string, blockNumber: number, trigger?: Trigger) {
+  /**
+   * EOA signature, ERC-1271 wallet, or an active session key whose limits cover this intent, read at
+   * `blockNumber` (latest when omitted).
+   */
+  async authorized(intent: TradeIntent, signature: string, blockNumber?: number, trigger?: Trigger) {
     const { domain, provider, clearing } = this.ctx;
     try {
       let signer: string | undefined;
@@ -364,7 +367,10 @@ export class ExecutionService {
       )
         return true;
       if (!clearing || !signer) return false;
-      const session = await clearing.sessions(signer, { blockTag: blockNumber });
+      const session = await clearing.sessions(
+        signer,
+        blockNumber === undefined ? {} : { blockTag: blockNumber },
+      );
       return (
         getAddress(session.account) === owner &&
         BigInt(session.validUntil) >= intent.deadline &&
