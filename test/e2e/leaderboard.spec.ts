@@ -9,13 +9,13 @@ const WEEK_MS = 7 * 86_400_000;
 const mainNav = (page: Page) => page.getByRole("navigation", { name: "Main" }).filter({ visible: true });
 const board = (page: Page) => page.getByRole("region", { name: "Top traders" });
 
-/** Opens and cashes out a $125 Up trade at 5× on Home: two $125 trades, so at least two points. */
+/** Opens and cashes out a $125 Long trade at 5× on Home: two $125 trades, so at least two points. */
 async function tradeOnHome(page: Page) {
   await page.goto(`/updown/${MARKET}`);
   const open = page.getByRole("region", { name: "Your trade" });
   const fresh = page.getByRole("region", { name: "New trade" });
   await expect(
-    open.or(fresh.getByRole("button", { name: "Up", exact: true, disabled: false })),
+    open.or(fresh.getByRole("button", { name: "Long", exact: true, disabled: false })),
   ).toBeVisible();
   if (!(await open.isVisible())) {
     await fresh.getByRole("textbox", { name: "Position size in USDC" }).fill("125");
@@ -23,10 +23,10 @@ async function tradeOnHome(page: Page) {
       .getByRole("group", { name: "Multiplier" })
       .getByRole("button", { name: "5×", exact: true })
       .click();
-    await fresh.getByRole("button", { name: "Up", exact: true }).click();
-    const confirm = page.getByRole("dialog", { name: "Up on Ethereum" });
+    await fresh.getByRole("button", { name: "Long", exact: true }).click();
+    const confirm = page.getByRole("dialog", { name: "Long on Ethereum" });
     if (await confirm.isVisible({ timeout: 5_000 }).catch(() => false))
-      await confirm.getByRole("button", { name: "Confirm Up" }).click();
+      await confirm.getByRole("button", { name: "Confirm Long" }).click();
     await expect(open).toBeVisible();
   }
   await open.getByRole("button", { name: /^Cash out/ }).click();

@@ -11,7 +11,7 @@ import { holdQuote, localDeadline, type HeldQuote } from "../lib/clock.js";
 import { API } from "../lib/env.js";
 import { friendlyError } from "../lib/errors.js";
 import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
-import { isolatedAccountOf, marginTopUp } from "../lib/isolated.js";
+import { isolatedAccountOf, marginTopUp, MIN_ISOLATED_OPEN } from "../lib/isolated.js";
 import {
   checkRoute,
   formatDuration,
@@ -86,7 +86,7 @@ export type MarketOrder = {
   title?: string;
   /**
    * Home: hold the trade's margin, `payMicro`, in its own isolated account so the loss stops there. A new
-   * isolated account needs at least MIN_ISOLATED_OPEN; a smaller first trade uses the main balance.
+   * isolated account opens with MIN_ISOLATED_OPEN and the excess goes straight back.
    */
   isolated?: { payMicro: bigint };
 };
@@ -459,6 +459,42 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     ]);
     return { held, registered };
   };
+  /**
+   * Waits (up to about 15 s) until the API reads at least `minMicro` collateral on the isolated account in `market`.
+   * The API prices and admits trades at its latest read block, which can trail a margin move by a few seconds:
+   * quoting before it sees the margin fails as insufficient margin.
+   */
+  const apiSeesMargin = async (market: Market, minMicro: bigint) => {
+    const address = tradeAccount(market, true);
+    for (let attempt = 0; attempt < 15; attempt++) {
+      try {
+        const response = await fetch(`${API}/v1/account/${address}`);
+        if (response.ok && BigInt(((await response.json()) as { collateral: string }).collateral) >= minMicro)
+          return;
+      } catch {
+        /* read again */
+      }
+      await pause(1_000);
+    }
+  };
+  /**
+   * Moves margin, retrying a few times a couple of seconds apart: right after a close the API's read block can
+   * still show the position, which refuses the return.
+   */
+  const moveMarginRetrying = async (
+    market: Market,
+    amountMicro: bigint,
+    progress: (detail: string) => void,
+  ) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await moveMargin(market, amountMicro, progress);
+      } catch (error) {
+        if (attempt >= 4) throw error;
+        await pause(2_500);
+      }
+    }
+  };
   /** Whether the isolated account in `market` holds a position (null when it cannot be read). */
   const isolatedOpen = async (market: Market): Promise<boolean | null> => {
     const clearing = trader.settlement?.clearingAddress,
@@ -539,12 +575,27 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             setAside = 0n;
           if (order.isolated && !order.reduceOnly) {
             const { held, registered } = await isolatedState(order.market);
-            const move = marginTopUp(order.isolated.payMicro, held, registered);
+            const pay = order.isolated.payMicro;
+            if (!registered && pay < MIN_ISOLATED_OPEN) {
+              // The contract opens an isolated account only with MIN_ISOLATED_OPEN: open it with that, then send
+              // the excess straight back, so the trade still holds only its own amount. Both moves are one tap.
+              progress("Setting the amount aside");
+              await moveMargin(order.market, MIN_ISOLATED_OPEN, progress);
+              setAside = MIN_ISOLATED_OPEN;
+              await apiSeesMargin(order.market, MIN_ISOLATED_OPEN);
+              await moveMarginRetrying(order.market, pay - MIN_ISOLATED_OPEN, progress);
+              setAside = pay;
+              isolated = true;
+            }
+            const move = isolated ? null : marginTopUp(pay, held, registered);
             if (move !== null) {
               if (move !== 0n) {
                 progress("Setting the amount aside");
                 await moveMargin(order.market, move, progress);
-                if (move > 0n) setAside = move;
+                if (move > 0n) {
+                  setAside = move;
+                  await apiSeesMargin(order.market, held + move);
+                }
               }
               isolated = true;
             }
@@ -580,7 +631,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
                   : `${why} ${usdc(setAside)} may still be set aside for ${order.market}. Use Return to balance on Home or in Portfolio if it is.`,
               );
             progress("Returning the amount to your balance");
-            const returned = await moveMargin(order.market, -setAside, progress).then(
+            const returned = await moveMarginRetrying(order.market, -setAside, progress).then(
               () => true,
               () => false,
             );
@@ -779,7 +830,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           const { held } = await isolatedState(market);
           if (held > 0n) {
             progress("Returning the money to your balance");
-            await moveMargin(market, -held, progress).catch(() => {
+            await moveMarginRetrying(market, -held, progress).catch(() => {
               leftover = `. ${usdc(held)} is still set aside for your next ${market} trade`;
             });
           }
@@ -858,7 +909,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       (await run("Return to balance", `Return ${market} money to your balance`, async (progress) => {
         const { held } = await isolatedState(market);
         if (held <= 0n) return { title: "Nothing to return", value: true };
-        await moveMargin(market, -held, progress);
+        await moveMarginRetrying(market, -held, progress);
         return { title: `${usdc(held)} is back in your balance`, value: true };
       })) ?? false,
 

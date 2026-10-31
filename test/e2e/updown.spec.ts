@@ -13,8 +13,8 @@ const MARKET_INDEX = 1;
 async function startFlat(page: Page) {
   const bet = page.getByRole("region", { name: "Your trade" });
   const newBet = page.getByRole("region", { name: "New trade" });
-  // Up turns on once both accounts have loaded, so by then an open trade would be showing.
-  const ready = newBet.getByRole("button", { name: "Up", exact: true, disabled: false });
+  // Long turns on once both accounts have loaded, so by then an open trade would be showing.
+  const ready = newBet.getByRole("button", { name: "Long", exact: true, disabled: false });
   await expect(bet.or(ready)).toBeVisible();
   if (await bet.isVisible()) {
     await bet.getByRole("button", { name: /^Cash out/ }).click();
@@ -29,8 +29,8 @@ test.describe("Up / Down", () => {
     await startFlat(page);
     await expect(page.getByRole("button", { name: "Ethereum" })).toBeVisible();
     await expect(page.getByRole("img", { name: /^Price chart/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Up", exact: true })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Down", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Long", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Short", exact: true })).toBeEnabled();
     await expectNoHorizontalOverflow(page);
   });
 
@@ -44,7 +44,7 @@ test.describe("Up / Down", () => {
       // Trading starts with one signature that turns one tap on; until then Start trading stands in for Up and Down.
       const start = page.getByRole("button", { name: "Start trading", exact: true });
       await expect(start).toBeVisible();
-      await expect(page.getByRole("button", { name: "Up", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Long", exact: true })).toHaveCount(0);
       await start.click();
       await expect(
         page.getByRole("status", { name: "Notifications" }).filter({ hasText: "One-tap trading on" }),
@@ -56,21 +56,17 @@ test.describe("Up / Down", () => {
         .getByRole("group", { name: "Multiplier" })
         .getByRole("button", { name: "2×", exact: true })
         .click();
-      await expect(
-        newBet.getByText("Uses $10.00 of your money, no fees. A 1% move your way: +$0.20"),
-      ).toBeVisible();
+      await expect(newBet.getByText("Margin $10.00")).toBeVisible();
 
-      await newBet.getByRole("button", { name: "Up", exact: true }).click();
+      await newBet.getByRole("button", { name: "Long", exact: true }).click();
       // With one tap on, the trade fills with no confirm step.
-      await expect(page.getByRole("dialog", { name: "Up on Ethereum" })).toHaveCount(0);
+      await expect(page.getByRole("dialog", { name: "Long on Ethereum" })).toHaveCount(0);
       await expect(
-        page
-          .getByRole("status", { name: "Notifications" })
-          .filter({ hasText: "You're Up on Ethereum with a $20 position" }),
+        page.getByRole("status", { name: "Notifications" }).filter({ hasText: "Long Ethereum · $20 at 2×" }),
       ).toBeVisible();
 
       const bet = page.getByRole("region", { name: "Your trade" });
-      await expect(bet).toContainText("You're Up on Ethereum with a $20 position at 2×");
+      await expect(bet).toContainText("Long Ethereum · $20 at 2×");
       await expectNoHorizontalOverflow(page);
       // The trade holds its own $10 in the market's isolated account, so that is the most it can lose.
       const { account } = await stack.devWallet();
@@ -90,7 +86,7 @@ test.describe("Up / Down", () => {
       const share = page.getByRole("dialog", { name: "Share your trade" });
       await expect(
         share.getByRole("img", {
-          name: /^Share card: Up 2× on Ethereum: [+-]?\$[\d.]+ \([+-]?[\d.]+%\) so far\.$/,
+          name: /^Share card: Long 2× on Ethereum: [+-]?\$[\d.]+ \([+-]?[\d.]+%\) so far\.$/,
         }),
       ).toBeVisible();
       const download = page.waitForEvent("download");
@@ -106,24 +102,22 @@ test.describe("Up / Down", () => {
       await expect.poll(async () => (await held()).collateral).toBe("0");
       // The result stays up with its own card until the next bet.
       const result = page.getByRole("region", { name: "Cashed out" });
-      await expect(result).toContainText("You cashed out of Up on Ethereum");
+      await expect(result).toContainText("You cashed out of Long Ethereum");
       await result.getByRole("button", { name: "Share", exact: true }).click();
       await expect(
-        share.getByRole("img", { name: /^Share card: Cashed out .* going Up 2× on Ethereum\.$/ }),
+        share.getByRole("img", { name: /^Share card: Cashed out .* from Long 2× on Ethereum\.$/ }),
       ).toBeVisible();
       await share.getByRole("button", { name: "Close" }).click();
       await result.getByRole("button", { name: "New trade" }).click();
       await expect(page.getByRole("region", { name: "New trade" })).toBeVisible();
 
       // One-tap is on now: Down fills from the button with no review.
-      await page.getByRole("button", { name: "Down", exact: true }).click();
+      await page.getByRole("button", { name: "Short", exact: true }).click();
       await expect(
-        page
-          .getByRole("status", { name: "Notifications" })
-          .filter({ hasText: "You're Down on Ethereum with a $20 position" }),
+        page.getByRole("status", { name: "Notifications" }).filter({ hasText: "Short Ethereum · $20 at 2×" }),
       ).toBeVisible();
-      await expect(page.getByRole("dialog", { name: "Down on Ethereum" })).toBeHidden();
-      await expect(bet).toContainText("You're Down on Ethereum");
+      await expect(page.getByRole("dialog", { name: "Short on Ethereum" })).toBeHidden();
+      await expect(bet).toContainText("Short Ethereum");
 
       // Portfolio shows the Home trade with the rest: in the account value, the trades and the positions,
       // where it closes on its own margin and the margin goes back to the balance.

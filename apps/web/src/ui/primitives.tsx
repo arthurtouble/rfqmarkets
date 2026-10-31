@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { StreamStatus } from "../lib/event-stream.js";
 import type { Market } from "../lib/types.js";
 import type { MascotMood } from "../../../../packages/design-system/mascot.js";
@@ -338,5 +338,32 @@ export function Sheet({
         {open && children}
       </div>
     </dialog>
+  );
+}
+
+/**
+ * A small ⓘ that shows `children` on hover, focus or tap: the place for explanations, so screens keep only what
+ * the trader acts on.
+ */
+export function InfoTip({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="rfq-tip" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button
+        type="button"
+        className="rfq-tip__button"
+        aria-label={label}
+        aria-expanded={open}
+        onClick={() => setOpen((shown) => !shown)}
+        onBlur={() => setOpen(false)}
+      >
+        i
+      </button>
+      {open && (
+        <span role="tooltip" className="rfq-tip__body">
+          {children}
+        </span>
+      )}
+    </span>
   );
 }

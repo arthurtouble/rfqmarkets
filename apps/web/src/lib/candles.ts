@@ -74,6 +74,26 @@ export type ChartPoint = { time: number; value: number };
  * then each close at its bucket's end, or at `nowMs` for the live bucket. One
  * bucket is enough to draw, so a newly listed market has a chart at once.
  */
+/**
+ * A denser line through 1m candles for the tick chart's history: open, then low and high (in the order the candle
+ * moved: a rising candle dips first), then close, spread across the minute. The path between them is approximate;
+ * every point is a price the market traded at.
+ */
+export function candlePath(candles: readonly Candle[], intervalMs: number, nowMs: number): ChartPoint[] {
+  return candles.flatMap((candle) => {
+    const end = Math.min(candle.time + intervalMs, Math.max(candle.time, nowMs)),
+      at = (fraction: number) => candle.time + Math.round((end - candle.time) * fraction),
+      rising = BigInt(candle.close) >= BigInt(candle.open),
+      [first, second] = rising ? [candle.low, candle.high] : [candle.high, candle.low];
+    return [
+      { time: candle.time, value: Number(candle.open) / 1e6 },
+      { time: at(1 / 3), value: Number(first) / 1e6 },
+      { time: at(2 / 3), value: Number(second) / 1e6 },
+      { time: end, value: Number(candle.close) / 1e6 },
+    ];
+  });
+}
+
 export function linePoints(candles: readonly Candle[], intervalMs: number, nowMs: number): ChartPoint[] {
   if (!candles.length) return [];
   return [

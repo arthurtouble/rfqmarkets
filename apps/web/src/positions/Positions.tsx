@@ -1,6 +1,6 @@
 // Open positions (cards on phones, a table on desktop), the close sheet for one
 // position and the close-all sheet. Math lives in lib/positions.ts.
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useIdleMargin } from "../account/useAccount.js";
 import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useServerNow } from "../data/market-feed.js";
@@ -466,9 +466,25 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
  * Money a Home trade set aside in its own isolated account that has no open position (a trade that did not go
  * through after its amount was moved). The balance and Withdraw don't count it, so it is offered back here.
  */
+/** How long margin must sit with no position before it is offered back: reads can trail a fill by a few blocks. */
+const IDLE_AFTER_MS = 20_000;
+
 export function IdleMargin() {
-  const idle = useIdleMargin();
+  const all = useIdleMargin();
   const trading = useTrading();
+  // Right after a trade fills, the account read can show the margin without the position for a few seconds;
+  // only margin that stays idle is offered back.
+  const since = useRef(new Map<string, number>());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!all.length) return;
+    const timer = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(timer);
+  }, [all.length]);
+  for (const key of [...since.current.keys()])
+    if (!all.some((item) => item.account === key)) since.current.delete(key);
+  for (const item of all) if (!since.current.has(item.account)) since.current.set(item.account, now);
+  const idle = all.filter((item) => now - since.current.get(item.account)! >= IDLE_AFTER_MS);
   if (!idle.length) return null;
   const busy = trading.busy !== null;
   return (

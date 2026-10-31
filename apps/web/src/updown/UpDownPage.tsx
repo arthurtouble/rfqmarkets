@@ -13,7 +13,7 @@ import { useProtocol } from "../data/queries.js";
 import { useQuickLimits } from "../data/quick-limits.js";
 import { useTicks } from "../data/ticks.js";
 import { initialMarginAfter } from "../lib/account.js";
-import { microToInput, parseUsdcInput, signedUsdc, usdc, usdcCompact, usdPrice } from "../lib/format.js";
+import { abs, microToInput, parseUsdcInput, signedUsdc, usdc, usdcCompact, usdPrice } from "../lib/format.js";
 import { DEFAULT_MARGIN_SCALE_BPS, marginFromLeverage } from "../lib/leverage.js";
 import { closePreview, positionView, type PositionView } from "../lib/positions.js";
 import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
@@ -45,11 +45,10 @@ import {
   pickMultiplier,
   recordMatches,
   type BetRecord,
-  lossAt,
-  stakeProblem,
+  sizeProblem,
 } from "../lib/updown.js";
 import { load, store, forget } from "../lib/storage.js";
-import { Banner, Down, Segmented, Up, marketName } from "../ui/primitives.js";
+import { Banner, Down, InfoTip, Segmented, Up, marketName } from "../ui/primitives.js";
 import { UnknownMarket } from "../markets/UnknownMarket.js";
 import { useTrader } from "../wallet/trader.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
@@ -128,7 +127,7 @@ function UpDown({ market }: { market: Market }) {
       <PriceHeader
         market={market}
         reference={reference}
-        period="5 min"
+        period="15 min"
         scrub={scrub && { value: scrub.value, label: chartTime(scrub.time, spanMs) }}
       />
       <PriceChart
@@ -209,6 +208,19 @@ function Balance() {
   );
 }
 
+/**
+ * `value`, held until it moves by more than 0.2%: the liquidation estimate shifts by a few cents with every
+ * quote's spread, which reads as a jumping number.
+ */
+function useSteady(value: bigint | null) {
+  const [held, setHeld] = useState(value);
+  useEffect(() => {
+    if (value === null || held === null) setHeld(value);
+    else if (abs(value - held) * 500n > held) setHeld(value);
+  }, [value, held]);
+  return value === null ? null : held;
+}
+
 const toneOf = (pnl: bigint) => (pnl > 0n ? "rfq-up" : pnl < 0n ? "rfq-down" : "rfq-faint");
 
 /** The trade in this market: live result, one button to cash out and one to share. */
@@ -239,6 +251,8 @@ function OpenBet({
   const tone = toneOf(view.pnl);
   const record = recordFor(view);
   const bet = shareBet(view, record, null);
+  const stake = record?.stake ?? view.margin;
+  const liquidation = useSteady(view.liquidationPrice);
   const cashOut = async () => {
     // The position is gone once this resolves, so the result is worked out from the view captured here.
     let closed: ClosedAt | undefined;
@@ -254,24 +268,30 @@ function OpenBet({
   return (
     <section className="updown-bet" aria-label="Your trade">
       <p className="updown-bet__what">
-        You're <b className={view.long ? "rfq-up" : "rfq-down"}>{view.long ? "Up" : "Down"}</b> on{" "}
-        {marketName(view.market)}{" "}
-        {record
-          ? `with a ${usdcCompact(record.notional)} position at ${leverageLabel(record.multiplier)}`
-          : `with a ${usdcCompact(view.notional)} position`}
-      </p>
-      <p className="footnote rfq-faint">
-        Your money in it: {usdc(record?.stake ?? view.margin)}. One trade per market here: pick another market
-        above to open more, or use Pro to change this one.
+        <b className={view.long ? "rfq-up" : "rfq-down"}>{view.long ? "Long" : "Short"}</b>{" "}
+        {marketName(view.market)} · {usdcCompact(record?.notional ?? view.notional)}
+        {record && ` at ${leverageLabel(record.multiplier)}`}
+        <InfoTip label="About this trade">
+          {usdc(stake)} of your money is in this trade, and that is the most it can lose. Cash out to get back
+          what it is worth now. One trade per market here: pick another market above to open more, or use Pro
+          to change this one.
+        </InfoTip>
       </p>
       <div className={`updown-bet__pnl tnum ${tone}`}>
         <span>{signedUsdc(view.pnl)}</span>
         <span className="updown-bet__roe">{returnLabel(bet.ret)}</span>
       </div>
-      <p className="footnote rfq-faint">
-        Entry {usdPrice(view.entryPrice)}
-        {view.liquidationPrice !== null &&
-          ` · Auto-closes at ${usdPrice(view.liquidationPrice)}, losing about ${usdcCompact(lossAt((view.size * view.entryPrice) / 10n ** 18n, view.entryPrice, view.liquidationPrice))}`}
+      <p className="footnote rfq-faint tnum updown-bet__details">
+        <span>Entry {usdPrice(view.entryPrice)}</span>
+        {liquidation !== null && (
+          <span>
+            Liquidation {usdPrice(liquidation)}
+            <InfoTip label="About liquidation">
+              If {marketName(view.market)} reaches this price the trade closes on its own and the{" "}
+              {usdc(stake)} in it is lost. Funding moves it a little over time.
+            </InfoTip>
+          </span>
+        )}
       </p>
       {blocked ? (
         <Banner tone="warning">
@@ -316,7 +336,7 @@ function CashOutResult({ result, onNext }: { result: CashedOut; onNext: () => vo
   return (
     <section className="updown-bet" aria-label="Cashed out">
       <p className="updown-bet__what">
-        You cashed out of <b className={bet.long ? "rfq-up" : "rfq-down"}>{bet.long ? "Up" : "Down"}</b> on{" "}
+        You cashed out of <b className={bet.long ? "rfq-up" : "rfq-down"}>{bet.long ? "Long" : "Short"}</b>{" "}
         {bet.name}
       </p>
       <div className={`updown-bet__pnl tnum ${toneOf(bet.pnl)}`}>
@@ -404,7 +424,7 @@ function NewBet({
         hasQuote: !!quote,
         marginShort: ready && marginAfter !== null && marginAfter > BigInt(account.openingEquity),
       });
-      return stakeProblem(stakeMicro, multiplier) ?? homeProblem(problem, side, { tradeCapMicro: tradeCap });
+      return sizeProblem(sizeMicro) ?? homeProblem(problem, side, { tradeCapMicro: tradeCap });
     };
     return { buy: check("buy"), sell: check("sell") };
   }, [
@@ -450,7 +470,7 @@ function NewBet({
       payMicro: stakeMicro,
       leverage: multiplier,
       reduceOnly: false,
-      title: `You're ${word} on ${marketName(market)} with a ${usdcCompact(notional)} position`,
+      title: `${word} ${marketName(market)} · ${usdcCompact(notional)} at ${leverageLabel(multiplier)}`,
       isolated: { payMicro: stakeMicro },
     };
     // One tap: the first trade in this browser grants a week's one-tap key (one wallet signature). Only a
@@ -508,16 +528,18 @@ function NewBet({
         onChange={(next) => chooseMultiplier(Number(next))}
         options={choices.map((step) => ({ id: String(step), label: leverageLabel(step) }))}
       />
-      <p className="footnote rfq-muted center tnum">
-        {notional > 0n && stakeMicro
-          ? `Uses ${usdc(stakeMicro)} of your money, ${feeWords(notional, snapshot?.pricing.feeBps ?? 0)}. A 1% move your way: +${usdc(onePercentGain(notional))}`
-          : "Pick a size to see what a move is worth"}
+      <p className="footnote rfq-muted center tnum updown-bet__details">
+        <span>Margin {notional > 0n && stakeMicro ? usdc(stakeMicro) : "—"}</span>
+        {power !== null && <span>Buying power {usdc(power)}</span>}
+        {notional > 0n && (
+          <InfoTip label="About this trade">
+            Margin is the money this trade uses: the size divided by the multiplier, and the most it can lose.
+            Buying power is the biggest trade your balance allows at {leverageLabel(multiplier)}. This one has{" "}
+            {feeWords(notional, snapshot?.pricing.feeBps ?? 0)}; a 1% move your way makes about{" "}
+            {usdc(onePercentGain(notional))}.
+          </InfoTip>
+        )}
       </p>
-      {power !== null && (
-        <p className="footnote rfq-faint center tnum">
-          Buying power at {leverageLabel(multiplier)}: {usdc(power)}
-        </p>
-      )}
 
       {!trader.address ? (
         <WalletMenu className="rfq-btn--lg rfq-btn--block" connectLabel="Connect to trade" />
@@ -560,9 +582,6 @@ function NewBet({
         <p id="updown-reason" className="footnote rfq-muted center" role="status">
           {waiting ? "Loading your balance" : reason}
         </p>
-      )}
-      {ready && !noFunds && !reason && trading.quickLive && trading.quickCovers(market, notional) && (
-        <p className="footnote rfq-faint center">One tap, no wallet prompt.</p>
       )}
 
       {review && (
