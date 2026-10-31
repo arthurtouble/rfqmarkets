@@ -563,10 +563,16 @@ export class DurableSender {
       await this.refreshFinalizedFloor();
       rows = this.reconcileCandidates();
     }
-    const found = await Promise.all(rows.map((row) => this.findReceipt(row.operation_id)));
+    // One unreadable receipt (a free RPC refusing an old transaction as an archive read) must not stall every
+    // other row: that row is skipped this round and keeps its status.
+    const found = await Promise.all(
+      rows.map((row) => this.findReceipt(row.operation_id).catch(() => "unreadable" as const)),
+    );
     for (const [index, row] of rows.entries()) {
-      if (found[index]) {
-        this.recordReceipt(row.operation_id, found[index]);
+      const receipt = found[index];
+      if (receipt === "unreadable") continue;
+      if (receipt) {
+        this.recordReceipt(row.operation_id, receipt);
         continue;
       }
       if (row.nonce < mined) {
