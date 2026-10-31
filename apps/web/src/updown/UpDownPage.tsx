@@ -58,6 +58,7 @@ import { MarketSwitcher, PriceHeader } from "../trade/MarketHeader.js";
 import { PriceChart } from "../trade/PriceChart.js";
 import type { ReviewOrder } from "../trade/ReviewSheet.js";
 import { ConfirmSheet } from "./ConfirmSheet.js";
+import { StartTrading } from "../trade/StartTrading.js";
 import { ShareSheet } from "./ShareCard.js";
 
 // The amount box is the position size; the margin it holds is size over multiplier.
@@ -520,7 +521,17 @@ function NewBet({
 
       {!trader.address ? (
         <WalletMenu className="rfq-btn--lg rfq-btn--block" connectLabel="Connect to trade" />
-      ) : noFunds || problems.buy === MARGIN_PROBLEM ? (
+      ) : noFunds ? (
+        <button
+          type="button"
+          className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block"
+          onClick={() => funds.open("deposit")}
+        >
+          Add money
+        </button>
+      ) : ready && !trading.quickLive ? (
+        <StartTrading />
+      ) : problems.buy === MARGIN_PROBLEM ? (
         <button
           type="button"
           className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block"
@@ -545,12 +556,12 @@ function NewBet({
           ))}
         </div>
       )}
-      {trader.address && !noFunds && (waiting || reason) && (
+      {trader.address && !noFunds && (!ready || trading.quickLive) && (waiting || reason) && (
         <p id="updown-reason" className="footnote rfq-muted center" role="status">
           {waiting ? "Loading your balance" : reason}
         </p>
       )}
-      {ready && !noFunds && !reason && trading.quickCovers(market, notional) && (
+      {ready && !noFunds && !reason && trading.quickLive && trading.quickCovers(market, notional) && (
         <p className="footnote rfq-faint center">One tap, no wallet prompt.</p>
       )}
 

@@ -20,6 +20,7 @@ import { Banner, Change, Rows, Segmented, Sheet } from "../ui/primitives.js";
 import { useAdvanced } from "../ui/prefs.js";
 import { useToasts } from "../ui/toasts.js";
 import { useTrader } from "../wallet/trader.js";
+import { StartTrading } from "./StartTrading.js";
 
 const DECIMAL_DRAFT = /^\d*\.?\d*$/;
 const PRESETS = [1, 2, 5, 10] as const;
@@ -281,26 +282,30 @@ export function TpslSheet({
         )}
         {existing.length > 0 && (
           <p className="footnote rfq-faint">
-            Replacing places the new orders first, then cancels the old ones. Each step asks for a wallet
+            Replacing places the new orders first, then cancels the old ones. Cancelling asks for one wallet
             signature.
           </p>
         )}
-        <button
-          type="button"
-          className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block"
-          disabled={!!problem || busy}
-          aria-busy={busy}
-          onClick={submit}
-        >
-          {busy ? (
-            <>
-              <span className="rfq-spinner" />
-              Confirm in your wallet
-            </>
-          ) : (
-            (problem ?? action)
-          )}
-        </button>
+        {!trading.quickLive && !removing ? (
+          <StartTrading />
+        ) : (
+          <button
+            type="button"
+            className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block"
+            disabled={!!problem || busy}
+            aria-busy={busy}
+            onClick={submit}
+          >
+            {busy ? (
+              <>
+                <span className="rfq-spinner" />
+                {existing.length ? "Confirm in your wallet" : "Placing"}
+              </>
+            ) : (
+              (problem ?? action)
+            )}
+          </button>
+        )}
         {orders.some(
           (order) =>
             order !== currentTp &&

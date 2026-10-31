@@ -98,6 +98,8 @@ export type CloseAllResult = { closed: Market[]; failed: Array<{ market: Market;
 type Trading = {
   busy: string | null;
   quickSession: QuickSession | null;
+  /** This browser holds a live one-tap key. Trading screens show Start trading until it does. */
+  quickLive: boolean;
   /** Whether the quick-trading key can sign a market trade of this size without a wallet prompt. */
   quickCovers(market: Market, amountMicro: bigint | null): boolean;
   /**
@@ -378,9 +380,18 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         );
       } catch (error) {
         // Past the session's limits (its total, or a winning exit above the per-trade cap) the approvers
-        // refuse the session's signature. Nothing was traded, so the wallet signs the same intent instead:
-        // getting out must never depend on the one-tap allowance.
-        if (!sessionRefused(error) || !quoteUsable(localDeadline(quote), Date.now())) throw error;
+        // refuse the session's signature. Nothing was traded. An exit is then signed by the wallet: getting out
+        // must never depend on the one-tap allowance. A new trade is not, since its price would expire while the
+        // wallet asks: the key is dropped, so the screen offers Start trading again.
+        if (!sessionRefused(error)) throw error;
+        if (!reduceOnly) {
+          quick.clear();
+          sessionRef.current = null;
+          throw new TraderFacingError(
+            "One-tap trading needs turning on again in this browser. Nothing was traded. Tap Start trading, then try again.",
+          );
+        }
+        if (!quoteUsable(localDeadline(quote), Date.now())) throw error;
       }
     }
     progress("Confirm in your wallet");
@@ -502,6 +513,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   const value: Trading = {
     busy,
     quickSession: quick.session,
+    quickLive: sessionCovers(quick.session, 0n),
     quickCovers,
     firmQuote: async (order) => {
       const wait = lastFirmQuoteAt.current + FIRM_QUOTE_SPACING_MS - Date.now();
@@ -603,19 +615,39 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           amountMicro: order.amountMicro,
           limitPrice: parseUnits(order.limitPrice, 6),
         };
+        // The one-tap key signs when it covers the order; the order then ends before the key does.
+        const sessionSeconds = sessionOrderSeconds(order.market),
+          session =
+            sessionSeconds !== null && quickCovers(order.market, order.amountMicro) ? liveSession() : null;
         const prepared = await api<Prepared & { orderId: string }>("/v1/orders/prepare", {
           account: account(),
           market: order.market,
           side: order.side,
           amount: microToInput(order.amountMicro),
           limitPrice: order.limitPrice,
-          durationSeconds: LIMIT_ORDER_DURATION_SECONDS,
+          durationSeconds: session
+            ? Math.min(LIMIT_ORDER_DURATION_SECONDS, sessionSeconds!)
+            : LIMIT_ORDER_DURATION_SECONDS,
           nonce,
           reduceOnly: order.reduceOnly,
         });
-        progress("Confirm in your wallet");
-        const userSignature = await trader.signIntent(prepared, "TradeIntent", expected);
-        await api("/v1/orders", { orderId: prepared.orderId, userSignature });
+        const place = (userSignature: Hex) => api("/v1/orders", { orderId: prepared.orderId, userSignature });
+        let placed = false;
+        if (session)
+          try {
+            await place(
+              await privateKeyToAccount(session.privateKey).signTypedData(
+                trader.verified(prepared, "TradeIntent", expected) as never,
+              ),
+            );
+            placed = true;
+          } catch (error) {
+            if (!(error instanceof ApiError && /invalid order signature/i.test(error.message))) throw error;
+          }
+        if (!placed) {
+          progress("Confirm in your wallet");
+          await place(await trader.signIntent(prepared, "TradeIntent", expected));
+        }
         return {
           title: `${sideLabel(order.side)} limit open`,
           detail: `${usdc(order.amountMicro)} ${order.market} at ${usdPrice((prepared.intent as { limitPrice: string }).limitPrice)}, good for 24 hours`,

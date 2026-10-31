@@ -217,8 +217,10 @@ export async function readChainState(
     return { rejection: reject("market registry unavailable", 503) };
   }
   const indexes = Array.from({ length: marketCount }, (_, index) => index);
-  // An isolated account's intents are signed by its owner, directly or through the owner's session key.
-  const isolated = await clearing.isolatedOwner(intent.account, at),
+  // An isolated account's intents are signed by its owner, directly or through the owner's session key. The owner
+  // never changes once set, so it is read at the latest block: the first trade in a market is quoted at a block
+  // that can trail the margin move that opened its isolated account, where the owner still reads as unset.
+  const isolated = await clearing.isolatedOwner(intent.account, { blockTag: "latest" }),
     signingAccount = BigInt(isolated.owner) === 0n ? intent.account : getAddress(isolated.owner);
   const signedByAccount = intentSigner === signingAccount;
   const [

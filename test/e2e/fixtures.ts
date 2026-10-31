@@ -17,12 +17,32 @@ type Fixtures = {
   isMobile: boolean;
   /** The dev wallet has already accepted the terms, so the dialog stays out of the way. Off in terms.spec.ts. */
   acceptTerms: boolean;
+  /**
+   * Trading screens show Start trading until the browser holds a one-tap key. On by default: whenever that button
+   * is in the way, it is clicked (one signature), as a trader would. Off in specs that test the button itself.
+   */
+  autoStartTrading: boolean;
 };
 
-export const test = base.extend<Fixtures & { pageErrors: void; termsAccepted: void }>({
+export const test = base.extend<Fixtures & { pageErrors: void; termsAccepted: void; startTrading: void }>({
   stack: async ({}, use) => use(stack),
   isMobile: async ({}, use, testInfo) => use(testInfo.project.name.endsWith("mobile")),
   acceptTerms: [true, { option: true }],
+  autoStartTrading: [true, { option: true }],
+  startTrading: [
+    async ({ page, autoStartTrading }, use) => {
+      if (autoStartTrading)
+        await page.addLocatorHandler(
+          page.getByRole("button", { name: "Start trading", exact: true }),
+          async (button) => {
+            await button.click();
+            await expect(button).toBeHidden({ timeout: 30_000 });
+          },
+        );
+      await use();
+    },
+    { auto: true },
+  ],
   termsAccepted: [
     async ({ page, acceptTerms }, use) => {
       if (acceptTerms) {

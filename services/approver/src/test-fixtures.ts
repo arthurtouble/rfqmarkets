@@ -164,6 +164,8 @@ export interface FakeChainState {
   latestSessions?: Record<string, string | undefined>;
   /** Isolated account => owner; accounts not listed are ordinary. */
   isolatedOwners: Record<string, string>;
+  /** Isolated owners that exist only at the latest block (the account opened after the pinned block). */
+  isolatedOwnersOnlyLatest?: boolean;
   erc1271: boolean;
   backing: bigint;
   floor: bigint;
@@ -277,9 +279,12 @@ export function fakeChain(state: FakeChainState): ChainClients & { calls: string
       })),
     positionOf: () => read("positionOf", () => state.position),
     sessions: (signer: string) => read("sessions", () => state.sessions[signer]),
-    isolatedOwner: (account: string) =>
+    isolatedOwner: (account: string, at?: { blockTag?: unknown }) =>
       read("isolatedOwner", () => ({
-        owner: state.isolatedOwners[account] ?? "0x0000000000000000000000000000000000000000",
+        owner:
+          (state.isolatedOwnersOnlyLatest && at?.blockTag !== "latest"
+            ? undefined
+            : state.isolatedOwners[account]) ?? "0x0000000000000000000000000000000000000000",
         market: 0n,
       })),
     makerBacking: () => read("makerBacking", () => state.backing),

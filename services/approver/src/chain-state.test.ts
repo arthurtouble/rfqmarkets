@@ -194,6 +194,10 @@ test("readChainState treats the owner as the signer of an isolated account", asy
   const snapshot = await snapshotOf(state, input);
   assert.equal(snapshot.signingAccount, fixture.user.address);
   assert.equal(snapshot.accountSignatureValid, true);
+  // The first trade in a market is quoted before the margin move that opens its isolated account lands: the
+  // owner, which never changes once set, is read at the latest block.
+  const opening = await snapshotOf({ ...state, isolatedOwnersOnlyLatest: true }, input);
+  assert.equal(opening.signingAccount, fixture.user.address);
   // Without the isolated link, the owner's signature does not sign for that account.
   const ordinary = await snapshotOf(chainState(Date.now()), input);
   assert.equal(ordinary.signingAccount, isolated);
