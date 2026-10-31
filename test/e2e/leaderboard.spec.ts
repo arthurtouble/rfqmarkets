@@ -9,7 +9,7 @@ const WEEK_MS = 7 * 86_400_000;
 const mainNav = (page: Page) => page.getByRole("navigation", { name: "Main" }).filter({ visible: true });
 const board = (page: Page) => page.getByRole("region", { name: "Top traders" });
 
-/** Opens and cashes out a $25 at 5× Up trade on Home: two $125 trades, so at least two points. */
+/** Opens and cashes out a $125 Up trade at 5× on Home: two $125 trades, so at least two points. */
 async function tradeOnHome(page: Page) {
   await page.goto(`/updown/${MARKET}`);
   const open = page.getByRole("region", { name: "Your trade" });
@@ -18,7 +18,7 @@ async function tradeOnHome(page: Page) {
     open.or(fresh.getByRole("button", { name: "Up", exact: true, disabled: false })),
   ).toBeVisible();
   if (!(await open.isVisible())) {
-    await fresh.getByRole("button", { name: "$25", exact: true }).click();
+    await fresh.getByRole("textbox", { name: "Position size in USDC" }).fill("125");
     await fresh
       .getByRole("group", { name: "Multiplier" })
       .getByRole("button", { name: "5×", exact: true })

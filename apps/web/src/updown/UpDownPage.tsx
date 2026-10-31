@@ -13,8 +13,8 @@ import { useProtocol } from "../data/queries.js";
 import { useQuickLimits } from "../data/quick-limits.js";
 import { useTicks } from "../data/ticks.js";
 import { initialMarginAfter } from "../lib/account.js";
-import { parseUsdcInput, signedUsdc, usdc, usdcCompact, usdPrice } from "../lib/format.js";
-import { DEFAULT_MARGIN_SCALE_BPS } from "../lib/leverage.js";
+import { microToInput, parseUsdcInput, signedUsdc, usdc, usdcCompact, usdPrice } from "../lib/format.js";
+import { DEFAULT_MARGIN_SCALE_BPS, marginFromLeverage } from "../lib/leverage.js";
 import { closePreview, positionView, type PositionView } from "../lib/positions.js";
 import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
 import type { ChartPoint } from "../lib/candles.js";
@@ -31,11 +31,11 @@ import type { AccountState, Market, Side } from "../lib/types.js";
 import { IdleMargin } from "../positions/Positions.js";
 import {
   DEFAULT_MULTIPLIER,
-  DEFAULT_STAKE,
-  STAKE_PRESETS,
+  DEFAULT_SIZE,
+  SIZE_PRESETS,
   UP_DOWN,
-  betNotional,
   betRecordText,
+  buyingPower,
   cashOutValue,
   feeWords,
   homeProblem,
@@ -60,7 +60,8 @@ import type { ReviewOrder } from "../trade/ReviewSheet.js";
 import { ConfirmSheet } from "./ConfirmSheet.js";
 import { ShareSheet } from "./ShareCard.js";
 
-const STAKE_KEY = "rfq.updown.stake",
+// The amount box is the position size; the margin it holds is size over multiplier.
+const SIZE_KEY = "rfq.updown.size",
   MULTIPLIER_KEY = "rfq.updown.multiplier",
   /** The amount and multiplier behind the open trade in a market, so its return reads against what went in. */
   betKey = (market: Market) => `rfq.updown.bet.${market}`;
@@ -76,8 +77,8 @@ function recordFor(view: PositionView): BetRecord | null {
 function shareBet(view: PositionView, record: BetRecord | null, closed: ClosedAt | null): ShareBet {
   const pnl = closed ? closePreview(view, 10_000, null, closed.price).realizedPnl - closed.fee : view.pnl;
   // Against the amount when this browser placed the trade; else against the margin the position uses.
-  const stake = record?.stake;
-  const ret = stake ? Number((pnl * 1_000_000n) / stake) / 1_000_000 : closed ? null : view.roe;
+  const stake = record?.stake ?? (closed && view.margin > 0n ? view.margin : undefined);
+  const ret = stake ? Number((pnl * 1_000_000n) / stake) / 1_000_000 : view.roe;
   return {
     market: view.market,
     name: marketName(view.market),
@@ -255,8 +256,12 @@ function OpenBet({
         You're <b className={view.long ? "rfq-up" : "rfq-down"}>{view.long ? "Up" : "Down"}</b> on{" "}
         {marketName(view.market)}{" "}
         {record
-          ? `with ${usdcCompact(record.stake)} at ${leverageLabel(record.multiplier)}`
+          ? `with a ${usdcCompact(record.notional)} position at ${leverageLabel(record.multiplier)}`
           : `with a ${usdcCompact(view.notional)} position`}
+      </p>
+      <p className="footnote rfq-faint">
+        Your money in it: {usdc(record?.stake ?? view.margin)}. One trade per market here: pick another market
+        above to open more, or use Pro to change this one.
       </p>
       <div className={`updown-bet__pnl tnum ${tone}`}>
         <span>{signedUsdc(view.pnl)}</span>
@@ -356,14 +361,15 @@ function NewBet({
   const marketMax = leverageInfo?.maxLeverage ?? live?.maxLeverage ?? 20;
   const scaleBps = leverageInfo?.marginScaleBps ?? live?.marginScaleBps ?? DEFAULT_MARGIN_SCALE_BPS;
   const choices = multiplierChoices(marketMax);
-  const [stake, setStake] = useState(() => load(STAKE_KEY) ?? String(DEFAULT_STAKE));
+  const [size, setSize] = useState(() => load(SIZE_KEY) ?? String(DEFAULT_SIZE));
   const [chosen, setChosen] = useState(() => Number(load(MULTIPLIER_KEY)) || DEFAULT_MULTIPLIER);
   const [review, setReview] = useState<ReviewOrder | null>(null);
   const multiplier = pickMultiplier(chosen, choices);
   useEffect(() => setReview(null), [market]);
 
-  const stakeMicro = parseUsdcInput(stake);
-  const notional = stakeMicro ? betNotional(stakeMicro, multiplier) : 0n;
+  const sizeMicro = parseUsdcInput(size);
+  const notional = sizeMicro ?? 0n;
+  const stakeMicro = sizeMicro ? marginFromLeverage(sizeMicro, multiplier) : null;
   const tradeCap = live ? BigInt(live.operatingMaxTradeNotional) : 0n;
   const fresh = status === "live" && !!live && now - live.observedAtMs <= STALE_AFTER_MS;
   // Until the account has loaded its balance reads as zero; that is not "no money".
@@ -385,7 +391,7 @@ function NewBet({
         enabled: live?.enabled ?? true,
         reduces: false,
         sideOpen: !live || (side === "buy" ? live.canBuy : live.canSell),
-        amountText: stake,
+        amountText: size,
         payMicro: stakeMicro,
         notionalMicro: notional,
         tradeCapMicro: tradeCap,
@@ -397,7 +403,7 @@ function NewBet({
         hasQuote: !!quote,
         marginShort: ready && marginAfter !== null && marginAfter > BigInt(account.openingEquity),
       });
-      return stakeProblem(stakeMicro) ?? homeProblem(problem, side, { multiplier, tradeCapMicro: tradeCap });
+      return stakeProblem(stakeMicro, multiplier) ?? homeProblem(problem, side, { tradeCapMicro: tradeCap });
     };
     return { buy: check("buy"), sell: check("sell") };
   }, [
@@ -409,7 +415,7 @@ function NewBet({
     ready,
     fresh,
     live,
-    stake,
+    size,
     stakeMicro,
     tradeCap,
     multiplier,
@@ -417,11 +423,12 @@ function NewBet({
     scaleBps,
   ]);
 
-  const chooseStake = (text: string) => {
+  const chooseSize = (text: string) => {
     if (!isDecimalDraft(text)) return;
-    setStake(text);
-    store(STAKE_KEY, text);
+    setSize(text);
+    store(SIZE_KEY, text);
   };
+  const power = ready ? buyingPower(BigInt(account.availableMargin), multiplier, tradeCap) : null;
   const chooseMultiplier = (next: number) => {
     setChosen(next);
     store(MULTIPLIER_KEY, String(next));
@@ -442,7 +449,7 @@ function NewBet({
       payMicro: stakeMicro,
       leverage: multiplier,
       reduceOnly: false,
-      title: `You're ${word} on ${marketName(market)} with ${usdcCompact(stakeMicro)}`,
+      title: `You're ${word} on ${marketName(market)} with a ${usdcCompact(notional)} position`,
       isolated: { payMicro: stakeMicro },
     };
     // One tap: the first trade in this browser grants a week's one-tap key (one wallet signature). Only a
@@ -464,24 +471,34 @@ function NewBet({
             inputMode="decimal"
             placeholder="0"
             autoComplete="off"
-            aria-label="Amount in USDC"
-            style={{ width: `${Math.max(1, stake.length) + 0.5}ch` }}
-            value={stake}
-            onChange={(event) => chooseStake(event.target.value)}
+            aria-label="Position size in USDC"
+            style={{ width: `${Math.max(1, size.length) + 0.5}ch` }}
+            value={size}
+            onChange={(event) => chooseSize(event.target.value)}
           />
         </label>
-        <div className="rfq-chips" aria-label="Amount presets">
-          {STAKE_PRESETS.map((step) => (
+        <div className="rfq-chips" aria-label="Size presets">
+          {SIZE_PRESETS.map((step) => (
             <button
               key={step}
               type="button"
               className="rfq-chip"
-              aria-pressed={stakeMicro === BigInt(step) * 1_000_000n}
-              onClick={() => chooseStake(String(step))}
+              aria-pressed={sizeMicro === BigInt(step) * 1_000_000n}
+              onClick={() => chooseSize(String(step))}
             >
               ${step}
             </button>
           ))}
+          {power !== null && power > 0n && (
+            <button
+              type="button"
+              className="rfq-chip"
+              aria-pressed={sizeMicro === power - (power % 10_000n)}
+              onClick={() => chooseSize(microToInput(power - (power % 10_000n)))}
+            >
+              Max
+            </button>
+          )}
         </div>
       </div>
       <Segmented
@@ -491,10 +508,15 @@ function NewBet({
         options={choices.map((step) => ({ id: String(step), label: leverageLabel(step) }))}
       />
       <p className="footnote rfq-muted center tnum">
-        {notional > 0n
-          ? `${usdcCompact(notional)} position, ${feeWords(notional, snapshot?.pricing.feeBps ?? 0)}. A 1% move your way: +${usdc(onePercentGain(notional))}`
-          : "Pick an amount to see what a move is worth"}
+        {notional > 0n && stakeMicro
+          ? `Uses ${usdc(stakeMicro)} of your money, ${feeWords(notional, snapshot?.pricing.feeBps ?? 0)}. A 1% move your way: +${usdc(onePercentGain(notional))}`
+          : "Pick a size to see what a move is worth"}
       </p>
+      {power !== null && (
+        <p className="footnote rfq-faint center tnum">
+          Buying power at {leverageLabel(multiplier)}: {usdc(power)}
+        </p>
+      )}
 
       {!trader.address ? (
         <WalletMenu className="rfq-btn--lg rfq-btn--block" connectLabel="Connect to trade" />

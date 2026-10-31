@@ -41,12 +41,14 @@ test.describe("Up / Down", () => {
     await page.goto(`/updown/${MARKET}`);
     await startFlat(page);
     const newBet = page.getByRole("region", { name: "New trade" });
-    await newBet.getByRole("button", { name: "$10", exact: true }).click();
+    await newBet.getByRole("textbox", { name: "Position size in USDC" }).fill("20");
     await newBet
       .getByRole("group", { name: "Multiplier" })
       .getByRole("button", { name: "2×", exact: true })
       .click();
-    await expect(newBet.getByText("$20 position, no fees. A 1% move your way: +$0.20")).toBeVisible();
+    await expect(
+      newBet.getByText("Uses $10.00 of your money, no fees. A 1% move your way: +$0.20"),
+    ).toBeVisible();
 
     await newBet.getByRole("button", { name: "Up", exact: true }).click();
     // The first trade in a browser turns one tap on with one signature and fills with no confirm step.
@@ -57,11 +59,11 @@ test.describe("Up / Down", () => {
     await expect(
       page
         .getByRole("status", { name: "Notifications" })
-        .filter({ hasText: "You're Up on Ethereum with $10" }),
+        .filter({ hasText: "You're Up on Ethereum with a $20 position" }),
     ).toBeVisible();
 
     const bet = page.getByRole("region", { name: "Your trade" });
-    await expect(bet).toContainText("You're Up on Ethereum with $10 at 2×");
+    await expect(bet).toContainText("You're Up on Ethereum with a $20 position at 2×");
     await expectNoHorizontalOverflow(page);
     // The trade holds its own $10 in the market's isolated account, so that is the most it can lose.
     const { account } = await stack.devWallet();
@@ -111,7 +113,7 @@ test.describe("Up / Down", () => {
     await expect(
       page
         .getByRole("status", { name: "Notifications" })
-        .filter({ hasText: "You're Down on Ethereum with $10" }),
+        .filter({ hasText: "You're Down on Ethereum with a $20 position" }),
     ).toBeVisible();
     await expect(page.getByRole("dialog", { name: "Down on Ethereum" })).toBeHidden();
     await expect(bet).toContainText("You're Down on Ethereum");
