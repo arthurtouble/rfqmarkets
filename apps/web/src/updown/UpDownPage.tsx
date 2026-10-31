@@ -422,7 +422,11 @@ function NewBet({
         limitMicro: null,
         quoteError: result && "error" in result ? result.error : null,
         hasQuote: !!quote,
-        marginShort: ready && marginAfter !== null && marginAfter > BigInt(account.openingEquity),
+        // Simple trades are isolated: their margin moves out of the free balance, so it must cover the stake.
+        marginShort:
+          ready &&
+          ((stakeMicro !== null && stakeMicro > BigInt(account.availableMargin)) ||
+            (marginAfter !== null && marginAfter > BigInt(account.openingEquity))),
       });
       return sizeProblem(sizeMicro) ?? homeProblem(problem, side, { tradeCapMicro: tradeCap });
     };

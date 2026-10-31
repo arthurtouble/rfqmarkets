@@ -161,11 +161,8 @@ export class DurableSender {
       if (found) return this.settle(operationId, found);
       await this.broadcast(stored.raw_tx);
     } else {
-      const unresolved = this.database
-        ?.prepare(`SELECT operation_id FROM sender_transactions WHERE status IN (${UNRESOLVED_SQL}) LIMIT 1`)
-        .get() as { operation_id: string } | undefined;
-      if (unresolved)
-        throw new Error(`unresolved sponsor operation ${unresolved.operation_id} blocks new submission`);
+      const unresolved = await this.fencingOperation();
+      if (unresolved) throw new Error(`unresolved sponsor operation ${unresolved} blocks new submission`);
       if (deadline !== undefined && Date.now() >= deadline * 1_000)
         throw new Error(`operation ${operationId} expired before broadcast`);
       stored = await this.signInitial(operationId, request);
@@ -192,6 +189,26 @@ export class DurableSender {
     throw new Error(`transaction for ${operationId} was not included after ${maxReplacements + 1} attempts`);
   }
 
+  /**
+   * The operation that fences new submissions, if any: one still in flight, or an ambiguous one whose nonce is
+   * still open. An ambiguous operation whose nonce the chain has consumed no longer fences: whatever its outcome,
+   * no later transaction can collide with it, and it stays in the journal for an operator to settle.
+   */
+  private async fencingOperation(): Promise<string | undefined> {
+    const rows = this.database
+      ?.prepare(
+        `SELECT operation_id,nonce,status FROM sender_transactions WHERE status IN (${UNRESOLVED_SQL})`,
+      )
+      .all() as Array<{ operation_id: string; nonce: number; status: SenderStatus }> | undefined;
+    if (!rows?.length) return undefined;
+    const pending = rows.find((row) => row.status !== "ambiguous");
+    if (pending) return pending.operation_id;
+    const mined = Number(
+      BigInt(await this.provider.send("eth_getTransactionCount", [this.wallet.address, "latest"])),
+    );
+    return rows.find((row) => Number(row.nonce) >= mined)?.operation_id;
+  }
+
   private assertSameInput(stored: StoredTransaction, request: TransactionRequest) {
     const original = Transaction.from(stored.raw_tx);
     if (
@@ -211,7 +228,14 @@ export class DurableSender {
       this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]),
       explicitFees ? this.provider.getFeeData() : Promise.resolve(undefined),
     ]);
-    const nonce = Number(BigInt(nonceHex));
+    // A load-balanced RPC's pending count can trail our own last broadcast, which would reuse its nonce and be
+    // refused as an underpriced replacement; never sign below the next nonce after the journal's highest.
+    const journaled = this.database?.prepare("SELECT max(nonce) nonce FROM sender_transactions").get() as
+      { nonce: number | null } | undefined;
+    const nonce = Math.max(
+      Number(BigInt(nonceHex)),
+      journaled?.nonce == null ? 0 : Number(journaled.nonce) + 1,
+    );
     let populated: TransactionRequest;
     if (explicitFees && fees) {
       populated = { ...request, nonce, chainId: this.options.chainId };

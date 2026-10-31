@@ -103,7 +103,9 @@ test("canonical revert is durable, unblocks later nonces and remains reorg-sensi
   provider.receipts.delete(failed.tx_hash);
   await restarted.reconcile();
   assert.equal(rows(database)[0].status, "ambiguous", "orphaned revert must no longer prove consumed nonce");
-  await assert.rejects(restarted.submit("blocked", request), /unresolved sponsor operation/);
+  // The chain has consumed its nonce, so it fences nothing: a new operation takes the next nonce.
+  await restarted.submit("after", { ...request, data: "0x9999" });
+  assert.equal(rows(database).find((row) => row.operation_id === "after")?.nonce, 2);
   provider.receipts.set(failed.tx_hash, {
     transactionHash: failed.tx_hash,
     blockNumber: "0x200",
@@ -467,5 +469,34 @@ test("a refused receipt poll after broadcast keeps polling instead of failing th
   assert.equal(receipt.status, 1);
   assert.equal(provider.broadcasts.length, 1, "no replacement was sent");
   assert.equal(rows(database)[0].status, "included");
+  database.close();
+});
+
+test("an ambiguous operation whose nonce the chain consumed no longer blocks new submissions", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    wallet = randomWallet();
+  provider.failBeforeAccept = true;
+  const sender = new DurableSender(provider as never, wallet, database, options);
+  await assert.rejects(sender.submit("lost", request));
+  provider.failBeforeAccept = false;
+  provider.minedNonce = 1;
+  await sender.reconcile();
+  assert.equal(rows(database)[0].status, "ambiguous");
+  await sender.submit("next", request);
+  assert.equal(rows(database).find((row) => row.operation_id === "next")?.status, "included");
+  database.close();
+});
+
+test("a new submission never reuses the journal's last nonce when the RPC's pending count trails", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    sender = new DurableSender(provider as never, randomWallet(), database, options);
+  await sender.submit("first", request);
+  // A lagging RPC node still reports the nonce the first operation used.
+  provider.minedNonce = 0;
+  await sender.submit("second", { ...request, data: "0x5678" });
+  const nonces = rows(database).map((row) => Number(row.nonce));
+  assert.deepEqual(nonces.sort(), [0, 1]);
   database.close();
 });
