@@ -25,6 +25,8 @@ export interface ApproverOptions {
   rpcFallbackUrls?: string[];
   /** RPCs the secondary fails over to. */
   secondaryFallbackUrls?: string[];
+  /** RPCs, in order, for session-grant log scans (1,000-block eth_getLogs ranges); defaults to the primary. */
+  logRpcUrls?: string[];
   rpcBatchMaxCount?: number;
   maxFutureSeconds?: number;
   oracleMode?: OracleMode;

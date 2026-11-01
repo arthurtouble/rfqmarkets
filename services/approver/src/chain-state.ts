@@ -123,14 +123,17 @@ export function createChainClients(
   provider: JsonRpcProvider,
   secondaryProvider: JsonRpcProvider | undefined,
   clearingAddress: string,
+  /** Reads session-grant logs; defaults to `provider`. Free RPC plans differ most on eth_getLogs ranges. */
+  logProvider: JsonRpcProvider = provider,
 ): ChainClients {
-  const clearing = new Contract(clearingAddress, clearingApproverAbi, provider);
+  const clearing = new Contract(clearingAddress, clearingApproverAbi, provider),
+    logReader = new Contract(clearingAddress, clearingApproverAbi, logProvider);
   return {
     provider,
     secondaryProvider,
     clearing: clearing as unknown as ClearingReader,
     latestSession: sessionGrantTracker(async (account, fromBlock, toBlock) => {
-      const logs = await clearing.queryFilter(sessionGrantedFilter(account), fromBlock, toBlock);
+      const logs = await logReader.queryFilter(sessionGrantedFilter(account), fromBlock, toBlock);
       return logs.flatMap((log) => {
         const parsed = clearing.interface.parseLog(log);
         return parsed ? [{ session: getAddress(parsed.args.session as string), block: log.blockNumber }] : [];

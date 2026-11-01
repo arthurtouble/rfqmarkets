@@ -41,6 +41,7 @@ const app = buildApprover({
   secondaryRpcUrl,
   rpcFallbackUrls: env.RFQ_RPC_FALLBACK_URLS?.split(",").filter(Boolean),
   secondaryFallbackUrls: env.RFQ_SECONDARY_RPC_FALLBACK_URLS?.split(",").filter(Boolean),
+  logRpcUrls: env.RFQ_LOG_RPC_URLS?.split(",").filter(Boolean),
   rpcBatchMaxCount: integer("RFQ_RPC_BATCH_MAX_COUNT", 1),
   maxFutureSeconds: integer("RFQ_MAX_FUTURE_SECONDS", 5),
   oracleMode,

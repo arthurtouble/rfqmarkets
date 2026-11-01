@@ -55,7 +55,19 @@ export function buildApprover(options: ApproverOptions) {
     throw new Error("Independent chain signing requires a pinned chain and clearing address");
   const chain =
     provider && options.expectedVerifyingContract
-      ? createChainClients(provider, secondaryProvider, options.expectedVerifyingContract)
+      ? createChainClients(
+          provider,
+          secondaryProvider,
+          options.expectedVerifyingContract,
+          options.logRpcUrls?.length && !options.provider
+            ? new FallbackRpcProvider(options.logRpcUrls, undefined, {
+                batchMaxCount: 1,
+                staticNetwork: true,
+                timeoutMs: 5_000,
+                label: "approver-logs",
+              })
+            : undefined,
+        )
       : undefined;
   const journal = new ApprovalJournal(
     options.databasePath,

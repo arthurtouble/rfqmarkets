@@ -104,6 +104,9 @@ const stack = await startServiceStack({
         secondary,
         fallbacks: pool.filter((url) => url !== primary),
         secondaryFallbacks: pool.filter((url) => url !== secondary),
+        // Session-grant scans read 1,000-block log ranges: only the archive RPCs serve those on free plans
+        // (QuickNode's caps eth_getLogs at 5 blocks, dRPC's refuses them), so they go there first.
+        logs: [...new Set([...(secrets.indexerFallbackRpcUrls ?? []).filter((url) => !url.includes("quiknode")), ...pool])],
       };
     },
     rpcBatchMaxCount: "1",
