@@ -239,6 +239,9 @@ export class ExecutionService {
 
   private finalizeReservations(block: number, timestamp: number, hash?: string) {
     const { journal, grossReservations, pending } = this.ctx;
+    // RPC failover can answer from a node whose finalized block trails the last one seen: nothing to release,
+    // and not a reason to refuse the trade (the approvers skip it the same way).
+    if (block < grossReservations.finalizedBlock || timestamp < grossReservations.finalizedTimestamp) return;
     const expired = finalizeGross(journal, grossReservations, block, timestamp, hash, (ids) => {
       if (journal) archiveApiCommitments(journal, ids, Date.now(), false);
     });
