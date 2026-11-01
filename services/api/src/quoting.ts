@@ -409,8 +409,9 @@ export class QuoteEngine {
       throw new Error("market is paused");
     const blockTag = { blockTag: snapshot.blockNumber },
       reserved = ctx.grossReservations.bounds(undefined, snapshot.markets.length);
-    const books = await Promise.all(
-      snapshot.markets.map((_, index) => (index === selected ? null : clearing.exposure(index, blockTag))),
+    // Read with the snapshot (one batched call per block), not one exposure read per market per quote.
+    const books = snapshot.markets.map((_, index) =>
+      index === selected ? null : (snapshot.books[index] as { longBase: bigint; shortBase: bigint }),
     );
     let refreshed = false;
     for (const [otherIndex, otherState] of snapshot.markets.entries()) {

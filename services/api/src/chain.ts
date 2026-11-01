@@ -48,6 +48,8 @@ export type QuoteSnapshot = {
   /** Every registered market at this block, by index. */
   markets: ChainMarketState[];
   limitWords: bigint[];
+  /** Every registered market's exposure book (`exposure(index)`) at this block, by index. */
+  books: unknown[];
   leaderEpoch: bigint;
   signerSetVersion: bigint;
   policyVersion: bigint;
@@ -187,6 +189,7 @@ export class ChainReader {
             ...indexes.flatMap((index): ViewCall[] => [
               ["markets", index],
               ["marketLimits", index],
+              ["exposure", index],
             ]),
           ],
           blockNumber,
@@ -204,8 +207,9 @@ export class ChainReader {
       return {
         blockNumber,
         block,
-        markets: indexes.map((_, i) => perMarket[i * 2]),
-        limitWords: indexes.map((_, i) => toLimitWord(perMarket[i * 2 + 1] as never)),
+        markets: indexes.map((_, i) => perMarket[i * 3]),
+        limitWords: indexes.map((_, i) => toLimitWord(perMarket[i * 3 + 1] as never)),
+        books: indexes.map((_, i) => perMarket[i * 3 + 2]),
         leaderEpoch,
         signerSetVersion,
         policyVersion,

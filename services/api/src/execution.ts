@@ -42,6 +42,7 @@ import { recordFlowFill } from "./journal.js";
 import type { MarketStream } from "./market-stream.js";
 import { abs, marketIndex, marketRegistry, unixSeconds } from "./markets.js";
 import type { IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
+import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import { signingAccount, validOwnerSignature } from "./owner-signature.js";
 import { approverPolicyRejection, publicError } from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
@@ -466,26 +467,56 @@ export class ExecutionService {
       blockNumber = await this.chain.blockNumber(),
       block = await provider.getBlock(blockNumber);
     if (!block) return null;
-    const blockTag = { blockTag: blockNumber };
-    // Gross, net and stress admission covers every market the chain has at this block.
-    await marketRegistry.ensureCount(await clearing.marketCount(blockTag));
-    const indexes = marketRegistry.all().map((market) => market.index);
-    const [books, rawStates, limitWords, positionRaw, backing, floor, clock, capital, params] =
-      await Promise.all([
-        Promise.all(indexes.map((index) => clearing.exposure(index, blockTag))),
-        Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
-        Promise.all(indexes.map((index) => clearing.marketLimits(index, blockTag))),
-        clearing.positionOf(intent.account, intent.market, blockTag),
-        clearing.makerBacking(blockTag),
-        clearing.baseRiskCapitalTarget(blockTag),
-        finalizedClock(provider, blockNumber, block.timestamp),
-        Promise.all([
-          clearing.collateralOf(intent.account, blockTag),
-          clearing.openingEquity(intent.account, blockTag),
-          clearing.initialMargin(intent.account, blockTag),
-        ]),
-        clearing.marketParams(intent.market, blockTag),
-      ]);
+    // Gross, net and stress admission covers every market the chain has at this block. Everything is one
+    // Multicall3 call (it was ~3 reads per market plus ten more, on every approval attempt); when a market has
+    // been added since the registry last looked, the read repeats with it.
+    const read = async () => {
+      const indexes = marketRegistry.all().map((market) => market.index);
+      const values = await readViews(
+        clearing,
+        [
+          ["marketCount"],
+          ["positionOf", intent.account, intent.market],
+          ["makerBacking"],
+          ["baseRiskCapitalTarget"],
+          ["collateralOf", intent.account],
+          ["openingEquity", intent.account],
+          ["initialMargin", intent.account],
+          ["marketParams", intent.market],
+          ...indexes.flatMap((index): ViewCall[] => [
+            ["exposure", index],
+            ["markets", index],
+            ["marketLimits", index],
+          ]),
+        ],
+        blockNumber,
+      );
+      return { indexes, values };
+    };
+    const [clock, first] = await Promise.all([
+      finalizedClock(provider, blockNumber, block.timestamp),
+      read(),
+    ]);
+    let { indexes, values } = first;
+    if (Number(values[0]) !== indexes.length) {
+      await marketRegistry.ensureCount(Number(values[0]));
+      ({ indexes, values } = await read());
+    }
+    const [, positionRaw, backing, floor, collateral, openingEquity, initialMargin, params] = values as [
+      unknown,
+      { size: bigint; entryPrice: bigint; lastFundingIndex: bigint },
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      { marginScaleBps: bigint },
+    ];
+    const perMarket = values.slice(8),
+      books = indexes.map((_, i) => perMarket[i * 3] as Parameters<typeof toExposureBook>[0]),
+      rawStates = indexes.map((_, i) => perMarket[i * 3 + 1] as Parameters<typeof toExposureMarket>[0]),
+      limitWords = indexes.map((_, i) => perMarket[i * 3 + 2] as Parameters<typeof toLimitWord>[0]),
+      capital = [collateral, openingEquity, initialMargin];
     return {
       blockNumber,
       blockTimestamp: block.timestamp,
