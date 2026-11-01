@@ -185,7 +185,7 @@ test("Pro: a market Long, TP/SL on it, a limit order placed and cancelled, then 
   await page.goto("/trade/BTC");
   await connect(page);
   const ticket = page.getByRole("region", { name: "Order ticket" });
-  const submit = ticket.getByRole("button", { name: /^(Long|Short|Limit) BTC · / });
+  const submit = ticket.getByRole("button", { name: /^(Long|Short|Limit long|Limit short) BTC · / });
   // A run that stopped midway leaves a cross BTC position: close it first.
   const leftOver = page.getByRole("button", { name: /^Close BTC (long|short)$/ }).first();
   if (await leftOver.isVisible().catch(() => false)) {
