@@ -1,6 +1,7 @@
 // The live walkthrough: the deployed UI (dev by default) with the real QA wallet, feature by feature, in order.
 // Each step leaves the account as the next expects, so the file runs serially. Steps that need money skip, with
 // the reason, while the wallet holds none.
+import { appendFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { TERMS_KEY, withAcceptance } from "../../apps/web/src/lib/legal.js";
 import { installLiveWallet, loadLiveWallet, sendQaPass, type LiveWallet } from "./live-wallet.js";
@@ -32,6 +33,15 @@ test.beforeEach(async ({ context, page, baseURL }) => {
       await expect(button).toBeHidden({ timeout: 60_000 });
     },
   );
+  // Every write the page sends and what it got back, for triage.
+  page.on("requestfinished", async (request) => {
+    if (request.method() !== "POST" || !request.url().includes("/v1/")) return;
+    const response = await request.response();
+    appendFileSync(
+      "test-results/live/writes.log",
+      `${new Date().toISOString()} ${request.url()} ${response?.status()}\n> ${request.postData()}\n< ${await response?.text().catch(() => "")}\n\n`,
+    );
+  });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   test.info().annotations.push({ type: "wallet", description: live.address });

@@ -138,6 +138,12 @@ export class GrossReservationBook {
     const old = exclude ? this.items.get(exclude) : undefined;
     return this.totalMakerDebit - (old?.makerDebit ?? 0n);
   }
+  /** Why the last `admit` refused, for the caller's error message. */
+  lastRefusal: string | undefined;
+  private refuse(reason: string) {
+    this.lastRefusal = reason;
+    return false;
+  }
   admit(
     id: string,
     item: GrossReservation,
@@ -148,15 +154,17 @@ export class GrossReservationBook {
     risk?: GrossRiskContext,
   ) {
     assertGrossReservation(item);
-    if (blockNumber < this.finalizedBlock) return false;
-    if (books.length !== asks.length || item.market >= books.length) return false;
-    if (risk && (risk.net.length !== books.length || risk.netLimits.length !== books.length)) return false;
+    this.lastRefusal = undefined;
+    if (blockNumber < this.finalizedBlock) return this.refuse("stale block");
+    if (books.length !== asks.length || item.market >= books.length) return this.refuse("market registry");
+    if (risk && (risk.net.length !== books.length || risk.netLimits.length !== books.length))
+      return this.refuse("market registry");
     const old = this.items.get(id);
     if (
       old &&
       (old.market !== item.market || old.baseDelta !== item.baseDelta || old.reduceOnly !== item.reduceOnly)
     )
-      return false;
+      return this.refuse("reservation changed");
     // The on-chain reduceOnly invariant guarantees zero additional gross capacity.
     if (item.reduceOnly) return true;
     const totals = this.bounds(id, books.length),
@@ -173,11 +181,11 @@ export class GrossReservationBook {
         (long * ask) / BASE > high128(book.limits) ||
         (short * ask) / BASE > high128(book.limits)
       )
-        return false;
+        return this.refuse(`gross or side limit in market ${market}`);
     }
     if (risk) {
       const available = risk.backing - this.capitalDebit(id) - item.makerDebit;
-      if (available < risk.floor) return false;
+      if (available < risk.floor) return this.refuse("maker capital at its floor");
       const low = [...risk.net],
         high = [...risk.net];
       let stress = 0n;
@@ -185,13 +193,14 @@ export class GrossReservationBook {
         low[market] -= (totals[market].shortBase * asks[market]) / BASE;
         high[market] += (totals[market].longBase * asks[market]) / BASE;
         const cap = high128(risk.netLimits[market]);
-        if (abs(low[market]) > cap || abs(high[market]) > cap) return false;
+        if (abs(low[market]) > cap || abs(high[market]) > cap)
+          return this.refuse(`net limit in market ${market}`);
         // Stress is a sum of per-market terms, so the worst execution subset takes each market's worse extreme.
         const lowStress = marketStress(low[market], market),
           highStress = marketStress(high[market], market);
         stress += lowStress > highStress ? lowStress : highStress;
       }
-      if (stress > available) return false;
+      if (stress > available) return this.refuse("stress above maker capital");
     }
     return true;
   }

@@ -776,7 +776,9 @@ export class ExecutionService {
           floor,
         })
       )
-        return Reply.error(409, "outstanding approvals exceed gross, net, stress, side or capital capacity");
+        return Reply.error(409, "outstanding approvals exceed gross, net, stress, side or capital capacity", {
+          reason: grossReservations.lastRefusal,
+        });
     } else {
       const timestamp = unixSeconds();
       this.finalizeReservations(timestamp, timestamp);
