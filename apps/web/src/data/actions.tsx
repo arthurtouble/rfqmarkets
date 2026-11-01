@@ -483,12 +483,16 @@ export function TradingProvider({ children }: { children: ReactNode }) {
    */
   const moveMarginRetrying = async (
     market: Market,
-    amountMicro: bigint,
+    amountMicro: bigint | (() => Promise<bigint>),
     progress: (detail: string) => void,
   ) => {
     for (let attempt = 1; ; attempt++) {
       try {
-        return await moveMargin(market, amountMicro, progress);
+        // A computed amount is read again each attempt: right after a close the wallet's RPC can still show
+        // the margin before the close's fee and PnL, and moving that stale amount out reverts.
+        const amount = typeof amountMicro === "function" ? await amountMicro() : amountMicro;
+        if (amount === 0n) return undefined;
+        return await moveMargin(market, amount, progress);
       } catch (error) {
         if (attempt >= 4) throw error;
         await pause(2_500);
@@ -631,7 +635,14 @@ export function TradingProvider({ children }: { children: ReactNode }) {
                   : `${why} ${usdc(setAside)} may still be set aside for ${order.market}. Use Return to balance on Home or in Portfolio if it is.`,
               );
             progress("Returning the amount to your balance");
-            const returned = await moveMarginRetrying(order.market, -setAside, progress).then(
+            const returned = await moveMarginRetrying(
+              order.market,
+              async () => {
+                const { held } = await isolatedState(order.market);
+                return held <= 0n ? 0n : -(held < setAside ? held : setAside);
+              },
+              progress,
+            ).then(
               () => true,
               () => false,
             );
@@ -839,7 +850,14 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           const { held } = await isolatedState(market);
           if (held > 0n) {
             progress("Returning the money to your balance");
-            await moveMarginRetrying(market, -held, progress).catch(() => {
+            await moveMarginRetrying(
+              market,
+              async () => {
+                const { held } = await isolatedState(market);
+                return held > 0n ? -held : 0n;
+              },
+              progress,
+            ).catch(() => {
               leftover = `. ${usdc(held)} is still set aside for your next ${market} trade`;
             });
           }
@@ -918,7 +936,14 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       (await run("Return to balance", `Return ${market} money to your balance`, async (progress) => {
         const { held } = await isolatedState(market);
         if (held <= 0n) return { title: "Nothing to return", value: true };
-        await moveMarginRetrying(market, -held, progress);
+        await moveMarginRetrying(
+          market,
+          async () => {
+            const { held } = await isolatedState(market);
+            return held > 0n ? -held : 0n;
+          },
+          progress,
+        );
         return { title: `${usdc(held)} is back in your balance`, value: true };
       })) ?? false,
 
