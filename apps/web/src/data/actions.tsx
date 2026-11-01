@@ -165,9 +165,12 @@ const fractionLabel = (fractionBps: number, market: Market) =>
 /** The API refused the signed price because the market moved past it before settlement. */
 const priceMoved = (error: unknown) =>
   error instanceof ApiError && error.status === 409 && error.message.startsWith("price moved");
-/** The API could not re-price the trade just then (a market data or chain read hiccup); nothing was traded. */
+/** The API could not re-price or approve the trade just then (a data, chain read or approver hiccup); nothing was traded. */
 const repriceUnavailable = (error: unknown) =>
-  error instanceof ApiError && error.status === 503 && error.message.startsWith("fresh settlement price");
+  error instanceof ApiError &&
+  error.status === 503 &&
+  (error.message.startsWith("fresh settlement price") ||
+    error.message.startsWith("approver quorum unavailable"));
 
 /** An error whose message is already written for the trader; the error toast shows it as is. */
 class TraderFacingError extends Error {}

@@ -46,6 +46,31 @@ import { DEFAULT_MAX_FUTURE_SECONDS, type ApproverOptions } from "./options.js";
 import { checkPricePolicy, checkQuoteModel, checkQuoteSpread } from "./pricing-policy.js";
 import { reject, type Rejection } from "./rejection.js";
 
+/**
+ * The signed report is seconds old at most, and the contract refuses one observed after the block it is
+ * verified in. This approver's head block can trail the report by a block or two (Base blocks are 2 s, and an
+ * RPC node lags), so a refusal is retried at the next head for up to ~3 s (inside the API's 5 s approver timeout) before the report is rejected.
+ */
+async function verifyWhenHeadCatchesUp(
+  chain: ChainClients,
+  report: string,
+  clearingAddress: string,
+  blockNumber: number,
+  market: number,
+) {
+  for (let attempt = 0, block = blockNumber; ; attempt++) {
+    try {
+      return await verifySignedReport(chain, report, clearingAddress, block, market);
+    } catch (error) {
+      if (attempt >= HEAD_CATCH_UP_ATTEMPTS) throw error;
+      await new Promise((resolve) => setTimeout(resolve, HEAD_CATCH_UP_MS));
+      block = Math.max(block, Number(BigInt(await chain.provider.send("eth_blockNumber", []))));
+    }
+  }
+}
+const HEAD_CATCH_UP_ATTEMPTS = 3,
+  HEAD_CATCH_UP_MS = 1_000;
+
 /** Upper bound on live gross reservations held in memory. */
 export const MAX_GROSS_RESERVATIONS = 50_000;
 
@@ -218,7 +243,7 @@ async function chainChecks(
   let observation = request.observation;
   if (options.oracleMode === "signed") {
     try {
-      observation = await verifySignedReport(
+      observation = await verifyWhenHeadCatchesUp(
         chain,
         input.report,
         domain.verifyingContract,
