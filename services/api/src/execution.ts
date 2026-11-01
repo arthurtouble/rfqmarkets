@@ -657,6 +657,12 @@ export class ExecutionService {
           if (!signaturesMayExist) this.releaseUnsigned(quote.quoteId);
           const policy = approverPolicyRejection(responses, this.approvals.size, APPROVAL_QUORUM);
           if (policy) return Reply.error(409, policy);
+          console.warn(
+            "approver quorum unavailable:",
+            responses.map((item) =>
+              item.status === "rejected" ? String(item.reason).slice(0, 300) : JSON.stringify(item.value).slice(0, 300),
+            ),
+          );
           return Reply.error(503, "approver quorum unavailable", {
             details:
               ctx.devFund || process.env.NODE_ENV === "test"
