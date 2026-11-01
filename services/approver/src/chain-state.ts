@@ -1,4 +1,4 @@
-import { Contract, Interface, JsonRpcProvider, getAddress, toBeHex, toQuantity, type BlockTag } from "ethers";
+import { Contract, Interface, JsonRpcProvider, getAddress, toQuantity, type BlockTag } from "ethers";
 import { clearingApproverAbi, sessionGrantedFilter } from "../../../packages/shared/src/abi.js";
 import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import {
@@ -349,9 +349,10 @@ export async function verifySignedReport(
         to: oracleAddress,
         from: clearingAddress,
         data: adapter.encodeFunctionData("verify", [report]),
-        value: toBeHex(fee),
+        // JSON-RPC quantities: toBeHex pads (0x00, 0x032e…), which strict RPCs such as dRPC refuse.
+        value: toQuantity(fee),
       },
-      toBeHex(blockNumber),
+      toQuantity(blockNumber),
     ]),
     [values] = adapter.decodeFunctionResult("verify", raw),
     observation = Array.from(values as OracleObservationInput[], toOracleObservation).find(
