@@ -148,6 +148,8 @@ export type Expectation =
   | {
       kind: "trigger";
       market: number;
+      /** For the connected account's isolated account in `market` (a Home trade's TP/SL). */
+      isolated?: boolean;
       triggerKind: TriggerKind;
       triggerPrice: bigint;
       slippageBps: number;
@@ -159,7 +161,8 @@ export type Expectation =
   | { kind: "withdraw"; amountMicro: bigint; nonce: string }
   /** Moves `amountMicro` into (positive) or out of (negative) the connected account's isolated account. */
   | { kind: "isolated-margin"; market: number; amountMicro: bigint; nonce: string }
-  | { kind: "cancel"; nonce: string }
+  /** With `isolatedMarket`, cancels an order of the connected account's isolated account in that market. */
+  | { kind: "cancel"; nonce: string; isolatedMarket?: number }
   | { kind: "close"; market: number; nonce: string }
   | { kind: "session-revoke"; session: string; nonce: string }
   | {
@@ -292,9 +295,11 @@ export function verifyPrepared(
     "unexpected message fields",
   );
   const signsFor =
-    expectation.kind === "trade" && expectation.isolated
+    (expectation.kind === "trade" || expectation.kind === "trigger") && expectation.isolated
       ? isolatedAccountOf(account, expectation.market)
-      : account;
+      : expectation.kind === "cancel" && expectation.isolatedMarket !== undefined
+        ? isolatedAccountOf(account, expectation.isolatedMarket)
+        : account;
   check(address(message.account, "account") === signsFor, "the message is for another account");
 
   verifyFields(message, expectation, account);

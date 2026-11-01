@@ -756,7 +756,9 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             randomNonce(),
           ),
           market = marketIndex(input.market);
-        const pair = await api<PreparedTpsl>("/v1/orders/tpsl/prepare", body);
+        const pair = await api<PreparedTpsl>("/v1/orders/tpsl/prepare", body),
+          holder = input.account ?? account(),
+          isolated = holder.toLowerCase() !== account().toLowerCase();
         verifyTpslPair(pair.orders, { takeProfit: input.takeProfitMicro, stopLoss: input.stopLossMicro });
         for (const [index, leg] of pair.orders.entries())
           await placeResting(
@@ -764,6 +766,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             {
               kind: "trigger",
               market,
+              isolated,
               triggerKind: leg.type,
               triggerPrice: (leg.type === "take-profit" ? input.takeProfitMicro : input.stopLossMicro)!,
               slippageBps: body.slippageBps,
@@ -793,9 +796,15 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         progress(
           affected > 1 ? `Confirm in your wallet (cancels ${affected} orders)` : "Confirm in your wallet",
         );
+        // A Home trade's TP/SL rests on its isolated account, which the owner signs for.
+        const market = marketIndex(order.market),
+          onIsolated =
+            String((prepared.intent as { account?: string }).account ?? "").toLowerCase() ===
+            isolatedAccountOf(account(), market).toLowerCase();
         const userSignature = await trader.signIntent(prepared, "CancelIntent", {
           kind: "cancel",
           nonce: order.nonce,
+          ...(onIsolated ? { isolatedMarket: market } : {}),
         });
         const result = await api<CancelResult>(`/v1/orders/${order.orderId}/cancel`, {
           intent: prepared.intent,
