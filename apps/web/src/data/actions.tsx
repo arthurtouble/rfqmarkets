@@ -165,6 +165,9 @@ const fractionLabel = (fractionBps: number, market: Market) =>
 /** The API refused the signed price because the market moved past it before settlement. */
 const priceMoved = (error: unknown) =>
   error instanceof ApiError && error.status === 409 && error.message.startsWith("price moved");
+/** The API could not re-price the trade just then (a market data or chain read hiccup); nothing was traded. */
+const repriceUnavailable = (error: unknown) =>
+  error instanceof ApiError && error.status === 503 && error.message.startsWith("fresh settlement price");
 
 /** An error whose message is already written for the trader; the error toast shows it as is. */
 class TraderFacingError extends Error {}
@@ -400,7 +403,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     return submit(userSignature);
   }
 
-  /** Settles a reduce-only close. If the price moves past the signed limit first, re-quotes and signs once more: getting out should not fail on a tick. */
+  /**
+   * Settles a reduce-only close. If the price moves past the signed limit first, or the API cannot re-price it for
+   * a moment, re-quotes and signs once more: getting out should not fail on a tick or a hiccup.
+   */
   async function settleClose(
     market: Market,
     fractionBps: number,
@@ -417,8 +423,8 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         }),
       };
     } catch (error) {
-      if (!priceMoved(error)) throw error;
-      progress("Price moved, getting a new price");
+      if (!priceMoved(error) && !repriceUnavailable(error)) throw error;
+      progress(priceMoved(error) ? "Price moved, getting a new price" : "Getting a new price");
       const fresh = await api<Quote>("/v1/close/quote", {
         account: tradeAccount(market, isolated),
         market,
