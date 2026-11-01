@@ -161,17 +161,17 @@ export class FallbackRpcProvider extends JsonRpcProvider {
   }
 
   /**
-   * At most one log line a minute, and only when a request had to leave the first RPC, so traffic that
-   * reaches the metered RPC shows in the logs with its cause.
+   * At most one log line a minute with the requests each RPC answered and the busiest methods, so the
+   * traffic that reaches the metered RPC shows in the logs with its cause.
    */
   #record(index: number) {
     this.#served[index]++;
     const now = Date.now();
     if (now - this.#loggedAt < 60_000) return;
-    if (this.#served.slice(1).some(Boolean)) {
+    if (this.#served.some(Boolean)) {
       const methods = [...this.#methods].sort((a, b) => b[1] - a[1]).slice(0, 6);
       console.warn(
-        `${this.#label} rpc fallback in the last minute: ${this.#hosts.map((host, i) => `${host}=${this.#served[i]}`).join(" ")}; methods ${methods.map(([name, count]) => `${name}=${count}`).join(" ")}; latest failure ${this.#lastFailure.slice(0, 160)}`,
+        `${this.#label} rpc in the last minute: ${this.#hosts.map((host, i) => `${host}=${this.#served[i]}`).join(" ")}; methods ${methods.map(([name, count]) => `${name}=${count}`).join(" ")}; latest failure ${this.#lastFailure.slice(0, 160)}`,
       );
     }
     this.#served.fill(0);

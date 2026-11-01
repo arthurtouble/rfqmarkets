@@ -1,6 +1,7 @@
 import { toLimitWord } from "../../../packages/shared/src/clearing-structs.js";
 import { AbiCoder, Contract, type Block } from "ethers";
 import { DEFAULT_MARGIN_SCALE_BPS } from "../../../packages/shared/src/pricing.js";
+import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import type { ApiContext } from "./context.js";
 import { marketRegistry, unixSeconds, type Market } from "./markets.js";
 import type { ProtocolVersions } from "./quote-store.js";
@@ -169,39 +170,48 @@ export class ChainReader {
       return this.quoteSnapshotCache.promise;
     const blockTag = { blockTag: blockNumber };
     const promise = (async (): Promise<QuoteSnapshot> => {
-      // Cross-market checks cover every market the chain has at this block.
-      await marketRegistry.ensureCount(await clearing.marketCount(blockTag));
-      const indexes = marketRegistry.all().map((market) => market.index);
-      const [
-        block,
-        markets,
-        limitWords,
-        leaderEpoch,
-        signerSetVersion,
-        policyVersion,
-        paused,
-        resolutionRequired,
-      ] = await Promise.all([
-        provider.getBlock(blockNumber),
-        Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
-        Promise.all(indexes.map(async (index) => toLimitWord(await clearing.marketLimits(index, blockTag)))),
-        clearing.leaderEpoch(blockTag),
-        clearing.signerSetVersion(blockTag),
-        clearing.policyVersion(blockTag),
-        clearing.paused(blockTag),
-        clearing.resolutionRequired(blockTag),
-      ]);
+      // Everything in one Multicall3 call at the block (plus the block header): this read runs for every firm
+      // quote on a new block, and as ~17 separate eth_calls it was most of the API's RPC traffic. The market
+      // count rides along; when a market has been added since, the read repeats with the new market included.
+      const read = async () => {
+        const indexes = marketRegistry.all().map((market) => market.index);
+        const values = await readViews(
+          clearing,
+          [
+            ["marketCount"],
+            ["leaderEpoch"],
+            ["signerSetVersion"],
+            ["policyVersion"],
+            ["paused"],
+            ["resolutionRequired"],
+            ...indexes.flatMap((index): ViewCall[] => [
+              ["markets", index],
+              ["marketLimits", index],
+            ]),
+          ],
+          blockNumber,
+        );
+        return { indexes, values };
+      };
+      let [block, { indexes, values }] = await Promise.all([provider.getBlock(blockNumber), read()]);
+      const count = Number(values[0]);
+      if (count !== indexes.length) {
+        await marketRegistry.ensureCount(count);
+        ({ indexes, values } = await read());
+      }
+      const [, leaderEpoch, signerSetVersion, policyVersion, paused, resolutionRequired] = values;
+      const perMarket = values.slice(6);
       return {
         blockNumber,
         block,
-        markets,
-        limitWords,
+        markets: indexes.map((_, i) => perMarket[i * 2]),
+        limitWords: indexes.map((_, i) => toLimitWord(perMarket[i * 2 + 1] as never)),
         leaderEpoch,
         signerSetVersion,
         policyVersion,
         paused,
         resolutionRequired,
-      };
+      } as QuoteSnapshot;
     })();
     this.quoteSnapshotCache = { at: now, blockNumber, promise };
     try {
