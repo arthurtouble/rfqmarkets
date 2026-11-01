@@ -61,6 +61,9 @@ export class RFQDevRuntime extends Container {
       return { ready: false, reason: "approver_keys_do_not_match_deployment" };
     const secrets = {
       ...JSON.parse(this.env.RFQ_DEV_RUNTIME_SECRETS),
+      // RPC overrides set by hand (`wrangler secret put RFQ_DEV_RPC_OVERRIDES`), such as a paid RPC with its key
+      // in the URL. Deploys rewrite RFQ_DEV_RUNTIME_SECRETS from defaults but never touch this one.
+      ...(this.env.RFQ_DEV_RPC_OVERRIDES ? JSON.parse(this.env.RFQ_DEV_RPC_OVERRIDES) : {}),
       hedgeToken: await this.hedgeToken(),
       sponsorKey: identities.sponsor.privateKey,
       approverKeys: identities.approvers.map((item) => item.privateKey),
