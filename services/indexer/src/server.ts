@@ -255,6 +255,7 @@ export function buildIndexer(options: IndexerOptions) {
           batchMaxCount: 1,
           staticNetwork: true,
           timeoutMs: 10_000,
+          label: "indexer",
         })
       : rpcProvider(options.rpcUrl, undefined, { batchMaxCount: 1, staticNetwork: true, timeoutMs: 10_000 }));
   const contract = new Contract(options.clearingAddress, clearingIndexerAbi, provider);
@@ -263,6 +264,7 @@ export function buildIndexer(options: IndexerOptions) {
         ? new FallbackRpcProvider([options.readRpcUrl, ...(options.readFallbackRpcUrls ?? [])], undefined, {
             batchMaxCount: 1,
             staticNetwork: true,
+            label: "indexer-read",
           })
         : provider,
     readContract = new Contract(options.clearingAddress, clearingIndexerAbi, readProvider);

@@ -35,7 +35,9 @@ export function buildApprover(options: ApproverOptions) {
       ? options.rpcFallbackUrls?.length
         ? new FallbackRpcProvider([options.rpcUrl, ...options.rpcFallbackUrls], undefined, {
             batchMaxCount: options.rpcBatchMaxCount ?? 1,
+            staticNetwork: true,
             timeoutMs: 5_000,
+            label: "approver",
           })
         : rpcProvider(options.rpcUrl, undefined, { batchMaxCount: options.rpcBatchMaxCount ?? 1 })
       : undefined);

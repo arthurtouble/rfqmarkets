@@ -260,6 +260,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
             staticNetwork: true,
             batchMaxCount: 1,
             timeoutMs: 5_000,
+            label: "registry",
           })
         : new JsonRpcProvider(config.rpcUrl, undefined, { staticNetwork: true, batchMaxCount: 1 });
       try {

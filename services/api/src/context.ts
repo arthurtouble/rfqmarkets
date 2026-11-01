@@ -189,7 +189,10 @@ export class ApiContext {
         ? options.chain.fallbackRpcUrls?.length
           ? new FallbackRpcProvider([options.chain.rpcUrl, ...options.chain.fallbackRpcUrls], undefined, {
               batchMaxCount: 1,
+              // Without it ethers sends eth_chainId ahead of calls, doubling the load on a rate-limited plan.
+              staticNetwork: true,
               timeoutMs: 5_000,
+              label: "api",
             })
           : rpcProvider(options.chain.rpcUrl, undefined, { batchMaxCount: 1 })
         : undefined);
@@ -206,6 +209,7 @@ export class ApiContext {
               new FallbackRpcProvider([...options.chain.readRpcUrls, options.chain.rpcUrl], undefined, {
                 batchMaxCount: 1,
                 staticNetwork: true,
+                label: "api-read",
               }),
             )
           : this.clearing;
