@@ -140,6 +140,8 @@ export function buildGrossContext(input: {
   position: PositionState;
   intent: TradeIntent;
   approval: MakerApproval;
+  /** See pendingMakerDebit. */
+  opposingPendingBase?: bigint;
 }): GrossContext {
   const { snapshot, markets, market, intent, approval } = input;
   return {
@@ -154,6 +156,7 @@ export function buildGrossContext(input: {
       timestamp: BigInt(snapshot.blockTimestamp),
       deadline: approval.deadline,
       netLimit: snapshot.limitWords[market],
+      opposingPendingBase: input.opposingPendingBase,
     }),
     risk: {
       net: markets.map((item) => marketNotional(item)),

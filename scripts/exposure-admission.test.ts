@@ -161,3 +161,26 @@ test("pending maker debit bounds realized PnL and funding across seeded position
     assert(reserved >= actual, `capital envelope ${i}`);
   }
 });
+
+test("pending maker debit charges realized PnL only on the part of a trade that could reduce", () => {
+  const market: ExposureMarket = {
+      aggregateBase: 0n,
+      fundingIndex: 0n,
+      fundingTime: 100n,
+      lastPriceTime: 100n,
+      lastBid: 100_000_000_000n,
+      lastAsk: 100_000_000_000n,
+      enabled: true,
+    },
+    flat = { size: 0n, entryPrice: 0n, lastFundingIndex: 0n },
+    long = { size: BASE / 10n, entryPrice: 90_000_000_000n, lastFundingIndex: 0n },
+    base = { market, delta: BASE / 10n, executionPrice: 100_000_000_000n, timestamp: 100n, deadline: 130n, netLimit: max << 128n },
+    legacy = pendingMakerDebit({ ...base, position: flat }),
+    opening = pendingMakerDebit({ ...base, position: flat, opposingPendingBase: 0n }),
+    contested = pendingMakerDebit({ ...base, position: flat, opposingPendingBase: BASE / 20n }),
+    reducing = pendingMakerDebit({ ...base, position: long, delta: -BASE / 10n, opposingPendingBase: 0n }),
+    reducingLegacy = pendingMakerDebit({ ...base, position: long, delta: -BASE / 10n });
+  assert(opening < legacy / 10n, "an opening fill with no opposing flow reserves only funding");
+  assert(contested > opening && contested < legacy, "opposing pending flow raises the charge in proportion");
+  assert.equal(reducing, reducingLegacy, "a reduction of the account's own position is charged in full");
+});

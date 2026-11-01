@@ -763,6 +763,7 @@ export class ExecutionService {
           timestamp: BigInt(blockTimestamp),
           deadline: approval.deadline,
           netLimit: netLimits[intent.market],
+          opposingPendingBase: priorGross[intent.market][fill.baseDelta > 0n ? "shortBase" : "longBase"],
         }),
       };
       const existingGross = grossReservations.get(quote.quoteId);

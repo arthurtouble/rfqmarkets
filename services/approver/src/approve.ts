@@ -302,6 +302,7 @@ async function chainChecks(
 
   const freshness = checkCrossMarketFreshness(gross, approval.intentHash.toLowerCase(), snapshot, market);
   if (freshness) return freshness;
+  const pending = gross.bounds(approval.intentHash.toLowerCase(), snapshot.books.length)[market];
   const grossContext = buildGrossContext({
     snapshot,
     markets,
@@ -309,6 +310,7 @@ async function chainChecks(
     position: snapshot.position,
     intent,
     approval,
+    opposingPendingBase: intent.baseDelta > 0n ? pending.shortBase : pending.longBase,
   });
   return checkImpact({ markets, market, prices, intent, approval }) ?? grossContext;
 }
