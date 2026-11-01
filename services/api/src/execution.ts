@@ -42,6 +42,7 @@ import { recordFlowFill } from "./journal.js";
 import type { MarketStream } from "./market-stream.js";
 import { abs, marketIndex, marketRegistry, unixSeconds } from "./markets.js";
 import type { IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
+import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import { signingAccount, validOwnerSignature } from "./owner-signature.js";
 import { approverPolicyRejection, publicError } from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
@@ -50,6 +51,9 @@ import { archiveApiCommitments } from "./recovery.js";
 import { approvalRequestSchema, intentRequestSchema, type ApprovalRequest } from "./schemas.js";
 import { afterSettlement, settlementEvent } from "./settlement-event.js";
 
+/** Reads of a fresh one-tap grant at the latest block before a session signature is refused. */
+const SESSION_READ_RETRIES = 3,
+  SESSION_READ_RETRY_MS = 1_000;
 /** The wallet signs a short execution interval; oracle proof freshness is bound separately at approval. */
 const INTENT_EXECUTION_WINDOW_SECONDS = 30;
 /** Maker approvals never outlive this many seconds past the block they were priced at. */
@@ -235,6 +239,9 @@ export class ExecutionService {
 
   private finalizeReservations(block: number, timestamp: number, hash?: string) {
     const { journal, grossReservations, pending } = this.ctx;
+    // RPC failover can answer from a node whose finalized block trails the last one seen: nothing to release,
+    // and not a reason to refuse the trade (the approvers skip it the same way).
+    if (block < grossReservations.finalizedBlock || timestamp < grossReservations.finalizedTimestamp) return;
     const expired = finalizeGross(journal, grossReservations, block, timestamp, hash, (ids) => {
       if (journal) archiveApiCommitments(journal, ids, Date.now(), false);
     });
@@ -367,10 +374,16 @@ export class ExecutionService {
       )
         return true;
       if (!clearing || !signer) return false;
-      const session = await clearing.sessions(
+      let session = await clearing.sessions(
         signer,
         blockNumber === undefined ? {} : { blockTag: blockNumber },
       );
+      // A key granted a moment ago (Start trading, then the first trade at once) postdates the quote's block, or
+      // the RPC node answering: read the grant at the latest block, briefly, before refusing the signature.
+      for (let attempt = 0; attempt < SESSION_READ_RETRIES && BigInt(session.account) === 0n; attempt++) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, SESSION_READ_RETRY_MS));
+        session = await clearing.sessions(signer, {});
+      }
       return (
         getAddress(session.account) === owner &&
         BigInt(session.validUntil) >= intent.deadline &&
@@ -455,28 +468,58 @@ export class ExecutionService {
     const clearing = this.ctx.clearing!,
       provider = this.ctx.provider!,
       blockNumber = await this.chain.blockNumber(),
-      block = await provider.getBlock(blockNumber);
+      block = await this.chain.block(blockNumber);
     if (!block) return null;
-    const blockTag = { blockTag: blockNumber };
-    // Gross, net and stress admission covers every market the chain has at this block.
-    await marketRegistry.ensureCount(await clearing.marketCount(blockTag));
-    const indexes = marketRegistry.all().map((market) => market.index);
-    const [books, rawStates, limitWords, positionRaw, backing, floor, clock, capital, params] =
-      await Promise.all([
-        Promise.all(indexes.map((index) => clearing.exposure(index, blockTag))),
-        Promise.all(indexes.map((index) => clearing.markets(index, blockTag))),
-        Promise.all(indexes.map((index) => clearing.marketLimits(index, blockTag))),
-        clearing.positionOf(intent.account, intent.market, blockTag),
-        clearing.makerBacking(blockTag),
-        clearing.baseRiskCapitalTarget(blockTag),
-        finalizedClock(provider, blockNumber, block.timestamp),
-        Promise.all([
-          clearing.collateralOf(intent.account, blockTag),
-          clearing.openingEquity(intent.account, blockTag),
-          clearing.initialMargin(intent.account, blockTag),
-        ]),
-        clearing.marketParams(intent.market, blockTag),
-      ]);
+    // Gross, net and stress admission covers every market the chain has at this block. Everything is one
+    // Multicall3 call (it was ~3 reads per market plus ten more, on every approval attempt); when a market has
+    // been added since the registry last looked, the read repeats with it.
+    const read = async () => {
+      const indexes = marketRegistry.all().map((market) => market.index);
+      const values = await readViews(
+        clearing,
+        [
+          ["marketCount"],
+          ["positionOf", intent.account, intent.market],
+          ["makerBacking"],
+          ["baseRiskCapitalTarget"],
+          ["collateralOf", intent.account],
+          ["openingEquity", intent.account],
+          ["initialMargin", intent.account],
+          ["marketParams", intent.market],
+          ...indexes.flatMap((index): ViewCall[] => [
+            ["exposure", index],
+            ["markets", index],
+            ["marketLimits", index],
+          ]),
+        ],
+        blockNumber,
+      );
+      return { indexes, values };
+    };
+    const [clock, first] = await Promise.all([
+      finalizedClock(provider, blockNumber, block.timestamp),
+      read(),
+    ]);
+    let { indexes, values } = first;
+    if (Number(values[0]) !== indexes.length) {
+      await marketRegistry.ensureCount(Number(values[0]));
+      ({ indexes, values } = await read());
+    }
+    const [, positionRaw, backing, floor, collateral, openingEquity, initialMargin, params] = values as [
+      unknown,
+      { size: bigint; entryPrice: bigint; lastFundingIndex: bigint },
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      { marginScaleBps: bigint },
+    ];
+    const perMarket = values.slice(8),
+      books = indexes.map((_, i) => perMarket[i * 3] as Parameters<typeof toExposureBook>[0]),
+      rawStates = indexes.map((_, i) => perMarket[i * 3 + 1] as Parameters<typeof toExposureMarket>[0]),
+      limitWords = indexes.map((_, i) => perMarket[i * 3 + 2] as Parameters<typeof toLimitWord>[0]),
+      capital = [collateral, openingEquity, initialMargin];
     return {
       blockNumber,
       blockTimestamp: block.timestamp,

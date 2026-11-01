@@ -48,6 +48,8 @@ export type QuoteSnapshot = {
   /** Every registered market at this block, by index. */
   markets: ChainMarketState[];
   limitWords: bigint[];
+  /** Every registered market's exposure book (`exposure(index)`) at this block, by index. */
+  books: unknown[];
   leaderEpoch: bigint;
   signerSetVersion: bigint;
   policyVersion: bigint;
@@ -60,6 +62,8 @@ export class ChainReader {
   private quoteSnapshotCache:
     { at: number; blockNumber: number; promise: Promise<QuoteSnapshot> } | undefined;
   private marginScaleCache: { at: number; promise: Promise<Record<Market, number>> } | undefined;
+  private blockNumberInFlight: Promise<number> | undefined;
+  private blockCache: { number: number; promise: Promise<Block | null> } | undefined;
 
   constructor(private readonly ctx: ApiContext) {}
 
@@ -67,8 +71,37 @@ export class ChainReader {
     this.quoteSnapshotCache = undefined;
   }
 
+  /**
+   * The head block number. Concurrent callers share one in-flight request (a trade's quote, admission and
+   * approval asked at once, in bursts a rate-limited RPC refused); an answer is never reused once it has
+   * arrived, so a governance change or a margin move that just landed is always seen.
+   */
   async blockNumber() {
-    return Number(BigInt(await this.ctx.provider!.send("eth_blockNumber", [])));
+    if (this.blockNumberInFlight) return this.blockNumberInFlight;
+    const promise = this.ctx
+      .provider!.send("eth_blockNumber", [])
+      .then((value: string) => Number(BigInt(value)))
+      .finally(() => {
+        if (this.blockNumberInFlight === promise) this.blockNumberInFlight = undefined;
+      });
+    this.blockNumberInFlight = promise;
+    return promise;
+  }
+
+  /** A block header by number, reused while it is the latest one asked for. */
+  async block(blockNumber: number) {
+    if (this.blockCache?.number === blockNumber) return this.blockCache.promise;
+    const promise = this.ctx.provider!.getBlock(blockNumber);
+    this.blockCache = { number: blockNumber, promise };
+    promise.then(
+      (block) => {
+        if (!block && this.blockCache?.promise === promise) this.blockCache = undefined;
+      },
+      () => {
+        if (this.blockCache?.promise === promise) this.blockCache = undefined;
+      },
+    );
+    return promise;
   }
 
   /**
@@ -133,16 +166,15 @@ export class ChainReader {
         blockNumber: 0,
         blockTimestamp: unixSeconds(),
       };
-    const blockNumber = await this.blockNumber(),
-      blockTag = { blockTag: blockNumber };
-    const [block, leaderEpoch, signerSetVersion, policyVersion, paused, resolutionRequired] =
+    const blockNumber = await this.blockNumber();
+    const [block, [leaderEpoch, signerSetVersion, policyVersion, paused, resolutionRequired]] =
       await Promise.all([
-        provider.getBlock(blockNumber),
-        clearing.leaderEpoch(blockTag),
-        clearing.signerSetVersion(blockTag),
-        clearing.policyVersion(blockTag),
-        clearing.paused(blockTag),
-        clearing.resolutionRequired(blockTag),
+        this.block(blockNumber),
+        readViews(
+          clearing,
+          [["leaderEpoch"], ["signerSetVersion"], ["policyVersion"], ["paused"], ["resolutionRequired"]],
+          blockNumber,
+        ) as Promise<[bigint, bigint, bigint, boolean, boolean]>,
       ]);
     if (!block || paused || resolutionRequired) throw new Error("market is paused");
     return {
@@ -187,13 +219,14 @@ export class ChainReader {
             ...indexes.flatMap((index): ViewCall[] => [
               ["markets", index],
               ["marketLimits", index],
+              ["exposure", index],
             ]),
           ],
           blockNumber,
         );
         return { indexes, values };
       };
-      let [block, { indexes, values }] = await Promise.all([provider.getBlock(blockNumber), read()]);
+      let [block, { indexes, values }] = await Promise.all([this.block(blockNumber), read()]);
       const count = Number(values[0]);
       if (count !== indexes.length) {
         await marketRegistry.ensureCount(count);
@@ -204,8 +237,9 @@ export class ChainReader {
       return {
         blockNumber,
         block,
-        markets: indexes.map((_, i) => perMarket[i * 2]),
-        limitWords: indexes.map((_, i) => toLimitWord(perMarket[i * 2 + 1] as never)),
+        markets: indexes.map((_, i) => perMarket[i * 3]),
+        limitWords: indexes.map((_, i) => toLimitWord(perMarket[i * 3 + 1] as never)),
+        books: indexes.map((_, i) => perMarket[i * 3 + 2]),
         leaderEpoch,
         signerSetVersion,
         policyVersion,

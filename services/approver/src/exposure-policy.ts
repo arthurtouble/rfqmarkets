@@ -88,6 +88,11 @@ export function checkExposure(input: {
   approval: MakerApproval;
 }): Rejection | undefined {
   const { snapshot, intent } = input;
+  // The trade settles in a block no older than its verified price (the oracle refuses a report observed after
+  // the block), so it is judged at the later of this approver's head and that observation: a head a block or
+  // two behind the report must not read the fresh price as from the future.
+  const priceTime = input.markets[input.market]?.lastPriceTime ?? 0n,
+    timestamp = BigInt(snapshot.blockTimestamp) > priceTime ? BigInt(snapshot.blockTimestamp) : priceTime;
   const admission = exposureAdmission({
     markets: input.markets,
     books: snapshot.books,
@@ -96,7 +101,7 @@ export function checkExposure(input: {
     position: snapshot.position,
     delta: intent.baseDelta,
     executionPrice: input.approval.executionPrice,
-    timestamp: BigInt(snapshot.blockTimestamp),
+    timestamp,
     backing: snapshot.backing,
   });
   if (!admission.allowed)
