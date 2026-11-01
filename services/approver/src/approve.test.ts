@@ -143,7 +143,7 @@ test("chain mode maps each chain-state rejection", async () => {
     [(s) => (s.blockTimestamp += 40), "chain-time expiry rejected"],
     [(s) => (s.markets[0].enabled = false), "market disabled"],
     [(s) => (s.blockTimestamp += 9), "chain-time oracle rejected"],
-    [(s) => (s.backing = 0n), "independent exposure check rejected"],
+    [(s) => (s.backing = 0n), "independent outstanding gross, net, stress or capital capacity exceeded"],
   ];
   for (const [mutate, error] of cases) {
     const state = chainState(fixture.nowMs);

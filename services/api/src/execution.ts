@@ -733,7 +733,7 @@ export class ExecutionService {
       makerDebit: 2n * BigInt(quote.notional),
     };
     if (grossSnapshot) {
-      const { blockNumber, blockTimestamp, books, states, position, netLimits, backing, floor, clock } =
+      const { blockNumber, blockTimestamp, books, states, position, netLimits, backing, clock } =
         grossSnapshot;
       if (clock) this.finalizeReservations(clock.block, clock.timestamp, clock.hash);
       if (intent.market >= states.length) return Reply.error(409, "unknown market");
@@ -780,7 +780,6 @@ export class ExecutionService {
           net,
           netLimits,
           backing,
-          floor,
         })
       )
         return Reply.error(409, "outstanding approvals exceed gross, net, stress, side or capital capacity", {

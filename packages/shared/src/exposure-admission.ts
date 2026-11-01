@@ -110,9 +110,8 @@ export function exposureAdmission(input: {
   executionPrice: bigint;
   timestamp: bigint;
   backing: bigint;
-  floor: bigint;
 }) {
-  const { markets, books, netLimits, market, position, delta, executionPrice, timestamp, floor } = input,
+  const { markets, books, netLimits, market, position, delta, executionPrice, timestamp } = input,
     previous = position.size,
     next = previous + delta,
     reduction = isPositionReduction(previous, delta);
@@ -142,7 +141,7 @@ export function exposureAdmission(input: {
     pnl = positionPnl(previous < 0n ? -closed : closed, position.entryPrice, executionPrice);
   backing -= pnl;
   if (backing < 0n) return reject("maker_settlement_incident");
-  if (!reduction && (!selected.enabled || backing < floor)) return reject("maker_capital_or_disabled");
+  if (!reduction && !selected.enabled) return reject("market_disabled");
   const within = (value: bigint, limit: bigint, old: bigint) => value <= limit || (reduction && value <= old),
     oldNet: bigint[] = [],
     newNet: bigint[] = [];
@@ -177,6 +176,5 @@ export function exposureAdmission(input: {
       return reject("gross_or_side_cap");
     if (!within(abs(newNet[i]), high128(netLimits[i]), abs(oldNet[i]))) return reject("net_cap");
   }
-  if (!within(makerStress(...newNet), backing, makerStress(...oldNet))) return reject("maker_stress");
   return { allowed: true, reason: "allowed", reduction };
 }

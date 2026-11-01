@@ -69,7 +69,7 @@ test("an unsigned reservation can be released durably and is not restored", () =
   assert.equal(restored.size, 1);
   database.close();
 });
-test("escaped approvals reserve every net/stress execution subset and maker floor", () => {
+test("escaped approvals reserve every net execution subset; idle maker capital does not gate them", () => {
   const baseBooks = [
       { longBase: 0n, shortBase: 0n, limits: word(100_000_000n) },
       { longBase: 0n, shortBase: 0n, limits: word(100_000_000n) },
@@ -77,7 +77,7 @@ test("escaped approvals reserve every net/stress execution subset and maker floo
     asks: [bigint, bigint] = [100_000_000n, 4_000_000n],
     netLimits: [bigint, bigint] = [word(15_000_000n), word(15_000_000n)];
   const netBook = new GrossReservationBook(),
-    risk = { net: [0n, 0n] as [bigint, bigint], netLimits, backing: 1_000_000_000n, floor: 100_000_000n };
+    risk = { net: [0n, 0n] as [bigint, bigint], netLimits, backing: 1_000_000_000n };
   assert(netBook.admit("one", item(BASE / 10n), baseBooks, asks, 1, risk));
   netBook.reserve("one", item(BASE / 10n));
   assert.equal(
@@ -89,26 +89,22 @@ test("escaped approvals reserve every net/stress execution subset and maker floo
     netBook.admit("opposite", item(-BASE / 10n), baseBooks, asks, 1, risk),
     "opposing optionality remains inside both net extremes",
   );
-  const stressBook = new GrossReservationBook(),
+  const capitalBook = new GrossReservationBook(),
     wide = {
       ...risk,
       netLimits: [word(1_000_000_000n), word(1_000_000_000n)] as [bigint, bigint],
-      backing: 6_000_000n,
-      floor: 1_000_000n,
+      backing: 1n,
     };
-  assert(stressBook.admit("one", item(BASE / 10n), baseBooks, asks, 1, wide));
-  stressBook.reserve("one", item(BASE / 10n));
-  assert.equal(
-    stressBook.admit("two", item(BASE / 10n), baseBooks, asks, 1, wide),
-    false,
-    "a subset can exceed maker stress capacity",
+  assert(capitalBook.admit("one", item(BASE / 10n), baseBooks, asks, 1, wide));
+  capitalBook.reserve("one", item(BASE / 10n));
+  assert(
+    capitalBook.admit("two", item(BASE / 10n), baseBooks, asks, 1, wide),
+    "stress beyond idle maker capital no longer refuses",
   );
   assert.equal(
-    new GrossReservationBook().admit("floor", item(BASE / 100n), baseBooks, asks, 1, {
-      ...wide,
-      backing: 999_999n,
-    }),
+    new GrossReservationBook().admit("payout", item(BASE / 100n, false, 100, 2n), baseBooks, asks, 1, wide),
     false,
+    "a payout the maker cannot cover still refuses",
   );
 });
 test("escaped approvals reserve maker debit even when reduce-only reserves no gross", () => {
@@ -118,7 +114,6 @@ test("escaped approvals reserve maker debit even when reduce-only reserves no gr
       net: [0n, 0n] as [bigint, bigint],
       netLimits: [word(1_000_000_000n), word(1_000_000_000n)] as [bigint, bigint],
       backing: 500_000_000n,
-      floor: 100_000_000n,
     },
     book = new GrossReservationBook();
   assert(book.admit("first", item(BASE / 100n, true, 100, 250_000_000n), [...state], asks, 1, risk));
@@ -126,7 +121,7 @@ test("escaped approvals reserve maker debit even when reduce-only reserves no gr
   assert.equal(book.bounds()[0].shortBase, 0n);
   assert.equal(book.capitalDebit(), 250_000_000n);
   assert.equal(
-    book.admit("second", item(BASE / 100n, false, 100, 200_000_001n), [...state], asks, 1, risk),
+    book.admit("second", item(BASE / 100n, false, 100, 250_000_001n), [...state], asks, 1, risk),
     false,
   );
 });

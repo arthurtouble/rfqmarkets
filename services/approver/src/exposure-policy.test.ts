@@ -81,8 +81,11 @@ test("markedMarkets re-marks only the intent market", async () => {
 test("checkExposure surfaces the model's reason and enforces reduce-only intents", async () => {
   const context = await setup();
   assert.equal(checkExposure(context), undefined);
-  const noBacking: ChainSnapshot = { ...context.snapshot, backing: 0n };
-  const rejection = checkExposure({ ...context, snapshot: noBacking })!;
+  const capped: ChainSnapshot = {
+    ...context.snapshot,
+    books: context.snapshot.books.map((book) => ({ ...book, limits: 1n | (1n << 128n) })),
+  };
+  const rejection = checkExposure({ ...context, snapshot: capped })!;
   assert.equal(rejection.body.error, "independent exposure check rejected");
   assert.ok(rejection.body.reason);
   assert.equal(

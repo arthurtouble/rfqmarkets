@@ -98,7 +98,6 @@ export function checkExposure(input: {
     executionPrice: input.approval.executionPrice,
     timestamp: BigInt(snapshot.blockTimestamp),
     backing: snapshot.backing,
-    floor: snapshot.floor,
   });
   if (!admission.allowed)
     return reject("independent exposure check rejected", 409, { reason: admission.reason });
@@ -162,7 +161,6 @@ export function buildGrossContext(input: {
       net: markets.map((item) => marketNotional(item)),
       netLimits: snapshot.limitWords,
       backing: snapshot.backing,
-      floor: snapshot.floor,
     },
   };
 }

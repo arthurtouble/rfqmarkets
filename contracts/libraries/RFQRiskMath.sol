@@ -27,33 +27,29 @@ library RFQRiskMath {
     // =======================================================================
 
     /// @notice Canonical on-chain exposure admission for a trade at `price`.
-    /// @dev Checks the capital floor, gross/side/net caps per market and stress loss <= backing.
-    /// A reduction may proceed above a cap as long as it does not make that metric worse.
-    /// @return stressAfter The portfolio stress loss once the trade is applied.
+    /// @dev Checks gross/side/net caps per market. A reduction may proceed above a cap as long as it does not
+    /// make that metric worse. Idle maker backing does not gate trading: the per-market caps bound the risk,
+    /// and the maker is topped up from outside as customers win. A gain the maker cannot pay still starts
+    /// resolution in the ledger.
+    /// @return stressAfter The portfolio stress loss once the trade is applied (it sizes the markup share).
     function checkExposureTrade(TradeIntent memory intent, uint256 price) public view returns (uint256 stressAfter) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         Position storage position = $.accounts[intent.account].positions[intent.market];
         int256 previous = position.size;
         int256 next = previous + intent.baseDelta;
 
-        // Maker backing after this trade's realized PnL. If the maker cannot pay, the clearing contract
-        // enters resolution instead of applying the trade, so there is nothing left to check here.
-        uint256 backing = $.makerBacking;
+        // If the maker cannot pay this trade's realized gain, the clearing contract enters resolution instead
+        // of applying the trade, so there is nothing left to check here.
         (,, int256 pnl) = positionTransition(previous, position.entryPrice, intent.baseDelta, price);
-        if (pnl > 0) {
-            if (uint256(pnl) > backing) return 0;
-            backing -= uint256(pnl);
-        } else {
-            backing += abs(pnl);
-        }
+        if (pnl > 0 && uint256(pnl) > $.makerBacking) return 0;
 
         bool reduction = isReduction(previous, next);
         if (!reduction) {
             if (!$.markets[intent.market].enabled) revert MarketDisabled();
-            if (backing < $.baseRiskCapitalTarget) revert Margin();
+            // No new exposure while the maker could not pay out today (a maker incident).
+            if (makerIncident()) revert Margin();
         }
 
-        uint256 stressBefore;
         uint8 count = $.marketCount;
         for (uint8 i; i < count; ++i) {
             Market storage market = $.markets[i];
@@ -69,9 +65,7 @@ library RFQRiskMath {
             int256 delta = i == intent.market ? intent.baseDelta : int256(0);
             int256 skewBefore = market.aggregateBase * int256(mark) / int256(BASE_UNIT);
             int256 skewAfter = (market.aggregateBase + delta) * int256(mark) / int256(BASE_UNIT);
-            uint16 shock = $.marketParams[i].shockBps;
-            stressBefore += stressContribution(skewBefore, shock);
-            stressAfter += stressContribution(skewAfter, shock);
+            stressAfter += stressContribution(skewAfter, $.marketParams[i].shockBps);
 
             uint256 ask = market.lastAsk;
             uint256 grossBefore = (longs + shorts) * ask / BASE_UNIT;
@@ -84,7 +78,6 @@ library RFQRiskMath {
             enforceLimit(shorts * ask / BASE_UNIT, book.sideLimit, shortBefore, reduction);
             enforceLimit(abs(skewAfter), $.limits[i].maxMarketNotional, abs(skewBefore), reduction);
         }
-        enforceLimit(stressAfter, backing, stressBefore, reduction);
     }
 
     /// @notice Checks per-trade and session limits and the on-chain inventory-impact price floor.
@@ -188,8 +181,9 @@ library RFQRiskMath {
         return gain > 0 ? uint256(gain) : 0;
     }
 
-    /// @notice True when customers hold open exposure and maker backing is below the opening floor or
-    /// cannot cover the stress loss.
+    /// @notice True when customers hold open exposure and maker backing cannot cover what the maker would
+    /// owe if every customer closed at mid now. Backing below the floor or the stress loss is not an
+    /// incident: only a maker that could not pay out today is.
     function makerIncident() public view returns (bool) {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         uint256 gross;
@@ -198,7 +192,7 @@ library RFQRiskMath {
             gross += $.exposure[i].longBase + $.exposure[i].shortBase;
         }
         if (gross == 0) return false;
-        return $.makerBacking < $.baseRiskCapitalTarget || portfolioStress() > $.makerBacking;
+        return customerUnrealizedGain() > $.makerBacking;
     }
 
     // =======================================================================

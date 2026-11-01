@@ -1,5 +1,5 @@
 import { ExpiryIndex } from "./expiry-index.js";
-import { marketStress, type ExposureBook } from "./exposure-admission.js";
+import { type ExposureBook } from "./exposure-admission.js";
 import { MAX_MARKETS, marketRegistry } from "./markets.js";
 import { BASE, abs, high128, low128 } from "./numeric.js";
 
@@ -17,7 +17,6 @@ export interface GrossRiskContext {
   net: readonly bigint[];
   netLimits: readonly bigint[];
   backing: bigint;
-  floor: bigint;
 }
 export function assertGrossReservation(input: GrossReservation) {
   if (
@@ -185,22 +184,18 @@ export class GrossReservationBook {
     }
     if (risk) {
       const available = risk.backing - this.capitalDebit(id) - item.makerDebit;
-      if (available < risk.floor) return this.refuse("maker capital at its floor");
+      // Idle maker capital does not gate trading (the per-market caps do), but approvals must not promise
+      // more than the maker can pay out: a gain it cannot pay starts resolution on chain.
+      if (available < 0n) return this.refuse("maker capital cannot cover pending payouts");
       const low = [...risk.net],
         high = [...risk.net];
-      let stress = 0n;
       for (let market = 0; market < books.length; market++) {
         low[market] -= (totals[market].shortBase * asks[market]) / BASE;
         high[market] += (totals[market].longBase * asks[market]) / BASE;
         const cap = high128(risk.netLimits[market]);
         if (abs(low[market]) > cap || abs(high[market]) > cap)
           return this.refuse(`net limit in market ${market}`);
-        // Stress is a sum of per-market terms, so the worst execution subset takes each market's worse extreme.
-        const lowStress = marketStress(low[market], market),
-          highStress = marketStress(high[market], market);
-        stress += lowStress > highStress ? lowStress : highStress;
       }
-      if (stress > available) return this.refuse("stress above maker capital");
     }
     return true;
   }

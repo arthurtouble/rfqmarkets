@@ -40,7 +40,6 @@ function fixture() {
     executionPrice: 100_000_000_000n,
     timestamp: 100n,
     backing: 100_000_000_000n,
-    floor: 100_000_000_000n,
   };
 }
 test("independent exposure model rejects netting bypasses, stale gross and incomplete migration", () => {
@@ -74,25 +73,23 @@ test("tightened caps permit improvements and disabled markets permit safe owner 
   assert.equal(exposureAdmission(input).allowed, true);
   assert.equal(isPositionReduction(BASE / 10n, -BASE / 5n), false, "crossing through zero is an opening");
 });
-test("capital floor includes funding and realized PnL rather than fee-funded prospective capital", () => {
+test("idle maker capital does not gate trades; only a gain the maker cannot pay does", () => {
   const input = fixture();
   input.books[0].limits = word(max);
-  input.backing -= 1n;
-  assert.equal(exposureAdmission(input).reason, "maker_capital_or_disabled");
-  input.backing = input.floor;
+  input.backing = 1n;
+  assert.equal(exposureAdmission(input).allowed, true, "an opening trade does not need idle maker capital");
+  input.markets[0].enabled = false;
+  assert.equal(exposureAdmission(input).reason, "market_disabled");
+  input.markets[0].enabled = true;
   input.position = { size: BASE / 10n, entryPrice: 90_000_000_000n, lastFundingIndex: 0n };
-  input.delta = -BASE / 5n;
-  assert.equal(
-    exposureAdmission(input).reason,
-    "maker_capital_or_disabled",
-    "crossing trade must include realized winner debit",
-  );
   input.delta = -BASE / 10n;
   assert.equal(
-    exposureAdmission(input).allowed,
-    true,
-    "closing a funded winner may cross the opening capital floor",
+    exposureAdmission(input).reason,
+    "maker_settlement_incident",
+    "a realized gain larger than maker backing cannot be paid",
   );
+  input.backing = 1_000_000_000n;
+  assert.equal(exposureAdmission(input).allowed, true, "a gain the maker can pay is admitted");
 });
 test("stress sums each market leg rounded up, independent of sign", () => {
   assert.equal(makerStress(0n, 0n), 0n);
