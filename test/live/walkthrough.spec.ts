@@ -170,6 +170,84 @@ test("simple mode opens a Long, takes a TP/SL from Pro's positions panel, and ca
   await page.screenshot({ path: test.info().outputPath("simple-cashed-out.png") });
 });
 
+async function btcMid() {
+  const response = await fetch(
+    `${process.env.RFQ_LIVE_URL ?? "https://dev.rfq-markets.workers.dev"}/v1/markets`,
+  );
+  const { markets } = (await response.json()) as { markets: Record<string, { mid: string }> };
+  return Number(markets.BTC.mid) / 1e6;
+}
+
+test("Pro: a market Long, TP/SL on it, a limit order placed and cancelled, then the position closes", async ({
+  page,
+}) => {
+  test.skip((await venueCollateral()) < 12_000_000n, "the venue holds under $12");
+  await page.goto("/trade/BTC");
+  await connect(page);
+  const ticket = page.getByRole("region", { name: "Order ticket" });
+  const submit = ticket.getByRole("button", { name: /^(Long|Short|Limit) BTC · / });
+  // A run that stopped midway leaves a cross BTC position: close it first.
+  const leftOver = page.getByRole("button", { name: /^Close BTC (long|short)$/ }).first();
+  if (await leftOver.isVisible().catch(() => false)) {
+    const name = (await leftOver.getAttribute("aria-label")) ?? (await leftOver.innerText());
+    await leftOver.click();
+    await page.getByRole("dialog", { name }).getByRole("button", { name }).click();
+    await expect(page.getByText("BTC position closed", { exact: true }).first()).toBeVisible({
+      timeout: 90_000,
+    });
+  }
+
+  // Market Long.
+  await ticket.getByLabel("Position size in USDC").fill("20");
+  await ticket
+    .getByRole("group", { name: "Leverage" })
+    .getByRole("button", { name: "2×", exact: true })
+    .click();
+  await expect(submit).toHaveText("Long BTC · $20 at 2×");
+  await submit.click();
+  await expect(notifications(page)).toContainText("Long BTC $20.00 filled", { timeout: 90_000 });
+  await expect(page.getByRole("button", { name: "Close BTC long" }).first()).toBeVisible({ timeout: 30_000 });
+  await page.screenshot({ path: test.info().outputPath("pro-open.png") });
+
+  // TP/SL on the position.
+  await page.getByRole("button", { name: "Set BTC take-profit and stop-loss" }).first().click();
+  const tpsl = page.getByRole("dialog");
+  await expect(tpsl.getByRole("heading", { name: "TP/SL for BTC long" })).toBeVisible();
+  await tpsl.getByRole("button", { name: "+5%", exact: true }).click();
+  await tpsl.getByRole("button", { name: "−2%", exact: true }).click();
+  await tpsl.getByRole("button", { name: "Set TP/SL" }).click();
+  await expect(page.getByText(/BTC take-profit and stop-loss set/).first()).toBeVisible({ timeout: 90_000 });
+
+  // A limit buy well below the market rests, then is cancelled.
+  await ticket
+    .getByRole("group", { name: "Order type" })
+    .getByRole("button", { name: "Limit", exact: true })
+    .click();
+  await ticket.getByLabel("Position size in USDC").fill("20");
+  await ticket.getByLabel(/Limit price/).fill(String(Math.round((await btcMid()) * 0.8)));
+  await expect(ticket.getByText("Fills when the price reaches your limit")).toBeVisible();
+  await submit.click();
+  await expect(page.getByText(/limit open/i).first()).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("tab", { name: /Orders/ }).click();
+  await page.screenshot({ path: test.info().outputPath("pro-orders.png") });
+  // The limit is the order without a trigger arrow; cancel it from its row.
+  const limitRow = page.getByRole("row").filter({ hasText: /Limit/ }).first();
+  await limitRow.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByText(/Order cancelled/).first()).toBeVisible({ timeout: 60_000 });
+
+  // Close the position; its TP/SL goes with it.
+  await page.getByRole("tab", { name: /Positions/ }).click();
+  await page.getByRole("button", { name: "Close BTC long" }).first().click();
+  await page
+    .getByRole("dialog", { name: "Close BTC long" })
+    .getByRole("button", { name: "Close BTC long" })
+    .click();
+  await expect(page.getByText("BTC position closed", { exact: true }).first()).toBeVisible({
+    timeout: 90_000,
+  });
+  await page.screenshot({ path: test.info().outputPath("pro-closed.png") });
+});
+
 test("withdraw sends USDC from the venue back to the wallet", async ({ page }) => {
   test.skip((await venueCollateral()) < 3_000_000n, "the venue holds under $3");
   const before = await walletUsdc();

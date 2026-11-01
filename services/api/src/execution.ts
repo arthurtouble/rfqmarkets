@@ -50,6 +50,9 @@ import { archiveApiCommitments } from "./recovery.js";
 import { approvalRequestSchema, intentRequestSchema, type ApprovalRequest } from "./schemas.js";
 import { afterSettlement, settlementEvent } from "./settlement-event.js";
 
+/** Reads of a fresh one-tap grant at the latest block before a session signature is refused. */
+const SESSION_READ_RETRIES = 3,
+  SESSION_READ_RETRY_MS = 1_000;
 /** The wallet signs a short execution interval; oracle proof freshness is bound separately at approval. */
 const INTENT_EXECUTION_WINDOW_SECONDS = 30;
 /** Maker approvals never outlive this many seconds past the block they were priced at. */
@@ -367,10 +370,16 @@ export class ExecutionService {
       )
         return true;
       if (!clearing || !signer) return false;
-      const session = await clearing.sessions(
+      let session = await clearing.sessions(
         signer,
         blockNumber === undefined ? {} : { blockTag: blockNumber },
       );
+      // A key granted a moment ago (Start trading, then the first trade at once) postdates the quote's block, or
+      // the RPC node answering: read the grant at the latest block, briefly, before refusing the signature.
+      for (let attempt = 0; attempt < SESSION_READ_RETRIES && BigInt(session.account) === 0n; attempt++) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, SESSION_READ_RETRY_MS));
+        session = await clearing.sessions(signer, {});
+      }
       return (
         getAddress(session.account) === owner &&
         BigInt(session.validUntil) >= intent.deadline &&
