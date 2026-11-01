@@ -14,6 +14,7 @@ class DeterministicProvider {
   broadcasts: string[] = [];
   receipts = new Map<string, Receipt>();
   receiptReads: string[] = [];
+  calls = 0;
   failBeforeAccept = false;
   failAfterAccept = false;
   revertNext = false;
@@ -24,6 +25,7 @@ class DeterministicProvider {
     return { gasPrice: null, maxFeePerGas: 2_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n };
   }
   async send(method: string, params: unknown[]) {
+    this.calls++;
     if (method === "eth_getTransactionCount")
       return `0x${(params[1] === "latest" ? this.minedNonce : this.pendingNonce).toString(16)}`;
     if (method === "eth_getTransactionReceipt") {
@@ -106,6 +108,9 @@ test("an included receipt is read again at most once per includedRecheckMs until
   await sender.reconcile();
   await sender.reconcile();
   assert.equal(reads(), afterFirst, "no receipt reads within the recheck window");
+  const before = provider.calls;
+  await sender.reconcile({ idle: "skip" });
+  assert.equal(provider.calls, before, "an idle pass with nothing due makes no RPC call at all");
 });
 
 test("canonical revert is durable, unblocks later nonces and remains reorg-sensitive", async () => {

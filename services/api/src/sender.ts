@@ -32,6 +32,8 @@ export const UNRESOLVED_SENDER_STATUSES: readonly SenderStatus[] = [
 ];
 /** How often an ambiguous operation at an already consumed nonce has its receipts re-read. */
 const AMBIGUOUS_RECHECK_MS = 10 * 60_000;
+/** Default includedRecheckMs: Base has not reorged a sequenced block, so a few checks before finality suffice. */
+const INCLUDED_RECHECK_MS = 5 * 60_000;
 const UNRESOLVED_SQL = UNRESOLVED_SENDER_STATUSES.map((status) => `'${status}'`).join(",");
 
 class CanonicalRevert extends Error {
@@ -45,7 +47,7 @@ export interface SenderOptions {
   pollMs?: number;
   /**
    * How often an included transaction's receipt is read again to catch a reorg until its block is finalized
-   * (Base takes ~15 min). Default 60 s; 0 reads it on every reconciliation pass.
+   * (Base takes ~15 min). Default 5 min; 0 reads it on every reconciliation pass.
    */
   includedRecheckMs?: number;
   maxReplacements?: number;
@@ -120,12 +122,15 @@ export class DurableSender {
    * (the only rows a reorg can still change). Operations at or below the finalized block are
    * terminal and are never read again, so the cost is bounded by the finality window, not history.
    */
-  /** With `idle: "skip"`, returns without any RPC read when no transaction awaits reconciliation. */
+  /**
+   * With `idle: "skip"`, returns without any RPC read when no transaction awaits reconciliation, or when every
+   * one is waiting out its recheck window.
+   */
   reconcile(options: { idle?: "skip" } = {}) {
     return this.serialize(() =>
       options.idle === "skip" && this.database && !this.reconcileCandidates().length
         ? Promise.resolve()
-        : this.reconcileLocked(),
+        : this.reconcileLocked(options.idle === "skip"),
     );
   }
 
@@ -562,8 +567,25 @@ export class DurableSender {
     }
   }
 
-  private async reconcileLocked() {
+  private async reconcileLocked(skipWhenNothingDue = false) {
     if (!this.database) return;
+    // Nothing due means no RPC at all: recent trades waiting out their recheck window used to cost a nonce
+    // read and a finality read every pass (two calls every 5 s, all day after any trade).
+    {
+      const now = Date.now(),
+        includedRecheckMs = this.options.includedRecheckMs ?? INCLUDED_RECHECK_MS;
+      const waiting = (row: StoredTransaction) => {
+        if (row.status === "included" || row.status === "reverted") {
+          const checked = this.includedCheckedAt.get(row.operation_id);
+          return includedRecheckMs > 0 && checked !== undefined && now - checked < includedRecheckMs;
+        }
+        // Only an ambiguous row at a consumed nonce is ever stamped, and a consumed nonce stays consumed.
+        const checked =
+          row.status === "ambiguous" ? this.ambiguousCheckedAt.get(row.operation_id) : undefined;
+        return checked !== undefined && now - checked < AMBIGUOUS_RECHECK_MS;
+      };
+      if (skipWhenNothingDue && this.reconcileCandidates().every(waiting)) return;
+    }
     // Read the mined nonce before any receipt: a nonce below it was consumed before the receipt
     // reads, so "no receipt for any attempt" then really means another transaction consumed it.
     const mined = Number(
@@ -580,7 +602,7 @@ export class DurableSender {
     const now = Date.now();
     // An included transaction is re-read only to catch a reorg until finality; every pass for each recent trade
     // was most of the API's RPC load, enough for a rate-limited plan to refuse the reads trades need.
-    const includedRecheckMs = this.options.includedRecheckMs ?? 60_000;
+    const includedRecheckMs = this.options.includedRecheckMs ?? INCLUDED_RECHECK_MS;
     const candidates = new Set(rows.map((row) => row.operation_id));
     for (const id of this.includedCheckedAt.keys())
       if (!candidates.has(id)) this.includedCheckedAt.delete(id);
