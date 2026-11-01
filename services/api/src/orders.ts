@@ -20,6 +20,7 @@ import {
   triggeredFillDelta,
   type TriggerKind,
 } from "../../../packages/shared/src/trigger.js";
+import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import { ExpiryIndex } from "./bounded-state.js";
 import type { ChainReader } from "./chain.js";
 import type { ApiContext } from "./context.js";
@@ -520,24 +521,39 @@ export class LimitOrders {
     const { clearing } = this.ctx;
     if (!clearing || this.positionSweeps.size === 0) return;
     const keys = [...this.positionSweeps].slice(0, MAX_POSITION_SWEEP);
-    for (const key of keys) {
-      this.positionSweeps.delete(key);
-      const [account, market] = key.split(":") as [string, Market];
-      const affected = this.ordersOf(account).filter(
-        (order) =>
-          order.trigger && order.intent.reduceOnly && order.status === "open" && order.market === market,
-      );
-      if (!affected.length) continue;
-      let size: bigint;
-      try {
-        size = BigInt((await clearing.positionOf(account, marketIndex(market))).size);
-      } catch {
-        this.positionSweeps.add(key);
-        continue;
-      }
-      for (const order of affected)
-        if (!reducible(size, order.intent.baseDelta)) this.cancelOffChain(order, POSITION_CLOSED_NOTE);
+    for (const key of keys) this.positionSweeps.delete(key);
+    const due = keys
+      .map((key) => {
+        const [account, market] = key.split(":") as [string, Market];
+        const affected = this.ordersOf(account).filter(
+          (order) =>
+            order.trigger && order.intent.reduceOnly && order.status === "open" && order.market === market,
+        );
+        return { key, account, market, affected };
+      })
+      .filter(({ affected }) => affected.length);
+    if (!due.length) return;
+    // One batched read for every position (this sweep runs every 30 s while any TP/SL rests).
+    let sizes: bigint[];
+    try {
+      const positions =
+        typeof (clearing as { getFunction?: unknown }).getFunction === "function"
+          ? await readViews(
+              clearing as never,
+              due.map(({ account, market }): ViewCall => ["positionOf", account, marketIndex(market)]),
+            )
+          : await Promise.all(
+              due.map(({ account, market }) => clearing.positionOf(account, marketIndex(market))),
+            );
+      sizes = positions.map((position) => BigInt((position as { size: bigint }).size));
+    } catch {
+      for (const { key } of due) this.positionSweeps.add(key);
+      return;
     }
+    for (const [index, { affected }] of due.entries())
+      for (const order of affected)
+        if (!reducible(sizes[index], order.intent.baseDelta))
+          this.cancelOffChain(order, POSITION_CLOSED_NOTE);
   }
 
   private cancelOffChain(order: RestingOrder, note: string) {
