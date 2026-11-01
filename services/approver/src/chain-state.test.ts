@@ -115,13 +115,14 @@ test("session grants are found newest first in bounded ranges and remembered per
     return granter === account ? grants.filter((grant) => grant.block >= from && grant.block <= to) : [];
   });
   assert.equal(await latest(account, 21_500), first);
-  // Newest first, at most 1,000 blocks a call and 16 calls at once, stopping at the wave holding the grant.
-  assert.equal(ranges.length, 16);
+  // Newest first, at most 1,000 blocks a call, in waves of 1, 4 then 16 calls, stopping at the wave holding
+  // the grant.
+  assert.equal(ranges.length, 5);
   assert.deepEqual(ranges.slice(0, 2), [
     [20_501, 21_500],
     [19_501, 20_500],
   ]);
-  assert.deepEqual(ranges.at(-1), [5_501, 6_500]);
+  assert.deepEqual(ranges.at(-1), [16_501, 17_500]);
   ranges.length = 0;
   assert.equal(await latest(account, 21_510), first);
   assert.deepEqual(ranges, [[21_501, 21_510]]);

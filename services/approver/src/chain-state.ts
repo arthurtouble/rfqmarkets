@@ -99,9 +99,12 @@ export function sessionGrantTracker(
       cached = known.get(account),
       usable = cached && cached.through >= floor && cached.through <= toBlock ? cached : undefined;
     let found: GrantLog | undefined;
-    for (let end = toBlock, from = usable ? usable.through + 1 : floor; end >= from && !found;) {
-      const ranges: Array<[number, number]> = [];
-      for (; end >= from && ranges.length < GRANT_LOG_PARALLEL; end -= GRANT_LOG_CHUNK)
+    // Waves grow 1, 4, 16 ranges: a key granted moments ago (the usual case) is in the newest range, and a
+    // burst of 16 parallel log reads per approver is what rate-limited RPCs refuse.
+    for (let end = toBlock, from = usable ? usable.through + 1 : floor, wave = 1; end >= from && !found; wave *= 4) {
+      const ranges: Array<[number, number]> = [],
+        width = Math.min(wave, GRANT_LOG_PARALLEL);
+      for (; end >= from && ranges.length < width; end -= GRANT_LOG_CHUNK)
         ranges.push([Math.max(from, end - GRANT_LOG_CHUNK + 1), end]);
       // Newest range first, so the first range with a grant holds the newest one.
       const waves = await Promise.all(ranges.map(([start, stop]) => grantsOf(account, start, stop)));
