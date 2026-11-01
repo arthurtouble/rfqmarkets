@@ -132,7 +132,27 @@ export class RFQDevRuntime extends Container {
   /** Cron: keeps the runtime up (the indexer and hedger must run between requests) and saves journals. */
   async tick() {
     const ready = await this.ensureRunning();
+    if (ready.ready) await this.forwardLogs().catch(() => undefined);
     return { ...ready, ...(ready.ready ? await this.snapshot() : {}) };
+  }
+
+  /** Container output never reaches Workers Logs by itself: copy the lines printed since the last tick. */
+  async forwardLogs() {
+    let after = (await this.ctx.storage.get("log-cursor")) ?? -1;
+    const read = async () => {
+      const response = await this.containerFetch(control(`/control/logs?after=${after}`), CONTROL);
+      return response.status === 200 ? response.json() : null;
+    };
+    let page = await read();
+    // A restarted container numbers its lines from zero again.
+    if (page && page.last < after) {
+      after = -1;
+      page = await read();
+    }
+    if (!page?.lines.length) return;
+    const { lines } = page;
+    for (const line of lines) console.log(`runtime: ${line.text}`);
+    await this.ctx.storage.put("log-cursor", lines[lines.length - 1].seq);
   }
 
   async fetch(request) {
