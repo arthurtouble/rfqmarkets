@@ -124,6 +124,15 @@ test("simple mode opens a Long, takes a TP/SL from Pro's positions panel, and ca
   test.skip((await venueCollateral()) < 12_000_000n, "the venue holds under $12");
   await page.goto("/updown/BTC");
   await connect(page);
+  // A run that stopped midway leaves its trade open, and simple mode holds one trade per market.
+  const leftOver = page.getByRole("region", { name: "Your trade" });
+  // The account loads after the page: give a left-over trade time to appear.
+  await leftOver.waitFor({ timeout: 20_000 }).catch(() => undefined);
+  if (await leftOver.isVisible()) {
+    await leftOver.getByRole("button", { name: /^Cash out/ }).click();
+    await expect(page.getByRole("region", { name: "Cashed out" })).toBeVisible({ timeout: 90_000 });
+    await page.goto("/updown/BTC");
+  }
   const newBet = page.getByRole("region", { name: "New trade" });
   await newBet.getByRole("textbox", { name: "Position size in USDC" }).fill("20");
   await newBet
