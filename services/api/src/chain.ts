@@ -42,6 +42,9 @@ export type ChainMarketState = {
   enabled: boolean;
 };
 
+/** How long a head block number is reused (see ChainReader.blockNumber). */
+const BLOCK_NUMBER_CACHE_MS = 500;
+
 export type QuoteSnapshot = {
   blockNumber: number;
   block: Block | null;
@@ -62,6 +65,8 @@ export class ChainReader {
   private quoteSnapshotCache:
     { at: number; blockNumber: number; promise: Promise<QuoteSnapshot> } | undefined;
   private marginScaleCache: { at: number; promise: Promise<Record<Market, number>> } | undefined;
+  private blockNumberCache: { at: number; promise: Promise<number> } | undefined;
+  private blockCache: { number: number; promise: Promise<Block | null> } | undefined;
 
   constructor(private readonly ctx: ApiContext) {}
 
@@ -69,8 +74,39 @@ export class ChainReader {
     this.quoteSnapshotCache = undefined;
   }
 
-  async blockNumber() {
-    return Number(BigInt(await this.ctx.provider!.send("eth_blockNumber", [])));
+  /**
+   * The head block number. Concurrent callers share one request and an answer is reused for 500 ms (a Base
+   * block is 2 s): a trade's quote, admission and approval each asked separately, in bursts a rate-limited
+   * RPC refused. `maxAgeMs` 0 asks the RPC now (admission, which must see a margin move that just landed).
+   */
+  async blockNumber(maxAgeMs = BLOCK_NUMBER_CACHE_MS) {
+    const now = Date.now();
+    if (this.blockNumberCache && now - this.blockNumberCache.at < maxAgeMs)
+      return this.blockNumberCache.promise;
+    const promise = this.ctx
+      .provider!.send("eth_blockNumber", [])
+      .then((value: string) => Number(BigInt(value)));
+    this.blockNumberCache = { at: now, promise };
+    promise.catch(() => {
+      if (this.blockNumberCache?.promise === promise) this.blockNumberCache = undefined;
+    });
+    return promise;
+  }
+
+  /** A block header by number, reused while it is the latest one asked for. */
+  async block(blockNumber: number) {
+    if (this.blockCache?.number === blockNumber) return this.blockCache.promise;
+    const promise = this.ctx.provider!.getBlock(blockNumber);
+    this.blockCache = { number: blockNumber, promise };
+    promise.then(
+      (block) => {
+        if (!block && this.blockCache?.promise === promise) this.blockCache = undefined;
+      },
+      () => {
+        if (this.blockCache?.promise === promise) this.blockCache = undefined;
+      },
+    );
+    return promise;
   }
 
   /**
@@ -135,16 +171,15 @@ export class ChainReader {
         blockNumber: 0,
         blockTimestamp: unixSeconds(),
       };
-    const blockNumber = await this.blockNumber(),
-      blockTag = { blockTag: blockNumber };
-    const [block, leaderEpoch, signerSetVersion, policyVersion, paused, resolutionRequired] =
+    const blockNumber = await this.blockNumber();
+    const [block, [leaderEpoch, signerSetVersion, policyVersion, paused, resolutionRequired]] =
       await Promise.all([
-        provider.getBlock(blockNumber),
-        clearing.leaderEpoch(blockTag),
-        clearing.signerSetVersion(blockTag),
-        clearing.policyVersion(blockTag),
-        clearing.paused(blockTag),
-        clearing.resolutionRequired(blockTag),
+        this.block(blockNumber),
+        readViews(
+          clearing,
+          [["leaderEpoch"], ["signerSetVersion"], ["policyVersion"], ["paused"], ["resolutionRequired"]],
+          blockNumber,
+        ) as Promise<[bigint, bigint, bigint, boolean, boolean]>,
       ]);
     if (!block || paused || resolutionRequired) throw new Error("market is paused");
     return {
@@ -196,7 +231,7 @@ export class ChainReader {
         );
         return { indexes, values };
       };
-      let [block, { indexes, values }] = await Promise.all([provider.getBlock(blockNumber), read()]);
+      let [block, { indexes, values }] = await Promise.all([this.block(blockNumber), read()]);
       const count = Number(values[0]);
       if (count !== indexes.length) {
         await marketRegistry.ensureCount(count);
