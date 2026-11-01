@@ -42,9 +42,6 @@ export type ChainMarketState = {
   enabled: boolean;
 };
 
-/** How long a head block number is reused (see ChainReader.blockNumber). */
-const BLOCK_NUMBER_CACHE_MS = 500;
-
 export type QuoteSnapshot = {
   blockNumber: number;
   block: Block | null;
@@ -65,7 +62,7 @@ export class ChainReader {
   private quoteSnapshotCache:
     { at: number; blockNumber: number; promise: Promise<QuoteSnapshot> } | undefined;
   private marginScaleCache: { at: number; promise: Promise<Record<Market, number>> } | undefined;
-  private blockNumberCache: { at: number; promise: Promise<number> } | undefined;
+  private blockNumberInFlight: Promise<number> | undefined;
   private blockCache: { number: number; promise: Promise<Block | null> } | undefined;
 
   constructor(private readonly ctx: ApiContext) {}
@@ -75,21 +72,19 @@ export class ChainReader {
   }
 
   /**
-   * The head block number. Concurrent callers share one request and an answer is reused for 500 ms (a Base
-   * block is 2 s): a trade's quote, admission and approval each asked separately, in bursts a rate-limited
-   * RPC refused. `maxAgeMs` 0 asks the RPC now (admission, which must see a margin move that just landed).
+   * The head block number. Concurrent callers share one in-flight request (a trade's quote, admission and
+   * approval asked at once, in bursts a rate-limited RPC refused); an answer is never reused once it has
+   * arrived, so a governance change or a margin move that just landed is always seen.
    */
-  async blockNumber(maxAgeMs = BLOCK_NUMBER_CACHE_MS) {
-    const now = Date.now();
-    if (this.blockNumberCache && now - this.blockNumberCache.at < maxAgeMs)
-      return this.blockNumberCache.promise;
+  async blockNumber() {
+    if (this.blockNumberInFlight) return this.blockNumberInFlight;
     const promise = this.ctx
       .provider!.send("eth_blockNumber", [])
-      .then((value: string) => Number(BigInt(value)));
-    this.blockNumberCache = { at: now, promise };
-    promise.catch(() => {
-      if (this.blockNumberCache?.promise === promise) this.blockNumberCache = undefined;
-    });
+      .then((value: string) => Number(BigInt(value)))
+      .finally(() => {
+        if (this.blockNumberInFlight === promise) this.blockNumberInFlight = undefined;
+      });
+    this.blockNumberInFlight = promise;
     return promise;
   }
 

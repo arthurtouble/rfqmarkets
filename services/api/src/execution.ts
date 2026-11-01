@@ -467,8 +467,7 @@ export class ExecutionService {
   private async readGrossSnapshot(intent: TradeIntent): Promise<GrossSnapshot | null> {
     const clearing = this.ctx.clearing!,
       provider = this.ctx.provider!,
-      // Fresh, not the shared head: a Home trade's margin move has just landed and must be in this block.
-      blockNumber = await this.chain.blockNumber(0),
+      blockNumber = await this.chain.blockNumber(),
       block = await this.chain.block(blockNumber);
     if (!block) return null;
     // Gross, net and stress admission covers every market the chain has at this block. Everything is one
