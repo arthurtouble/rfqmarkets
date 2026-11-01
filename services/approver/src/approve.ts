@@ -225,7 +225,8 @@ async function chainChecks(
         snapshot.blockNumber,
         market,
       );
-    } catch {
+    } catch (error) {
+      console.warn("approver oracle verification failed:", String(error).slice(0, 400));
       return reject("oracle report rejected");
     }
     const verified = checkVerifiedObservation(observation, market);
