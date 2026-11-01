@@ -165,6 +165,7 @@ export async function approve(
       if ("status" in result) return result;
       grossContext = result;
     } catch (error) {
+      console.warn("approver chain read failed:", String(error).slice(0, 400));
       return reject("independent chain read unavailable", 503, {
         detail: process.env.NODE_ENV === "test" ? String(error) : undefined,
       });
