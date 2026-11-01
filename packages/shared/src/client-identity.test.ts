@@ -28,3 +28,15 @@ test("malformed or repeated edge headers fall back to the peer", () => {
   assert.equal(client(request("127.0.0.1", "203.0.113.9, 198.51.100.1")), "127.0.0.1");
   assert.equal(client(request("127.0.0.1", ["203.0.113.9", "198.51.100.1"])), "127.0.0.1");
 });
+
+test("behind an edge that is the only ingress, the header keys clients from any peer", () => {
+  const client = clientIdentity({ clientIpHeader: "cf-connecting-ip", trustAnyPeer: true });
+  assert.equal(client(request("10.250.3.7", "203.0.113.9")), "203.0.113.9");
+  assert.equal(client(request("10.250.3.7", "198.51.100.4")), "198.51.100.4");
+  assert.equal(
+    client(request("10.250.3.7", "not-an-ip")),
+    "10.250.3.7",
+    "a malformed header still falls back",
+  );
+  assert.equal(client(request("10.250.3.7")), "10.250.3.7");
+});

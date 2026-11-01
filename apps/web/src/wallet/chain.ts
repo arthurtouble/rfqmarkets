@@ -70,7 +70,8 @@ export function walletConnectors(chain: Chain) {
           name: APP.name,
           description: "Request-for-quote markets on Base",
           url: origin,
-          icons: [],
+          // Shown beside the connect and signing requests in the phone wallet.
+          icons: [`${origin}/icons/icon-192.png`],
         },
       }),
     ),

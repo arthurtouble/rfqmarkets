@@ -249,7 +249,12 @@ test("Pro: a market Long, TP/SL on it, a limit order placed and cancelled, then 
 });
 
 test("withdraw sends USDC from the venue back to the wallet", async ({ page }) => {
-  test.skip((await venueCollateral()) < 3_000_000n, "the venue holds under $3");
+  // RFQ_LIVE_WITHDRAW (whole dollars, default 2) sizes it; withdraw more first to give the deposit step a real amount.
+  const dollars = BigInt(process.env.RFQ_LIVE_WITHDRAW ?? "2");
+  test.skip(
+    (await venueCollateral()) < (dollars + 1n) * 1_000_000n,
+    `the venue holds under $${dollars + 1n}`,
+  );
   const before = await walletUsdc();
   await page.goto("/trade/BTC");
   await connect(page);
@@ -258,8 +263,8 @@ test("withdraw sends USDC from the venue back to the wallet", async ({ page }) =
     .getByRole("button", { name: "Withdraw", exact: true })
     .click();
   const sheet = page.getByRole("dialog", { name: "Withdraw" });
-  await sheet.getByRole("textbox", { name: "Amount in USDC" }).fill("2");
-  await sheet.getByRole("button", { name: "Withdraw $2.00" }).click();
-  await expect(notifications(page).getByText("Withdrew $2.00")).toBeVisible({ timeout: 90_000 });
-  await expect.poll(walletUsdc, { timeout: 60_000 }).toBe(before + 2_000_000n);
+  await sheet.getByRole("textbox", { name: "Amount in USDC" }).fill(String(dollars));
+  await sheet.getByRole("button", { name: `Withdraw $${dollars}.00` }).click();
+  await expect(notifications(page).getByText(`Withdrew $${dollars}.00`)).toBeVisible({ timeout: 90_000 });
+  await expect.poll(walletUsdc, { timeout: 60_000 }).toBe(before + dollars * 1_000_000n);
 });

@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-router";
 import { useIndexerSync } from "./data/queries.js";
 import { useOrderFillAlerts } from "./trade/TriggerOrders.js";
+import { useLiquidationAlerts } from "./positions/liquidation-alerts.js";
 import type { Market } from "./lib/types.js";
 import { RestrictedNotice, TermsDialog, UnavailableHere, useLocationStatus } from "./legal/LegalGate.js";
 import { FundsProvider, useFunds } from "./trade/FundsDialog.js";
@@ -51,6 +52,7 @@ function Shell() {
 function ShellLayout() {
   useIndexerSync();
   useOrderFillAlerts();
+  useLiquidationAlerts();
   const funds = useFunds();
   const trader = useTrader();
   const location = useLocationStatus();

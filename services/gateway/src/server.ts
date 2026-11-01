@@ -34,6 +34,8 @@ export interface GatewayOptions {
   maxConnectionsPerClient?: number;
   /** Edge header keyed for the per-client SSE budget when the peer is loopback or `trustedProxy`. */
   clientIpHeader?: ClientIpHeader;
+  /** Honor `clientIpHeader` from any peer (packages/shared/src/client-identity.ts). */
+  trustAnyPeer?: boolean;
   trustedProxy?: string | string[];
   /** How long one-minute candles of the relayed mid are kept in memory (default seven days). */
   candleRetentionMs?: number;

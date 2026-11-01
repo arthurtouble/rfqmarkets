@@ -82,6 +82,8 @@ export interface IndexerOptions {
    * it every user behind the edge shares one client's stream slots.
    */
   clientIpHeader?: ClientIpHeader;
+  /** Honor `clientIpHeader` from any peer (packages/shared/src/client-identity.ts). */
+  trustAnyPeer?: boolean;
   trustedProxy?: string | string[];
   /** Where sync failures are reported; defaults to stderr. Each distinct failure is logged once. */
   logError?: (message: string, error: unknown) => void;
