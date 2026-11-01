@@ -43,6 +43,11 @@ export interface SenderOptions {
   firstWaitMs?: number;
   replacementWaitMs?: number;
   pollMs?: number;
+  /**
+   * How often an included transaction's receipt is read again to catch a reorg until its block is finalized
+   * (Base takes ~15 min). Default 60 s; 0 reads it on every reconciliation pass.
+   */
+  includedRecheckMs?: number;
   maxReplacements?: number;
   bumpBps?: number;
   initialFeeBumpBps?: number;
@@ -82,6 +87,8 @@ export class DurableSender {
   private tail: Promise<unknown> = Promise.resolve();
   /** When each ambiguous operation at a consumed nonce last had its receipts read (see AMBIGUOUS_RECHECK_MS). */
   private readonly ambiguousCheckedAt = new Map<string, number>();
+  /** When each included, not yet finalized operation last had its receipt read (see includedRecheckMs). */
+  private readonly includedCheckedAt = new Map<string, number>();
   constructor(
     private provider: JsonRpcProvider,
     private wallet: Wallet,
@@ -571,7 +578,19 @@ export class DurableSender {
     // pass re-reads the receipts of all its attempts. Re-check those at most every AMBIGUOUS_RECHECK_MS, so a
     // few of them cannot keep a rate-limited RPC busy (they did: most of the API's reads on dev).
     const now = Date.now();
+    // An included transaction is re-read only to catch a reorg until finality; every pass for each recent trade
+    // was most of the API's RPC load, enough for a rate-limited plan to refuse the reads trades need.
+    const includedRecheckMs = this.options.includedRecheckMs ?? 60_000;
+    const candidates = new Set(rows.map((row) => row.operation_id));
+    for (const id of this.includedCheckedAt.keys())
+      if (!candidates.has(id)) this.includedCheckedAt.delete(id);
     rows = rows.filter((row) => {
+      if ((row.status === "included" || row.status === "reverted") && includedRecheckMs > 0) {
+        const checked = this.includedCheckedAt.get(row.operation_id);
+        if (checked !== undefined && now - checked < includedRecheckMs) return false;
+        this.includedCheckedAt.set(row.operation_id, now);
+        return true;
+      }
       if (row.status !== "ambiguous" || row.nonce >= mined) return true;
       const checked = this.ambiguousCheckedAt.get(row.operation_id);
       if (checked !== undefined && now - checked < AMBIGUOUS_RECHECK_MS) return false;
