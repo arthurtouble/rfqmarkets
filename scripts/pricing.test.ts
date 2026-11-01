@@ -24,7 +24,7 @@ test("an exact close quote preserves the full base position", () => {
   );
   assert.equal(quote.baseDelta, exactBaseDelta);
   assert.equal(quote.notional, (-exactBaseDelta * (snapshot.bid + snapshot.ask)) / 2n / BASE);
-  assert(quote.expectedPrice < snapshot.bid);
+  assert(quote.expectedPrice < (snapshot.bid + snapshot.ask) / 2n, "a sale prices below the oracle mid");
 });
 
 test("an exact quote rejects a base delta opposite to its side", () => {

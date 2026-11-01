@@ -84,6 +84,8 @@ export type TpslInput = {
   stopLossMicro?: bigint;
   slippageBps?: number;
   durationSeconds?: number;
+  /** The account holding the position when it is not the trader's own: a Home trade's isolated account. */
+  account?: string;
 };
 
 /** Body for POST /v1/orders/tpsl/prepare. Both legs close the whole position and share `nonce`. */

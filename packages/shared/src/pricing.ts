@@ -250,7 +250,9 @@ export function constructQuote(
     spreadBps = spread?.totalBps ?? parameters.baseSpreadBps,
     baseSpread = ceilDiv(notional * spreadBps, 10_000n),
     fee = ceilDiv(notional * parameters.feeBps, 10_000n),
-    anchor = request.side === "buy" ? snapshot.ask : snapshot.bid,
+    // Priced from the oracle mid: the adaptive spread is the whole charge over it. The oracle's bid/ask band (the
+    // exchanges' disagreement) is not charged again on top.
+    anchor = mid,
     premium = ceilDiv(anchor * (baseSpread + impactCharge), notional),
     expectedPrice = request.side === "buy" ? anchor + premium : anchor - premium,
     toleranceBps = request.slippageBps === undefined ? parameters.toleranceBps : BigInt(request.slippageBps),

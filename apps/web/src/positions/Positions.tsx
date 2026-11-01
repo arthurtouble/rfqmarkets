@@ -55,10 +55,15 @@ function NearLiquidation({ view }: { view: PositionView }) {
   );
 }
 
-/** Without `onTpsl` (Home trades, which hold their own margin) the TP/SL controls are left out. */
-type PositionActions = { onClose: (market: Market) => void; onTpsl?: (market: Market) => void };
+/** Without `onTpsl` the TP/SL controls are left out. `holderOf` names the account holding a market's position
+ * when it is not the trader's own (a Home trade's isolated account), so its TP/SL is read there. */
+type PositionActions = {
+  onClose: (market: Market) => void;
+  onTpsl?: (market: Market) => void;
+  holderOf?: (market: Market) => string | undefined;
+};
 
-export function PositionCard({ view, onClose, onTpsl }: { view: PositionView } & PositionActions) {
+export function PositionCard({ view, onClose, onTpsl, holderOf }: { view: PositionView } & PositionActions) {
   return (
     <article className="rfq-pos" aria-label={`${view.market} ${sideWord(view)}`}>
       <div className="rfq-pos__head">
@@ -100,7 +105,11 @@ export function PositionCard({ view, onClose, onTpsl }: { view: PositionView } &
       {onTpsl && (
         <div className="rfq-pos__tpsl">
           <span>TP/SL</span>
-          <ProtectionSummary market={view.market} size={view.long ? view.size : -view.size} />
+          <ProtectionSummary
+            market={view.market}
+            size={view.long ? view.size : -view.size}
+            account={holderOf?.(view.market)}
+          />
         </div>
       )}
       <NearLiquidation view={view} />
@@ -132,6 +141,7 @@ function PositionsTable({
   positions,
   onClose,
   onTpsl,
+  holderOf,
   onCloseAll,
 }: { positions: PositionView[]; onCloseAll?: () => void } & PositionActions) {
   return (
@@ -198,6 +208,7 @@ function PositionsTable({
                       market={view.market}
                       size={view.long ? view.size : -view.size}
                       empty="Add"
+                      account={holderOf?.(view.market)}
                     />
                   </button>
                 ) : (
@@ -512,31 +523,48 @@ export function IdleMargin() {
 
 /**
  * Open Home trades: one-tap trades that each hold their own margin in an isolated account, so the stake is the
- * most they can lose. They close in full or in part here; TP/SL and close-all stay with the main account.
+ * most they can lose. They close in full or in part here and take a TP/SL on their own account; close-all stays
+ * with the main account.
  */
 export function HomeBets({ accounts }: { accounts: AccountState[] }) {
   const desktop = useDesktop();
   const [closing, setClosing] = useState<Market | null>(null);
+  const [protecting, setProtecting] = useState<Market | null>(null);
   const bets = accounts.flatMap((account) => openPositions(account).map((view) => ({ account, view })));
   if (!bets.length) return null;
   const views = bets.map((bet) => bet.view);
   const closingBet = closing ? bets.find((bet) => bet.view.market === closing) : undefined;
   const closingView = closingBet ? positionView(closingBet.account, closingBet.view.market) : null;
+  const holderOf = (market: Market) => bets.find((bet) => bet.view.market === market)?.account.account;
+  const protectingBet = protecting ? bets.find((bet) => bet.view.market === protecting) : undefined;
   return (
     <section className="positions home-bets" aria-label="Home trades">
       <div className="positions__bar">
         <span className="footnote rfq-muted">Home trades, each on its own margin</span>
       </div>
       {desktop ? (
-        <PositionsTable positions={views} onClose={setClosing} />
+        <PositionsTable positions={views} onClose={setClosing} onTpsl={setProtecting} holderOf={holderOf} />
       ) : (
         <div className="positions__cards">
           {views.map((view) => (
-            <PositionCard key={view.market} view={view} onClose={setClosing} />
+            <PositionCard
+              key={view.market}
+              view={view}
+              onClose={setClosing}
+              onTpsl={setProtecting}
+              holderOf={holderOf}
+            />
           ))}
         </div>
       )}
       {closingView && <ClosePositionSheet view={closingView} onClose={() => setClosing(null)} isolated />}
+      {protectingBet && (
+        <TpslSheet
+          account={protectingBet.account}
+          market={protectingBet.view.market}
+          onClose={() => setProtecting(null)}
+        />
+      )}
     </section>
   );
 }

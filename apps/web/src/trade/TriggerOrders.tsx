@@ -28,9 +28,10 @@ const SLIPPAGE_OPTIONS = ["50", "100", "200", "500"] as const;
 type SlippageOption = (typeof SLIPPAGE_OPTIONS)[number];
 
 /** The open TP/SL protecting `market` for the connected wallet. */
-export function useProtection(market: Market) {
+/** The TP/SL resting on `account` (default: the trader's own account; a Home trade passes its isolated one). */
+export function useProtection(market: Market, account?: string) {
   const trader = useTrader();
-  const orders = useOpenOrders(trader.address, market);
+  const orders = useOpenOrders(account ?? trader.address, market);
   return { orders: orders.data ?? [], ...positionProtection(orders.data ?? [], market) };
 }
 
@@ -39,12 +40,14 @@ export function ProtectionSummary({
   market,
   size,
   empty = "—",
+  account,
 }: {
   market: Market;
   size: bigint;
   empty?: string;
+  account?: string;
 }) {
-  const { takeProfit, stopLoss } = useProtection(market);
+  const { takeProfit, stopLoss } = useProtection(market, account);
   if (!takeProfit && !stopLoss) return <span className="rfq-faint">{empty}</span>;
   const partial = [takeProfit, stopLoss].some((order) => order && coversLessThan(order, size));
   return (
@@ -142,7 +145,10 @@ export function TpslSheet({
   const trading = useTrading(),
     advanced = useAdvanced(),
     { snapshot } = useMarketFeed();
-  const { takeProfit: currentTp, stopLoss: currentSl, orders } = useProtection(market);
+  const trader = useTrader(),
+    // A Home trade's position lives on its isolated account, whose orders the owner signs.
+    holder = account.account.toLowerCase() === trader.address?.toLowerCase() ? undefined : account.account;
+  const { takeProfit: currentTp, stopLoss: currentSl, orders } = useProtection(market, holder);
   const position = account.positions[market],
     size = BigInt(position.size),
     long = size > 0n;
@@ -208,6 +214,7 @@ export function TpslSheet({
       takeProfitMicro: tpMicro ?? undefined,
       stopLossMicro: slMicro ?? undefined,
       slippageBps: Number(slippage),
+      account: holder,
     });
     if (!placed) return;
     await cancelExisting();

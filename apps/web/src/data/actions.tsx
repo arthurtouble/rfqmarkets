@@ -752,7 +752,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
                   durationSeconds: Math.min(sessionSeconds, input.durationSeconds ?? sessionSeconds),
                 }
               : input,
-            account(),
+            input.account ?? account(),
             randomNonce(),
           ),
           market = marketIndex(input.market);

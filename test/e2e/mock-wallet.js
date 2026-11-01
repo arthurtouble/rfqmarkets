@@ -43,7 +43,15 @@
       }
     });
   const rejected = () => Object.assign(new Error("User rejected the request."), { code: 4001 });
+  // A live run (test/live) exposes window.__walletBridge: reads and signing then go to a real key held by the test
+  // process, never to the page.
+  const bridge = async (method, params) => {
+    const answer = await window.__walletBridge(method, params);
+    if (answer.error) throw Object.assign(new Error(answer.error.message), answer.error);
+    return answer.result;
+  };
   const rpc = async (method, params) => {
+    if (window.__walletBridge) return bridge(method, params);
     const response = await fetch(RPC, {
       method: "POST",
       headers: { "content-type": "application/json" },

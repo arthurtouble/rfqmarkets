@@ -307,3 +307,22 @@ test("lets restricted and unverified locations reduce risk and withdraw but not 
   }
   assert.ok(!reached.some((path) => blocked.includes(path)));
 });
+
+test("only a deployment holding QA_PASS_TOKEN lets the matching QA header past the geofence", async () => {
+  const token = "q".repeat(40),
+    geo = (env, headers = {}) =>
+      handleRequest(request("https://dev.example/edge/geo", { headers }, { country: "US" }), env).then((r) =>
+        r.json(),
+      );
+  assert.equal((await geo(edge, { "x-rfq-qa-pass": token })).status, "restricted");
+  assert.equal((await geo({ ...edge, QA_PASS_TOKEN: token }, { "x-rfq-qa-pass": token })).status, "allowed");
+  assert.equal(
+    (await geo({ ...edge, QA_PASS_TOKEN: token }, { "x-rfq-qa-pass": "q".repeat(39) + "x" })).status,
+    "restricted",
+  );
+  assert.equal((await geo({ ...edge, QA_PASS_TOKEN: token })).status, "restricted");
+  assert.equal(
+    (await geo({ ...edge, QA_PASS_TOKEN: "short" }, { "x-rfq-qa-pass": "short" })).status,
+    "restricted",
+  );
+});
