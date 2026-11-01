@@ -105,8 +105,12 @@ const stack = await startServiceStack({
         fallbacks: pool.filter((url) => url !== primary),
         secondaryFallbacks: pool.filter((url) => url !== secondary),
         // Session-grant scans read 1,000-block log ranges: only the archive RPCs serve those on free plans
-        // (QuickNode's caps eth_getLogs at 5 blocks, dRPC's refuses them), so they go there first.
-        logs: [...new Set([...(secrets.indexerFallbackRpcUrls ?? []).filter((url) => !url.includes("quiknode")), ...pool])],
+        // (QuickNode's caps eth_getLogs at 5 blocks, dRPC's refuses them). Alone in the list, the last RPC
+        // keeps ethers' back-off on 429s instead of failing over to an RPC that cannot answer.
+        logs: (() => {
+          const archive = (secrets.indexerFallbackRpcUrls ?? []).filter((url) => !url.includes("quiknode"));
+          return archive.length ? archive : pool;
+        })(),
       };
     },
     rpcBatchMaxCount: "1",
