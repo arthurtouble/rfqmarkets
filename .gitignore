@@ -17,3 +17,4 @@ deploy/cloudflare/runtime/wrangler.oracle-*.generated.jsonc
 coverage/
 test-results/
 playwright-report/
+playwright-report-live/

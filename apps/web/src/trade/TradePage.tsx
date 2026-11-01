@@ -55,6 +55,9 @@ function ListedMarket({ market }: { market: Market }) {
           <section className="rfq-card rfq-card--pad chart-card">
             <div className="chart-card__head">
               <MarketSwitcher market={market} />
+              <Link className="rfq-btn rfq-btn--ghost rfq-btn--sm" to="/updown/$market" params={{ market }}>
+                Simple
+              </Link>
             </div>
             <MarketChart market={market} height={320} />
             <MarketDetails market={market} />
@@ -79,7 +82,12 @@ function ListedMarket({ market }: { market: Market }) {
     <div className="trade-mobile">
       <div className="trade-mobile__top">
         <MarketSwitcher market={market} />
-        <WalletMenu />
+        <div className="updown__end">
+          <Link className="rfq-btn rfq-btn--ghost rfq-btn--sm" to="/updown/$market" params={{ market }}>
+            Simple
+          </Link>
+          <WalletMenu />
+        </div>
       </div>
       <div className="trade-mobile__price">
         <MarketChart market={market} height={220} />

@@ -39,6 +39,7 @@ import type { AccountState, Market, Quote, Side } from "../lib/types.js";
 import { Banner, Down, Rows, Segmented, Up } from "../ui/primitives.js";
 import { useTrader } from "../wallet/trader.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
+import { StartTrading } from "./StartTrading.js";
 import { useFunds } from "./FundsDialog.js";
 import { ReviewSheet, type ReviewOrder } from "./ReviewSheet.js";
 import { useSlippage, useTicketMemory } from "./ticket-memory.js";
@@ -456,6 +457,8 @@ export function OrderTicket({
         >
           Add funds to trade
         </button>
+      ) : !trading.quickLive ? (
+        <StartTrading />
       ) : problem === MARGIN_PROBLEM ? (
         <button
           type="button"

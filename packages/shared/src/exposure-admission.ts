@@ -66,8 +66,16 @@ export function pendingMakerDebit(input: {
   timestamp: bigint;
   deadline: bigint;
   netLimit: bigint;
+  /**
+   * Base that outstanding approvals in this market could add against this trade's direction before it lands.
+   * Given, only the part of the trade that could reduce a position (the account's own opposite position plus
+   * that pending flow) is charged realized PnL: an opening fill realizes nothing on-chain. Omitted, the whole
+   * trade is charged, as before.
+   */
+  opposingPendingBase?: bigint;
 }) {
-  const { position, market, delta, executionPrice, timestamp, deadline, netLimit } = input,
+  const { position, market, delta, executionPrice, timestamp, deadline, netLimit, opposingPendingBase } =
+      input,
     mid = (market.lastBid + market.lastAsk) / 2n,
     cap = high128(netLimit);
   if (cap === 0n || market.fundingTime > timestamp || deadline < timestamp)
@@ -76,11 +84,18 @@ export function pendingMakerDebit(input: {
     payment = (position.size * (index - position.lastFundingIndex)) / BASE;
   const currentFundingDebit = payment < 0n ? -payment : 0n,
     quantity = abs(delta),
-    executionNotional = (quantity * executionPrice) / BASE,
-    entryNotional = (quantity * position.entryPrice) / BASE,
-    existingNotional = (abs(position.size) * mid) / BASE;
+    opposite = position.size !== 0n && position.size > 0n !== delta > 0n ? abs(position.size) : 0n,
+    reducible = opposingPendingBase === undefined ? quantity : opposite + opposingPendingBase,
+    atRisk = quantity < reducible ? quantity : reducible,
+    // The account's own position is entered at its entry price; a position pending flow would open is
+    // bounded by this trade's execution price, since both land within the deadline.
+    fromExisting = atRisk < opposite ? atRisk : opposite,
+    executionNotional = (atRisk * executionPrice) / BASE,
+    entryNotional = (fromExisting * position.entryPrice + (atRisk - fromExisting) * executionPrice) / BASE,
+    existingNotional = (abs(position.size) * mid) / BASE,
+    tradeNotional = (quantity * executionPrice) / BASE;
   const seconds = deadline - timestamp,
-    futureFunding = ((existingNotional + executionNotional) * seconds + YEAR_SECONDS - 1n) / YEAR_SECONDS;
+    futureFunding = ((existingNotional + tradeNotional) * seconds + YEAR_SECONDS - 1n) / YEAR_SECONDS;
   return currentFundingDebit + executionNotional + entryNotional + futureFunding;
 }
 /** Independent integer model of selected-market funding, realized PnL and canonical exposure bounds. */
@@ -95,9 +110,8 @@ export function exposureAdmission(input: {
   executionPrice: bigint;
   timestamp: bigint;
   backing: bigint;
-  floor: bigint;
 }) {
-  const { markets, books, netLimits, market, position, delta, executionPrice, timestamp, floor } = input,
+  const { markets, books, netLimits, market, position, delta, executionPrice, timestamp } = input,
     previous = position.size,
     next = previous + delta,
     reduction = isPositionReduction(previous, delta);
@@ -127,7 +141,7 @@ export function exposureAdmission(input: {
     pnl = positionPnl(previous < 0n ? -closed : closed, position.entryPrice, executionPrice);
   backing -= pnl;
   if (backing < 0n) return reject("maker_settlement_incident");
-  if (!reduction && (!selected.enabled || backing < floor)) return reject("maker_capital_or_disabled");
+  if (!reduction && !selected.enabled) return reject("market_disabled");
   const within = (value: bigint, limit: bigint, old: bigint) => value <= limit || (reduction && value <= old),
     oldNet: bigint[] = [],
     newNet: bigint[] = [];
@@ -162,6 +176,5 @@ export function exposureAdmission(input: {
       return reject("gross_or_side_cap");
     if (!within(abs(newNet[i]), high128(netLimits[i]), abs(oldNet[i]))) return reject("net_cap");
   }
-  if (!within(makerStress(...newNet), backing, makerStress(...oldNet))) return reject("maker_stress");
   return { allowed: true, reason: "allowed", reduction };
 }

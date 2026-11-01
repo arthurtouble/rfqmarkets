@@ -165,6 +165,7 @@ export async function approve(
       if ("status" in result) return result;
       grossContext = result;
     } catch (error) {
+      console.warn("approver chain read failed:", String(error).slice(0, 400));
       return reject("independent chain read unavailable", 503, {
         detail: process.env.NODE_ENV === "test" ? String(error) : undefined,
       });
@@ -224,7 +225,8 @@ async function chainChecks(
         snapshot.blockNumber,
         market,
       );
-    } catch {
+    } catch (error) {
+      console.warn("approver oracle verification failed:", String(error).slice(0, 400));
       return reject("oracle report rejected");
     }
     const verified = checkVerifiedObservation(observation, market);
@@ -302,6 +304,7 @@ async function chainChecks(
 
   const freshness = checkCrossMarketFreshness(gross, approval.intentHash.toLowerCase(), snapshot, market);
   if (freshness) return freshness;
+  const pending = gross.bounds(approval.intentHash.toLowerCase(), snapshot.books.length)[market];
   const grossContext = buildGrossContext({
     snapshot,
     markets,
@@ -309,6 +312,7 @@ async function chainChecks(
     position: snapshot.position,
     intent,
     approval,
+    opposingPendingBase: intent.baseDelta > 0n ? pending.shortBase : pending.longBase,
   });
   return checkImpact({ markets, market, prices, intent, approval }) ?? grossContext;
 }

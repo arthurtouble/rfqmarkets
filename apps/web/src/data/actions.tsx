@@ -11,7 +11,7 @@ import { holdQuote, localDeadline, type HeldQuote } from "../lib/clock.js";
 import { API } from "../lib/env.js";
 import { friendlyError } from "../lib/errors.js";
 import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
-import { isolatedAccountOf, marginTopUp } from "../lib/isolated.js";
+import { isolatedAccountOf, marginTopUp, MIN_ISOLATED_OPEN } from "../lib/isolated.js";
 import {
   checkRoute,
   formatDuration,
@@ -86,7 +86,7 @@ export type MarketOrder = {
   title?: string;
   /**
    * Home: hold the trade's margin, `payMicro`, in its own isolated account so the loss stops there. A new
-   * isolated account needs at least MIN_ISOLATED_OPEN; a smaller first trade uses the main balance.
+   * isolated account opens with MIN_ISOLATED_OPEN and the excess goes straight back.
    */
   isolated?: { payMicro: bigint };
 };
@@ -98,6 +98,8 @@ export type CloseAllResult = { closed: Market[]; failed: Array<{ market: Market;
 type Trading = {
   busy: string | null;
   quickSession: QuickSession | null;
+  /** This browser holds a live one-tap key. Trading screens show Start trading until it does. */
+  quickLive: boolean;
   /** Whether the quick-trading key can sign a market trade of this size without a wallet prompt. */
   quickCovers(market: Market, amountMicro: bigint | null): boolean;
   /**
@@ -378,9 +380,18 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         );
       } catch (error) {
         // Past the session's limits (its total, or a winning exit above the per-trade cap) the approvers
-        // refuse the session's signature. Nothing was traded, so the wallet signs the same intent instead:
-        // getting out must never depend on the one-tap allowance.
-        if (!sessionRefused(error) || !quoteUsable(localDeadline(quote), Date.now())) throw error;
+        // refuse the session's signature. Nothing was traded. An exit is then signed by the wallet: getting out
+        // must never depend on the one-tap allowance. A new trade is not, since its price would expire while the
+        // wallet asks: the key is dropped, so the screen offers Start trading again.
+        if (!sessionRefused(error)) throw error;
+        if (!reduceOnly) {
+          quick.clear();
+          sessionRef.current = null;
+          throw new TraderFacingError(
+            "One-tap trading needs turning on again in this browser. Nothing was traded. Tap Start trading, then try again.",
+          );
+        }
+        if (!quoteUsable(localDeadline(quote), Date.now())) throw error;
       }
     }
     progress("Confirm in your wallet");
@@ -448,6 +459,46 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     ]);
     return { held, registered };
   };
+  /**
+   * Waits (up to about 15 s) until the API reads at least `minMicro` collateral on the isolated account in `market`.
+   * The API prices and admits trades at its latest read block, which can trail a margin move by a few seconds:
+   * quoting before it sees the margin fails as insufficient margin.
+   */
+  const apiSeesMargin = async (market: Market, minMicro: bigint) => {
+    const address = tradeAccount(market, true);
+    for (let attempt = 0; attempt < 15; attempt++) {
+      try {
+        const response = await fetch(`${API}/v1/account/${address}`);
+        if (response.ok && BigInt(((await response.json()) as { collateral: string }).collateral) >= minMicro)
+          return;
+      } catch {
+        /* read again */
+      }
+      await pause(1_000);
+    }
+  };
+  /**
+   * Moves margin, retrying a few times a couple of seconds apart: right after a close the API's read block can
+   * still show the position, which refuses the return.
+   */
+  const moveMarginRetrying = async (
+    market: Market,
+    amountMicro: bigint | (() => Promise<bigint>),
+    progress: (detail: string) => void,
+  ) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        // A computed amount is read again each attempt: right after a close the wallet's RPC can still show
+        // the margin before the close's fee and PnL, and moving that stale amount out reverts.
+        const amount = typeof amountMicro === "function" ? await amountMicro() : amountMicro;
+        if (amount === 0n) return undefined;
+        return await moveMargin(market, amount, progress);
+      } catch (error) {
+        if (attempt >= 4) throw error;
+        await pause(2_500);
+      }
+    }
+  };
   /** Whether the isolated account in `market` holds a position (null when it cannot be read). */
   const isolatedOpen = async (market: Market): Promise<boolean | null> => {
     const clearing = trader.settlement?.clearingAddress,
@@ -502,6 +553,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   const value: Trading = {
     busy,
     quickSession: quick.session,
+    quickLive: sessionCovers(quick.session, 0n),
     quickCovers,
     firmQuote: async (order) => {
       const wait = lastFirmQuoteAt.current + FIRM_QUOTE_SPACING_MS - Date.now();
@@ -527,12 +579,27 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             setAside = 0n;
           if (order.isolated && !order.reduceOnly) {
             const { held, registered } = await isolatedState(order.market);
-            const move = marginTopUp(order.isolated.payMicro, held, registered);
+            const pay = order.isolated.payMicro;
+            if (!registered && pay < MIN_ISOLATED_OPEN) {
+              // The contract opens an isolated account only with MIN_ISOLATED_OPEN: open it with that, then send
+              // the excess straight back, so the trade still holds only its own amount. Both moves are one tap.
+              progress("Setting the amount aside");
+              await moveMargin(order.market, MIN_ISOLATED_OPEN, progress);
+              setAside = MIN_ISOLATED_OPEN;
+              await apiSeesMargin(order.market, MIN_ISOLATED_OPEN);
+              await moveMarginRetrying(order.market, pay - MIN_ISOLATED_OPEN, progress);
+              setAside = pay;
+              isolated = true;
+            }
+            const move = isolated ? null : marginTopUp(pay, held, registered);
             if (move !== null) {
               if (move !== 0n) {
                 progress("Setting the amount aside");
                 await moveMargin(order.market, move, progress);
-                if (move > 0n) setAside = move;
+                if (move > 0n) {
+                  setAside = move;
+                  await apiSeesMargin(order.market, held + move);
+                }
               }
               isolated = true;
             }
@@ -568,7 +635,14 @@ export function TradingProvider({ children }: { children: ReactNode }) {
                   : `${why} ${usdc(setAside)} may still be set aside for ${order.market}. Use Return to balance on Home or in Portfolio if it is.`,
               );
             progress("Returning the amount to your balance");
-            const returned = await moveMargin(order.market, -setAside, progress).then(
+            const returned = await moveMarginRetrying(
+              order.market,
+              async () => {
+                const { held } = await isolatedState(order.market);
+                return held <= 0n ? 0n : -(held < setAside ? held : setAside);
+              },
+              progress,
+            ).then(
               () => true,
               () => false,
             );
@@ -603,19 +677,39 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           amountMicro: order.amountMicro,
           limitPrice: parseUnits(order.limitPrice, 6),
         };
+        // The one-tap key signs when it covers the order; the order then ends before the key does.
+        const sessionSeconds = sessionOrderSeconds(order.market),
+          session =
+            sessionSeconds !== null && quickCovers(order.market, order.amountMicro) ? liveSession() : null;
         const prepared = await api<Prepared & { orderId: string }>("/v1/orders/prepare", {
           account: account(),
           market: order.market,
           side: order.side,
           amount: microToInput(order.amountMicro),
           limitPrice: order.limitPrice,
-          durationSeconds: LIMIT_ORDER_DURATION_SECONDS,
+          durationSeconds: session
+            ? Math.min(LIMIT_ORDER_DURATION_SECONDS, sessionSeconds!)
+            : LIMIT_ORDER_DURATION_SECONDS,
           nonce,
           reduceOnly: order.reduceOnly,
         });
-        progress("Confirm in your wallet");
-        const userSignature = await trader.signIntent(prepared, "TradeIntent", expected);
-        await api("/v1/orders", { orderId: prepared.orderId, userSignature });
+        const place = (userSignature: Hex) => api("/v1/orders", { orderId: prepared.orderId, userSignature });
+        let placed = false;
+        if (session)
+          try {
+            await place(
+              await privateKeyToAccount(session.privateKey).signTypedData(
+                trader.verified(prepared, "TradeIntent", expected) as never,
+              ),
+            );
+            placed = true;
+          } catch (error) {
+            if (!(error instanceof ApiError && /invalid order signature/i.test(error.message))) throw error;
+          }
+        if (!placed) {
+          progress("Confirm in your wallet");
+          await place(await trader.signIntent(prepared, "TradeIntent", expected));
+        }
         return {
           title: `${sideLabel(order.side)} limit open`,
           detail: `${usdc(order.amountMicro)} ${order.market} at ${usdPrice((prepared.intent as { limitPrice: string }).limitPrice)}, good for 24 hours`,
@@ -669,11 +763,13 @@ export function TradingProvider({ children }: { children: ReactNode }) {
                   durationSeconds: Math.min(sessionSeconds, input.durationSeconds ?? sessionSeconds),
                 }
               : input,
-            account(),
+            input.account ?? account(),
             randomNonce(),
           ),
           market = marketIndex(input.market);
-        const pair = await api<PreparedTpsl>("/v1/orders/tpsl/prepare", body);
+        const pair = await api<PreparedTpsl>("/v1/orders/tpsl/prepare", body),
+          holder = input.account ?? account(),
+          isolated = holder.toLowerCase() !== account().toLowerCase();
         verifyTpslPair(pair.orders, { takeProfit: input.takeProfitMicro, stopLoss: input.stopLossMicro });
         for (const [index, leg] of pair.orders.entries())
           await placeResting(
@@ -681,6 +777,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             {
               kind: "trigger",
               market,
+              isolated,
               triggerKind: leg.type,
               triggerPrice: (leg.type === "take-profit" ? input.takeProfitMicro : input.stopLossMicro)!,
               slippageBps: body.slippageBps,
@@ -710,9 +807,15 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         progress(
           affected > 1 ? `Confirm in your wallet (cancels ${affected} orders)` : "Confirm in your wallet",
         );
+        // A Home trade's TP/SL rests on its isolated account, which the owner signs for.
+        const market = marketIndex(order.market),
+          onIsolated =
+            String((prepared.intent as { account?: string }).account ?? "").toLowerCase() ===
+            isolatedAccountOf(account(), market).toLowerCase();
         const userSignature = await trader.signIntent(prepared, "CancelIntent", {
           kind: "cancel",
           nonce: order.nonce,
+          ...(onIsolated ? { isolatedMarket: market } : {}),
         });
         const result = await api<CancelResult>(`/v1/orders/${order.orderId}/cancel`, {
           intent: prepared.intent,
@@ -747,7 +850,14 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           const { held } = await isolatedState(market);
           if (held > 0n) {
             progress("Returning the money to your balance");
-            await moveMargin(market, -held, progress).catch(() => {
+            await moveMarginRetrying(
+              market,
+              async () => {
+                const { held } = await isolatedState(market);
+                return held > 0n ? -held : 0n;
+              },
+              progress,
+            ).catch(() => {
               leftover = `. ${usdc(held)} is still set aside for your next ${market} trade`;
             });
           }
@@ -826,7 +936,14 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       (await run("Return to balance", `Return ${market} money to your balance`, async (progress) => {
         const { held } = await isolatedState(market);
         if (held <= 0n) return { title: "Nothing to return", value: true };
-        await moveMargin(market, -held, progress);
+        await moveMarginRetrying(
+          market,
+          async () => {
+            const { held } = await isolatedState(market);
+            return held > 0n ? -held : 0n;
+          },
+          progress,
+        );
         return { title: `${usdc(held)} is back in your balance`, value: true };
       })) ?? false,
 

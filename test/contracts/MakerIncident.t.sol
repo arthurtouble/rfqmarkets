@@ -5,20 +5,24 @@ import {ClearingFixture} from "./ClearingFixture.sol";
 import "../../contracts/RFQTypes.sol";
 
 /// @notice Resolution is irreversible, so anyone can force it only after a reported maker incident has
-/// lasted the full grace period. Before that the maker can recapitalize.
+/// lasted the full grace period. Before that the maker can recapitalize. An incident is a maker that could
+/// not pay customers out today: backing below their unrealized gains. Idle backing below the floor or the
+/// stress loss is not one.
 contract MakerIncidentTest is ClearingFixture {
     Trader internal alice;
     address internal stranger = makeAddr("stranger");
 
     function setUp() public override {
         super.setUp();
-        fundMaker(101_000e6);
+        fundMaker(20_000e6);
         openVenue();
         alice = newTrader("alice", 100_000e6);
         refreshAll();
-        // 2.5 BTC at 100k: stress loss (40% shock) is 100k, just under backing = 101k.
+        // 2.5 BTC at 100k: stress (40% shock) is 100k, five times backing, and the trade is still admitted.
         trade(alice, 0, 25e17, false);
-        // A rally pushes stress above backing without any realized loss: an objective incident.
+        assertGt(clearing.portfolioStress(), clearing.makerBacking());
+        assertFalse(clearing.makerIncident(), "stress above backing is not an incident");
+        // A 10% rally owes alice about 25k, more than the 20k backing: an objective incident.
         vm.warp(block.timestamp + 1);
         setPrice(0, 110_000e6);
         refresh(1);
@@ -62,7 +66,7 @@ contract MakerIncidentTest is ClearingFixture {
         vm.expectRevert(InvalidTrade.selector);
         clearing.clearMakerIncident();
 
-        fundMaker(50_000e6);
+        fundMaker(10_000e6);
         assertFalse(clearing.makerIncident());
         vm.prank(stranger);
         clearing.clearMakerIncident();

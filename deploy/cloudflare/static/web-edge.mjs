@@ -50,11 +50,31 @@ function requestId(request) {
   return request.headers.get("cf-ray") ?? crypto.randomUUID();
 }
 
+/**
+ * The visitor's location class. Only a deployment given the QA_PASS_TOKEN secret (dev, approved by the owner for
+ * the automated QA runner) honours a matching `x-rfq-qa-pass` header as allowed. Without that secret nothing
+ * changes, so production stays strictly geofenced.
+ */
+export function locate(request, env) {
+  const token = env?.QA_PASS_TOKEN,
+    presented = request.headers.get("x-rfq-qa-pass");
+  if (typeof token === "string" && token.length >= 32 && presented !== null && sameText(presented, token))
+    return { status: "allowed", country: null, region: null, reason: "qa_pass" };
+  return classifyLocation(request.cf);
+}
+
+function sameText(left, right) {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let i = 0; i < left.length; i++) difference |= left.charCodeAt(i) ^ right.charCodeAt(i);
+  return difference === 0;
+}
+
 export async function handleRequest(request, env) {
   const url = new URL(request.url);
   if (url.pathname === "/edge/geo") {
     // The app asks once on load which mode to run in. The service routes below enforce it either way.
-    const { status, country, region } = classifyLocation(request.cf);
+    const { status, country, region } = locate(request, env);
     return json({ status, country, region, message: RESTRICTION_MESSAGE[status] ?? null });
   }
   if (url.pathname === "/edge/health") {
@@ -71,7 +91,7 @@ export async function handleRequest(request, env) {
 
   const serviceName = serviceForPath(url.pathname,request.method);
   if (serviceName) {
-    const location = classifyLocation(request.cf);
+    const location = locate(request, env);
     if (!locationAllows(location, url.pathname, request.method)) {
       return json(
         { error: "jurisdiction_restricted", status: location.status, message: RESTRICTION_MESSAGE[location.status] },

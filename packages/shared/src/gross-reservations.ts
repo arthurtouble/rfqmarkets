@@ -1,5 +1,5 @@
 import { ExpiryIndex } from "./expiry-index.js";
-import { marketStress, type ExposureBook } from "./exposure-admission.js";
+import { type ExposureBook } from "./exposure-admission.js";
 import { MAX_MARKETS, marketRegistry } from "./markets.js";
 import { BASE, abs, high128, low128 } from "./numeric.js";
 
@@ -17,7 +17,6 @@ export interface GrossRiskContext {
   net: readonly bigint[];
   netLimits: readonly bigint[];
   backing: bigint;
-  floor: bigint;
 }
 export function assertGrossReservation(input: GrossReservation) {
   if (
@@ -138,6 +137,12 @@ export class GrossReservationBook {
     const old = exclude ? this.items.get(exclude) : undefined;
     return this.totalMakerDebit - (old?.makerDebit ?? 0n);
   }
+  /** Why the last `admit` refused, for the caller's error message. */
+  lastRefusal: string | undefined;
+  private refuse(reason: string) {
+    this.lastRefusal = reason;
+    return false;
+  }
   admit(
     id: string,
     item: GrossReservation,
@@ -148,15 +153,17 @@ export class GrossReservationBook {
     risk?: GrossRiskContext,
   ) {
     assertGrossReservation(item);
-    if (blockNumber < this.finalizedBlock) return false;
-    if (books.length !== asks.length || item.market >= books.length) return false;
-    if (risk && (risk.net.length !== books.length || risk.netLimits.length !== books.length)) return false;
+    this.lastRefusal = undefined;
+    if (blockNumber < this.finalizedBlock) return this.refuse("stale block");
+    if (books.length !== asks.length || item.market >= books.length) return this.refuse("market registry");
+    if (risk && (risk.net.length !== books.length || risk.netLimits.length !== books.length))
+      return this.refuse("market registry");
     const old = this.items.get(id);
     if (
       old &&
       (old.market !== item.market || old.baseDelta !== item.baseDelta || old.reduceOnly !== item.reduceOnly)
     )
-      return false;
+      return this.refuse("reservation changed");
     // The on-chain reduceOnly invariant guarantees zero additional gross capacity.
     if (item.reduceOnly) return true;
     const totals = this.bounds(id, books.length),
@@ -173,25 +180,22 @@ export class GrossReservationBook {
         (long * ask) / BASE > high128(book.limits) ||
         (short * ask) / BASE > high128(book.limits)
       )
-        return false;
+        return this.refuse(`gross or side limit in market ${market}`);
     }
     if (risk) {
       const available = risk.backing - this.capitalDebit(id) - item.makerDebit;
-      if (available < risk.floor) return false;
+      // Idle maker capital does not gate trading (the per-market caps do), but approvals must not promise
+      // more than the maker can pay out: a gain it cannot pay starts resolution on chain.
+      if (available < 0n) return this.refuse("maker capital cannot cover pending payouts");
       const low = [...risk.net],
         high = [...risk.net];
-      let stress = 0n;
       for (let market = 0; market < books.length; market++) {
         low[market] -= (totals[market].shortBase * asks[market]) / BASE;
         high[market] += (totals[market].longBase * asks[market]) / BASE;
         const cap = high128(risk.netLimits[market]);
-        if (abs(low[market]) > cap || abs(high[market]) > cap) return false;
-        // Stress is a sum of per-market terms, so the worst execution subset takes each market's worse extreme.
-        const lowStress = marketStress(low[market], market),
-          highStress = marketStress(high[market], market);
-        stress += lowStress > highStress ? lowStress : highStress;
+        if (abs(low[market]) > cap || abs(high[market]) > cap)
+          return this.refuse(`net limit in market ${market}`);
       }
-      if (stress > available) return false;
     }
     return true;
   }

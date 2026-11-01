@@ -81,10 +81,17 @@ export function buildApi(options: ApiOptions = {}) {
       });
     }
     if (ctx.recoveredCommitments.length) {
-      const versions = await chain.readProtocolVersions();
-      for (const { quote } of ctx.recoveredCommitments) ctx.quotes.versions.set(quote.quoteId, versions);
+      // Recovered quotes without versions are refused like expired ones; an RPC failure must not stop the API.
+      const versions = await chain
+        .readProtocolVersions()
+        .catch((error: unknown) => console.error("recovered quote versions unavailable", error));
+      if (versions)
+        for (const { quote } of ctx.recoveredCommitments) ctx.quotes.versions.set(quote.quoteId, versions);
     }
     const sender = ctx.sender;
+    // Reconcile skips a row whose receipt is unreadable (a free RPC refusing an archive read), so one old
+    // transaction cannot stop startup. An RPC that cannot be reached at all still fails it, and the supervisor
+    // retries with a fresh instance.
     await sender?.reconcile();
     senderReconcileTimer = setInterval(() => {
       if (sender && !senderReconciliation)

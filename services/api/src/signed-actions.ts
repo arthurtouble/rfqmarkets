@@ -87,6 +87,9 @@ export async function verifySignedAction(
 /** The on-chain grant of a session key (RFQClearing.sessions). */
 type SessionView = { account: string; validUntil: bigint; marketMask: bigint; maxTradeNotional: bigint };
 
+const SESSION_READ_RETRIES = 3,
+  SESSION_READ_RETRY_MS = 1_000;
+
 /**
  * An unexpired intent signed by a live session key of its account whose grant `allows` it. Only actions the
  * contract also accepts from session keys opt in (see SignedAction.sessionAllows).
@@ -102,7 +105,13 @@ async function verifySessionSignedAction<I extends SignedIntent>(
   if (!clearing || Number(intent.deadline) * 1_000 <= Date.now()) return false;
   try {
     const signer = recoverAddress(TypedDataEncoder.hash(ctx.domain, types, intent), signature);
-    const session = await clearing.sessions(signer);
+    // A grant from a moment ago may not have reached the RPC node answering this read (load-balanced RPCs lag
+    // a block or two): an empty record is read again briefly before the signature is refused.
+    let session = await clearing.sessions(signer);
+    for (let attempt = 0; attempt < SESSION_READ_RETRIES && BigInt(session.account) === 0n; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, SESSION_READ_RETRY_MS));
+      session = await clearing.sessions(signer);
+    }
     return (
       getAddress(session.account) === getAddress(intent.account) &&
       BigInt(session.validUntil) >= intent.deadline &&

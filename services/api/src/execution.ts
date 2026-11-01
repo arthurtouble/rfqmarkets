@@ -657,6 +657,14 @@ export class ExecutionService {
           if (!signaturesMayExist) this.releaseUnsigned(quote.quoteId);
           const policy = approverPolicyRejection(responses, this.approvals.size, APPROVAL_QUORUM);
           if (policy) return Reply.error(409, policy);
+          console.warn(
+            "approver quorum unavailable:",
+            responses.map((item) =>
+              item.status === "rejected"
+                ? String(item.reason).slice(0, 300)
+                : JSON.stringify(item.value).slice(0, 300),
+            ),
+          );
           return Reply.error(503, "approver quorum unavailable", {
             details:
               ctx.devFund || process.env.NODE_ENV === "test"
@@ -727,7 +735,7 @@ export class ExecutionService {
       makerDebit: 2n * BigInt(quote.notional),
     };
     if (grossSnapshot) {
-      const { blockNumber, blockTimestamp, books, states, position, netLimits, backing, floor, clock } =
+      const { blockNumber, blockTimestamp, books, states, position, netLimits, backing, clock } =
         grossSnapshot;
       if (clock) this.finalizeReservations(clock.block, clock.timestamp, clock.hash);
       if (intent.market >= states.length) return Reply.error(409, "unknown market");
@@ -763,6 +771,7 @@ export class ExecutionService {
           timestamp: BigInt(blockTimestamp),
           deadline: approval.deadline,
           netLimit: netLimits[intent.market],
+          opposingPendingBase: priorGross[intent.market][fill.baseDelta > 0n ? "shortBase" : "longBase"],
         }),
       };
       const existingGross = grossReservations.get(quote.quoteId);
@@ -773,10 +782,11 @@ export class ExecutionService {
           net,
           netLimits,
           backing,
-          floor,
         })
       )
-        return Reply.error(409, "outstanding approvals exceed gross, net, stress, side or capital capacity");
+        return Reply.error(409, "outstanding approvals exceed gross, net, stress, side or capital capacity", {
+          reason: grossReservations.lastRefusal,
+        });
     } else {
       const timestamp = unixSeconds();
       this.finalizeReservations(timestamp, timestamp);

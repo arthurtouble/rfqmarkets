@@ -9,7 +9,7 @@ import {
   multiplierChoices,
   onePercentGain,
   pickMultiplier,
-  stakeProblem,
+  sizeProblem,
   tradeFee,
 } from "./updown.js";
 
@@ -61,9 +61,9 @@ test("the loss at the auto-close price follows the move, either way", () => {
 
 test("Home asks for at least the isolated account's opening amount", () => {
   // Below it the trade would quietly use the whole balance, so it could lose more than the amount.
-  assert.equal(stakeProblem(9_990_000n), "The smallest trade is $10");
-  assert.equal(stakeProblem(10n * USDC), null);
-  assert.equal(stakeProblem(null), null);
+  assert.equal(sizeProblem(9_990_000n), "The smallest trade is $10");
+  assert.equal(sizeProblem(10n * USDC), null);
+  assert.equal(sizeProblem(null), null);
 });
 
 test("the fee line follows the venue's fee", () => {

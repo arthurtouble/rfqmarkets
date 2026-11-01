@@ -30,6 +30,8 @@ export const UNRESOLVED_SENDER_STATUSES: readonly SenderStatus[] = [
   "ambiguous",
   "reorged",
 ];
+/** How often an ambiguous operation at an already consumed nonce has its receipts re-read. */
+const AMBIGUOUS_RECHECK_MS = 10 * 60_000;
 const UNRESOLVED_SQL = UNRESOLVED_SENDER_STATUSES.map((status) => `'${status}'`).join(",");
 
 class CanonicalRevert extends Error {
@@ -78,6 +80,8 @@ const maximum = (...values: bigint[]) => values.reduce((best, value) => (value >
  */
 export class DurableSender {
   private tail: Promise<unknown> = Promise.resolve();
+  /** When each ambiguous operation at a consumed nonce last had its receipts read (see AMBIGUOUS_RECHECK_MS). */
+  private readonly ambiguousCheckedAt = new Map<string, number>();
   constructor(
     private provider: JsonRpcProvider,
     private wallet: Wallet,
@@ -161,11 +165,8 @@ export class DurableSender {
       if (found) return this.settle(operationId, found);
       await this.broadcast(stored.raw_tx);
     } else {
-      const unresolved = this.database
-        ?.prepare(`SELECT operation_id FROM sender_transactions WHERE status IN (${UNRESOLVED_SQL}) LIMIT 1`)
-        .get() as { operation_id: string } | undefined;
-      if (unresolved)
-        throw new Error(`unresolved sponsor operation ${unresolved.operation_id} blocks new submission`);
+      const unresolved = await this.fencingOperation();
+      if (unresolved) throw new Error(`unresolved sponsor operation ${unresolved} blocks new submission`);
       if (deadline !== undefined && Date.now() >= deadline * 1_000)
         throw new Error(`operation ${operationId} expired before broadcast`);
       stored = await this.signInitial(operationId, request);
@@ -192,6 +193,26 @@ export class DurableSender {
     throw new Error(`transaction for ${operationId} was not included after ${maxReplacements + 1} attempts`);
   }
 
+  /**
+   * The operation that fences new submissions, if any: one still in flight, or an ambiguous one whose nonce is
+   * still open. An ambiguous operation whose nonce the chain has consumed no longer fences: whatever its outcome,
+   * no later transaction can collide with it, and it stays in the journal for an operator to settle.
+   */
+  private async fencingOperation(): Promise<string | undefined> {
+    const rows = this.database
+      ?.prepare(
+        `SELECT operation_id,nonce,status FROM sender_transactions WHERE status IN (${UNRESOLVED_SQL})`,
+      )
+      .all() as Array<{ operation_id: string; nonce: number; status: SenderStatus }> | undefined;
+    if (!rows?.length) return undefined;
+    const pending = rows.find((row) => row.status !== "ambiguous");
+    if (pending) return pending.operation_id;
+    const mined = Number(
+      BigInt(await this.provider.send("eth_getTransactionCount", [this.wallet.address, "latest"])),
+    );
+    return rows.find((row) => Number(row.nonce) >= mined)?.operation_id;
+  }
+
   private assertSameInput(stored: StoredTransaction, request: TransactionRequest) {
     const original = Transaction.from(stored.raw_tx);
     if (
@@ -211,7 +232,14 @@ export class DurableSender {
       this.provider.send("eth_getTransactionCount", [this.wallet.address, "pending"]),
       explicitFees ? this.provider.getFeeData() : Promise.resolve(undefined),
     ]);
-    const nonce = Number(BigInt(nonceHex));
+    // A load-balanced RPC's pending count can trail our own last broadcast, which would reuse its nonce and be
+    // refused as an underpriced replacement; never sign below the next nonce after the journal's highest.
+    const journaled = this.database?.prepare("SELECT max(nonce) nonce FROM sender_transactions").get() as
+      { nonce: number | null } | undefined;
+    const nonce = Math.max(
+      Number(BigInt(nonceHex)),
+      journaled?.nonce == null ? 0 : Number(journaled.nonce) + 1,
+    );
     let populated: TransactionRequest;
     if (explicitFees && fees) {
       populated = { ...request, nonce, chainId: this.options.chainId };
@@ -539,10 +567,27 @@ export class DurableSender {
       await this.refreshFinalizedFloor();
       rows = this.reconcileCandidates();
     }
-    const found = await Promise.all(rows.map((row) => this.findReceipt(row.operation_id)));
+    // An ambiguous operation whose nonce is already consumed can only turn out to have landed, and every
+    // pass re-reads the receipts of all its attempts. Re-check those at most every AMBIGUOUS_RECHECK_MS, so a
+    // few of them cannot keep a rate-limited RPC busy (they did: most of the API's reads on dev).
+    const now = Date.now();
+    rows = rows.filter((row) => {
+      if (row.status !== "ambiguous" || row.nonce >= mined) return true;
+      const checked = this.ambiguousCheckedAt.get(row.operation_id);
+      if (checked !== undefined && now - checked < AMBIGUOUS_RECHECK_MS) return false;
+      this.ambiguousCheckedAt.set(row.operation_id, now);
+      return true;
+    });
+    // One unreadable receipt (a free RPC refusing an old transaction as an archive read) must not stall every
+    // other row: that row is skipped this round and keeps its status.
+    const found = await Promise.all(
+      rows.map((row) => this.findReceipt(row.operation_id).catch(() => "unreadable" as const)),
+    );
     for (const [index, row] of rows.entries()) {
-      if (found[index]) {
-        this.recordReceipt(row.operation_id, found[index]);
+      const receipt = found[index];
+      if (receipt === "unreadable") continue;
+      if (receipt) {
+        this.recordReceipt(row.operation_id, receipt);
         continue;
       }
       if (row.nonce < mined) {

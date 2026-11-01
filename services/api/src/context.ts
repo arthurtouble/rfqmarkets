@@ -39,6 +39,11 @@ export interface ApiOptions {
      * (which sends and reconciles transactions) then only takes the requests they all fail.
      */
     readRpcUrls?: string[];
+    /**
+     * RPCs that take a request rpcUrl fails or times out on (outage, rate limit, a free RPC refusing an old
+     * block), in order. Without them a single RPC outage stops trading.
+     */
+    fallbackRpcUrls?: string[];
     sponsorPrivateKey: string;
     clearingAddress: string;
     tokenAddress: string;
@@ -180,7 +185,17 @@ export class ApiContext {
 
     this.provider =
       options.provider ??
-      (options.chain ? rpcProvider(options.chain.rpcUrl, undefined, { batchMaxCount: 1 }) : undefined);
+      (options.chain
+        ? options.chain.fallbackRpcUrls?.length
+          ? new FallbackRpcProvider([options.chain.rpcUrl, ...options.chain.fallbackRpcUrls], undefined, {
+              batchMaxCount: 1,
+              // Without it ethers sends eth_chainId ahead of calls, doubling the load on a rate-limited plan.
+              staticNetwork: true,
+              timeoutMs: 5_000,
+              label: "api",
+            })
+          : rpcProvider(options.chain.rpcUrl, undefined, { batchMaxCount: 1 })
+        : undefined);
     if (this.provider && this.devFund) this.provider.pollingInterval = 50;
     if (this.provider && options.chain) {
       this.sponsor = new Wallet(options.chain.sponsorPrivateKey, this.provider);
@@ -194,6 +209,7 @@ export class ApiContext {
               new FallbackRpcProvider([...options.chain.readRpcUrls, options.chain.rpcUrl], undefined, {
                 batchMaxCount: 1,
                 staticNetwork: true,
+                label: "api-read",
               }),
             )
           : this.clearing;
@@ -209,6 +225,8 @@ export class ApiContext {
         ? new DurableSender(this.provider, this.sponsor, this.journal, {
             chainId: options.chainId,
             initialFeeBumpBps: 2_500,
+            // A receipt poll every 100 ms was most of the API's reads on a rate-limited RPC; Base blocks are 2 s.
+            pollMs: this.devFund ? undefined : 250,
             ...options.senderBudget,
           })
         : undefined);

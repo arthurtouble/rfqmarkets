@@ -14,7 +14,21 @@ let child: ChildProcess | null = null,
   phase: "waiting" | "running" | "exited" = "waiting",
   clearing: string | null = null,
   oracle: unknown = null,
-  exitCode: number | null = null;
+  exitCode: number | null = null,
+  // The last output of the stack: container output never reaches Workers Logs, so status carries it.
+  tail = "";
+// Every output line with a sequence number, so the worker can pull what is new into Workers Logs.
+const lines: Array<{ seq: number; text: string }> = [];
+let nextSeq = 0,
+  partial = "";
+const keep = (chunk: Buffer) => {
+  const text = chunk.toString("utf8");
+  tail = (tail + text).slice(-4_000);
+  const parts = (partial + text).split("\n");
+  partial = parts.pop() ?? "";
+  for (const line of parts) if (line.trim()) lines.push({ seq: nextSeq++, text: line.slice(0, 2_000) });
+  if (lines.length > 2_000) lines.splice(0, lines.length - 2_000);
+};
 
 /** Consistent copies of every journal, base64-encoded, taken while the services keep writing. */
 export function snapshotJournals(directory: string) {
@@ -71,7 +85,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/control/status")
-        return reply(response, 200, { phase, clearing, oracle, exitCode });
+        return reply(response, 200, {
+          phase,
+          clearing,
+          oracle,
+          exitCode,
+          tail: phase === "exited" ? tail : undefined,
+        });
+      if (request.method === "GET" && request.url?.startsWith("/control/logs")) {
+        const after = Number(new URL(request.url, "http://control").searchParams.get("after") ?? -1);
+        return reply(response, 200, {
+          last: nextSeq - 1,
+          lines: lines.filter((line) => line.seq > after).slice(0, 500),
+        });
+      }
       if (request.method === "GET" && request.url === "/control/snapshot")
         return reply(
           response,
@@ -92,7 +119,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         oracle = input.deployment.oracle ?? null;
         phase = "running";
         child = spawn(process.execPath, ["--import", "tsx", "scripts/base-mainnet-dev-stack.ts"], {
-          stdio: "inherit",
+          stdio: ["ignore", "pipe", "pipe"],
           env: {
             ...process.env,
             RFQ_BIND_HOST: "0.0.0.0",
@@ -101,6 +128,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
             RFQ_DEV_RUNTIME_SECRETS_JSON: JSON.stringify(input.secrets),
           },
         });
+        for (const stream of [child.stdout, child.stderr])
+          stream?.on("data", (chunk: Buffer) => {
+            keep(chunk);
+            (stream === child?.stderr ? process.stderr : process.stdout).write(chunk);
+          });
         child.once("exit", (code) => {
           phase = "exited";
           exitCode = code;

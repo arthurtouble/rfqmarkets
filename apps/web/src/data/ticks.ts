@@ -1,7 +1,7 @@
-// A live tick line for one market: the last few minutes of 1m closes as a
+// A live tick line for one market: the last 15 minutes of 1m candles as a
 // starting point, then every mid the market stream delivers.
 import { useEffect, useState } from "react";
-import { linePoints, type ChartPoint } from "../lib/candles.js";
+import { candlePath, type ChartPoint } from "../lib/candles.js";
 import type { Market } from "../lib/types.js";
 import { TICK_WINDOW_MS, appendTick } from "../lib/updown.js";
 import { useCandles } from "./candles.js";
@@ -23,7 +23,7 @@ export function useTicks(market: Market): { points: ChartPoint[]; loading: boole
       const base = current.market === market ? current : { market, seeded: false, points: [] };
       if (base.seeded || !candles) return base;
       const firstTick = base.points[0]?.time ?? Infinity;
-      const history = linePoints(candles, 60_000, Date.now()).filter((point) => point.time < firstTick);
+      const history = candlePath(candles, 60_000, Date.now()).filter((point) => point.time < firstTick);
       return { market, seeded: true, points: [...history, ...base.points] };
     });
   }, [market, candles]);

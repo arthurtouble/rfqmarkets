@@ -69,7 +69,15 @@ const stack = await startServiceStack({
   indexerRpcUrl: secrets.indexerRpcUrl,
   indexerFallbackRpcUrls: secrets.indexerFallbackRpcUrls,
   maxLogRange: secrets.maxLogRange,
+  indexerHeadLagBlocks: 1,
+  // Base makes a block every 2 s: a 1 s poll still sees each one, at half the RPC calls.
+  indexerPollMs: 1_000,
   readRpcUrls: secrets.readRpcUrls,
+  // Calls, transactions and receipts fail over too: first the archive RPCs (a free primary refuses old blocks),
+  // then the approvers' second RPC.
+  rpcFallbackUrls: [...new Set([...(secrets.indexerFallbackRpcUrls ?? []), secrets.secondaryRpcUrl])].filter(
+    (url) => url !== secrets.rpcUrl,
+  ),
   // Every refresh is an RPC read per service; markets change rarely, and a request naming a market the
   // registry has not loaded yet refreshes it at once.
   marketRefreshMs: 300_000,
@@ -85,7 +93,28 @@ const stack = await startServiceStack({
   }),
   approvers: {
     keys: secrets.approverKeys,
-    rpc: () => ({ primary: secrets.rpcUrl, secondary: secrets.secondaryRpcUrl }),
+    // Each approver leads on a different RPC so one provider's rate limit cannot take quorum down, and
+    // fails over to the others.
+    rpc: (index) => {
+      const pool = [
+          ...new Set([secrets.rpcUrl, ...(secrets.indexerFallbackRpcUrls ?? []), secrets.secondaryRpcUrl]),
+        ],
+        primary = pool[index % pool.length],
+        secondary = pool[(index + 1) % pool.length];
+      return {
+        primary,
+        secondary,
+        fallbacks: pool.filter((url) => url !== primary),
+        secondaryFallbacks: pool.filter((url) => url !== secondary),
+        // Session-grant scans read 1,000-block log ranges: only the archive RPCs serve those on free plans
+        // (QuickNode's caps eth_getLogs at 5 blocks, dRPC's refuses them). Alone in the list, the last RPC
+        // keeps ethers' back-off on 429s instead of failing over to an RPC that cannot answer.
+        logs: (() => {
+          const archive = (secrets.indexerFallbackRpcUrls ?? []).filter((url) => !url.includes("quiknode"));
+          return archive.length ? archive : pool;
+        })(),
+      };
+    },
     rpcBatchMaxCount: "1",
     maxFutureSeconds: 5,
     oracleMode: "signed",

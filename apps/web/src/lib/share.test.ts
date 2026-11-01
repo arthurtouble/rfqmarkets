@@ -50,12 +50,12 @@ test("Tick cheers a gain, sweats a loss and stays calm at break-even", () => {
 });
 
 test("captions say what the bet was and whether it is still open", () => {
-  assert.equal(shareCaption(bet()), "Cashed out +$12.40 (+49.6%) going Up 3× on Ethereum.");
+  assert.equal(shareCaption(bet()), "Cashed out +$12.40 (+49.6%) from Long 3× on Ethereum.");
   assert.equal(
     shareCaption(bet({ closed: false, long: false, multiplier: null, pnl: -5n * USDC, ret: null })),
-    "Down on Ethereum: -$5.00 so far.",
+    "Short on Ethereum: -$5.00 so far.",
   );
-  assert.equal(betLabel({ long: false, multiplier: 10 }), "Down 10×");
+  assert.equal(betLabel({ long: false, multiplier: 10 }), "Short 10×");
 });
 
 test("file names are safe for any market symbol", () => {

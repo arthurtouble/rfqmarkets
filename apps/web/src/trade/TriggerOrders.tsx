@@ -20,6 +20,7 @@ import { Banner, Change, Rows, Segmented, Sheet } from "../ui/primitives.js";
 import { useAdvanced } from "../ui/prefs.js";
 import { useToasts } from "../ui/toasts.js";
 import { useTrader } from "../wallet/trader.js";
+import { StartTrading } from "./StartTrading.js";
 
 const DECIMAL_DRAFT = /^\d*\.?\d*$/;
 const PRESETS = [1, 2, 5, 10] as const;
@@ -27,9 +28,10 @@ const SLIPPAGE_OPTIONS = ["50", "100", "200", "500"] as const;
 type SlippageOption = (typeof SLIPPAGE_OPTIONS)[number];
 
 /** The open TP/SL protecting `market` for the connected wallet. */
-export function useProtection(market: Market) {
+/** The TP/SL resting on `account` (default: the trader's own account; a Home trade passes its isolated one). */
+export function useProtection(market: Market, account?: string) {
   const trader = useTrader();
-  const orders = useOpenOrders(trader.address, market);
+  const orders = useOpenOrders(account ?? trader.address, market);
   return { orders: orders.data ?? [], ...positionProtection(orders.data ?? [], market) };
 }
 
@@ -38,12 +40,14 @@ export function ProtectionSummary({
   market,
   size,
   empty = "—",
+  account,
 }: {
   market: Market;
   size: bigint;
   empty?: string;
+  account?: string;
 }) {
-  const { takeProfit, stopLoss } = useProtection(market);
+  const { takeProfit, stopLoss } = useProtection(market, account);
   if (!takeProfit && !stopLoss) return <span className="rfq-faint">{empty}</span>;
   const partial = [takeProfit, stopLoss].some((order) => order && coversLessThan(order, size));
   return (
@@ -141,7 +145,10 @@ export function TpslSheet({
   const trading = useTrading(),
     advanced = useAdvanced(),
     { snapshot } = useMarketFeed();
-  const { takeProfit: currentTp, stopLoss: currentSl, orders } = useProtection(market);
+  const trader = useTrader(),
+    // A Home trade's position lives on its isolated account, whose orders the owner signs.
+    holder = account.account.toLowerCase() === trader.address?.toLowerCase() ? undefined : account.account;
+  const { takeProfit: currentTp, stopLoss: currentSl, orders } = useProtection(market, holder);
   const position = account.positions[market],
     size = BigInt(position.size),
     long = size > 0n;
@@ -207,6 +214,7 @@ export function TpslSheet({
       takeProfitMicro: tpMicro ?? undefined,
       stopLossMicro: slMicro ?? undefined,
       slippageBps: Number(slippage),
+      account: holder,
     });
     if (!placed) return;
     await cancelExisting();
@@ -281,26 +289,30 @@ export function TpslSheet({
         )}
         {existing.length > 0 && (
           <p className="footnote rfq-faint">
-            Replacing places the new orders first, then cancels the old ones. Each step asks for a wallet
+            Replacing places the new orders first, then cancels the old ones. Cancelling asks for one wallet
             signature.
           </p>
         )}
-        <button
-          type="button"
-          className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block"
-          disabled={!!problem || busy}
-          aria-busy={busy}
-          onClick={submit}
-        >
-          {busy ? (
-            <>
-              <span className="rfq-spinner" />
-              Confirm in your wallet
-            </>
-          ) : (
-            (problem ?? action)
-          )}
-        </button>
+        {!trading.quickLive && !removing ? (
+          <StartTrading />
+        ) : (
+          <button
+            type="button"
+            className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block"
+            disabled={!!problem || busy}
+            aria-busy={busy}
+            onClick={submit}
+          >
+            {busy ? (
+              <>
+                <span className="rfq-spinner" />
+                {existing.length ? "Confirm in your wallet" : "Placing"}
+              </>
+            ) : (
+              (problem ?? action)
+            )}
+          </button>
+        )}
         {orders.some(
           (order) =>
             order !== currentTp &&

@@ -1,5 +1,6 @@
-import { Contract, Interface, JsonRpcProvider, getAddress, toBeHex, toQuantity, type BlockTag } from "ethers";
+import { Contract, Interface, JsonRpcProvider, getAddress, toQuantity, type BlockTag } from "ethers";
 import { clearingApproverAbi, sessionGrantedFilter } from "../../../packages/shared/src/abi.js";
+import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import {
   toExposureBook,
   toExposureMarket,
@@ -99,9 +100,16 @@ export function sessionGrantTracker(
       cached = known.get(account),
       usable = cached && cached.through >= floor && cached.through <= toBlock ? cached : undefined;
     let found: GrantLog | undefined;
-    for (let end = toBlock, from = usable ? usable.through + 1 : floor; end >= from && !found;) {
-      const ranges: Array<[number, number]> = [];
-      for (; end >= from && ranges.length < GRANT_LOG_PARALLEL; end -= GRANT_LOG_CHUNK)
+    // Waves grow 1, 4, 16 ranges: a key granted moments ago (the usual case) is in the newest range, and a
+    // burst of 16 parallel log reads per approver is what rate-limited RPCs refuse.
+    for (
+      let end = toBlock, from = usable ? usable.through + 1 : floor, wave = 1;
+      end >= from && !found;
+      wave *= 4
+    ) {
+      const ranges: Array<[number, number]> = [],
+        width = Math.min(wave, GRANT_LOG_PARALLEL);
+      for (; end >= from && ranges.length < width; end -= GRANT_LOG_CHUNK)
         ranges.push([Math.max(from, end - GRANT_LOG_CHUNK + 1), end]);
       // Newest range first, so the first range with a grant holds the newest one.
       const waves = await Promise.all(ranges.map(([start, stop]) => grantsOf(account, start, stop)));
@@ -120,14 +128,17 @@ export function createChainClients(
   provider: JsonRpcProvider,
   secondaryProvider: JsonRpcProvider | undefined,
   clearingAddress: string,
+  /** Reads session-grant logs; defaults to `provider`. Free RPC plans differ most on eth_getLogs ranges. */
+  logProvider: JsonRpcProvider = provider,
 ): ChainClients {
-  const clearing = new Contract(clearingAddress, clearingApproverAbi, provider);
+  const clearing = new Contract(clearingAddress, clearingApproverAbi, provider),
+    logReader = new Contract(clearingAddress, clearingApproverAbi, logProvider);
   return {
     provider,
     secondaryProvider,
     clearing: clearing as unknown as ClearingReader,
     latestSession: sessionGrantTracker(async (account, fromBlock, toBlock) => {
-      const logs = await clearing.queryFilter(sessionGrantedFilter(account), fromBlock, toBlock);
+      const logs = await logReader.queryFilter(sessionGrantedFilter(account), fromBlock, toBlock);
       return logs.flatMap((log) => {
         const parsed = clearing.interface.parseLog(log);
         return parsed ? [{ session: getAddress(parsed.args.session as string), block: log.blockNumber }] : [];
@@ -217,53 +228,59 @@ export async function readChainState(
     return { rejection: reject("market registry unavailable", 503) };
   }
   const indexes = Array.from({ length: marketCount }, (_, index) => index);
-  // An isolated account's intents are signed by its owner, directly or through the owner's session key.
-  const isolated = await clearing.isolatedOwner(intent.account, at),
+  // An isolated account's intents are signed by its owner, directly or through the owner's session key. The owner
+  // never changes once set, so it is read at the latest block: the first trade in a market is quoted at a block
+  // that can trail the margin move that opened its isolated account, where the owner still reads as unset.
+  const isolated = await clearing.isolatedOwner(intent.account, { blockTag: "latest" }),
     signingAccount = BigInt(isolated.owner) === 0n ? intent.account : getAddress(isolated.owner);
   const signedByAccount = intentSigner === signingAccount;
-  const [
-    block,
-    secondaryBlock,
-    leaderEpoch,
-    signerSetVersion,
-    policyVersion,
-    paused,
-    resolutionRequired,
-    cachedEnrolment,
-    rawMarkets,
-    limitWords,
-    accountSignatureValid,
-    session,
-    latestSession,
-    position,
-    rawBooks,
-    backing,
-    floor,
-  ] = await Promise.all([
-    provider.getBlock(blockNumber),
-    secondaryProvider?.getBlock(blockNumber),
-    clearing.leaderEpoch(at),
-    clearing.signerSetVersion(at),
-    clearing.policyVersion(at),
-    clearing.paused(at),
-    clearing.resolutionRequired(at),
-    enrolment.get(chain),
-    Promise.all(indexes.map((index) => clearing.markets(index, at))),
-    Promise.all(indexes.map(async (index) => toLimitWord(await clearing.marketLimits(index, at)))),
-    signedByAccount
-      ? Promise.resolve(true)
-      : chain.isValidSignature(signingAccount, request.intentHash, request.userSignature, blockNumber),
-    signedByAccount || intentSigner === undefined
-      ? Promise.resolve(undefined)
-      : clearing.sessions(intentSigner, at),
-    signedByAccount || intentSigner === undefined
-      ? Promise.resolve(undefined)
-      : chain.latestSession(signingAccount, blockNumber),
-    clearing.positionOf(intent.account, market, at),
-    Promise.all(indexes.map((index) => clearing.exposure(index, at))),
-    clearing.makerBacking(at),
-    clearing.baseRiskCapitalTarget(at),
-  ]);
+  const sessionRead = !signedByAccount && intentSigner !== undefined;
+  // One aggregated eth_call for every clearing view at this block (when the chain has Multicall3): about
+  // twenty parallel calls per approver, three approvers at once, was what rate-limited RPC plans refused.
+  const views: ViewCall[] = [
+    ["leaderEpoch"],
+    ["signerSetVersion"],
+    ["policyVersion"],
+    ["paused"],
+    ["resolutionRequired"],
+    ["positionOf", intent.account, market],
+    ["makerBacking"],
+    ["baseRiskCapitalTarget"],
+    ...indexes.map((index): ViewCall => ["markets", index]),
+    ...indexes.map((index): ViewCall => ["marketLimits", index]),
+    ...indexes.map((index): ViewCall => ["exposure", index]),
+    ...(sessionRead ? [["sessions", intentSigner] as ViewCall] : []),
+  ];
+  const readAll =
+    typeof (clearing as unknown as Contract).getFunction === "function"
+      ? () => readViews(clearing as unknown as Contract, views, blockNumber)
+      : () =>
+          Promise.all(
+            views.map(([method, ...args]) =>
+              (clearing as unknown as Record<string, (...input: unknown[]) => Promise<unknown>>)[method](
+                ...args,
+                at,
+              ),
+            ),
+          );
+  const [block, secondaryBlock, cachedEnrolment, accountSignatureValid, latestSession, viewResults] =
+    await Promise.all([
+      provider.getBlock(blockNumber),
+      secondaryProvider?.getBlock(blockNumber),
+      enrolment.get(chain),
+      signedByAccount
+        ? Promise.resolve(true)
+        : chain.isValidSignature(signingAccount, request.intentHash, request.userSignature, blockNumber),
+      sessionRead ? chain.latestSession(signingAccount, blockNumber) : Promise.resolve(undefined),
+      readAll(),
+    ]);
+  const [leaderEpoch, signerSetVersion, policyVersion, paused, resolutionRequired, position, backing, floor] =
+      viewResults as any[],
+    count = indexes.length,
+    rawMarkets = viewResults.slice(8, 8 + count) as any[],
+    limitWords = (viewResults.slice(8 + count, 8 + 2 * count) as any[]).map(toLimitWord),
+    rawBooks = viewResults.slice(8 + 2 * count, 8 + 3 * count) as any[],
+    session = sessionRead ? (viewResults[8 + 3 * count] as any) : undefined;
   if (secondaryProvider && (!secondaryBlock || secondaryBlock.hash !== block?.hash))
     return { rejection: reject("rpc divergence") };
   if (!block) return { rejection: reject("independent chain policy rejected") };
@@ -339,9 +356,10 @@ export async function verifySignedReport(
         to: oracleAddress,
         from: clearingAddress,
         data: adapter.encodeFunctionData("verify", [report]),
-        value: toBeHex(fee),
+        // JSON-RPC quantities: toBeHex pads (0x00, 0x032e…), which strict RPCs such as dRPC refuse.
+        value: toQuantity(fee),
       },
-      toBeHex(blockNumber),
+      toQuantity(blockNumber),
     ]),
     [values] = adapter.decodeFunctionResult("verify", raw),
     observation = Array.from(values as OracleObservationInput[], toOracleObservation).find(

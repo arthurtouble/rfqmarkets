@@ -89,8 +89,7 @@ export function ConfirmSheet({
 
   const autoClose = useMemo(() => {
     if (!snapshot) return null;
-    // A Home trade holds only its amount as margin, so it auto-closes against that, not the whole balance. Home
-    // asks for at least MIN_ISOLATED_OPEN (lib/updown.ts stakeProblem), so every Home trade opens that way.
+    // A Home trade holds only its amount as margin, so it auto-closes against that, not the whole balance.
     const base =
       order.isolated || !account
         ? { ...emptyAccount("", snapshot), collateral: payMicro.toString() }

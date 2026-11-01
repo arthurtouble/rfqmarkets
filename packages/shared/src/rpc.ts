@@ -95,15 +95,23 @@ export class FallbackRpcProvider extends JsonRpcProvider {
   readonly #hosts: string[];
   /** Since the last log line: requests per RPC that answered them, and the latest failure. */
   #served: number[];
+  /** Since the last log line: requests per JSON-RPC method, to find what drives the load. */
+  #methods = new Map<string, number>();
+  readonly #label: string;
   #lastFailure = "";
   #loggedAt = Date.now();
 
   constructor(
     urls: readonly string[],
     network?: Networkish,
-    options: JsonRpcApiProviderOptions & { timeoutMs?: number; lastTimeoutMs?: number } = {},
+    options: JsonRpcApiProviderOptions & { timeoutMs?: number; lastTimeoutMs?: number; label?: string } = {},
   ) {
-    const { timeoutMs = 1_500, lastTimeoutMs = Math.max(timeoutMs, 8_000), ...providerOptions } = options;
+    const {
+      timeoutMs = 1_500,
+      lastTimeoutMs = Math.max(timeoutMs, 8_000),
+      label = "rpc",
+      ...providerOptions
+    } = options;
     if (!urls.length) throw new Error("FallbackRpcProvider needs at least one RPC URL");
     const request = (url: string, last: boolean) => {
       const fetch = new FetchRequest(url);
@@ -115,6 +123,7 @@ export class FallbackRpcProvider extends JsonRpcProvider {
     // Only hosts: a metered RPC URL carries its API key in the path.
     this.#hosts = urls.map((url) => new URL(url).host);
     this.#served = urls.map(() => 0);
+    this.#label = label;
     this.#fallbacks = urls
       .slice(1)
       .map(
@@ -125,6 +134,8 @@ export class FallbackRpcProvider extends JsonRpcProvider {
 
   // ethers types the results as JsonRpcResult, but error responses come back in the same array.
   override async _send(payload: JsonRpcPayload | JsonRpcPayload[]): Promise<JsonRpcResult[]> {
+    for (const item of Array.isArray(payload) ? payload : [payload])
+      this.#methods.set(item.method, (this.#methods.get(item.method) ?? 0) + 1);
     const senders = [
       (body: typeof payload) => super._send(body),
       ...this.#fallbacks.map((provider) => provider._send.bind(provider)),
@@ -157,11 +168,14 @@ export class FallbackRpcProvider extends JsonRpcProvider {
     this.#served[index]++;
     const now = Date.now();
     if (now - this.#loggedAt < 60_000) return;
-    if (this.#served.slice(1).some(Boolean))
+    if (this.#served.slice(1).some(Boolean)) {
+      const methods = [...this.#methods].sort((a, b) => b[1] - a[1]).slice(0, 6);
       console.warn(
-        `rpc fallback in the last minute: ${this.#hosts.map((host, i) => `${host}=${this.#served[i]}`).join(" ")}; latest failure ${this.#lastFailure.slice(0, 200)}`,
+        `${this.#label} rpc fallback in the last minute: ${this.#hosts.map((host, i) => `${host}=${this.#served[i]}`).join(" ")}; methods ${methods.map(([name, count]) => `${name}=${count}`).join(" ")}; latest failure ${this.#lastFailure.slice(0, 160)}`,
       );
+    }
     this.#served.fill(0);
+    this.#methods.clear();
     this.#loggedAt = now;
   }
 

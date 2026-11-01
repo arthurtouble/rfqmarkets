@@ -4,12 +4,11 @@
 // it stays open until the trader cashes out (or it auto-closes), like any perp.
 import type { ChartPoint } from "./candles.js";
 import { usdc, usdcCompact } from "./format.js";
-import { MIN_ISOLATED_OPEN } from "./isolated.js";
 import { MARGIN_PROBLEM, leverageLabel, positionNotional } from "./ticket.js";
 import type { Side } from "./types.js";
 
 /** The words Home uses for the two sides. */
-export const UP_DOWN: Record<Side, string> = { buy: "Up", sell: "Down" };
+export const UP_DOWN: Record<Side, string> = { buy: "Long", sell: "Short" };
 
 /** Position size presets in whole dollars. */
 export const SIZE_PRESETS = [50, 100, 250, 500] as const;
@@ -18,7 +17,7 @@ export const MULTIPLIER_PRESETS = [2, 3, 5, 10] as const;
 export const DEFAULT_SIZE = 100;
 export const DEFAULT_MULTIPLIER = 3;
 /** How far back the tick line reaches. */
-export const TICK_WINDOW_MS = 5 * 60_000;
+export const TICK_WINDOW_MS = 15 * 60_000;
 /** Most points the tick line keeps; older ones drop first. */
 export const MAX_TICKS = 600;
 
@@ -99,7 +98,7 @@ export const recordMatches = (record: BetRecord, entryNotional: bigint) => {
 };
 
 /**
- * The ticket's reason a trade can't go yet, in Home's words: Up and Down
+ * The ticket's reason a trade can't go yet, in Home's words: Long and Short
  * rather than Long and Short, and limits as money.
  */
 export function homeProblem(
@@ -128,16 +127,13 @@ export function homeProblem(
 export const lossAt = (notional: bigint, entry: bigint, exit: bigint) =>
   entry > 0n ? (notional * (entry > exit ? entry - exit : exit - entry)) / entry : 0n;
 
-/**
- * Why a Home amount can't be traded, or null. Every Home trade holds its amount in its own isolated account,
- * which the contract opens only with at least MIN_ISOLATED_OPEN; a smaller amount would trade on the whole
- * balance instead, so Home asks for the minimum rather than quietly risking more than the amount.
- */
-export function stakeProblem(stakeMicro: bigint | null, multiplier?: number): string | null {
-  if (stakeMicro !== null && stakeMicro < MIN_ISOLATED_OPEN)
-    return multiplier
-      ? `The smallest trade at ${leverageLabel(multiplier)} is ${usdcCompact(betNotional(MIN_ISOLATED_OPEN, multiplier))}`
-      : `The smallest trade is ${usdcCompact(MIN_ISOLATED_OPEN)}`;
+/** The smallest Home position, at any multiplier (USDC 1e6). */
+export const MIN_POSITION = 10_000_000n;
+
+/** Why a Home position size can't be traded, or null: under the smallest position. */
+export function sizeProblem(sizeMicro: bigint | null): string | null {
+  if (sizeMicro !== null && sizeMicro > 0n && sizeMicro < MIN_POSITION)
+    return `The smallest trade is ${usdcCompact(MIN_POSITION)}`;
   return null;
 }
 

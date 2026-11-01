@@ -9,6 +9,7 @@ import { Contract, JsonRpcProvider, Wallet } from "ethers";
 import { clearingStateAbi } from "../../packages/shared/src/abi.js";
 import { syncMarketRegistry } from "../../packages/shared/src/markets-chain.js";
 import { childEnvironment } from "../../packages/shared/src/process-environment.js";
+import { FallbackRpcProvider } from "../../packages/shared/src/rpc.js";
 import { buildApi, type ApiOptions } from "../../services/api/src/server.js";
 import { HttpHedgeRiskSource } from "../../services/api/src/hedge-risk.js";
 import type { OracleSource } from "../../services/api/src/oracle.js";
@@ -59,12 +60,18 @@ export interface ServiceStackConfig {
   indexerFallbackRpcUrls?: string[];
   /** Most blocks per indexer eth_getLogs call. */
   maxLogRange?: number;
+  /** Blocks the indexer stays behind the reported head (load-balanced public RPCs lag between nodes). */
+  indexerHeadLagBlocks?: number;
+  /** How often the indexer follows the chain (its default 500 ms). */
+  indexerPollMs?: number;
   /**
    * RPCs, in order, for the polling reads (the hedger's exposure poll, the indexer's registry refresh,
    * the API's public market snapshot) when they should stay off rpcUrl, for example free RPCs in front
    * of a metered one. rpcUrl then only takes the requests they all fail.
    */
   readRpcUrls?: string[];
+  /** RPCs, in order, that take an API request (calls, transactions, receipts) rpcUrl fails on. */
+  rpcFallbackUrls?: string[];
   /** Market registry refresh interval for every service (default 60 s). */
   marketRefreshMs?: number;
   sponsorKey: string;
@@ -72,7 +79,13 @@ export interface ServiceStackConfig {
   approvers: {
     keys: string[];
     /** Primary and secondary RPC for approver `index`; independent providers keep quorum honest. */
-    rpc(index: number): { primary: string; secondary: string };
+    rpc(index: number): {
+      primary: string;
+      secondary: string;
+      fallbacks?: string[];
+      secondaryFallbacks?: string[];
+      logs?: string[];
+    };
     rpcBatchMaxCount?: string;
     maxFutureSeconds: number;
     oracleMode?: "local" | "signed";
@@ -175,6 +188,8 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
       startBlock: config.startBlock,
       confirmations: 2,
       maxLogRange: config.maxLogRange,
+      pollMs: config.indexerPollMs,
+      headLagBlocks: config.indexerHeadLagBlocks,
       marketRefreshMs: config.marketRefreshMs,
     });
     await indexer.listen({ host: bindHost, port: ports.indexer });
@@ -217,6 +232,9 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
             RFQ_CLEARING_ADDRESS: config.clearingAddress,
             RFQ_RPC_URL: rpc.primary,
             RFQ_SECONDARY_RPC_URL: rpc.secondary,
+            RFQ_RPC_FALLBACK_URLS: rpc.fallbacks?.join(","),
+            RFQ_SECONDARY_RPC_FALLBACK_URLS: rpc.secondaryFallbacks?.join(","),
+            RFQ_LOG_RPC_URLS: rpc.logs?.join(","),
             RFQ_RPC_BATCH_MAX_COUNT: config.approvers.rpcBatchMaxCount,
             RFQ_APPROVER_PORT: String(port),
             RFQ_MAX_FUTURE_SECONDS: String(config.approvers.maxFutureSeconds),
@@ -245,10 +263,14 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     // Load the clearing registry before the API rebuilds journaled quotes for markets beyond BTC/ETH.
     {
       // One call per request: free RPC plans (drpc) reject batches, which stopped the dev runtime at start.
-      const provider = new JsonRpcProvider(config.rpcUrl, undefined, {
-        staticNetwork: true,
-        batchMaxCount: 1,
-      });
+      const provider = config.rpcFallbackUrls?.length
+        ? new FallbackRpcProvider([config.rpcUrl, ...config.rpcFallbackUrls], undefined, {
+            staticNetwork: true,
+            batchMaxCount: 1,
+            timeoutMs: 5_000,
+            label: "registry",
+          })
+        : new JsonRpcProvider(config.rpcUrl, undefined, { staticNetwork: true, batchMaxCount: 1 });
       try {
         await syncMarketRegistry(new Contract(config.clearingAddress, clearingStateAbi, provider));
       } finally {
@@ -270,6 +292,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
         ...apiChain,
         rpcUrl: config.rpcUrl,
         readRpcUrls: config.readRpcUrls,
+        fallbackRpcUrls: config.rpcFallbackUrls,
         sponsorPrivateKey: config.sponsorKey,
         clearingAddress: config.clearingAddress,
         tokenAddress: config.tokenAddress,

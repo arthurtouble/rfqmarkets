@@ -30,7 +30,7 @@ export function checkQuoteModel(
 
 /**
  * Recompute the leader's adaptive spread: the base component must reach the market's base spread, the
- * components must sum to the capped total, and the expected price must equal anchor +/- (spread + impact)
+ * components must sum to the capped total, and the expected price must equal mid +/- (spread + impact)
  * premium.
  */
 export function checkQuoteSpread(
@@ -62,7 +62,8 @@ export function checkQuoteSpread(
     notional = BigInt(quote.amount),
     impact = BigInt(quote.impactCharge) > 0n ? BigInt(quote.impactCharge) : 0n,
     spreadCharge = ceilDiv(notional * total, 10_000n),
-    anchor = selling ? BigInt(quote.bid) : BigInt(quote.ask),
+    // Quotes are priced from the oracle mid (packages/shared/src/pricing.ts constructQuote).
+    anchor = (BigInt(quote.bid) + BigInt(quote.ask)) / 2n,
     premium = ceilDiv(anchor * (spreadCharge + impact), notional),
     expected = selling ? anchor - premium : anchor + premium;
   if (expected !== BigInt(quote.expectedPrice)) return reject("quote spread price mismatch");
@@ -70,7 +71,7 @@ export function checkQuoteSpread(
 
 /**
  * Quote freshness, base/notional rounding and a minimum charge: the fee plus
- * the price premium over the touch must reach the market's base spread, the
+ * the price premium over the mid must reach the market's base spread, the
  * platform markup and the impact charge. `capNotional` applies the static
  * per-trade ceiling when no chain limit word is available.
  */
@@ -93,7 +94,7 @@ export function checkPricePolicy(input: {
     minimumCharge = ceilDiv(notional * minimumChargeBps(input.baseSpreadBps), 10_000n) + positiveImpact,
     // A fee pays part of the charge; the price premium must cover the rest.
     premiumCharge = minimumCharge > approval.fee ? minimumCharge - approval.fee : 0n,
-    anchor = intent.baseDelta > 0n ? BigInt(quote.ask) : BigInt(quote.bid),
+    anchor = mid,
     minimumPremium = ceilDiv(anchor * premiumCharge, notional);
   const underpriced =
     intent.baseDelta > 0n

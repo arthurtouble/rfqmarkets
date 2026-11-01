@@ -143,25 +143,17 @@ contract MakerCapitalTest is ClearingFixture {
         assertTrue(custodyMatchesBuckets());
     }
 
-    /// @notice A trade the exposure check admits right at the stress limit keeps stress covered after the
-    /// markup share moves to insurance.
-    function test_theMarkupShareNeverTakesBackingBelowStress() public {
+    /// @notice Stress above backing no longer refuses a trade (the per-market caps bound risk), and the markup
+    /// share still never moves backing that stress would need into insurance.
+    function test_stressAboveBackingIsAdmittedAndKeepsTheMarkupShare() public {
         Trader memory whale = newTrader("whale", 1_000_000e6);
-        // Backing is 150,000 and BTC stress is 40% of skew, so the limit is near 3.75 BTC. Find the largest
-        // trade the venue admits.
-        uint256 low = 1e17;
-        uint256 high = 5e18;
-        while (high - low > 1e9) {
-            uint256 mid = (low + high) / 2;
-            if (admits(whale, int256(mid))) low = mid;
-            else high = mid;
-        }
         uint256 insurance = clearing.insuranceBalance();
-        trade(whale, 0, int256(low), false);
-        assertGt(clearing.portfolioStress(), clearing.makerBacking() * 99 / 100, "the trade reached the stress limit");
-        assertLe(clearing.portfolioStress(), clearing.makerBacking());
-        // The markup share would have been about 15 USDC; only the headroom moved.
-        assertLt(clearing.insuranceBalance() - insurance, 1e6);
+        // Backing is 150,000 and BTC stress is 40% of skew: 5 BTC at 100k is 200,000 of stress.
+        assertTrue(admits(whale, 5e18));
+        trade(whale, 0, 5e18, false);
+        assertGt(clearing.portfolioStress(), clearing.makerBacking(), "stress exceeds backing");
+        assertFalse(clearing.makerIncident(), "nothing is owed to customers yet");
+        assertEq(clearing.insuranceBalance(), insurance, "no backing above stress, so no markup share moved");
         assertTrue(custodyMatchesBuckets());
     }
 

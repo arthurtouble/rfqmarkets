@@ -56,33 +56,39 @@ async function setMarketEnabled(market: number, enabled: boolean) {
 }
 
 test.describe("placing trades", () => {
-  test("a first Long turns on one-tap trading with one signature and fills with no review", async ({
-    page,
-    isMobile,
-  }) => {
-    await page.goto("/trade/BTC");
-    const ticket = await openTicket(page, isMobile);
-    await size(ticket, "100", "5×");
-    await expect(ticket.getByText("Margin $20")).toBeVisible();
-    await expect(submit(ticket)).toHaveText("Long BTC · $100 at 5×");
-    await submit(ticket).click();
+  test.describe("starting from no one-tap key", () => {
+    test.use({ autoStartTrading: false });
+    test("Start trading turns on one tap with one signature, then a Long fills with no review", async ({
+      page,
+      isMobile,
+    }) => {
+      await page.goto("/trade/BTC");
+      const ticket = await openTicket(page, isMobile);
+      const start = ticket.getByRole("button", { name: "Start trading", exact: true });
+      await expect(start).toBeVisible();
+      await start.click();
+      await expect(page.getByRole("status", { name: "Notifications" })).toContainText("One-tap trading on");
+      await size(ticket, "100", "5×");
+      await expect(ticket.getByText("Margin $20")).toBeVisible();
+      await expect(submit(ticket)).toHaveText("Long BTC · $100 at 5×");
+      await submit(ticket).click();
 
-    const notifications = page.getByRole("status", { name: "Notifications" });
-    await expect(notifications).toContainText("One-tap trading on");
-    await expect(notifications).toContainText("Long BTC $100.00 filled");
-    await expect(page.getByRole("dialog", { name: "Review order" })).toHaveCount(0);
-    // The mobile sheet closes after a fill so the position shows; desktop clears the amount.
-    if (isMobile) await expect(page.getByRole("dialog", { name: "Trade BTC" })).toBeHidden();
-    else await expect(ticket.getByLabel("Position size in USDC")).toHaveValue("");
+      const notifications = page.getByRole("status", { name: "Notifications" });
+      await expect(notifications).toContainText("Long BTC $100.00 filled");
+      await expect(page.getByRole("dialog", { name: "Review order" })).toHaveCount(0);
+      // The mobile sheet closes after a fill so the position shows; desktop clears the amount.
+      if (isMobile) await expect(page.getByRole("dialog", { name: "Trade BTC" })).toBeHidden();
+      else await expect(ticket.getByLabel("Position size in USDC")).toHaveValue("");
 
-    // The key is kept, so the next trade fills from the ticket without a wallet prompt.
-    const again = await openTicket(page, isMobile);
-    await again.getByRole("group", { name: "Direction" }).getByRole("button", { name: "Short" }).click();
-    await size(again, "20", "2×");
-    await expect(again.getByText("One-tap trading is on. No wallet prompt.")).toBeVisible();
-    await submit(again).click();
-    await expect(notifications).toContainText("Short BTC $20.00 filled");
-    await expect(page.getByRole("dialog", { name: "Review order" })).toHaveCount(0);
+      // The key is kept, so the next trade fills from the ticket without a wallet prompt.
+      const again = await openTicket(page, isMobile);
+      await again.getByRole("group", { name: "Direction" }).getByRole("button", { name: "Short" }).click();
+      await size(again, "20", "2×");
+      await expect(again.getByText("One-tap trading is on. No wallet prompt.")).toBeVisible();
+      await submit(again).click();
+      await expect(notifications).toContainText("Short BTC $20.00 filled");
+      await expect(page.getByRole("dialog", { name: "Review order" })).toHaveCount(0);
+    });
   });
 
   test("the ticket explains what blocks a trade and Max respects the margin tiers", async ({

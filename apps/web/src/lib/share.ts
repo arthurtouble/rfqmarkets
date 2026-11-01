@@ -33,9 +33,9 @@ export function returnLabel(ret: number | null): string | null {
   return `${pct > 0 ? "+" : "-"}${text}%`;
 }
 
-/** "Up 3×" or "Down" when the multiplier is unknown. */
+/** "Long 3×", or "Short" when the multiplier is unknown. */
 export const betLabel = (bet: Pick<ShareBet, "long" | "multiplier">) =>
-  `${bet.long ? "Up" : "Down"}${bet.multiplier ? ` ${bet.multiplier}×` : ""}`;
+  `${bet.long ? "Long" : "Short"}${bet.multiplier ? ` ${bet.multiplier}×` : ""}`;
 
 /** The big number on the card: the return when known, else the dollar result. */
 export const shareHeadline = (bet: ShareBet) => returnLabel(bet.ret) ?? signedUsdc(bet.pnl);
@@ -55,7 +55,7 @@ export function shareCaption(bet: ShareBet): string {
   const result = [signedUsdc(bet.pnl), returnLabel(bet.ret)].filter(Boolean);
   const amount = result.length === 2 ? `${result[0]} (${result[1]})` : result[0];
   const call = `${betLabel(bet)} on ${bet.name}`;
-  return bet.closed ? `Cashed out ${amount} going ${call}.` : `${call}: ${amount} so far.`;
+  return bet.closed ? `Cashed out ${amount} from ${call}.` : `${call}: ${amount} so far.`;
 }
 
 /** "rfq-btc-up.png" */

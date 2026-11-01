@@ -61,12 +61,17 @@ export class RFQDevRuntime extends Container {
       return { ready: false, reason: "approver_keys_do_not_match_deployment" };
     const secrets = {
       ...JSON.parse(this.env.RFQ_DEV_RUNTIME_SECRETS),
+      // RPC overrides set by hand (`wrangler secret put RFQ_DEV_RPC_OVERRIDES`), such as a paid RPC with its key
+      // in the URL. Deploys rewrite RFQ_DEV_RUNTIME_SECRETS from defaults but never touch this one.
+      ...(this.env.RFQ_DEV_RPC_OVERRIDES ? JSON.parse(this.env.RFQ_DEV_RPC_OVERRIDES) : {}),
       hedgeToken: await this.hedgeToken(),
       sponsorKey: identities.sponsor.privateKey,
       approverKeys: identities.approvers.map((item) => item.privateKey),
     };
     await this.startAndWaitForPorts(CONTROL);
     let status = await this.status();
+    if (status.phase === "exited")
+      console.log(`runtime exited ${JSON.stringify({ exitCode: status.exitCode, tail: status.tail })}`);
     if (needsRestart(status, deployment)) {
       // A crashed stack, a new deployment or new oracle signers: keep the journals of what ran, then start clean.
       await this.snapshot();
@@ -127,7 +132,27 @@ export class RFQDevRuntime extends Container {
   /** Cron: keeps the runtime up (the indexer and hedger must run between requests) and saves journals. */
   async tick() {
     const ready = await this.ensureRunning();
+    if (ready.ready) await this.forwardLogs().catch(() => undefined);
     return { ...ready, ...(ready.ready ? await this.snapshot() : {}) };
+  }
+
+  /** Container output never reaches Workers Logs by itself: copy the lines printed since the last tick. */
+  async forwardLogs() {
+    let after = (await this.ctx.storage.get("log-cursor")) ?? -1;
+    const read = async () => {
+      const response = await this.containerFetch(control(`/control/logs?after=${after}`), CONTROL);
+      return response.status === 200 ? response.json() : null;
+    };
+    let page = await read();
+    // A restarted container numbers its lines from zero again.
+    if (page && page.last < after) {
+      after = -1;
+      page = await read();
+    }
+    if (!page?.lines.length) return;
+    const { lines } = page;
+    for (const line of lines) console.log(`runtime: ${line.text}`);
+    await this.ctx.storage.put("log-cursor", lines[lines.length - 1].seq);
   }
 
   async fetch(request) {

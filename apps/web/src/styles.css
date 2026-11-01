@@ -125,7 +125,7 @@ dialog.sheet > .rfq-sheet { width: 100%; max-height: 92dvh; overflow-y: auto; ov
 /* Trade: mobile --------------------------------------------------------- */
 .trade-mobile { display: flex; flex-direction: column; gap: var(--space-4); min-height: calc(100dvh - var(--size-tabbar) - env(safe-area-inset-bottom, 0px)); padding: var(--space-3) var(--space-4) 0; }
 .trade-mobile > * { min-width: 0; }
-.trade-mobile__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.trade-mobile__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
 .trade-mobile__body { flex: 1; display: grid; gap: var(--space-4); align-content: start; padding-bottom: var(--space-4); }
 .trade-mobile__body .market-details { padding: var(--space-4); border: 0; border-radius: var(--radius-lg); background: var(--surface); }
 .trade-mobile__actions { position: sticky; bottom: calc(var(--size-tabbar) + env(safe-area-inset-bottom, 0px)); z-index: 10; display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin: 0 calc(-1 * var(--space-4)); padding: var(--space-3) var(--space-4); background: linear-gradient(to bottom, transparent, var(--bg) 30%); }
@@ -353,7 +353,7 @@ dialog.sheet { text-align: start; }
 /* Home: Up / Down in one centred column. */
 .updown { width: min(100%, 480px); }
 .updown__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-.updown__end { display: flex; align-items: center; gap: var(--space-2); }
+.updown__end { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .updown-balance { position: relative; }
 .updown-balance__menu { position: absolute; right: 0; top: calc(100% + var(--space-1)); z-index: 20; display: grid; gap: var(--space-2); padding: var(--space-2); min-width: 9rem; }
 .updown .price-header { text-align: center; }
@@ -387,3 +387,9 @@ dialog.sheet { text-align: start; }
   min-height: 100vh;
   background: var(--bg);
 }
+
+/* InfoTip: explanations live behind a small "i". */
+.rfq-tip { position: relative; display: inline-flex; vertical-align: middle; margin-left: var(--space-1); }
+.rfq-tip__button { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); background: transparent; color: var(--text-secondary); font: 600 11px/1 var(--font-sans); cursor: help; padding: 0; }
+.rfq-tip__body { position: absolute; z-index: 20; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); width: max-content; max-width: min(260px, 80vw); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: 0 4px 16px rgb(0 0 0 / 0.18), inset 0 0 0 1px var(--line); color: var(--text); font: 400 13px/1.4 var(--font-sans); text-align: left; }
+.updown-bet__details { display: flex; justify-content: center; gap: var(--space-4); flex-wrap: wrap; }

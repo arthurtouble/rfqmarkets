@@ -432,6 +432,18 @@ test("checks trigger orders and TP/SL legs against the requested trigger", () =>
     reduceOnly: true,
   };
   verifyPrepared(leg, "TriggeredTradeIntent", context, expected);
+  // A Home trade's TP/SL is for the connected account's isolated account, and only with `isolated`.
+  const isolatedLeg = tamper(leg, { account: isolatedAccountOf(ACCOUNT, 0) });
+  verifyPrepared(isolatedLeg, "TriggeredTradeIntent", context, { ...expected, isolated: true });
+  refused(() => verifyPrepared(isolatedLeg, "TriggeredTradeIntent", context, expected), /another account/);
+  refused(
+    () =>
+      verifyPrepared(tamper(leg, { account: isolatedAccountOf(OTHER, 0) }), "TriggeredTradeIntent", context, {
+        ...expected,
+        isolated: true,
+      }),
+    /another account/,
+  );
   refused(
     () => verifyPrepared(tamper(leg, { triggerPrice: "1" }), "TriggeredTradeIntent", context, expected),
     /trigger price changed/,
@@ -592,6 +604,19 @@ test("session grants must authorize this tab's key with the quick-trading limits
 test("cancels and emergency closes name the requested nonce and market", () => {
   const cancel = prepared(cancelTypes, cancelToWire({ account: ACCOUNT, nonce: 12n, deadline: 1n }));
   verifyPrepared(cancel, "CancelIntent", context, { kind: "cancel", nonce: "12" });
+  verifyPrepared(tamper(cancel, { account: isolatedAccountOf(ACCOUNT, 1) }), "CancelIntent", context, {
+    kind: "cancel",
+    nonce: "12",
+    isolatedMarket: 1,
+  });
+  refused(
+    () =>
+      verifyPrepared(tamper(cancel, { account: isolatedAccountOf(ACCOUNT, 1) }), "CancelIntent", context, {
+        kind: "cancel",
+        nonce: "12",
+      }),
+    /another account/,
+  );
   refused(
     () =>
       verifyPrepared(tamper(cancel, { nonce: "13" }), "CancelIntent", context, {

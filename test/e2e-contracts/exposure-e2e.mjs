@@ -28,7 +28,8 @@ const proxy = await deploy("TestProxy", [await implementation.getAddress(), gov.
 await (await clearing.unpause()).wait();
 await (await token.mint(maker.address, 200_000_000_000n)).wait();
 await (await token.connect(maker).approve(await proxy.getAddress(), ethers.MaxUint256)).wait();
-await (await clearing.connect(maker).fundMaker(99_999_000_000n)).wait();
+// Far below the 100k floor: idle maker capital no longer gates trading.
+await (await clearing.connect(maker).fundMaker(1_000_000_000n)).wait();
 for (const user of [long, short, third]) {
   await (await token.mint(user.address, 100_000_000_000n)).wait();
   await (await token.connect(user).approve(await proxy.getAddress(), ethers.MaxUint256)).wait();
@@ -134,7 +135,6 @@ await assert.rejects(
   clearing.connect(third).declareResolution(),
   "an empty underfunded deployment must not be griefable",
 );
-await assert.rejects(trade(long, BASE / 10n), "opening below maker capital floor must fail");
 await (await clearing.connect(maker).fundMaker(1_000_000n)).wait();
 await configure(25_000_000_000n, 20_000_000_000n);
 await refresh();
@@ -181,15 +181,13 @@ await (await clearing.setMarketPolicy(0, true, 1_000_000_000_000n, 5_000_000_000
 await configure(50_000_000_000n, 20_000_000_000n);
 await refresh();
 await trade(long, BASE / 10n);
-await trade(short, -BASE / 100n);
+assert.equal(await clearing.makerIncident(), false, "backing far below the floor is not an incident");
+// A 50% rally owes the long about 5k unrealized, more than the maker's backing: a maker that could not pay
+// out today. New exposure stops until it is recapitalized.
 prices[0] = 150_000_000_000n;
 await refresh();
-await trade(long, -BASE / 10n, 0, true);
-assert((await clearing.makerBacking()) < 100_000_000_000n);
-await assert.rejects(
-  trade(third, BASE / 100n),
-  "realized maker losses must enforce capital floor on later opening",
-);
+assert.equal(await clearing.makerIncident(), true);
+await assert.rejects(trade(third, BASE / 100n), "no new exposure while the maker could not pay out");
 await assert.rejects(
   clearing.connect(third).declareResolution(),
   "an unreported incident must not resolve the venue",
@@ -225,5 +223,5 @@ assert.equal(
   "a persistent objective undercapitalization must permit permissionless resolution",
 );
 console.log(
-  "Exposure E2E passed: capital floor, opposing gross, independent sides, stale gross marks, reductions and permissionless incident entry after the grace period",
+  "Exposure E2E passed: no idle-capital floor, opposing gross, independent sides, stale gross marks, reductions and permissionless incident entry after the grace period",
 );
