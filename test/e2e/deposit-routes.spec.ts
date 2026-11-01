@@ -165,6 +165,10 @@ async function lifi(page: Page) {
   });
 }
 
+// The mock wallet's account (Hardhat #9) has collateral once wallet-connect.spec.ts or edge-cases.spec.ts has run on
+// the same chain, and the ticket then offers Start trading; a session grant cannot settle on this faked Base config.
+test.use({ autoStartTrading: false });
+
 test("deposits from another network show the route's rate, fees and arrival before confirming", async ({
   page,
   context,

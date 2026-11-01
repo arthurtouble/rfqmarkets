@@ -53,3 +53,11 @@ export const errorMessage = (error: unknown, fallback: string) => {
     return error.shortMessage;
   return error instanceof Error && error.message ? error.message : fallback;
 };
+
+/**
+ * Whether a request's answer was lost on the way rather than refused: the browser's network error, or the edge
+ * timing out on an upstream that may still be working (502, 504).
+ */
+export const connectionLost = (error: unknown) =>
+  (error instanceof TypeError && /fetch|network|load failed/i.test(error.message)) ||
+  (error instanceof ApiError && (error.status === 502 || error.status === 504));

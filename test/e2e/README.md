@@ -31,7 +31,7 @@ matching browser with `npx playwright install --with-deps chromium`.
 
 - One file per feature, named after it: `wallet-connect.spec.ts`,
   `funds.spec.ts`, `trading.spec.ts`, `orders.spec.ts`, `portfolio.spec.ts`,
-  `markets.spec.ts`, `leaderboard.spec.ts`, `exit.spec.ts`, `admin.spec.ts`, `terms.spec.ts`, `shell.spec.ts`
+  `markets.spec.ts`, `leaderboard.spec.ts`, `edge-cases.spec.ts` (refused signatures, a lost connection, a liquidation), `exit.spec.ts`, `admin.spec.ts`, `terms.spec.ts`, `shell.spec.ts`
   (navigation, top bar, tab bar, theme) and `docs.spec.ts` (the public docs site). `smoke.spec.ts` only
   checks that every page loads and fits the screen.
 - Import `test` and `expect` from `./fixtures.js`. Every test then fails on an
@@ -54,3 +54,15 @@ matching browser with `npx playwright install --with-deps chromium`.
 Unit tests still own the logic (`npm run test:web`, `npm run test:services`).
 Use end-to-end specs for what only a browser shows: the flow works, the screen
 is laid out correctly, and errors reach the user.
+
+## Against a deployed site
+
+Two configs drive the deployed app (dev by default, `RFQ_LIVE_URL` to change it) with the QA wallet:
+
+- `npx playwright test -c playwright.live.config.ts`: the walkthrough (`test/live/walkthrough.spec.ts`), which
+  trades small real amounts. `RFQ_LIVE_WITHDRAW=20` withdraws $20 instead of $2, so a later deposit step has a
+  real amount to move.
+- `npx playwright test -c playwright.devices.config.ts`: the device matrix (`test/live/devices.spec.ts`), every
+  page on iPhone, iPad, Android and desktop profiles in WebKit, Chromium and Firefox. It signs nothing. Install
+  the extra engines once with `npx playwright install webkit firefox`; behind a TLS-intercepting proxy, point
+  `RFQ_FIREFOX_PROFILE` at a Firefox profile that trusts the proxy's CA.

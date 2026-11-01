@@ -139,6 +139,9 @@ const stack = await startServiceStack({
     },
   },
   stopOnApproverExit: true,
+  // The container's only ingress is the dev Worker, which forwards Cloudflare's cf-connecting-ip. Without this
+  // every visitor shared one client's budgets: eight update streams in all, so the ninth tab got 429s.
+  clientIdentity: { clientIpHeader: "cf-connecting-ip", trustAnyPeer: true },
 });
 console.log(`Base mainnet dev services ready for ${clearing} from block ${record.deploymentBlock}`);
 stopOnSignals(stack);

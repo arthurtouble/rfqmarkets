@@ -8,6 +8,12 @@ export interface ClientIdentityOptions {
   clientIpHeader?: ClientIpHeader;
   /** Exact peer addresses allowed to set `clientIpHeader`, in addition to loopback. */
   trustedProxy?: string | string[];
+  /**
+   * Honor `clientIpHeader` from any peer. Only for a service whose ports no one can reach except through the
+   * edge that sets the header, such as the Cloudflare dev container (its only ingress is the edge Worker, and
+   * Cloudflare overwrites cf-connecting-ip on every request).
+   */
+  trustAnyPeer?: boolean;
 }
 
 type IdentifiableRequest = {
@@ -37,7 +43,7 @@ export function clientIdentity(options: ClientIdentityOptions = {}) {
   ]);
   return (request: IdentifiableRequest) => {
     const peer = request.socket?.remoteAddress;
-    if (!peer || !trusted.has(peer)) return request.ip;
+    if (!options.trustAnyPeer && (!peer || !trusted.has(peer))) return request.ip;
     const value = request.headers[header];
     if (typeof value !== "string") return request.ip;
     const address = value.trim();

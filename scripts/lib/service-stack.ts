@@ -17,6 +17,7 @@ import type { SenderOptions } from "../../services/api/src/sender.js";
 import { buildGateway, type GatewayOptions } from "../../services/gateway/src/server.js";
 import { buildHedger, type HedgeVenue } from "../../services/hedger/src/server.js";
 import { buildIndexer } from "../../services/indexer/src/server.js";
+import type { ClientIdentityOptions } from "../../packages/shared/src/client-identity.js";
 import { buildKeeper, type KeeperOptions } from "../../services/keeper/src/server.js";
 
 export interface Closable {
@@ -131,6 +132,11 @@ export interface ServiceStackConfig {
   };
   /** Stream gateway chart options: candle retention and oracle-node candle backfill. */
   gateway?: Pick<GatewayOptions, "candleRetentionMs" | "candleBackfill">;
+  /**
+   * How the public services (API, indexer, gateway) tell visitors apart for their per-client budgets. Without it
+   * each keys on the TCP peer, so behind an edge every visitor shares one client's stream slots and rate limits.
+   */
+  clientIdentity?: ClientIdentityOptions;
   /** Stop the whole stack when an approver dies. Local scenarios kill approvers on purpose, so it is opt-in. */
   stopOnApproverExit?: boolean;
 }
@@ -191,6 +197,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
       pollMs: config.indexerPollMs,
       headLagBlocks: config.indexerHeadLagBlocks,
       marketRefreshMs: config.marketRefreshMs,
+      ...config.clientIdentity,
     });
     await indexer.listen({ host: bindHost, port: ports.indexer });
     servers.push(indexer);
@@ -279,6 +286,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     }
     const api = buildApi({
       marketRefreshMs: config.marketRefreshMs,
+      ...config.clientIdentity,
       ...apiOptions,
       approvers,
       chainId: config.chainId,
@@ -302,7 +310,11 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
     servers.push(api);
     ready("api");
 
-    const gateway = buildGateway({ ...config.gateway, upstreamUrl: `http://127.0.0.1:${ports.api}` });
+    const gateway = buildGateway({
+      ...config.gateway,
+      ...config.clientIdentity,
+      upstreamUrl: `http://127.0.0.1:${ports.api}`,
+    });
     await gateway.listen({ host: bindHost, port: ports.gateway });
     servers.push(gateway);
     ready("gateway");

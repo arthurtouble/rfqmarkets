@@ -76,6 +76,8 @@ export interface ApiOptions {
   trustedProxy?: string | string[];
   /** Edge header keyed for per-client budgets when the peer is loopback or `trustedProxy`. */
   clientIpHeader?: ClientIpHeader;
+  /** Honor `clientIpHeader` from any peer (packages/shared/src/client-identity.ts). */
+  trustAnyPeer?: boolean;
   /** Live (signed, unexecuted) orders one account may hold at once (default 50). */
   maxRestingOrdersPerAccount?: number;
   /** Unsigned prepared orders held at once (default min(maxRestingOrders, 10 000)). */

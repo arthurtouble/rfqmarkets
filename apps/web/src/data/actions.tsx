@@ -10,7 +10,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { holdQuote, localDeadline, type HeldQuote } from "../lib/clock.js";
 import { API } from "../lib/env.js";
 import { friendlyError } from "../lib/errors.js";
-import { ApiError, errorMessage, postJson, randomNonce } from "../lib/http.js";
+import { ApiError, connectionLost, errorMessage, postJson, randomNonce } from "../lib/http.js";
 import { isolatedAccountOf, marginTopUp, MIN_ISOLATED_OPEN } from "../lib/isolated.js";
 import {
   checkRoute,
@@ -175,6 +175,14 @@ const repriceUnavailable = (error: unknown) =>
 /** An error whose message is already written for the trader; the error toast shows it as is. */
 class TraderFacingError extends Error {}
 
+/**
+ * A write whose answer never arrived: the connection dropped (or the edge timed out) after the request left, so the
+ * API may have carried it out. Saying "failed" would invite a second, duplicate trade.
+ */
+class MaybeSentError extends TraderFacingError {}
+const MAYBE_SENT =
+  "The connection dropped after this was sent, so it may have gone through. Check your account before trying again.";
+
 /** A session-signed resting order expires this long before its key. */
 const SESSION_ORDER_MARGIN_SECONDS = 600;
 /** Firm quote requests from screens are spaced at least this far apart. */
@@ -202,6 +210,11 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   const busyRef = useRef<string | null>(null);
   const lastFirmQuoteAt = useRef(0);
   const api = <T,>(path: string, body: unknown) => postJson<T>(`${API}${path}`, body);
+  /** `api` for the step that carries out a signed write: a lost answer is reported as maybe sent, not failed. */
+  const send = <T,>(path: string, body: unknown) =>
+    api<T>(path, body).catch((error: unknown) => {
+      throw connectionLost(error) ? new MaybeSentError(MAYBE_SENT) : error;
+    });
 
   /** When account reads repeat after an action, for RPC nodes a block or two behind. */
   const REFRESH_AGAIN_MS = 4_000;
@@ -230,7 +243,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       notify(
         {
           kind: "error",
-          title: `${label} failed`,
+          title: error instanceof MaybeSentError ? `${label}: no answer` : `${label} failed`,
           detail:
             error instanceof TraderFacingError
               ? error.message
@@ -329,7 +342,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     const { summary } = prepared,
       notional = (abs(BigInt(summary.baseDelta)) * BigInt(summary.triggerPrice)) / 10n ** 18n,
       session = viaSession && quickCovers(summary.market, notional) ? liveSession() : null;
-    const place = (userSignature: Hex) => api("/v1/orders", { orderId: prepared.orderId, userSignature });
+    const place = (userSignature: Hex) => send("/v1/orders", { orderId: prepared.orderId, userSignature });
     if (session) {
       try {
         return await place(
@@ -375,7 +388,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     });
     const session = sessionAllowed ? liveSession() : null;
     const submit = (userSignature: Hex) =>
-      api<Settled>("/v1/approve", { quoteId: quote.quoteId, account: onAccount, nonce, userSignature });
+      send<Settled>("/v1/approve", { quoteId: quote.quoteId, account: onAccount, nonce, userSignature });
     if (session) {
       progress("Signing with one tap");
       try {
@@ -556,7 +569,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       );
       userSignature = await trader.signIntent(prepared, "IsolatedMarginIntent", expected);
     }
-    return api<Settled>("/v1/isolated/margin/execute", { intent: prepared.intent, userSignature });
+    return send<Settled>("/v1/isolated/margin/execute", { intent: prepared.intent, userSignature });
   }
 
   const value: Trading = {
@@ -702,7 +715,8 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           nonce,
           reduceOnly: order.reduceOnly,
         });
-        const place = (userSignature: Hex) => api("/v1/orders", { orderId: prepared.orderId, userSignature });
+        const place = (userSignature: Hex) =>
+          send("/v1/orders", { orderId: prepared.orderId, userSignature });
         let placed = false;
         if (session)
           try {
@@ -933,7 +947,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           nonce,
         });
         progress("Closing");
-        const result = await api<Settled>("/v1/close/execute", { intent: prepared.intent, userSignature });
+        const result = await send<Settled>("/v1/close/execute", { intent: prepared.intent, userSignature });
         return {
           title: `${market} position closed`,
           txHash: result.transaction?.hash,
@@ -985,7 +999,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             progress("Sign the deposit in your wallet. No gas needed");
             const userSignature = await trader.signTyped(payload);
             progress("Depositing");
-            const result = await api<Settled>("/v1/deposit/execute", {
+            const result = await send<Settled>("/v1/deposit/execute", {
               authorization: prepared.authorization,
               userSignature,
             });
@@ -1103,7 +1117,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           nonce,
         });
         progress("Sending");
-        const result = await api<Settled>("/v1/withdraw/execute", { intent: prepared.intent, userSignature });
+        const result = await send<Settled>("/v1/withdraw/execute", {
+          intent: prepared.intent,
+          userSignature,
+        });
         return {
           title: `Withdrew ${usdc(amount)}`,
           txHash: result.transaction?.hash,
