@@ -14,6 +14,7 @@ class DeterministicProvider {
   broadcasts: string[] = [];
   receipts = new Map<string, Receipt>();
   receiptReads: string[] = [];
+  calls = 0;
   failBeforeAccept = false;
   failAfterAccept = false;
   revertNext = false;
@@ -24,6 +25,7 @@ class DeterministicProvider {
     return { gasPrice: null, maxFeePerGas: 2_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n };
   }
   async send(method: string, params: unknown[]) {
+    this.calls++;
     if (method === "eth_getTransactionCount")
       return `0x${(params[1] === "latest" ? this.minedNonce : this.pendingNonce).toString(16)}`;
     if (method === "eth_getTransactionReceipt") {
@@ -71,7 +73,15 @@ class DeterministicProvider {
   }
 }
 
-const options = { chainId: 31_337n, firstWaitMs: 20, replacementWaitMs: 20, pollMs: 1, maxReplacements: 0 };
+// Reorg checks read an included receipt on every pass here; the production cadence has its own test.
+const options = {
+  chainId: 31_337n,
+  firstWaitMs: 20,
+  replacementWaitMs: 20,
+  pollMs: 1,
+  maxReplacements: 0,
+  includedRecheckMs: 0,
+};
 const request = {
   to: "0x0000000000000000000000000000000000000001",
   data: "0x1234",
@@ -83,6 +93,25 @@ const rows = (database: DatabaseSync) =>
     .prepare("SELECT operation_id,nonce,tx_hash,status FROM sender_transactions ORDER BY nonce")
     .all() as Array<{ operation_id: string; nonce: number; tx_hash: string; status: string }>;
 const randomWallet = () => new Wallet(Wallet.createRandom().privateKey);
+
+test("an included receipt is read again at most once per includedRecheckMs until finality", async () => {
+  const provider = new DeterministicProvider(),
+    database = new DatabaseSync(":memory:"),
+    sender = new DurableSender(provider as never, randomWallet(), database, {
+      ...options,
+      includedRecheckMs: 60_000,
+    });
+  await sender.submit("landed", request);
+  const reads = () => provider.receiptReads.length;
+  await sender.reconcile();
+  const afterFirst = reads();
+  await sender.reconcile();
+  await sender.reconcile();
+  assert.equal(reads(), afterFirst, "no receipt reads within the recheck window");
+  const before = provider.calls;
+  await sender.reconcile({ idle: "skip" });
+  assert.equal(provider.calls, before, "an idle pass with nothing due makes no RPC call at all");
+});
 
 test("canonical revert is durable, unblocks later nonces and remains reorg-sensitive", async () => {
   const provider = new DeterministicProvider(),

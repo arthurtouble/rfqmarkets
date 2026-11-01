@@ -547,6 +547,7 @@ export class ExecutionService {
             },
           );
         } catch (error) {
+          console.error("approve: re-pricing failed:", error instanceof Error ? error.message : error);
           return Reply.error(503, publicError(error, "fresh settlement price unavailable"));
         }
         if (exceedsProtection(intent, refreshed.quote))
