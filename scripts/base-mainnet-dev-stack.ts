@@ -93,7 +93,17 @@ const stack = await startServiceStack({
   }),
   approvers: {
     keys: secrets.approverKeys,
-    rpc: () => ({ primary: secrets.rpcUrl, secondary: secrets.secondaryRpcUrl }),
+    // Each approver leads on a different RPC so one provider's rate limit cannot take quorum down, and
+    // fails over to the others.
+    rpc: (index) => {
+      const pool = [...new Set([secrets.rpcUrl, ...(secrets.indexerFallbackRpcUrls ?? []), secrets.secondaryRpcUrl])],
+        primary = pool[index % pool.length];
+      return {
+        primary,
+        secondary: pool[(index + 1) % pool.length],
+        fallbacks: pool.filter((url) => url !== primary),
+      };
+    },
     rpcBatchMaxCount: "1",
     maxFutureSeconds: 5,
     oracleMode: "signed",

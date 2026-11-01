@@ -39,6 +39,7 @@ const app = buildApprover({
   expectedQuoteModelVersion: env.RFQ_QUOTE_MODEL_VERSION ?? QUOTE_MODEL_VERSION,
   rpcUrl,
   secondaryRpcUrl,
+  rpcFallbackUrls: env.RFQ_RPC_FALLBACK_URLS?.split(",").filter(Boolean),
   rpcBatchMaxCount: integer("RFQ_RPC_BATCH_MAX_COUNT", 1),
   maxFutureSeconds: integer("RFQ_MAX_FUTURE_SECONDS", 5),
   oracleMode,

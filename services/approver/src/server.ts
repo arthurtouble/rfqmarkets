@@ -12,6 +12,7 @@ import { createChainClients } from "./chain-state.js";
 import { ApprovalJournal } from "./journal.js";
 import type { ApproverOptions } from "./options.js";
 import { registerErrorHandler } from "../../lib/src/error-codes.js";
+import { FallbackRpcProvider } from "../../../packages/shared/src/rpc.js";
 import { rpcProvider } from "../../lib/src/rpc.js";
 
 export type { ApproverOptions } from "./options.js";
@@ -31,7 +32,12 @@ export function buildApprover(options: ApproverOptions) {
   const provider =
     options.provider ??
     (options.rpcUrl
-      ? rpcProvider(options.rpcUrl, undefined, { batchMaxCount: options.rpcBatchMaxCount ?? 1 })
+      ? options.rpcFallbackUrls?.length
+        ? new FallbackRpcProvider([options.rpcUrl, ...options.rpcFallbackUrls], undefined, {
+            batchMaxCount: options.rpcBatchMaxCount ?? 1,
+            timeoutMs: 5_000,
+          })
+        : rpcProvider(options.rpcUrl, undefined, { batchMaxCount: options.rpcBatchMaxCount ?? 1 })
       : undefined);
   const secondaryProvider = options.secondaryRpcUrl
     ? rpcProvider(options.secondaryRpcUrl, undefined, { batchMaxCount: 1 })

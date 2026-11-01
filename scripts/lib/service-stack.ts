@@ -79,7 +79,7 @@ export interface ServiceStackConfig {
   approvers: {
     keys: string[];
     /** Primary and secondary RPC for approver `index`; independent providers keep quorum honest. */
-    rpc(index: number): { primary: string; secondary: string };
+    rpc(index: number): { primary: string; secondary: string; fallbacks?: string[] };
     rpcBatchMaxCount?: string;
     maxFutureSeconds: number;
     oracleMode?: "local" | "signed";
@@ -226,6 +226,7 @@ export async function startServiceStack(config: ServiceStackConfig): Promise<Ser
             RFQ_CLEARING_ADDRESS: config.clearingAddress,
             RFQ_RPC_URL: rpc.primary,
             RFQ_SECONDARY_RPC_URL: rpc.secondary,
+            RFQ_RPC_FALLBACK_URLS: rpc.fallbacks?.join(","),
             RFQ_RPC_BATCH_MAX_COUNT: config.approvers.rpcBatchMaxCount,
             RFQ_APPROVER_PORT: String(port),
             RFQ_MAX_FUTURE_SECONDS: String(config.approvers.maxFutureSeconds),
