@@ -29,9 +29,12 @@ test.beforeEach(async ({ context, page, baseURL }) => {
   await page.addLocatorHandler(
     page.getByRole("button", { name: "Start trading", exact: true }),
     async (button) => {
+      // Behind an open sheet the button is not in the trader's way; leave it.
+      if (await page.locator("dialog[open]").count()) return;
       await button.click();
       await expect(button).toBeHidden({ timeout: 60_000 });
     },
+    { noWaitAfter: true },
   );
   // Every write the page sends and what it got back, for triage.
   page.on("requestfinished", async (request) => {
@@ -156,4 +159,20 @@ test("simple mode opens a Long, takes a TP/SL from Pro's positions panel, and ca
     .click();
   await expect(page.getByRole("region", { name: "Cashed out" })).toBeVisible({ timeout: 90_000 });
   await page.screenshot({ path: test.info().outputPath("simple-cashed-out.png") });
+});
+
+test("withdraw sends USDC from the venue back to the wallet", async ({ page }) => {
+  test.skip((await venueCollateral()) < 3_000_000n, "the venue holds under $3");
+  const before = await walletUsdc();
+  await page.goto("/trade/BTC");
+  await connect(page);
+  await page
+    .getByRole("region", { name: "Account" })
+    .getByRole("button", { name: "Withdraw", exact: true })
+    .click();
+  const sheet = page.getByRole("dialog", { name: "Withdraw" });
+  await sheet.getByRole("textbox", { name: "Amount in USDC" }).fill("2");
+  await sheet.getByRole("button", { name: "Withdraw $2.00" }).click();
+  await expect(notifications(page).getByText("Withdrew $2.00")).toBeVisible({ timeout: 90_000 });
+  await expect.poll(walletUsdc, { timeout: 60_000 }).toBe(before + 2_000_000n);
 });
