@@ -30,6 +30,8 @@ export const UNRESOLVED_SENDER_STATUSES: readonly SenderStatus[] = [
   "ambiguous",
   "reorged",
 ];
+/** How often an ambiguous operation at an already consumed nonce has its receipts re-read. */
+const AMBIGUOUS_RECHECK_MS = 10 * 60_000;
 const UNRESOLVED_SQL = UNRESOLVED_SENDER_STATUSES.map((status) => `'${status}'`).join(",");
 
 class CanonicalRevert extends Error {
@@ -78,6 +80,8 @@ const maximum = (...values: bigint[]) => values.reduce((best, value) => (value >
  */
 export class DurableSender {
   private tail: Promise<unknown> = Promise.resolve();
+  /** When each ambiguous operation at a consumed nonce last had its receipts read (see AMBIGUOUS_RECHECK_MS). */
+  private readonly ambiguousCheckedAt = new Map<string, number>();
   constructor(
     private provider: JsonRpcProvider,
     private wallet: Wallet,
@@ -563,6 +567,17 @@ export class DurableSender {
       await this.refreshFinalizedFloor();
       rows = this.reconcileCandidates();
     }
+    // An ambiguous operation whose nonce is already consumed can only turn out to have landed, and every
+    // pass re-reads the receipts of all its attempts. Re-check those at most every AMBIGUOUS_RECHECK_MS, so a
+    // few of them cannot keep a rate-limited RPC busy (they did: most of the API's reads on dev).
+    const now = Date.now();
+    rows = rows.filter((row) => {
+      if (row.status !== "ambiguous" || row.nonce >= mined) return true;
+      const checked = this.ambiguousCheckedAt.get(row.operation_id);
+      if (checked !== undefined && now - checked < AMBIGUOUS_RECHECK_MS) return false;
+      this.ambiguousCheckedAt.set(row.operation_id, now);
+      return true;
+    });
     // One unreadable receipt (a free RPC refusing an old transaction as an archive read) must not stall every
     // other row: that row is skipped this round and keeps its status.
     const found = await Promise.all(
