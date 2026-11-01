@@ -117,21 +117,27 @@ test.describe("markets list", () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test("a market governance lists appears without a code change, unpriced until the oracle covers it", async ({
-    page,
-  }) => {
-    await page.route("**/v1/config", async (route) => {
-      const config = await (await route.fetch()).json();
-      config.marketList.push({ index: config.marketList.length, symbol: "AVAX", enabled: true });
-      await route.fulfill({ json: config, headers: { "access-control-allow-origin": "*" } });
+  test.describe("a market only the config lists", () => {
+    // AVAX is added to the served config only, not on chain, so no one-tap key can cover it: the screen is
+    // checked as it stands, with Start trading left alone.
+    test.use({ autoStartTrading: false });
+
+    test("a market governance lists appears without a code change, unpriced until the oracle covers it", async ({
+      page,
+    }) => {
+      await page.route("**/v1/config", async (route) => {
+        const config = await (await route.fetch()).json();
+        config.marketList.push({ index: config.marketList.length, symbol: "AVAX", enabled: true });
+        await route.fulfill({ json: config, headers: { "access-control-allow-origin": "*" } });
+      });
+      await page.goto("/markets");
+      const avax = row(page, /Avalanche/);
+      await expect(avax).toBeVisible();
+      await expect(avax).toContainText("No price");
+      await avax.click();
+      await expect(page).toHaveURL(/\/updown\/AVAX$/);
+      await expect(page.getByText("Avalanche has no price yet.")).toBeVisible();
     });
-    await page.goto("/markets");
-    const avax = row(page, /Avalanche/);
-    await expect(avax).toBeVisible();
-    await expect(avax).toContainText("No price");
-    await avax.click();
-    await expect(page).toHaveURL(/\/updown\/AVAX$/);
-    await expect(page.getByText("Avalanche has no price yet.")).toBeVisible();
   });
 
   test("a dropped price stream keeps the last prices, marked as delayed", async ({ page }) => {
@@ -200,14 +206,14 @@ test.describe("price chart", () => {
   test("the Home tick line scrubs to a point", async ({ page, isMobile }) => {
     await page.goto("/updown/BTC");
     await expect(page.getByRole("img", { name: /^Price chart/ })).toBeVisible();
-    await expect(page.getByText("5 min", { exact: true })).toBeVisible();
+    await expect(page.getByText("15 min", { exact: true })).toBeVisible();
     if (!isMobile) {
       const box = (await page.locator("figure.price-chart").boundingBox())!;
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       // While scrubbing, the change line shows the point's time instead of the period.
-      await expect(page.getByText("5 min", { exact: true })).toHaveCount(0);
+      await expect(page.getByText("15 min", { exact: true })).toHaveCount(0);
       await page.mouse.move(box.x + box.width / 2, box.y - 80);
-      await expect(page.getByText("5 min", { exact: true })).toBeVisible();
+      await expect(page.getByText("15 min", { exact: true })).toBeVisible();
     }
     await expectNoHorizontalOverflow(page);
   });

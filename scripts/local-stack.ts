@@ -46,6 +46,10 @@ const stack = await startServiceStack({
   api: {
     publicRpcUrl: deployment.rpcUrl,
     chain: { devFund: true, devWallet: deployment.devWallet, riskOperator: deployment.riskOperator },
+    // Every trading screen asks for a one-tap key, and the browser tests open hundreds of fresh pages for the
+    // same dev wallet: the production budget (5, then one per 10 s) would refuse most of their session grants.
+    sponsoredActionRatePerSecond: 50,
+    sponsoredActionBurst: 1_000,
   },
 });
 
