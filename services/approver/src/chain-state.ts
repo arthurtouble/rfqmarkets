@@ -1,5 +1,6 @@
 import { Contract, Interface, JsonRpcProvider, getAddress, toBeHex, toQuantity, type BlockTag } from "ethers";
 import { clearingApproverAbi, sessionGrantedFilter } from "../../../packages/shared/src/abi.js";
+import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import {
   toExposureBook,
   toExposureMarket,
@@ -229,49 +230,50 @@ export async function readChainState(
   const isolated = await clearing.isolatedOwner(intent.account, { blockTag: "latest" }),
     signingAccount = BigInt(isolated.owner) === 0n ? intent.account : getAddress(isolated.owner);
   const signedByAccount = intentSigner === signingAccount;
-  const [
-    block,
-    secondaryBlock,
-    leaderEpoch,
-    signerSetVersion,
-    policyVersion,
-    paused,
-    resolutionRequired,
-    cachedEnrolment,
-    rawMarkets,
-    limitWords,
-    accountSignatureValid,
-    session,
-    latestSession,
-    position,
-    rawBooks,
-    backing,
-    floor,
-  ] = await Promise.all([
-    provider.getBlock(blockNumber),
-    secondaryProvider?.getBlock(blockNumber),
-    clearing.leaderEpoch(at),
-    clearing.signerSetVersion(at),
-    clearing.policyVersion(at),
-    clearing.paused(at),
-    clearing.resolutionRequired(at),
-    enrolment.get(chain),
-    Promise.all(indexes.map((index) => clearing.markets(index, at))),
-    Promise.all(indexes.map(async (index) => toLimitWord(await clearing.marketLimits(index, at)))),
-    signedByAccount
-      ? Promise.resolve(true)
-      : chain.isValidSignature(signingAccount, request.intentHash, request.userSignature, blockNumber),
-    signedByAccount || intentSigner === undefined
-      ? Promise.resolve(undefined)
-      : clearing.sessions(intentSigner, at),
-    signedByAccount || intentSigner === undefined
-      ? Promise.resolve(undefined)
-      : chain.latestSession(signingAccount, blockNumber),
-    clearing.positionOf(intent.account, market, at),
-    Promise.all(indexes.map((index) => clearing.exposure(index, at))),
-    clearing.makerBacking(at),
-    clearing.baseRiskCapitalTarget(at),
-  ]);
+  const sessionRead = !signedByAccount && intentSigner !== undefined;
+  // One aggregated eth_call for every clearing view at this block (when the chain has Multicall3): about
+  // twenty parallel calls per approver, three approvers at once, was what rate-limited RPC plans refused.
+  const views: ViewCall[] = [
+    ["leaderEpoch"],
+    ["signerSetVersion"],
+    ["policyVersion"],
+    ["paused"],
+    ["resolutionRequired"],
+    ["positionOf", intent.account, market],
+    ["makerBacking"],
+    ["baseRiskCapitalTarget"],
+    ...indexes.map((index): ViewCall => ["markets", index]),
+    ...indexes.map((index): ViewCall => ["marketLimits", index]),
+    ...indexes.map((index): ViewCall => ["exposure", index]),
+    ...(sessionRead ? [["sessions", intentSigner] as ViewCall] : []),
+  ];
+  const readAll =
+    typeof (clearing as unknown as Contract).getFunction === "function"
+      ? () => readViews(clearing as unknown as Contract, views, blockNumber)
+      : () =>
+          Promise.all(
+            views.map(([method, ...args]) =>
+              (clearing as unknown as Record<string, (...input: unknown[]) => Promise<unknown>>)[method](...args, at),
+            ),
+          );
+  const [block, secondaryBlock, cachedEnrolment, accountSignatureValid, latestSession, viewResults] =
+    await Promise.all([
+      provider.getBlock(blockNumber),
+      secondaryProvider?.getBlock(blockNumber),
+      enrolment.get(chain),
+      signedByAccount
+        ? Promise.resolve(true)
+        : chain.isValidSignature(signingAccount, request.intentHash, request.userSignature, blockNumber),
+      sessionRead ? chain.latestSession(signingAccount, blockNumber) : Promise.resolve(undefined),
+      readAll(),
+    ]);
+  const [leaderEpoch, signerSetVersion, policyVersion, paused, resolutionRequired, position, backing, floor] =
+      viewResults as any[],
+    count = indexes.length,
+    rawMarkets = viewResults.slice(8, 8 + count) as any[],
+    limitWords = (viewResults.slice(8 + count, 8 + 2 * count) as any[]).map(toLimitWord),
+    rawBooks = viewResults.slice(8 + 2 * count, 8 + 3 * count) as any[],
+    session = sessionRead ? (viewResults[8 + 3 * count] as any) : undefined;
   if (secondaryProvider && (!secondaryBlock || secondaryBlock.hash !== block?.hash))
     return { rejection: reject("rpc divergence") };
   if (!block) return { rejection: reject("independent chain policy rejected") };
