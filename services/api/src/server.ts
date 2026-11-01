@@ -89,8 +89,10 @@ export function buildApi(options: ApiOptions = {}) {
         for (const { quote } of ctx.recoveredCommitments) ctx.quotes.versions.set(quote.quoteId, versions);
     }
     const sender = ctx.sender;
-    // A failed first pass must not stop the API from starting: the timer below retries every few seconds.
-    await sender?.reconcile().catch((error: unknown) => console.error("sender reconciliation failed", error));
+    // Reconcile skips a row whose receipt is unreadable (a free RPC refusing an archive read), so one old
+    // transaction cannot stop startup. An RPC that cannot be reached at all still fails it, and the supervisor
+    // retries with a fresh instance.
+    await sender?.reconcile();
     senderReconcileTimer = setInterval(() => {
       if (sender && !senderReconciliation)
         // Nothing in flight means nothing to read: the nonce read alone would hit the RPC every tick.
