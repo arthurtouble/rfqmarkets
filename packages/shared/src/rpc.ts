@@ -106,8 +106,12 @@ export class FallbackRpcProvider extends JsonRpcProvider {
     network?: Networkish,
     options: JsonRpcApiProviderOptions & { timeoutMs?: number; lastTimeoutMs?: number; label?: string } = {},
   ) {
-    const { timeoutMs = 1_500, lastTimeoutMs = Math.max(timeoutMs, 8_000), label = "rpc", ...providerOptions } =
-      options;
+    const {
+      timeoutMs = 1_500,
+      lastTimeoutMs = Math.max(timeoutMs, 8_000),
+      label = "rpc",
+      ...providerOptions
+    } = options;
     if (!urls.length) throw new Error("FallbackRpcProvider needs at least one RPC URL");
     const request = (url: string, last: boolean) => {
       const fetch = new FetchRequest(url);

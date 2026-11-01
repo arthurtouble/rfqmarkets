@@ -79,7 +79,13 @@ export interface ServiceStackConfig {
   approvers: {
     keys: string[];
     /** Primary and secondary RPC for approver `index`; independent providers keep quorum honest. */
-    rpc(index: number): { primary: string; secondary: string; fallbacks?: string[]; secondaryFallbacks?: string[]; logs?: string[] };
+    rpc(index: number): {
+      primary: string;
+      secondary: string;
+      fallbacks?: string[];
+      secondaryFallbacks?: string[];
+      logs?: string[];
+    };
     rpcBatchMaxCount?: string;
     maxFutureSeconds: number;
     oracleMode?: "local" | "signed";

@@ -102,7 +102,11 @@ export function sessionGrantTracker(
     let found: GrantLog | undefined;
     // Waves grow 1, 4, 16 ranges: a key granted moments ago (the usual case) is in the newest range, and a
     // burst of 16 parallel log reads per approver is what rate-limited RPCs refuse.
-    for (let end = toBlock, from = usable ? usable.through + 1 : floor, wave = 1; end >= from && !found; wave *= 4) {
+    for (
+      let end = toBlock, from = usable ? usable.through + 1 : floor, wave = 1;
+      end >= from && !found;
+      wave *= 4
+    ) {
       const ranges: Array<[number, number]> = [],
         width = Math.min(wave, GRANT_LOG_PARALLEL);
       for (; end >= from && ranges.length < width; end -= GRANT_LOG_CHUNK)
@@ -253,7 +257,10 @@ export async function readChainState(
       : () =>
           Promise.all(
             views.map(([method, ...args]) =>
-              (clearing as unknown as Record<string, (...input: unknown[]) => Promise<unknown>>)[method](...args, at),
+              (clearing as unknown as Record<string, (...input: unknown[]) => Promise<unknown>>)[method](
+                ...args,
+                at,
+              ),
             ),
           );
   const [block, secondaryBlock, cachedEnrolment, accountSignatureValid, latestSession, viewResults] =

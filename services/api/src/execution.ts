@@ -660,7 +660,9 @@ export class ExecutionService {
           console.warn(
             "approver quorum unavailable:",
             responses.map((item) =>
-              item.status === "rejected" ? String(item.reason).slice(0, 300) : JSON.stringify(item.value).slice(0, 300),
+              item.status === "rejected"
+                ? String(item.reason).slice(0, 300)
+                : JSON.stringify(item.value).slice(0, 300),
             ),
           );
           return Reply.error(503, "approver quorum unavailable", {
