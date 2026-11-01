@@ -23,6 +23,8 @@ export interface ApproverOptions {
   secondaryRpcUrl?: string;
   /** RPCs the primary fails over to on rate limits or outages (FallbackRpcProvider). */
   rpcFallbackUrls?: string[];
+  /** RPCs the secondary fails over to. */
+  secondaryFallbackUrls?: string[];
   rpcBatchMaxCount?: number;
   maxFutureSeconds?: number;
   oracleMode?: OracleMode;

@@ -97,11 +97,13 @@ const stack = await startServiceStack({
     // fails over to the others.
     rpc: (index) => {
       const pool = [...new Set([secrets.rpcUrl, ...(secrets.indexerFallbackRpcUrls ?? []), secrets.secondaryRpcUrl])],
-        primary = pool[index % pool.length];
+        primary = pool[index % pool.length],
+        secondary = pool[(index + 1) % pool.length];
       return {
         primary,
-        secondary: pool[(index + 1) % pool.length],
+        secondary,
         fallbacks: pool.filter((url) => url !== primary),
+        secondaryFallbacks: pool.filter((url) => url !== secondary),
       };
     },
     rpcBatchMaxCount: "1",

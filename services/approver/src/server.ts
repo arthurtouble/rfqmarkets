@@ -42,7 +42,14 @@ export function buildApprover(options: ApproverOptions) {
         : rpcProvider(options.rpcUrl, undefined, { batchMaxCount: options.rpcBatchMaxCount ?? 1 })
       : undefined);
   const secondaryProvider = options.secondaryRpcUrl
-    ? rpcProvider(options.secondaryRpcUrl, undefined, { batchMaxCount: 1 })
+    ? options.secondaryFallbackUrls?.length
+      ? new FallbackRpcProvider([options.secondaryRpcUrl, ...options.secondaryFallbackUrls], undefined, {
+          batchMaxCount: 1,
+          staticNetwork: true,
+          timeoutMs: 5_000,
+          label: "approver-secondary",
+        })
+      : rpcProvider(options.secondaryRpcUrl, undefined, { batchMaxCount: 1 })
     : undefined;
   if (provider && (!options.expectedChainId || !options.expectedVerifyingContract))
     throw new Error("Independent chain signing requires a pinned chain and clearing address");

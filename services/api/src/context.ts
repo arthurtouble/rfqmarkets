@@ -225,6 +225,8 @@ export class ApiContext {
         ? new DurableSender(this.provider, this.sponsor, this.journal, {
             chainId: options.chainId,
             initialFeeBumpBps: 2_500,
+            // A receipt poll every 100 ms was most of the API's reads on a rate-limited RPC; Base blocks are 2 s.
+            pollMs: this.devFund ? undefined : 250,
             ...options.senderBudget,
           })
         : undefined);
