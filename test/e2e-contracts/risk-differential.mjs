@@ -26,8 +26,8 @@ const tradeAssessment = (k, skew, oldSize, baseDelta, executionPrice, bid, ask) 
     requiredImpact = impactCost(k, skew, (baseDelta * mark) / BASE);
   const deliveredImpact =
       baseDelta > 0n
-        ? (absoluteBase * executionPrice) / BASE - (absoluteBase * ask) / BASE
-        : (absoluteBase * bid) / BASE - (absoluteBase * executionPrice) / BASE,
+        ? (absoluteBase * executionPrice) / BASE - (absoluteBase * mark) / BASE
+        : (absoluteBase * mark) / BASE - (absoluteBase * executionPrice) / BASE,
     next = oldSize + baseDelta;
   const reduces = oldSize !== 0n && abs(next) < abs(oldSize) && (next === 0n || next > 0n === oldSize > 0n);
   return [notional, requiredImpact, deliveredImpact, reduces];

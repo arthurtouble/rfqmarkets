@@ -241,10 +241,9 @@ export function marketMarginView(scaleBps: bigint | number) {
 }
 /**
  * The price a fill of `notional` pays before its fee: the oracle mid moved by the spread and inventory
- * charges, but never inside the oracle's bid/ask. The contract requires a buy to pay at least the ask
- * plus the impact charge (a sell at most the bid less it; `RFQRiskMath.tradeAssessment`), so when the
- * exchanges disagree by more than the model spread the touch sets the price. The touch branch charges one
- * micro-USDC more impact so the contract's floored comparison still sees the full charge.
+ * charges. The contract measures the delivered inventory charge from the mid too
+ * (`RFQRiskMath.tradeAssessment`), so a small trade in a calm market fills at the mid even when the
+ * exchanges the oracle reads disagree.
  */
 export function quotedPrice(input: {
   buy: boolean;
@@ -257,11 +256,8 @@ export function quotedPrice(input: {
 }): bigint {
   const { buy, bid, ask, notional, spreadCharge, impactCharge } = input,
     mid = (bid + ask) / 2n,
-    premium = ceilDiv(mid * (spreadCharge + impactCharge), notional),
-    model = buy ? mid + premium : mid - premium,
-    touchImpact = impactCharge > 0n ? ceilDiv(mid * (impactCharge + 1n), notional) : 0n,
-    touch = buy ? ask + touchImpact : bid - touchImpact;
-  return buy ? (model > touch ? model : touch) : model < touch ? model : touch;
+    premium = ceilDiv(mid * (spreadCharge + impactCharge), notional);
+  return buy ? mid + premium : mid - premium;
 }
 export function constructQuote(
   request: QuoteRequest,

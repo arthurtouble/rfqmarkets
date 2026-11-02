@@ -82,7 +82,7 @@ test("a small calm trade fills at the mid and pays the market's base spread plus
   assert.equal(quote.fee, 8_000n); // 4 bps of $20
 });
 
-test("a quote never prices inside the oracle touch, which the contract requires", () => {
+test("a quote prices from the mid even inside a wide oracle band, as the contract measures it", () => {
   const wide = {
     market: "BTC" as const,
     bid: 99_980n * 1_000_000n,
@@ -102,10 +102,11 @@ test("a quote never prices inside the oracle touch, which the contract requires"
         spread: adaptiveSpread(),
       },
     );
-    const beyond = side === "buy" ? quote.expectedPrice - wide.ask : wide.bid - quote.expectedPrice;
+    const mid = (wide.bid + wide.ask) / 2n,
+      beyond = side === "buy" ? quote.expectedPrice - mid : mid - quote.expectedPrice;
     assert(beyond > 0n && beyond < 20_000n, side);
   }
-  // A wider model spread prices from the mid past the touch; impact on the touch branch is charged in full.
+  // A wider model spread prices from the mid; the contract's floored comparison sees the full impact charge.
   const args = { bid: wide.bid, ask: wide.ask, notional: 100_000n * 1_000_000n };
   assert.equal(
     quotedPrice({ ...args, buy: true, spreadCharge: 50_000_000n, impactCharge: 0n }),
@@ -114,6 +115,6 @@ test("a quote never prices inside the oracle touch, which the contract requires"
   const impactCharge = 5_000_000n,
     price = quotedPrice({ ...args, buy: false, spreadCharge: 0n, impactCharge }),
     quantity = (args.notional * BASE) / 100_000_000_000n,
-    delivered = (quantity * wide.bid) / BASE - (quantity * price) / BASE;
+    delivered = (quantity * 100_000_000_000n) / BASE - (quantity * price) / BASE;
   assert(delivered >= impactCharge);
 });

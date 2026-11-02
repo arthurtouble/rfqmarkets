@@ -64,7 +64,8 @@ const assessment = await riskMath.tradeAssessment(
   100_000_000n,
 );
 assert.equal(assessment.notional, 99_000_000n);
-assert.equal(assessment.deliveredImpact, 0n);
+// Delivered impact is measured from the 99.5 mid: selling at the 99 bid delivers 0.5 USDC.
+assert.equal(assessment.deliveredImpact, 500_000n);
 assert.equal(assessment.reduces, true);
 const unchangedFunding = await riskMath.fundingStep(
   1_000_000_000_000_000_000n,

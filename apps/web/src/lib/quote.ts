@@ -68,8 +68,9 @@ export const marketFeeBps = (snapshot: MarketSnapshot | null | undefined, market
   snapshot?.markets[market]?.feeBps ?? snapshot?.pricing.feeBps ?? Number(DEFAULT_TRADING_FEE_BPS);
 
 /**
- * The prices a small trade fills at before its fee: the mid moved by the adaptive spread, but never inside
- * the oracle's bid and ask (`quotedPrice`). Size then adds the inventory charge.
+ * The prices a small trade fills at before its fee: the mid moved by the adaptive spread (`quotedPrice`).
+ * Size then adds the inventory charge. Not the oracle's bid and ask, which only show how far the exchanges
+ * it reads disagree.
  */
 export function touchPrices(live: MarketState) {
   const notional = 1_000_000n * USDC,

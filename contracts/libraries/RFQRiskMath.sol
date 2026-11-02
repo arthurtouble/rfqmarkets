@@ -300,7 +300,8 @@ library RFQRiskMath {
 
     /// @return notional Trade notional at the execution price.
     /// @return requiredImpact Inventory-impact charge the maker must collect at mid.
-    /// @return deliveredImpact What the execution price actually collects relative to the oracle side.
+    /// @return deliveredImpact What the execution price actually collects relative to the oracle mid. The
+    /// platform's charge is an explicit fee, so a small trade in a calm market may fill at the mid itself.
     /// @return reduces Whether the trade shrinks the account's position without flipping it.
     function tradeAssessment(
         uint32 impactK,
@@ -316,8 +317,8 @@ library RFQRiskMath {
         uint256 mark = (bid + ask) / 2;
         requiredImpact = impactCost(impactK, skew, baseDelta * int256(mark) / int256(BASE_UNIT));
         deliveredImpact = baseDelta > 0
-            ? int256(quantity * executionPrice / BASE_UNIT) - int256(quantity * ask / BASE_UNIT)
-            : int256(quantity * bid / BASE_UNIT) - int256(quantity * executionPrice / BASE_UNIT);
+            ? int256(quantity * executionPrice / BASE_UNIT) - int256(quantity * mark / BASE_UNIT)
+            : int256(quantity * mark / BASE_UNIT) - int256(quantity * executionPrice / BASE_UNIT);
         reduces = oldSize != 0 && isReduction(oldSize, oldSize + baseDelta);
     }
 
