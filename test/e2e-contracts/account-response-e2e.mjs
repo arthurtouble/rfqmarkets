@@ -308,7 +308,8 @@ try {
     marketMask: 1,
     maxTradeAmount: "200",
     maxCumulativeAmount: "1000",
-    maxFee: "0.000001",
+    // 10 bps of the per-trade cap, as the app grants: room for the 4 bps trading fee.
+    maxFee: "0.2",
     durationSeconds: 3600,
     nonce: "904",
   });
@@ -335,7 +336,8 @@ try {
   };
   const sessionAdded = await sessionMove("BTC", "add", "200", "905");
   assert.equal(sessionAdded.statusCode, 200, sessionAdded.body);
-  assert.equal(sessionAdded.json().isolated.collateral, "700000000");
+  // 500 USDC less the first trade's 4 bps fee on 100 USDC, plus the 200 just added.
+  assert.equal(sessionAdded.json().isolated.collateral, "699960000");
   const sessionFilled = await isolatedOrder("906", sessionKey);
   assert.equal(sessionFilled.statusCode, 200, sessionFilled.body);
   assert.equal((await sessionMove("BTC", "add", "201", "907")).statusCode, 401);
