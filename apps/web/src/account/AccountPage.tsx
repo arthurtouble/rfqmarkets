@@ -67,7 +67,7 @@ export function AccountPage() {
           <div>
             <div className="headline">Trading view</div>
             <div className="footnote rfq-muted">
-              What Home opens. Simple is one-tap Up or Down; Pro adds the full order ticket. Same account and
+              What Home opens. Simple is Up or Down; Pro adds the full order ticket. Same account and
               positions either way.
             </div>
           </div>
