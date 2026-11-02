@@ -47,7 +47,12 @@ Each market has a base spread on chain (`marketSpread(id)`, zero means the defau
 (`defaultSpread()`, zero means the services' built-in 2 bps). Since the adaptive-v2 quote model the base
 spread is charged as the trading fee, together with the platform's 2 bps (4 bps by default), not in the price; the
 price carries only the volatility, toxicity, hedge and basis components (capped at 100 bps) and the inventory
-charge. Approvers reject a fill whose fee and price premium together fall short of the market's fee. Services reload the registry every minute
+charge. Since adaptive-v3 those components move in 0.1 bp steps, the inventory charge on accumulating trades
+scales with volatility (up to 4x), and inventory-reducing trades get half their improvement back as a rebate (at
+most 5 bps of notional). Approvers reject a fill whose fee and price premium together fall short of the market's
+fee plus the inventory charge. A per-market minimum spread can be added through the adaptive model's `baseBps`
+input (0 today, at most 50 bps). Upgrade the API and approvers together: approvers reject quotes from a
+different model version. Services reload the registry every minute
 (`RFQ_MARKET_REFRESH_MS`), so a raised spread can cause a minute of rejected quotes on approvers that refreshed
 first. Spread changes do not bump `policyVersion`.
 

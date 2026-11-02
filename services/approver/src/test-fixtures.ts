@@ -41,8 +41,10 @@ export interface PayloadOptions {
   side?: "buy" | "sell";
   amount?: string;
   user?: BaseWallet;
-  /** Defaults to the adaptive-v2 spread; false omits the spread breakdown. */
+  /** Defaults to the adaptive-v3 spread; false omits the spread breakdown. */
   spread?: boolean;
+  /** Maker inventory notional the quote prices against (none by default). */
+  settled?: Partial<Record<Market, bigint>>;
   /** Overrides for the local oracle report observation. */
   report?: Partial<{ bid: bigint; ask: bigint; observedAt: bigint; validUntil: bigint; market: number }>;
   /** Sign a `TriggeredTradeIntent` with this trigger and send it in the payload. */
@@ -72,7 +74,7 @@ export function buildFixture(options: PayloadOptions = {}): Fixture {
   const quote = constructQuote(
     { market, side, amount: options.amount ?? "1000" },
     { market, bid: price, ask: price, observedAtMs: nowMs },
-    { BTC: 0n, ETH: 0n },
+    { BTC: 0n, ETH: 0n, ...options.settled },
     [],
     nowMs,
     crypto.randomUUID(),

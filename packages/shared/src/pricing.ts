@@ -87,6 +87,7 @@ export interface PriceSnapshot {
   volatilityBps?: number;
   volatility?: { fastBps: number; mediumBps: number; slowBps: number; jumpBps: number; sampleCount: number };
 }
+/** The adaptive spread by component, each in tenths of a bp (`SPREAD_UNITS_PER_BPS`) since adaptive-v3. */
 export interface SpreadBreakdown {
   baseBps: bigint;
   volatilityBps: bigint;
@@ -118,6 +119,7 @@ export interface Quote {
   expectedPrice: bigint;
   worstPrice: bigint;
   fee: bigint;
+  /** Inventory charge in USDC micro; negative is a rebate for a trade that reduces the maker's inventory. */
   impactCharge: bigint;
   spread?: SpreadBreakdown;
   expiresAtMs: number;
@@ -125,6 +127,7 @@ export interface Quote {
 }
 export interface PricingParameters {
   maxNotional: bigint;
+  /** Whole-bps spread over the mid, used only when there is no adaptive `spread`. */
   baseSpreadBps: bigint;
   feeBps: bigint;
   toleranceBps: bigint;
@@ -160,27 +163,42 @@ export const launchPricing: PricingParameters = {
 };
 const bounded = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, Number.isFinite(value) ? value : 0));
-const bps = (value: number) => BigInt(Math.ceil(Math.max(0, value)));
-/** Nearest whole bps (half up): a calm market's sub-bps volatility adds nothing to the price. */
-const nearestBps = (value: number) => BigInt(Math.floor(Math.max(0, value) + 0.5));
+/**
+ * Spread components and totals are in tenths of a bp from adaptive-v3 on (the fields keep their `Bps`
+ * names), so the price moves in 0.1 bp steps, about $1 on BTC at $100k, instead of whole bps.
+ */
+export const SPREAD_UNITS_PER_BPS = 10n;
+/** `value` bps in spread units (tenths of a bp), rounded up; the epsilon keeps float noise from adding a unit. */
+export const toSpreadUnits = (value: number) =>
+  BigInt(Math.max(0, Math.ceil(Math.max(0, value) * 10 - 1e-9)));
+/** Nearest spread unit (half up): volatility moves the price by its own size, not up to the next step. */
+const nearestUnits = (value: number) => BigInt(Math.floor(Math.max(0, value) * 10 + 0.5));
+/** The charge a spread of `units` (tenths of a bp) takes from `notional`, rounded up. */
+export const spreadChargeOf = (notional: bigint, units: bigint) =>
+  ceilDiv(notional * units, 10_000n * SPREAD_UNITS_PER_BPS);
 /**
  * Deterministic market-wide quote-risk decomposition: the spread over the oracle mid, before the
- * size-dependent inventory charge. There is no fixed base: the market's base spread is charged as the
- * trading fee (`tradingFeeBps`), so `baseBps` is zero unless a caller adds one (at most 50 bps).
+ * size-dependent inventory charge, in tenths of a bp. There is no fixed base: the market's base spread
+ * is charged as the trading fee (`tradingFeeBps`), so `baseBps` is zero unless a caller sets a
+ * per-market minimum (at most 50 bps).
  */
 export function adaptiveSpread(inputs: AdaptiveSpreadInputs = {}): SpreadBreakdown {
-  const baseBps = bps(bounded(inputs.baseBps ?? 0, 0, 50));
+  const baseBps = toSpreadUnits(bounded(inputs.baseBps ?? 0, 0, 50));
   const observedVol = bounded(inputs.volatilityBps ?? 0, 0, 2_000);
-  const volatilityBps = nearestBps(Math.min(40, observedVol / 5));
-  const toxicityBps = bps(Math.min(35, (bounded(inputs.toxicityScoreBps ?? 0, 0, 10_000) * 35) / 10_000));
+  const volatilityBps = nearestUnits(Math.min(40, observedVol / 5));
+  const toxicityBps = toSpreadUnits(
+    Math.min(35, (bounded(inputs.toxicityScoreBps ?? 0, 0, 10_000) * 35) / 10_000),
+  );
   const hedgeCost = bounded(inputs.hedgeCostBps ?? 0, 0, 50),
     latency = bounded(inputs.hedgeLatencyMs ?? 0, 0, 30_000);
   const hedgeMode = inputs.riskMode === "guarded" ? 4 : inputs.riskMode === "reduce_only" ? 12 : 0;
-  const hedgeBps = bps(Math.min(30, hedgeCost + hedgeMode + (Math.sqrt(latency / 1_000) * observedVol) / 25));
-  const basisBps = bps(Math.min(25, Math.abs(bounded(inputs.venueBasisBps ?? 0, -500, 500))));
-  const uncertaintyBps = bps(Math.min(20, bounded(inputs.confidenceBps ?? 0, 0, 500) / 2));
+  const hedgeBps = toSpreadUnits(
+    Math.min(30, hedgeCost + hedgeMode + (Math.sqrt(latency / 1_000) * observedVol) / 25),
+  );
+  const basisBps = toSpreadUnits(Math.min(25, Math.abs(bounded(inputs.venueBasisBps ?? 0, -500, 500))));
+  const uncertaintyBps = toSpreadUnits(Math.min(20, bounded(inputs.confidenceBps ?? 0, 0, 500) / 2));
   const uncapped = baseBps + volatilityBps + toxicityBps + hedgeBps + basisBps + uncertaintyBps;
-  const cap = BigInt(inputs.maxTotalBps ?? 100),
+  const cap = BigInt(inputs.maxTotalBps ?? 100) * SPREAD_UNITS_PER_BPS,
     totalBps = uncapped > cap ? cap : uncapped;
   return {
     baseBps,
@@ -194,7 +212,28 @@ export function adaptiveSpread(inputs: AdaptiveSpreadInputs = {}): SpreadBreakdo
   };
 }
 /** Spread model the leader quotes with; approvers reject quotes from any other model. */
-export const QUOTE_MODEL_VERSION = "adaptive-v2";
+export const QUOTE_MODEL_VERSION = "adaptive-v3";
+/**
+ * How much steeper the size curve gets with volatility, in thousandths: 1x in a still market, rising by
+ * 1x per 50 bps of short-horizon risk to at most 4x. Only charges scale; rebates do not.
+ */
+export function impactScaleMilli(volatilityBps: number | undefined) {
+  return 1_000n + BigInt(Math.min(3_000, Math.floor(bounded(volatilityBps ?? 0, 0, 2_000) * 20)));
+}
+/** Largest inventory rebate a fill can earn, in bps of its notional. */
+export const MAX_REBATE_BPS = 5n;
+/**
+ * The inventory charge a quote carries. A trade that adds to the maker's inventory pays the contract's
+ * required charge scaled by `impactScaleMilli`; one that reduces it gets half of the improvement as a
+ * better price (rounded towards zero, at most `MAX_REBATE_BPS` of notional), so the contract's
+ * requirement still holds with margin and a round trip always costs more than it earns.
+ */
+export function quotedImpact(rawImpact: bigint, volatilityBps: number | undefined, notional: bigint) {
+  if (rawImpact >= 0n) return ceilDiv(rawImpact * impactScaleMilli(volatilityBps), 1_000n);
+  const half = -rawImpact / 2n,
+    cap = (notional * MAX_REBATE_BPS) / 10_000n;
+  return -(half < cap ? half : cap);
+}
 export function marginRate(notional: bigint, initial: boolean) {
   if (notional <= 25_000n * USDC) return initial ? 2_000n : 1_200n;
   if (notional <= 100_000n * USDC) return initial ? 2_500n : 1_500n;
@@ -256,7 +295,9 @@ export function quotedPrice(input: {
 }): bigint {
   const { buy, bid, ask, notional, spreadCharge, impactCharge } = input,
     mid = (bid + ask) / 2n,
-    premium = ceilDiv(mid * (spreadCharge + impactCharge), notional);
+    charge = spreadCharge + impactCharge,
+    // Rounded up for a charge and towards zero for a rebate, always in the maker's favour.
+    premium = charge >= 0n ? ceilDiv(mid * charge, notional) : -((mid * -charge) / notional);
   return buy ? mid + premium : mid - premium;
 }
 export function constructQuote(
@@ -281,10 +322,13 @@ export function constructQuote(
     notional = exactBaseDelta === undefined ? requested : (absoluteBase * mid) / BASE;
   if (notional <= 0n || notional > parameters.maxNotional) throw new Error("amount exceeds market limit");
   const delta = baseDelta > 0n ? notional : -notional,
-    rawImpact = requiredPendingImpact(settled, pending, request.market, delta),
-    impactCharge = rawImpact > 0n ? rawImpact : 0n,
+    impactCharge = quotedImpact(
+      requiredPendingImpact(settled, pending, request.market, delta),
+      snapshot.volatilityBps,
+      notional,
+    ),
     spread = parameters.spread,
-    spreadBps = spread?.totalBps ?? parameters.baseSpreadBps,
+    spreadUnits = spread?.totalBps ?? parameters.baseSpreadBps * SPREAD_UNITS_PER_BPS,
     // The market's base spread is in the fee; the price carries only the model spread and impact.
     fee = ceilDiv(notional * parameters.feeBps, 10_000n),
     expectedPrice = quotedPrice({
@@ -292,7 +336,7 @@ export function constructQuote(
       bid: snapshot.bid,
       ask: snapshot.ask,
       notional,
-      spreadCharge: ceilDiv(notional * spreadBps, 10_000n),
+      spreadCharge: spreadChargeOf(notional, spreadUnits),
       impactCharge,
     }),
     toleranceBps = request.slippageBps === undefined ? parameters.toleranceBps : BigInt(request.slippageBps),

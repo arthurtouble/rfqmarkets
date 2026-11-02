@@ -3,10 +3,10 @@
 import { marketRegistry } from "../../../../packages/shared/src/markets.js";
 import {
   adaptiveSpread,
-  ceilDiv,
   constructQuote,
   DEFAULT_TRADING_FEE_BPS,
   quotedPrice,
+  spreadChargeOf,
   USDC,
   type SpreadBreakdown,
 } from "../../../../packages/shared/src/pricing.js";
@@ -74,7 +74,7 @@ export const marketFeeBps = (snapshot: MarketSnapshot | null | undefined, market
  */
 export function touchPrices(live: MarketState) {
   const notional = 1_000_000n * USDC,
-    spreadCharge = ceilDiv(notional * BigInt(spreadOf(live).totalBps), 10_000n),
+    spreadCharge = spreadChargeOf(notional, spreadOf(live).totalBps),
     at = (buy: boolean) =>
       quotedPrice({
         buy,
@@ -135,7 +135,7 @@ export function indicativeQuote(
       crypto.randomUUID(),
       {
         maxNotional,
-        baseSpreadBps: spread.totalBps,
+        baseSpreadBps: 0n,
         feeBps: BigInt(marketFeeBps(snapshot, market)),
         toleranceBps: BigInt(pricing.toleranceBps),
         spread,

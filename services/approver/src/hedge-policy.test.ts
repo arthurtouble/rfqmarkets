@@ -17,15 +17,16 @@ const snapshot = (mode: "normal" | "guarded" | "reduce_only", overrides: Partial
     },
     ...overrides,
   }) as HedgeRiskSnapshot;
+// Spread components are in tenths of a bp (adaptive-v3).
 const spread = {
-  baseBps: "2",
+  baseBps: "20",
   volatilityBps: "0",
   toxicityBps: "0",
-  hedgeBps: "3",
-  basisBps: "2",
+  hedgeBps: "30",
+  basisBps: "20",
   uncertaintyBps: "0",
-  totalBps: "7",
-  modelVersion: "adaptive-v1",
+  totalBps: "70",
+  modelVersion: "adaptive-v3",
 };
 const base = {
   risk: snapshot("normal"),
@@ -87,10 +88,14 @@ test("checkHedgeRisk enforces reduce-only, guarded limits and venue execution sp
   assert.equal(
     error(checkHedgeRisk({ ...base, risk: withExecution })),
     "venue execution spread rejected",
-    "hedge bps must cover the rounded-up venue cost",
+    "hedge spread must cover the venue cost, rounded up to a tenth of a bp",
   );
   assert.equal(
-    checkHedgeRisk({ ...base, risk: withExecution, spread: { ...spread, hedgeBps: "4" } }),
+    error(checkHedgeRisk({ ...base, risk: withExecution, spread: { ...spread, hedgeBps: "31" } })),
+    "venue execution spread rejected",
+  );
+  assert.equal(
+    checkHedgeRisk({ ...base, risk: withExecution, spread: { ...spread, hedgeBps: "32" } }),
     undefined,
   );
   assert.equal(
@@ -98,7 +103,7 @@ test("checkHedgeRisk enforces reduce-only, guarded limits and venue execution sp
       checkHedgeRisk({
         ...base,
         risk: withExecution,
-        spread: { ...spread, hedgeBps: "4", basisBps: "1" },
+        spread: { ...spread, hedgeBps: "32", basisBps: "19" },
       }),
     ),
     "venue execution spread rejected",
