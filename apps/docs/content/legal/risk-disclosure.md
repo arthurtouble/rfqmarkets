@@ -26,7 +26,7 @@ RFQ Markets is a development deployment that runs on Base mainnet with real USDC
 ## Pricing and counterparty
 
 - **The market maker is your only counterparty.** Every trade is against the Protocol's market maker, which is operated by or on behalf of RFQ Markets and trades for its own account. Its interests are opposed to yours.
-- **Prices include a spread and an inventory charge** that widen in volatile or one-sided markets. No separate trading fee is charged; the platform is paid through a markup included in the spread. The price you can trade at may differ from prices on other venues. See [Pricing and fees](../risk/pricing-and-fees.md).
+- **Prices include a spread and an inventory charge** that widen in volatile or one-sided markets. Each fill also pays a trading fee, shown before you sign. The price you can trade at may differ from prices on other venues. See [Pricing and fees](../risk/pricing-and-fees.md).
 - **The maker can refuse to trade.** When its risk limits or capital limits are reached, the maker may refuse new trades in one or both directions, possibly when you most want to trade. Trades that reduce your risk are favored but not guaranteed.
 - **Your profit depends on the maker's capital.** Profits are paid from the collateral the contract holds, which includes the maker's capital and the insurance fund. If losses exceed them, the Protocol can enter resolution and pay out claims pro rata, so you may receive less than the full value of your account, possibly much less. See [Safety and exits](../protocol/safety-and-exits.md).
 

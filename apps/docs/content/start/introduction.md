@@ -4,7 +4,7 @@ RFQ Markets is a perpetual futures venue on Base. You trade BTC and ETH against 
 
 The app opens on **Home**, the Up / Down screen. Pick an amount and a multiplier, then tap **Up** if you think the price will rise or **Down** if you think it will fall. The trade stays open until you tap **Cash out**. For limit orders, stop orders and more control, tap **Pro** for the full trading screen.
 
-There is no order book. When you trade, the venue asks its market maker for a firm price for exactly your size, checks that price against the venue's own price oracle, gets it co-signed by two of three approvers, and submits it on chain. You sign once, and the venue pays the gas. There are no trading fees.
+There is no order book. When you trade, the venue asks its market maker for a firm price for exactly your size, checks that price against the venue's own price oracle, gets it co-signed by two of three approvers, and submits it on chain. You sign once, and the venue pays the gas. Each fill pays a flat 0.04% trading fee.
 
 The point of this design is a clean trading experience without giving up custody. The prices come from a request-for-quote (RFQ) model, the way large trades are done in traditional markets, but your collateral never leaves the contract, and the contract refuses any fill that is worse than the price you signed.
 
@@ -27,7 +27,7 @@ On a central limit order book, your order meets other traders' orders, and the p
 
 That has a few practical consequences:
 
-- **You see one price for your size.** The app shows the estimated fill for your amount, with the spread and the effect of your size already in it. There is no fee on top and no walking the book.
+- **You see one price for your size.** The app shows the estimated fill for your amount, with the spread and the effect of your size already in it, and the 0.04% fee beside it. There is no walking the book.
 - **Fills are all or nothing.** A market order either fills completely within your protection or not at all. There are no partial fills.
 - **The maker can say no.** The maker has hard limits on how much risk it can take on. When a market is near its limit, trades that add to the maker's exposure may be refused while trades that reduce it go through. [Markets and limits](../markets/markets-and-limits.md) explains these limits.
 - **The maker hedges.** The maker offsets its net exposure on external venues. This is the maker's business, not yours, but it affects pricing and is described in [Hedging](../protocol/hedging.md).
@@ -36,7 +36,7 @@ That has a few practical consequences:
 
 Four separate checks have to pass before a trade settles:
 
-1. **You** sign the exact trade: market, size, the worst price you accept, the maximum fee (zero for a market order) and a short deadline.
+1. **You** sign the exact trade: market, size, the worst price you accept, the maximum fee and a short deadline.
 2. **The oracle** supplies a price report signed by at least two of three price nodes in different regions, each of which aggregates prices from seven exchanges.
 3. **Two of three approvers** each check the quote separately against the oracle, the contract's state and the venue's risk policy, and co-sign it. The operator runs all three today; separate hosts are planned for production.
 4. **The contract** verifies all of the above again, plus your margin and the venue's risk limits, and only then moves any money.

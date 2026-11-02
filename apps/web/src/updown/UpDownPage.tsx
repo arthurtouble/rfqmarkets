@@ -16,7 +16,7 @@ import { initialMarginAfter } from "../lib/account.js";
 import { abs, microToInput, parseUsdcInput, signedUsdc, usdc, usdcCompact, usdPrice } from "../lib/format.js";
 import { DEFAULT_MARGIN_SCALE_BPS, marginFromLeverage } from "../lib/leverage.js";
 import { closePreview, positionView, type PositionView } from "../lib/positions.js";
-import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
+import { STALE_AFTER_MS, indicativeQuote, marketFeeBps } from "../lib/quote.js";
 import type { ChartPoint } from "../lib/candles.js";
 import { chartTime } from "../lib/market-stats.js";
 import { returnLabel, type ShareBet } from "../lib/share.js";
@@ -246,7 +246,7 @@ function OpenBet({
   // While trading is paused a trade on the main balance still closes at the oracle price (as Pro's close sheet
   // does); a Home trade on its own margin waits for trading to resume.
   const blocked = paused && isolated;
-  const back = cashOutValue(worth, view.notional, paused ? 0 : (snapshot?.pricing.feeBps ?? 0));
+  const back = cashOutValue(worth, view.notional, paused ? 0 : marketFeeBps(snapshot, view.market));
   const [sharing, setSharing] = useState<ShareBet | null>(null);
   const tone = toneOf(view.pnl);
   const record = recordFor(view);
@@ -539,7 +539,7 @@ function NewBet({
           <InfoTip label="About this trade">
             Margin is the money this trade uses: the size divided by the multiplier, and the most it can lose.
             Buying power is the biggest trade your balance allows at {leverageLabel(multiplier)}. This one has{" "}
-            {feeWords(notional, snapshot?.pricing.feeBps ?? 0)}; a 1% move your way makes about{" "}
+            {feeWords(notional, marketFeeBps(snapshot, market))}; a 1% move your way makes about{" "}
             {usdc(onePercentGain(notional))}.
           </InfoTip>
         )}

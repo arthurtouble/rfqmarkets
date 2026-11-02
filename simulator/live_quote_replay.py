@@ -1,4 +1,4 @@
-"""Independent integer replay of adaptive-v1 quote inputs, not live qualification."""
+"""Independent integer replay of adaptive-v2 quote inputs, not live qualification."""
 import json,sys
 from walk_forward_calibration import Observation,spread,CURRENT_WEIGHTS
 BASE=10**18
@@ -34,8 +34,10 @@ def replay(item):
     spread_bps=spread(Observation(0,inputs.get('volatilityBps',0),inputs.get('toxicityScoreBps',0),inputs.get('hedgeCostBps',0),inputs.get('venueBasisBps',0),0,hedge_latency_ms=inputs.get('hedgeLatencyMs',0),confidence_bps=inputs.get('confidenceBps',0),risk_mode=inputs.get('riskMode','normal')),CURRENT_WEIGHTS)
     ceil=lambda numerator,denominator:(numerator+denominator-1)//denominator
     spread_charge=ceil(notional*spread_bps,10000);fee=ceil(notional*2,10000)
-    anchor=mid;premium=ceil(anchor*(spread_charge+impact),notional)
-    expected=anchor+premium if buy else anchor-premium
+    # pricing.ts quotedPrice: the mid moved by spread and impact, never inside the oracle touch.
+    premium=ceil(mid*(spread_charge+impact),notional)
+    touch_impact=ceil(mid*(impact+1),notional) if impact>0 else 0
+    expected=max(mid+premium,ask+touch_impact) if buy else min(mid-premium,bid-touch_impact)
     tolerance=ceil(expected*8,10000);worst=expected+tolerance if buy else expected-tolerance
     return {name:str(value) for name,value in dict(notional=notional,delta=delta,baseDelta=base,expectedPrice=expected,worstPrice=worst,fee=fee,impactCharge=impact).items()}
 

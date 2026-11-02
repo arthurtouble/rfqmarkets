@@ -3,7 +3,11 @@
 import { marketRegistry } from "../../../../packages/shared/src/markets.js";
 import {
   adaptiveSpread,
+  ceilDiv,
   constructQuote,
+  DEFAULT_TRADING_FEE_BPS,
+  quotedPrice,
+  USDC,
   type SpreadBreakdown,
 } from "../../../../packages/shared/src/pricing.js";
 import { quoteToWire } from "../../../../packages/shared/src/wire.js";
@@ -59,6 +63,29 @@ function registerListedMarkets(snapshot: MarketSnapshot) {
   }
 }
 
+/** The trading fee `market` charges, in bps of notional; older servers send only the default. */
+export const marketFeeBps = (snapshot: MarketSnapshot | null | undefined, market: Market) =>
+  snapshot?.markets[market]?.feeBps ?? snapshot?.pricing.feeBps ?? Number(DEFAULT_TRADING_FEE_BPS);
+
+/**
+ * The prices a small trade fills at before its fee: the mid moved by the adaptive spread, but never inside
+ * the oracle's bid and ask (`quotedPrice`). Size then adds the inventory charge.
+ */
+export function touchPrices(live: MarketState) {
+  const notional = 1_000_000n * USDC,
+    spreadCharge = ceilDiv(notional * BigInt(spreadOf(live).totalBps), 10_000n),
+    at = (buy: boolean) =>
+      quotedPrice({
+        buy,
+        bid: BigInt(live.bid),
+        ask: BigInt(live.ask),
+        notional,
+        spreadCharge,
+        impactCharge: 0n,
+      });
+  return { bid: at(false), ask: at(true) };
+}
+
 export type IndicativeQuote = { quote: Quote } | { error: string };
 
 /**
@@ -108,7 +135,7 @@ export function indicativeQuote(
       {
         maxNotional,
         baseSpreadBps: spread.totalBps,
-        feeBps: BigInt(pricing.feeBps),
+        feeBps: BigInt(marketFeeBps(snapshot, market)),
         toleranceBps: BigInt(pricing.toleranceBps),
         spread,
         maxSnapshotAgeMs: STALE_AFTER_MS,

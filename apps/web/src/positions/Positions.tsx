@@ -5,7 +5,7 @@ import { useIdleMargin } from "../account/useAccount.js";
 import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useProtocol } from "../data/queries.js";
-import { baseAmount, signedUsdc, usdc, usdPrice } from "../lib/format.js";
+import { baseAmount, feeLabel, signedUsdc, usdc, usdPrice } from "../lib/format.js";
 import {
   CLOSE_PRESETS,
   closeAllPreview,
@@ -15,7 +15,7 @@ import {
   positionView,
   type PositionView,
 } from "../lib/positions.js";
-import { indicativeQuote } from "../lib/quote.js";
+import { indicativeQuote, marketFeeBps } from "../lib/quote.js";
 import type { AccountState, Market } from "../lib/types.js";
 import { AssetIcon, Banner, Change, Rows, Segmented, Sheet, marketName } from "../ui/primitives.js";
 import { useDesktop } from "../ui/prefs.js";
@@ -367,6 +367,7 @@ export function ClosePositionSheet({
               `${baseAmount(preview.closingSize)} ${view.market} · ${usdc(preview.closingNotional)}`,
             ],
             ["Estimated price", usdPrice(preview.price)],
+            ["Fee", paused ? "None" : feeLabel(fee, marketFeeBps(snapshot, view.market))],
             [
               "Left open",
               preview.remainingSize > 0n ? `${baseAmount(preview.remainingSize)} ${view.market}` : "Nothing",

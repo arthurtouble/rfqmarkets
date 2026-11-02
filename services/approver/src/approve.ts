@@ -126,11 +126,7 @@ export async function approve(
       signerSetVersion: options.expectedSignerSetVersion,
     }) ??
     checkQuoteModel(input.quote.spread, options.expectedQuoteModelVersion) ??
-    checkQuoteSpread(
-      input.quote,
-      fill.baseDelta.toString(),
-      baseSpreadOf(marketRegistry.get(input.quote.market)),
-    ) ??
+    checkQuoteSpread(input.quote, fill.baseDelta.toString()) ??
     checkEnvelopeConsistency(input.quote, fill, approval);
   if (offChain) return offChain;
 

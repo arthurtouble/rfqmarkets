@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { indicativeQuote, STALE_AFTER_MS } from "./quote.js";
+import { indicativeQuote, marketFeeBps, STALE_AFTER_MS, touchPrices } from "./quote.js";
 import type { MarketSnapshot, MarketState } from "./types.js";
 
 const USDC = 1_000_000n;
@@ -30,22 +30,46 @@ const snapshotWith = (state: MarketState): MarketSnapshot => ({
   blockNumber: 1,
   serverTimeMs: NOW,
   markets: { BTC: state },
-  pricing: { settled: { BTC: "0" }, pending: [], baseSpreadBps: 2, feeBps: 2, toleranceBps: 8 },
+  pricing: { settled: { BTC: "0" }, pending: [], baseSpreadBps: 0, feeBps: 4, toleranceBps: 8 },
 });
 const quoteOf = (result: ReturnType<typeof indicativeQuote>) => {
   if (!("quote" in result)) throw new Error(result.error);
   return result.quote;
 };
 
-test("a long quotes above mid and a short below, with the 2 bps fee", () => {
+test("a long quotes above mid and a short below, with the 4 bps fee", () => {
   const snapshot = snapshotWith(market());
   const long = quoteOf(indicativeQuote(snapshot, "BTC", "buy", 1_000n * USDC, NOW));
   const short = quoteOf(indicativeQuote(snapshot, "BTC", "sell", 1_000n * USDC, NOW));
   assert.ok(BigInt(long.expectedPrice) > 100_000n * USDC);
   assert.ok(BigInt(short.expectedPrice) < 100_000n * USDC);
-  assert.equal(long.fee, 200_000n.toString());
+  assert.equal(long.fee, 400_000n.toString());
   assert.ok(BigInt(long.baseDelta!) > 0n && BigInt(short.baseDelta!) < 0n);
   assert.equal(long.quoteId, undefined, "indicative quotes are never signable");
+});
+
+test("each market's own fee applies, and small trades fill at the touch, not past it", () => {
+  const own = snapshotWith(market({ feeBps: 7 }));
+  assert.equal(marketFeeBps(own, "BTC"), 7);
+  assert.equal(marketFeeBps(snapshotWith(market()), "BTC"), 4);
+  assert.equal(marketFeeBps(null, "BTC"), 4);
+  assert.equal(quoteOf(indicativeQuote(own, "BTC", "buy", 1_000n * USDC, NOW)).fee, 700_000n.toString());
+  // A calm spread is zero, so a small trade fills at the oracle side; a wide one moves past it from the mid.
+  const calm = market({
+    spread: {
+      baseBps: "0",
+      volatilityBps: "0",
+      toxicityBps: "0",
+      hedgeBps: "0",
+      basisBps: "0",
+      uncertaintyBps: "0",
+      totalBps: "0",
+      modelVersion: "adaptive-v2",
+    },
+  });
+  assert.deepEqual(touchPrices(calm), { bid: 99_990n * USDC, ask: 100_010n * USDC });
+  const wide = market({ spread: { ...calm.spread!, volatilityBps: "5", totalBps: "5" } });
+  assert.deepEqual(touchPrices(wide), { bid: 99_950n * USDC, ask: 100_050n * USDC });
 });
 
 test("slippage widens the protected price on the trader's side", () => {

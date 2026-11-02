@@ -1,6 +1,7 @@
 // The market list. Markets are registered on chain and can be added by
 // governance at any time, so the list comes from GET /v1/config (marketList,
 // markets) and the live market stream rather than a constant.
+import { DEFAULT_TRADING_FEE_BPS } from "../../../../packages/shared/src/pricing.js";
 import { marginForScale } from "./leverage.js";
 import { MARKETS, type ChainConfig, type Market, type MarketMargin, type MarketSnapshot } from "./types.js";
 
@@ -12,7 +13,11 @@ export type MarketInfo = MarketMargin & {
   enabled: boolean;
   /** Whether the live stream currently prices this market. */
   priced: boolean;
+  /** The trading fee, in bps of notional (4 until a snapshot says otherwise). */
+  feeBps: number;
 };
+
+const DEFAULT_FEE_BPS = Number(DEFAULT_TRADING_FEE_BPS);
 
 /**
  * Merges the boot config and the latest snapshot into one list in contract
@@ -49,6 +54,7 @@ export function marketInfos(
         index: live?.index ?? entry.index,
         enabled: live?.enabled ?? entry.enabled,
         priced: !!live,
+        feeBps: live?.feeBps ?? snapshot?.pricing?.feeBps ?? DEFAULT_FEE_BPS,
         ...margin,
       };
     })

@@ -70,9 +70,19 @@ export const usdPrice = (micro?: string | bigint | null) =>
 
 /** Like `usdc`, without cents on whole amounts ("$250", "$12.50"). */
 export const usdcCompact = (micro?: string | bigint | null) => usdc(micro).replace(/\.00$/, "");
-/** A trading fee: "None" at zero (trades carry no fee; the platform's charge is in the price). */
-export const feeLabel = (micro?: string | bigint | null) =>
-  micro === undefined || micro === null ? "—" : toBig(micro) === 0n ? "None" : usdc(micro);
+/** A fee rate in bps as a percentage: 4 → "0.04%". */
+export const feeRate = (bps: number) => `${Number((bps / 100).toFixed(4))}%`;
+/** A trading fee, with its rate when known: "$0.40 (0.04%)", "None" at zero. */
+export const feeLabel = (micro?: string | bigint | null, bps?: number) =>
+  micro === undefined || micro === null
+    ? bps === undefined
+      ? "—"
+      : feeRate(bps)
+    : toBig(micro) === 0n
+      ? "None"
+      : bps === undefined
+        ? usdc(micro)
+        : `${usdc(micro)} (${feeRate(bps)})`;
 export const signedUsdc = (micro?: string | bigint | null) => {
   if (micro === undefined || micro === null) return "—";
   return `${toBig(micro) >= 100n ? "+" : ""}${usdc(micro)}`;

@@ -44,9 +44,10 @@ impact K at least the BTC value (10,000).
 ## Spreads
 
 Each market has a base spread on chain (`marketSpread(id)`, zero means the default) and there is a default
-(`defaultSpread()`, zero means the services' built-in 2 bps). The API uses it as the base component of the
-adaptive spread; volatility, toxicity, hedge and basis components still add on top, capped at 100 bps. Approvers
-reject a quote whose base component is below the market's. Services reload the registry every minute
+(`defaultSpread()`, zero means the services' built-in 2 bps). Since the adaptive-v2 quote model the base
+spread is charged as the trading fee, together with the platform's 2 bps (4 bps by default), not in the price; the
+price carries only the volatility, toxicity, hedge and basis components (capped at 100 bps) and the inventory
+charge. Approvers reject a fill whose fee and price premium together fall short of the market's fee. Services reload the registry every minute
 (`RFQ_MARKET_REFRESH_MS`), so a raised spread can cause a minute of rejected quotes on approvers that refreshed
 first. Spread changes do not bump `policyVersion`.
 

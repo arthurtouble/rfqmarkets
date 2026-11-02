@@ -59,7 +59,11 @@ def adaptive_spread_bps(volatility_bps: float, toxicity_score: float,
                         hedge_latency_ms: float, hedge_cost_bps: float,
                         venue_basis_bps: float, confidence_bps: float,
                         risk_mode: str) -> float:
-    """Float mirror of adaptive-v1 for economic simulation, capped at 100 bps."""
+    """Float mirror of adaptive-v2 for economic simulation, capped at 100 bps.
+
+    The 2 bps base is the market's base spread, which adaptive-v2 charges as part of the trading fee
+    rather than in the price; the economics are the same, so the simulation keeps it in the charge.
+    """
     volatility = min(40, max(0, volatility_bps) / 5)
     toxicity = min(35, max(0, min(1, toxicity_score)) * 35)
     mode = 4 if risk_mode == "guarded" else 12 if risk_mode == "reduce_only" else 0

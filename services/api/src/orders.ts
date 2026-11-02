@@ -72,8 +72,11 @@ type RestingOrder = {
 
 /** Unsigned prepared orders are dropped after five minutes. */
 const PREPARED_ORDER_TTL_MS = 300_000;
-/** Limit and trigger orders cap their fee at 2 bps of the notional at the protected price. */
-const ORDER_FEE_BPS = 2n;
+/**
+ * Limit and trigger orders cap their fee at 10 bps of the notional at the protected price. The fill pays
+ * the market's trading fee (4 bps by default); the cap leaves room for an operator-raised fee.
+ */
+const ORDER_FEE_BPS = 10n;
 const MAX_TRIGGERS_PER_MARKET = 16;
 const ORDER_CHECK_DELAY_MS = 25;
 const ORDER_RECONCILE_MS = 30_000;

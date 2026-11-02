@@ -3,7 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { useAccount } from "../account/useAccount.js";
 import { useMarketFeed } from "../data/market-feed.js";
 import { useMarketList } from "../data/markets.js";
-import { fundingApr, usdc, usdPrice } from "../lib/format.js";
+import { feeRate, fundingApr, usdc, usdPrice } from "../lib/format.js";
+import { marketFeeBps, touchPrices } from "../lib/quote.js";
 import type { Market, Side } from "../lib/types.js";
 import { Banner, Down, Rows, Sheet, Up } from "../ui/primitives.js";
 import { UnknownMarket } from "../markets/UnknownMarket.js";
@@ -18,15 +19,18 @@ import { OrderTicket } from "./OrderTicket.js";
 function MarketDetails({ market }: { market: Market }) {
   const { snapshot } = useMarketFeed();
   const live = snapshot?.markets[market];
+  // What a small trade fills at before the fee; size widens it by the inventory charge.
+  const touch = live ? touchPrices(live) : null;
   return (
     <Rows
       className="market-details"
       rows={[
         ["Funding (yearly)", fundingApr(live?.fundingApr)],
         ["Max per trade", usdc(live?.operatingMaxTradeNotional)],
-        ["Bid", usdPrice(live?.bid)],
-        ["Ask", usdPrice(live?.ask)],
-        ["Spread", live ? `${live.spread?.totalBps ?? live.baseSpreadBps} bps` : "—"],
+        ["Bid", usdPrice(touch?.bid)],
+        ["Ask", usdPrice(touch?.ask)],
+        ["Spread", touch ? usdPrice(touch.ask - touch.bid) : "—"],
+        ["Trading fee", live ? feeRate(marketFeeBps(snapshot, market)) : "—"],
         ["Max open per market", usdc(live?.maxMarketNotional)],
       ]}
     />

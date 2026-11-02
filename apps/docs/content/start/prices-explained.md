@@ -18,7 +18,7 @@ The **Entry price** on the Pro ticket is an indicative quote for the exact amoun
 - the maker's **spread** is added on top;
 - an **inventory adjustment** is added if your trade increases the maker's existing exposure, or subtracted if it reduces it.
 
-There is no trading fee: the platform's markup is already in this price. Typing an amount does not send anything to the venue or reserve anything. Pro's market details show the current spread. [Pricing and fees](../risk/pricing-and-fees.md) gives the formula.
+The 0.04% trading fee is shown on its own line, not in this price. Typing an amount does not send anything to the venue or reserve anything. Pro's market details show the current spread. [Pricing and fees](../risk/pricing-and-fees.md) gives the formula.
 
 ## Firm quote
 

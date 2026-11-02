@@ -74,7 +74,7 @@ Positions require margin and accrue funding as described in [Margin](../risk/mar
 
 ### 3.4 Fees
 
-No trading fee is charged on any trade. RFQ Markets is compensated through a markup included in the quoted price and spread, as described in [Pricing and fees](../risk/pricing-and-fees.md). The price you sign already includes that markup, and you agree to trade at the prices and spreads displayed in the Interface as they apply at the time you sign. The maximum fee is part of every signed intent, and the Protocol will not charge a fee above it. We may change pricing parameters, or introduce fees, for future trades at any time; any fee will be displayed in the Interface before you sign. You are responsible for the network fees of any transaction you submit yourself and for any fees charged by third-party services you use, such as bridges and wallet providers.
+Every trade pays a trading fee, charged in USDC from your balance when it settles, at the rate shown in the Interface and described in [Pricing and fees](../risk/pricing-and-fees.md). You agree to trade at the prices, spreads and fees displayed in the Interface as they apply at the time you sign. The maximum fee is part of every signed intent, and the Protocol will not charge a fee above it. We may change pricing parameters, or introduce fees, for future trades at any time; any fee will be displayed in the Interface before you sign. You are responsible for the network fees of any transaction you submit yourself and for any fees charged by third-party services you use, such as bridges and wallet providers.
 
 ### 3.5 Pauses, wind-down and resolution
 

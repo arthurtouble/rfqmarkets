@@ -42,7 +42,7 @@
 
 **Initial margin.** The margin needed to open risk or withdraw. For BTC and ETH today, 5% of notional for positions up to 25,000 USDC, which allows 20x. Each market's rates are its base schedule times a multiplier set by governance.
 
-**Insurance fund.** Capital, built from a share of the platform markup, liquidation penalties and direct top-ups, that covers bankrupt accounts before the maker's capital does.
+**Insurance fund.** Capital, built from a share of trading fees, liquidation penalties and direct top-ups, that covers bankrupt accounts before the maker's capital does.
 
 **Intent.** A signed message stating exactly what you authorize, such as a *TradeIntent* or *WithdrawalIntent*.
 
@@ -86,7 +86,9 @@
 
 **Slippage.** How far the fill price may move past the quote before a trade is refused. Set by the price protection.
 
-**Spread.** The maker's margin over the oracle price, in basis points. Adaptive; 4 bps at its base today, including the 2 bps platform markup.
+**Spread.** The maker's margin over the oracle mid, in basis points. Adaptive, with no fixed part: zero in a calm market, wider with volatility, toxic flow, hedging cost and disagreement between sources.
+
+**Trading fee.** 0.04% (4 bps) of the notional on every fill: the market's base spread (2 bps by default) plus the platform's 2 bps.
 
 **Stop loss, take profit, stop entry.** Orders that wait for the oracle mid to cross a trigger price and then trade within a signed band. See [Stop loss and take profit](../trading/stop-orders.md).
 

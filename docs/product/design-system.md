@@ -19,7 +19,7 @@ The specimen page renders all of it straight from those files, so it cannot drif
 1. Home is the product for most people: a market, an amount, a multiplier and two buttons. Everything else (order types, slippage, close only, candles) lives in Pro, one tap away.
 2. Say it the way a person would: trade, amount, Up, Down, Cash out. No "bet", "stake", "notional" or "reduce-only" on Home.
 3. Show the price someone will get and what happens if it moves against them: the auto-close price and about how much they would lose there. Never label an indicative price as firm.
-4. There are no trading fees, so there are no fee rows. The spread is the price.
+4. Every fill pays one flat trading fee (0.04% today). Tickets, reviews and close sheets show it on its own **Fee** row, in dollars with its rate; the price carries only the adaptive spread and inventory charge.
 5. Defaults must be safe and enough for a first trade. One tap is offered on the first trade's confirm step, with its limits stated.
 6. Every loading, delayed, paused, closing-only, rejected and pending state has explicit text, not just a color.
 7. Public data may show aggregate exposure. Hedge state, venue orders, thresholds and failures stay private.

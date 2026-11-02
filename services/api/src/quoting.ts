@@ -16,15 +16,14 @@ import {
   launchPricing,
   marketMarginView,
   parseUsdc,
-  PLATFORM_MARKUP_BPS,
   quoteRequestSchema,
   RATE,
+  tradingFeeBps,
   type PriceSnapshot,
   type PricingParameters,
   type Quote,
   type QuoteRequest,
 } from "../../../packages/shared/src/policy.js";
-import { baseSpreadOf, DEFAULT_BASE_SPREAD_BPS } from "../../../packages/shared/src/markets.js";
 import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import { decodeLimits, encodeLocalReport, type ChainMarketState, type ChainReader } from "./chain.js";
@@ -73,7 +72,10 @@ export type MarketView = {
   source: string;
   volatilityBps: number;
   volatility: PriceSnapshot["volatility"];
+  /** The quoted spread over the mid for a small trade (the adaptive total), in bps. */
   baseSpreadBps: number;
+  /** The trading fee every fill in this market pays, in bps of notional. */
+  feeBps: number;
   aggregateBase: string;
   fundingApr: string;
   fundingIndex: string;
@@ -105,6 +107,7 @@ export type MarketsSnapshot = {
     settled: Record<Market, string>;
     pending: ReturnType<ApiContext["pending"]["envelope"]>;
     baseSpreadBps: number;
+    /** The fee of a market without its own base spread; each market's own is `markets[m].feeBps`. */
     feeBps: number;
     toleranceBps: number;
   };
@@ -135,13 +138,9 @@ function quoteSpread(
   execution?: HedgeExecutionSignal,
   volatilityScale = 1,
 ) {
+  // No base component: the market's on-chain base spread and the platform's share are charged as the
+  // trading fee (`tradingFeeBps`), so only the model's risk components move the price off the mid.
   return adaptiveSpread({
-    // The base component is the market's on-chain spread, set by governance or the risk operator,
-    // plus the platform markup that replaces a trading fee.
-    baseBps:
-      (marketRegistry.has(snapshot.market)
-        ? baseSpreadOf(marketRegistry.get(snapshot.market))
-        : DEFAULT_BASE_SPREAD_BPS) + Number(PLATFORM_MARKUP_BPS),
     volatilityBps: (snapshot.volatilityBps ?? 0) * volatilityScale,
     riskMode,
     toxicityScoreBps,
@@ -359,6 +358,7 @@ export class QuoteEngine {
         volatilityBps: snapshot.volatilityBps ?? 0,
         volatility: snapshot.volatility,
         baseSpreadBps: Number(spread.totalBps),
+        feeBps: Number(tradingFeeBps(name)),
         aggregateBase: aggregateBase.toString(),
         fundingApr: fundingApr.toString(),
         fundingIndex: storedIndex.toString(),
@@ -560,6 +560,7 @@ export class QuoteEngine {
       ...launchPricing,
       maxNotional: admission.maxTradeNotional,
       baseSpreadBps: spread.totalBps,
+      feeBps: tradingFeeBps(request.market),
       spread,
     };
     const quote = constructQuote(

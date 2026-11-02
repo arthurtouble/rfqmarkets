@@ -14,7 +14,7 @@ The full stack runs and is tested on a local chain. A development deployment run
 - Production financial services run on Linux hosts with persistent volumes ([deploy/host/README.md](../../deploy/host/README.md)). Cloudflare Containers are acceptable only for the dev profile, because their disk cannot be the only copy of a journal.
 - Production approvers are provisioned independently: separate hosts, providers and operators, with keys generated on each host. The dev setup, where one Durable Object holds all three keys, is never production key custody.
 - Prices come from our own three signed oracle nodes and the `SignedPriceOracle` adapter. There is no unsigned fallback price.
-- No trading fees. The platform earns a 2 bps markup inside the quoted price. Fee tiers were removed.
+- One flat trading fee: 4 bps of notional, the market's base spread plus the platform's 2 bps. The price carries only the adaptive spread and inventory charge. Fee tiers were removed.
 - Deposits are native Base USDC. A bridge route never creates collateral. Cross-chain deposits into the contract stay disabled for the capped launch.
 - Mainnet tooling fails closed. Every broadcasting `npm run mainnet -- <command>` needs a confirmation string bound to the chain, the deployer and the candidate. Production deploys also need release evidence.
 

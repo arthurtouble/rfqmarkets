@@ -248,10 +248,12 @@ test("signed mode validates the adapter's consensus observation", async () => {
     approval: { ...fixture.payload.approval, oracleReportHash: keccak256(report) },
   };
   const state = chainState(fixture.nowMs);
+  // The adapter's consensus is what the approver checks the fill against: a calm quote sits at the mid, so
+  // it must match the report the leader priced.
   const consensus = {
     market: 0n,
-    bid: PRICES.BTC + 1_000n,
-    ask: PRICES.BTC + 1_000n,
+    bid: PRICES.BTC,
+    ask: PRICES.BTC,
     observedAt: nowSeconds,
     validUntil: nowSeconds + 60n,
   };

@@ -26,7 +26,7 @@ When it fills, you get the maker's executable price at that moment, which may be
 
 - **Size is fixed in BTC or ETH.** When you place the order, the app converts your USDC amount to a base size at the current mid. That base size is what you sign, so the USDC value of the fill moves with the price.
 - **All or none.** A limit order fills completely in one trade or not at all. There are no partial fills.
-- **No fee.** A limit order pays no trading fee. The message you sign still carries a maximum fee of 2 basis points of the order's notional at your limit price, as a ceiling the contract enforces. The fee actually charged is zero.
+- **Fee.** A limit order pays the market's trading fee when it fills, 0.04% of the notional today. The message you sign carries a maximum fee of 10 basis points of the order's notional at your limit price, as a ceiling the contract enforces.
 - **Margin is checked at fill time.** Placing an order does not reserve your margin. If you do not have enough margin when the price reaches your limit, the attempt fails and the order stays open.
 
 ## Order status

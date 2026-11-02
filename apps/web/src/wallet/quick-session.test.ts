@@ -22,7 +22,8 @@ test("the session mask covers every registered market", () => {
   assert.deepEqual(quickSessionRequest(3, quickLimits([25_000_000n])), {
     maxTradeAmount: "50",
     maxCumulativeAmount: "10000",
-    maxFee: "0.000001",
+    // 10 bps of the 50 USDC per-trade cap.
+    maxFee: "0.05",
     durationSeconds: 7 * 24 * 60 * 60,
     marketMask: 7,
   });
@@ -57,6 +58,7 @@ test("mask membership and session coverage by market", () => {
     privateKey: "0x01",
     marketMask: "7",
     maxTradeNotional: "50000000",
+    maxFee: "50000",
   };
   assert.equal(sessionCovers(session, 50_000_000n, 2), true);
   assert.equal(sessionCovers(session, 50_000_001n, 2), false);
@@ -68,6 +70,11 @@ test("mask membership and session coverage by market", () => {
   assert.equal(sessionCovers({ ...session, marketMask: undefined }, 1n, 1), true);
   assert.equal(sessionCovers({ ...session, marketMask: undefined }, 1n, 2), false);
   assert.equal(sessionCovers({ ...session, privateKey: undefined }, 1n), false);
+  // The trade's fee must fit the key's fee cap: 50 USDC at 4 bps is 0.02, at 11 bps 0.055.
+  assert.equal(sessionCovers(session, 50_000_000n, 2, 4), true);
+  assert.equal(sessionCovers(session, 50_000_000n, 2, 10), true);
+  assert.equal(sessionCovers(session, 50_000_000n, 2, 11), false);
+  assert.equal(sessionCovers({ ...session, maxFee: "1" }, 10_000_000n, 2, 4), false);
 });
 
 test("sessions expire 30 seconds early and keys can be forgotten", () => {
@@ -77,6 +84,7 @@ test("sessions expire 30 seconds early and keys can be forgotten", () => {
     validUntil: Date.now() + 3_600_000,
     privateKey: "0x01",
     marketMask: "3",
+    maxFee: "50000",
   };
   assert.equal(sessionCovers({ ...base, validUntil: Date.now() + 20_000 }, 1n, 0), false);
   assert.equal(sessionCovers({ ...base, validUntil: Date.now() + 60_000 }, 1n, 0), true);

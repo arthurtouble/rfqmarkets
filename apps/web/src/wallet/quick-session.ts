@@ -8,8 +8,14 @@ import { formatUnits, type Hex } from "viem";
 
 /** How long a one-tap key lasts. The approvers only honour an account's newest key granted this recently. */
 export const QUICK_DAYS = 7;
-/** Trades carry no fee (the spread is in the price), so the fee cap is the smallest the contract accepts. */
-const QUICK_MAX_FEE = "0.000001";
+/**
+ * A one-tap key's fee cap per trade, in bps of its per-trade cap: room for the 4 bps trading fee and an
+ * operator-raised one. A trade whose fee would pass the cap falls back to the wallet.
+ */
+export const QUICK_FEE_BPS = 10n;
+/** The per-trade fee cap (USDC micro) a key with these limits is granted. */
+export const quickMaxFee = (limits: Pick<QuickLimits, "maxTradeMicro">) =>
+  (limits.maxTradeMicro * QUICK_FEE_BPS + 9_999n) / 10_000n;
 /** No one-tap key may sign more than this a trade or in total, whatever the markets allow (USDC micro). */
 export const QUICK_CEILING = {
   maxTradeMicro: 1_000_000_000_000n,
@@ -59,7 +65,7 @@ export function allMarketsMask(marketCount: number): number | string {
 export const quickSessionRequest = (marketCount: number, limits: QuickLimits) => ({
   maxTradeAmount: formatUnits(limits.maxTradeMicro, 6),
   maxCumulativeAmount: formatUnits(limits.maxCumulativeMicro, 6),
-  maxFee: QUICK_MAX_FEE,
+  maxFee: formatUnits(quickMaxFee(limits), 6),
   durationSeconds: QUICK_DAYS * 24 * 60 * 60,
   marketMask: allMarketsMask(marketCount),
 });
@@ -69,8 +75,10 @@ export const maskIncludes = (mask: number | string, index: number) =>
   index >= 0 && ((BigInt(mask) >> BigInt(index)) & 1n) === 1n;
 
 /**
- * `marketMask` is the granted mask and `maxTradeNotional` the granted per-trade cap (USDC micro), both
- * decimal strings. Sessions saved before they were stored cover the launch markets (3) and the ceiling.
+ * `marketMask` is the granted mask, `maxTradeNotional` the granted per-trade cap and `maxFee` the per-trade
+ * fee cap (USDC micro), all decimal strings. Sessions saved before the mask and cap were stored cover the
+ * launch markets (3) and the ceiling. Keys saved without a fee cap were granted when trades carried no
+ * fee (a 0.000001 USDC cap), so they are dropped and the next trade grants a new key.
  */
 export type QuickSession = {
   account: string;
@@ -79,6 +87,7 @@ export type QuickSession = {
   privateKey?: Hex;
   marketMask?: string;
   maxTradeNotional?: string;
+  maxFee: string;
 };
 
 const storageKey = (account: string) => `rfq-session:${account.toLowerCase()}`;
@@ -105,6 +114,8 @@ function load(account: string | null): QuickSession | null {
       !parsed ||
       parsed.account.toLowerCase() !== account.toLowerCase() ||
       !/^0x[0-9a-f]{40}$/i.test(parsed.sessionAddress) ||
+      typeof parsed.maxFee !== "string" ||
+      !/^\d{1,39}$/.test(parsed.maxFee) ||
       !live(parsed)
     )
       return null;
@@ -112,6 +123,7 @@ function load(account: string | null): QuickSession | null {
       account: parsed.account,
       sessionAddress: parsed.sessionAddress,
       validUntil: parsed.validUntil,
+      maxFee: parsed.maxFee,
       marketMask:
         typeof parsed.marketMask === "string" && /^\d{1,39}$/.test(parsed.marketMask)
           ? parsed.marketMask
@@ -156,12 +168,19 @@ export function useQuickSession(account: string | null) {
 /**
  * Whether a trade of `amountMicro` USDC can be signed with the session key: the
  * session is live, its key is in this browser, the amount is within the per-trade
- * cap and, when `marketIndex` is given, the market is in the granted mask (a
- * market added after the grant is not). The cumulative cap is enforced on
- * chain; a trade beyond it fails and should be retried with the wallet.
+ * cap, its fee at `feeBps` fits the key's fee cap and, when `marketIndex` is given,
+ * the market is in the granted mask (a market added after the grant is not). The
+ * cumulative cap is enforced on chain; a trade beyond it fails and should be
+ * retried with the wallet.
  */
-export const sessionCovers = (session: QuickSession | null, amountMicro: bigint, marketIndex?: number) =>
+export const sessionCovers = (
+  session: QuickSession | null,
+  amountMicro: bigint,
+  marketIndex?: number,
+  feeBps: bigint | number = 0,
+) =>
   live(session) &&
   !!session!.privateKey &&
   amountMicro <= BigInt(session!.maxTradeNotional ?? LEGACY_MAX_TRADE_MICRO) &&
+  (amountMicro * BigInt(feeBps) + 9_999n) / 10_000n <= BigInt(session!.maxFee) &&
   (marketIndex === undefined || maskIncludes(session!.marketMask ?? "3", marketIndex));

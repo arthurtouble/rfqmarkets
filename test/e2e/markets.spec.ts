@@ -253,7 +253,15 @@ test.describe("market state", () => {
   test("Pro lists the market details", async ({ page }) => {
     await page.goto("/trade/BTC");
     const details = page.locator(".market-details");
-    for (const label of ["Funding (yearly)", "Max per trade", "Bid", "Ask", "Spread", "Max open per market"])
+    for (const label of [
+      "Funding (yearly)",
+      "Max per trade",
+      "Bid",
+      "Ask",
+      "Spread",
+      "Trading fee",
+      "Max open per market",
+    ])
       await expect(details).toContainText(label);
   });
 
