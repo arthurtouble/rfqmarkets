@@ -8,7 +8,7 @@ The board lists the top 50 traders over the last 24 hours, 7 days, 30 days or al
 
 Each row shows the trader's wallet address, volume, PnL, number of trades and points. Your own row is highlighted and marked **You**.
 
-- Trades made on Home and in Pro both count. Home trades sit in a separate account for each market, and the board adds them to the wallet that owns them.
+- Trades made on Home and in Pro both count. Trades opened with isolated margin sit in a separate account for each market, and the board adds them to the wallet that owns them.
 - PnL is realized profit or loss, after fees and funding, from trades in that period that reduced or closed a position. Positions you still hold do not count until you close them.
 - The board is worked out from events on the chain, so anyone can check it. It updates within a block of each trade.
 

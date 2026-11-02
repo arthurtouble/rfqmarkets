@@ -13,6 +13,7 @@ The ticket sits on the right of the Pro screen on a computer. On a phone, tap **
 | **Long** and **Short** | The direction. Long opens or adds to a long, or reduces a short. Short does the opposite. |
 | **Market**, **Limit** and **Stop** | The order type. Market orders fill now. Limit orders wait for your price; see [Limit orders](limit-orders.md). Stop orders wait for the price to break a level, then trade; see [Stop loss and take profit](stop-orders.md). |
 | **You pay** | The margin you put up, in USDC. The position is this amount times your leverage. |
+| **Margin** | **Cross** (the default) trades on your main account, shared with your other positions, one position per market. **Isolated** sets this trade's margin aside in its own account for the market, so that margin is the most it can lose. Limit, stop and close-only orders always use cross. |
 | **25%, 50%, 75%, Max** | Shortcuts that fill in a share of the most you can pay at the chosen leverage. Max stays within your **Available** margin, the market's per-trade limit and the margin tier for that leverage. |
 | **Leverage** | Presets up to the market's maximum (20× on BTC and ETH). Beside it the ticket shows the position you will open, for example "Position $1,250 · 0.0125 BTC". |
 | **Options** | **Close only** and **Max slippage**. The row shows what is set. |

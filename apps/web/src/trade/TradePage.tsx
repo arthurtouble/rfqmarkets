@@ -8,7 +8,7 @@ import { marketFeeBps, touchPrices } from "../lib/quote.js";
 import type { Market, Side } from "../lib/types.js";
 import { Banner, Down, Rows, Sheet, Up } from "../ui/primitives.js";
 import { UnknownMarket } from "../markets/UnknownMarket.js";
-import { useDesktop } from "../ui/prefs.js";
+import { useDesktop, usePrefs } from "../ui/prefs.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
 import { Positions } from "../positions/Positions.js";
 import { AccountCard, ActivityTabs } from "./AccountPanel.js";
@@ -45,6 +45,7 @@ export function TradePage({ market }: { market: Market }) {
 
 function ListedMarket({ market }: { market: Market }) {
   const desktop = useDesktop();
+  const { setView } = usePrefs();
   const { account, error } = useAccount();
   const [side, setSide] = useState<Side>("buy");
   const [ticketOpen, setTicketOpen] = useState(false);
@@ -59,7 +60,12 @@ function ListedMarket({ market }: { market: Market }) {
           <section className="rfq-card rfq-card--pad chart-card">
             <div className="chart-card__head">
               <MarketSwitcher market={market} />
-              <Link className="rfq-btn rfq-btn--ghost rfq-btn--sm" to="/updown/$market" params={{ market }}>
+              <Link
+                className="rfq-btn rfq-btn--ghost rfq-btn--sm"
+                to="/updown/$market"
+                params={{ market }}
+                onClick={() => setView("simple")}
+              >
                 Simple
               </Link>
             </div>
@@ -87,7 +93,12 @@ function ListedMarket({ market }: { market: Market }) {
       <div className="trade-mobile__top">
         <MarketSwitcher market={market} />
         <div className="updown__end">
-          <Link className="rfq-btn rfq-btn--ghost rfq-btn--sm" to="/updown/$market" params={{ market }}>
+          <Link
+            className="rfq-btn rfq-btn--ghost rfq-btn--sm"
+            to="/updown/$market"
+            params={{ market }}
+            onClick={() => setView("simple")}
+          >
             Simple
           </Link>
           <WalletMenu />

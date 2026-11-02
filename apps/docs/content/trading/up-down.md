@@ -25,6 +25,10 @@ Your whole balance backs your trades, as it does in Pro. If you hold more than t
 
 Funding is paid or received while the trade is open, as with any position. See [Funding](../risk/funding.md).
 
+## Cross or isolated margin
+
+Under the multiplier, **Margin** picks how the trade is margined. **Cross** is the default: the trade opens on your main account, shares your balance with your other positions, and is the same single position per market that Pro shows. **Isolated** sets the trade's amount aside in its own account for that market, so that amount is the most it can lose; it shows in Positions with an **Isolated** tag and its money goes back to your balance when you cash out. The choice is remembered on this device, and you can also set it under **Default margin** on the Account page.
+
 ## The first trade
 
 Before the first trade in a browser, **Start trading** stands in for the Up and Down buttons. Tap it and sign once in your wallet to [connect](connecting-to-trade.md). The app says "Connection established. You can start trading."
@@ -60,4 +64,4 @@ On a phone, your balance sits at the top of Home. Tap it for **Add money** and *
 
 ## When you want more
 
-Tap **Pro** at the top of Home to open the full trading screen for the same market. It has higher leverage, limit and stop orders, take profit and stop loss, **Close only**, slippage settings and candlestick charts. See [Placing a trade](placing-a-trade.md).
+Tap **Pro** at the top of Home to open the full trading screen for the same market. Simple or Pro is a setting: once you pick Pro, **Home** opens Pro until you tap **Simple** again. You can also set it under **Trading view** on the Account page. It has higher leverage, limit and stop orders, take profit and stop loss, **Close only**, slippage settings and candlestick charts. See [Placing a trade](placing-a-trade.md).

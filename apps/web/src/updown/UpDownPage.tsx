@@ -54,6 +54,8 @@ import { WalletMenu } from "../wallet/WalletMenu.js";
 import { useFunds } from "../trade/FundsDialog.js";
 import { MarketSwitcher, PriceHeader } from "../trade/MarketHeader.js";
 import { PriceChart } from "../trade/PriceChart.js";
+import { MarginModeChoice, useMarginMode } from "../trade/MarginModeChoice.js";
+import { usePrefs } from "../ui/prefs.js";
 import { StartTrading } from "../trade/StartTrading.js";
 import { ShareSheet } from "./ShareCard.js";
 
@@ -100,11 +102,16 @@ function UpDown({ market }: { market: Market }) {
   const { account, loading, error } = useAccount();
   const trading = useTrading();
   const ticks = useTicks(market);
-  // Home trades hold their own margin in the market's isolated account; one opened before that (or in Pro) is on
-  // the main balance.
+  const { setView } = usePrefs();
+  // Home and Pro trade the same account: a market's position is the main (cross margin) account's, whichever
+  // screen opened it. A trade opened with isolated margin sits in the market's isolated account instead; Home
+  // shows the one that matches the chosen margin mode first, then the other.
+  const isolatedFirst = useMarginMode() === "isolated";
   const { account: isolatedAccount, loading: isolatedLoading } = useIsolatedAccount(market);
   const isolatedOpen = isolatedAccount ? positionView(isolatedAccount, market) : null;
-  const open = isolatedOpen ?? (account ? positionView(account, market) : null);
+  const crossOpen = account ? positionView(account, market) : null;
+  const open = isolatedFirst ? (isolatedOpen ?? crossOpen) : (crossOpen ?? isolatedOpen);
+  const openIsolated = !!open && open === isolatedOpen;
   const reference = ticks.points[0] ? BigInt(Math.round(ticks.points[0].value * 1e6)).toString() : null;
   const [cashedOut, setCashedOut] = useState<CashedOut | null>(null);
   const [scrub, setScrub] = useState<ChartPoint | null>(null);
@@ -116,7 +123,12 @@ function UpDown({ market }: { market: Market }) {
         <MarketSwitcher market={market} to="/updown/$market" />
         <div className="updown__end">
           <Balance />
-          <Link className="rfq-btn rfq-btn--ghost rfq-btn--sm" to="/trade/$market" params={{ market }}>
+          <Link
+            className="rfq-btn rfq-btn--ghost rfq-btn--sm"
+            to="/trade/$market"
+            params={{ market }}
+            onClick={() => setView("pro")}
+          >
             Pro
           </Link>
         </div>
@@ -139,9 +151,9 @@ function UpDown({ market }: { market: Market }) {
       {open ? (
         <OpenBet
           view={open}
-          isolated={!!isolatedOpen}
+          isolated={openIsolated}
           worth={
-            isolatedOpen && isolatedAccount
+            openIsolated && isolatedAccount
               ? BigInt(isolatedAccount.equity)
               : (recordFor(open)?.stake ?? open.margin) + open.pnl + open.funding
           }
@@ -158,7 +170,7 @@ function UpDown({ market }: { market: Market }) {
 }
 
 /**
- * The account value (the balance plus open Home trades, the same number as the header and Portfolio), with Add
+ * The account value (the balance plus open isolated positions, the same number as the header and Portfolio), with Add
  * money and Withdraw one tap away. Phones have no top bar, so this is the way in. A dash until it has loaded.
  */
 function Balance() {
@@ -241,7 +253,7 @@ function OpenBet({
   const paused = useProtocol().data?.paused ?? false;
   const busy = trading.busy !== null;
   // While trading is paused a trade on the main balance still closes at the oracle price (as Pro's close sheet
-  // does); a Home trade on its own margin waits for trading to resume.
+  // does); a trade on isolated margin waits for trading to resume.
   const blocked = paused && isolated;
   const back = cashOutValue(worth, view.notional, paused ? 0 : marketFeeBps(snapshot, view.market));
   const [sharing, setSharing] = useState<ShareBet | null>(null);
@@ -269,9 +281,11 @@ function OpenBet({
         {marketName(view.market)} · {usdcCompact(record?.notional ?? view.notional)}
         {record && ` at ${leverageLabel(record.multiplier)}`}
         <InfoTip label="About this trade">
-          {usdc(stake)} of your money is in this trade, and that is the most it can lose. Cash out to get back
-          what it is worth now. One trade per market here: pick another market above to open more, or use Pro
-          to change this one.
+          {isolated
+            ? `${usdc(stake)} is set aside for this trade (isolated margin), and that is the most it can lose.`
+            : `This trade uses ${usdc(stake)} of margin from your balance (cross margin), shared with your other positions.`}{" "}
+          Cash out to get back what it is worth now. It is the same position you see in Pro and Portfolio: use
+          Pro to add to it or close part of it.
         </InfoTip>
       </p>
       <div className={`updown-bet__pnl tnum ${tone}`}>
@@ -284,8 +298,11 @@ function OpenBet({
           <span>
             Liquidation {usdPrice(liquidation)}
             <InfoTip label="About liquidation">
-              If {marketName(view.market)} reaches this price the trade closes on its own and the{" "}
-              {usdc(stake)} in it is lost. Funding moves it a little over time.
+              If {marketName(view.market)} reaches this price the trade closes on its own
+              {isolated
+                ? ` and the ${usdc(stake)} in it is lost`
+                : ", and its loss comes out of your balance"}
+              . Funding and your other positions move it over time.
             </InfoTip>
           </span>
         )}
@@ -381,6 +398,7 @@ function NewBet({
   const [size, setSize] = useState(() => load(SIZE_KEY) ?? String(DEFAULT_SIZE));
   const [chosen, setChosen] = useState(() => Number(load(MULTIPLIER_KEY)) || DEFAULT_MULTIPLIER);
   const multiplier = pickMultiplier(chosen, choices);
+  const isolated = useMarginMode() === "isolated";
 
   const sizeMicro = parseUsdcInput(size);
   const notional = sizeMicro ?? 0n;
@@ -416,10 +434,11 @@ function NewBet({
         limitMicro: null,
         quoteError: result && "error" in result ? result.error : null,
         hasQuote: !!quote,
-        // Simple trades are isolated: their margin moves out of the free balance, so it must cover the stake.
+        // An isolated trade's margin moves out of the free balance, so it must cover the stake; a cross trade
+        // needs the account's margin after the trade covered, as in Pro.
         marginShort:
           ready &&
-          ((stakeMicro !== null && stakeMicro > BigInt(account.availableMargin)) ||
+          ((isolated && stakeMicro !== null && stakeMicro > BigInt(account.availableMargin)) ||
             (marginAfter !== null && marginAfter > BigInt(account.openingEquity))),
       });
       return sizeProblem(sizeMicro) ?? homeProblem(problem, side, { tradeCapMicro: tradeCap });
@@ -440,6 +459,7 @@ function NewBet({
     multiplier,
     marketMax,
     scaleBps,
+    isolated,
   ]);
 
   const chooseSize = (text: string) => {
@@ -463,7 +483,7 @@ function NewBet({
       amountMicro: notional,
       reduceOnly: false,
       title: `${word} ${marketName(market)} · ${usdcCompact(notional)} at ${leverageLabel(multiplier)}`,
-      isolated: { payMicro: stakeMicro },
+      ...(isolated ? { isolated: { payMicro: stakeMicro } } : {}),
     };
     // Fills from the button with the trading key: no confirm step and no wallet prompt.
     if ((await trading.readyQuick(market, notional)) && (await trading.marketOrder(order))) remember();
@@ -517,12 +537,14 @@ function NewBet({
         onChange={(next) => chooseMultiplier(Number(next))}
         options={choices.map((step) => ({ id: String(step), label: leverageLabel(step) }))}
       />
+      <MarginModeChoice />
       <p className="footnote rfq-muted center tnum updown-bet__details">
         <span>Margin {notional > 0n && stakeMicro ? usdc(stakeMicro) : "—"}</span>
         {power !== null && <span>Buying power {usdc(power)}</span>}
         {notional > 0n && (
           <InfoTip label="About this trade">
-            Margin is the money this trade uses: the size divided by the multiplier, and the most it can lose.
+            Margin is the money this trade uses: the size divided by the multiplier.
+            {isolated ? " With isolated margin it is set aside, and that is the most it can lose." : ""}
             Buying power is the biggest trade your balance allows at {leverageLabel(multiplier)}. This one has{" "}
             {feeWords(notional, marketFeeBps(snapshot, market))}; a 1% move your way makes about{" "}
             {usdc(onePercentGain(notional))}.

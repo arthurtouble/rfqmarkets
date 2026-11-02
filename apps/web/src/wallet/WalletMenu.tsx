@@ -23,7 +23,7 @@ export function WalletMenu({
   connectLabel?: string;
 }) {
   const trader = useTrader();
-  // The same account value as Home and Portfolio (the balance plus open Home trades).
+  // The same account value as Home and Portfolio (the balance plus open isolated positions).
   const { value } = useAccountValue();
   const connectors = useConnectors();
   const { mutate: connect } = useConnect();

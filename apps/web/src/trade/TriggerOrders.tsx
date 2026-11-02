@@ -28,7 +28,7 @@ const SLIPPAGE_OPTIONS = ["50", "100", "200", "500"] as const;
 type SlippageOption = (typeof SLIPPAGE_OPTIONS)[number];
 
 /** The open TP/SL protecting `market` for the connected wallet. */
-/** The TP/SL resting on `account` (default: the trader's own account; a Home trade passes its isolated one). */
+/** The TP/SL resting on `account` (default: the trader's own account; an isolated trade passes its isolated one). */
 export function useProtection(market: Market, account?: string) {
   const trader = useTrader();
   const orders = useOpenOrders(account ?? trader.address, market);
@@ -146,7 +146,7 @@ export function TpslSheet({
     advanced = useAdvanced(),
     { snapshot } = useMarketFeed();
   const trader = useTrader(),
-    // A Home trade's position lives on its isolated account, whose orders the owner signs.
+    // An isolated trade's position lives on its isolated account, whose orders the owner signs.
     holder = account.account.toLowerCase() === trader.address?.toLowerCase() ? undefined : account.account;
   const { takeProfit: currentTp, stopLoss: currentSl, orders } = useProtection(market, holder);
   const position = account.positions[market],

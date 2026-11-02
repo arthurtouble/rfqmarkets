@@ -68,18 +68,21 @@ test.describe("Up / Down", () => {
       const bet = page.getByRole("region", { name: "Your trade" });
       await expect(bet).toContainText("Long Ethereum · $20 at 2×");
       await expectNoHorizontalOverflow(page);
-      // The trade holds its own $10 in the market's isolated account, so that is the most it can lose.
+      // Cross margin is the default: the trade opens on the main account, the same one Pro trades, and
+      // nothing moves to the market's isolated account.
       const { account } = await stack.devWallet();
       const isolated = isolatedAccountOf(account, MARKET_INDEX);
-      const held = async () =>
-        (await (await fetch(`${stack.urls.api}/v1/account/${isolated}`)).json()) as {
+      const read = async (address: string) =>
+        (await (await fetch(`${stack.urls.api}/v1/account/${address}`)).json()) as {
           collateral: string;
-          positions: Record<string, { size: string }>;
+          positions: Record<string, { size: string } | undefined>;
         };
+      const held = () => read(isolated);
+      const size = async (address: string) => BigInt((await read(address)).positions[MARKET]?.size ?? "0");
       // The API reads at its latest priced block, which can trail the fill by a moment.
-      await expect.poll(async () => BigInt((await held()).positions[MARKET].size)).toBeGreaterThan(0n);
-      expect(BigInt((await held()).collateral)).toBeLessThanOrEqual(10_000_000n);
-      await expect(bet).toContainText(/Liquidation \$[\d,.]+/);
+      await expect.poll(() => size(account)).toBeGreaterThan(0n);
+      expect(await size(isolated)).toBe(0n);
+      // On cross the whole (well-funded) balance backs the trade, so no liquidation price may be in reach.
 
       // The open bet shares as a card that says what it is, and the image saves as a PNG.
       await bet.getByRole("button", { name: "Share", exact: true }).click();
@@ -98,8 +101,7 @@ test.describe("Up / Down", () => {
 
       await bet.getByRole("button", { name: /^Cash out/ }).click();
       await expect(page.getByRole("status", { name: "Notifications" })).toContainText("ETH position closed");
-      // Cashing out returns the trade's margin to the balance.
-      await expect.poll(async () => (await held()).collateral).toBe("0");
+      await expect.poll(() => size(account)).toBe(0n);
       // The result stays up with its own card until the next bet.
       const result = page.getByRole("region", { name: "Cashed out" });
       await expect(result).toContainText("You cashed out of Long Ethereum");
@@ -111,6 +113,13 @@ test.describe("Up / Down", () => {
       await result.getByRole("button", { name: "New trade" }).click();
       await expect(page.getByRole("region", { name: "New trade" })).toBeVisible();
 
+      // Isolated margin is a choice on the form: the next trade holds its own $10 in the market's isolated
+      // account, so that is the most it can lose.
+      await page
+        .getByRole("region", { name: "New trade" })
+        .getByRole("group", { name: "Margin mode" })
+        .getByRole("button", { name: "Isolated", exact: true })
+        .click();
       // Still connected: Down fills from the button with no review.
       await page.getByRole("button", { name: "Short", exact: true }).click();
       await expect(
@@ -118,27 +127,51 @@ test.describe("Up / Down", () => {
       ).toBeVisible();
       await expect(page.getByRole("dialog", { name: "Short on Ethereum" })).toBeHidden();
       await expect(bet).toContainText("Short Ethereum");
+      await expect.poll(async () => BigInt((await held()).positions[MARKET]?.size ?? "0")).toBeLessThan(0n);
+      expect(BigInt((await held()).collateral)).toBeLessThanOrEqual(10_000_000n);
+      // Its own $10 is all that backs it, so it has a liquidation price.
+      await expect(bet).toContainText(/Liquidation \$[\d,.]+/);
 
-      // Portfolio shows the Home trade with the rest: in the account value, the trades and the positions,
-      // where it closes on its own margin and the margin goes back to the balance.
+      // Portfolio lists it with every other position, tagged Isolated: in the account value, the trades and
+      // the one positions list, where it closes on its own margin and the margin goes back to the balance.
       await page.goto("/portfolio");
       await expect(page.getByRole("region", { name: "Account value" })).toContainText(
-        /Includes \$[\d.,]+ in Home trades/,
+        /Includes \$[\d.,]+ in isolated positions/,
       );
       await page.getByRole("tab", { name: "Trades" }).click();
-      await expect(page.locator(".activity-body").getByText("Home", { exact: true }).first()).toBeVisible();
+      await expect(
+        page.locator(".activity-body").getByText("Isolated", { exact: true }).first(),
+      ).toBeVisible();
       await page.getByRole("tab", { name: /Positions/ }).click();
-      const home = page.getByRole("region", { name: "Home trades" });
-      await expect(home).toContainText(MARKET);
+      await expect(page.getByRole("region", { name: "Home trades" })).toHaveCount(0);
+      const close = page.getByRole("button", { name: `Close ${MARKET} short isolated` });
       await expectNoHorizontalOverflow(page);
-      await home.getByRole("button", { name: `Close ${MARKET} short` }).click();
+      await close.click();
       await page
         .getByRole("dialog", { name: `Close ${MARKET} short` })
         .getByRole("button", { name: `Close ${MARKET} short` })
         .click();
-      await expect(home).toBeHidden();
+      await expect(close).toBeHidden();
       await expect.poll(async () => (await held()).collateral).toBe("0");
+      // Back to cross for the next run (the choice is saved on the device).
+      await page.evaluate(() => localStorage.removeItem("rfq.margin"));
     });
+  });
+
+  test("Simple or Pro is a saved setting that Home follows", async ({ page }) => {
+    await page.goto(`/updown/${MARKET}`);
+    await page.getByRole("link", { name: "Pro", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/trade/${MARKET}$`));
+    await page.getByRole("link", { name: "Markets", exact: true }).filter({ visible: true }).click();
+    await page.getByRole("link", { name: "Home", exact: true }).filter({ visible: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/trade/${MARKET}$`));
+    await page.goto("/");
+    await expect(page).toHaveURL(new RegExp(`/trade/${MARKET}$`));
+    await page.getByRole("link", { name: "Simple", exact: true }).filter({ visible: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/updown/${MARKET}$`));
+    await page.getByRole("link", { name: "Markets", exact: true }).filter({ visible: true }).click();
+    await page.getByRole("link", { name: "Home", exact: true }).filter({ visible: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/updown/${MARKET}$`));
   });
 
   test("picking another market stays on the Up / Down screen", async ({ page }) => {
