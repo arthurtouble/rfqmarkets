@@ -73,7 +73,7 @@ A stop loss or take profit is signed for a size, but your position may change be
 
 A stop order does not reserve margin. When it fires, it goes through the same path as any other trade: a fresh quote from the maker, two of three approver signatures and the contract's margin and risk checks. A stop entry that would take your account past its initial margin does not fill. Stop loss and take profit only need to keep the account above maintenance margin, like any reduction.
 
-Stop orders are always signed by your wallet, never by a one-tap trading key, and the venue pays the gas when they fill.
+Stop orders sign with your [trading key](connecting-to-trade.md), and the venue pays the gas when they fill.
 
 ## Expiry
 

@@ -34,20 +34,20 @@ test.describe("Up / Down", () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test.describe("starting from no one-tap key", () => {
+  test.describe("starting from no trading key", () => {
     test.use({ autoStartTrading: false });
     test("an amount and multiplier size the trade, Up opens it and Cash out closes it", async ({
       page,
       stack,
     }) => {
       await page.goto(`/updown/${MARKET}`);
-      // Trading starts with one signature that turns one tap on; until then Start trading stands in for Up and Down.
+      // Trading starts with one signature that connects; until then Start trading stands in for Up and Down.
       const start = page.getByRole("button", { name: "Start trading", exact: true });
       await expect(start).toBeVisible();
       await expect(page.getByRole("button", { name: "Long", exact: true })).toHaveCount(0);
       await start.click();
       await expect(
-        page.getByRole("status", { name: "Notifications" }).filter({ hasText: "One-tap trading on" }),
+        page.getByRole("status", { name: "Notifications" }).filter({ hasText: "Connection established" }),
       ).toBeVisible();
       await startFlat(page);
       const newBet = page.getByRole("region", { name: "New trade" });
@@ -59,7 +59,7 @@ test.describe("Up / Down", () => {
       await expect(newBet.getByText("Margin $10.00")).toBeVisible();
 
       await newBet.getByRole("button", { name: "Long", exact: true }).click();
-      // With one tap on, the trade fills with no confirm step.
+      // Once connected, the trade fills with no confirm step.
       await expect(page.getByRole("dialog", { name: "Long on Ethereum" })).toHaveCount(0);
       await expect(
         page.getByRole("status", { name: "Notifications" }).filter({ hasText: "Long Ethereum · $20 at 2×" }),
@@ -111,7 +111,7 @@ test.describe("Up / Down", () => {
       await result.getByRole("button", { name: "New trade" }).click();
       await expect(page.getByRole("region", { name: "New trade" })).toBeVisible();
 
-      // One-tap is on now: Down fills from the button with no review.
+      // Still connected: Down fills from the button with no review.
       await page.getByRole("button", { name: "Short", exact: true }).click();
       await expect(
         page.getByRole("status", { name: "Notifications" }).filter({ hasText: "Short Ethereum · $20 at 2×" }),

@@ -12,7 +12,7 @@ Limit orders are placed from the ticket in **Pro**. Tap **Pro** on Home to open 
 4. Read the hint under the price. "Fills now at the current price" means your limit is already at or through the executable price, so the order will fill as soon as it is placed. "Fills when the price reaches your limit" means it will wait.
 5. Click **Limit long BTC · $20 at 2×** (or the equivalent) and sign the *TradeIntent* in your wallet.
 
-Limit orders always use your wallet, even when one-tap trading is on. The app places them **good for 24 hours**, after which they expire.
+Limit orders sign with your [trading key](connecting-to-trade.md), like market orders. The app places them **good for 24 hours**, after which they expire.
 
 ## How it triggers
 

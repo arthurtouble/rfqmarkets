@@ -451,7 +451,7 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
         />
         {!paused && (
           <p className="footnote rfq-muted">
-            Each position gets its own quote. With one-tap trading on, they close without wallet prompts.
+            Each position gets its own quote, and they close without wallet prompts.
           </p>
         )}
         <button

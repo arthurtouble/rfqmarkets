@@ -1,4 +1,4 @@
-// Every user action (trade, order, trigger/TP-SL, close, funds, quick trading)
+// Every user action (trade, order, trigger/TP-SL, close, funds, connecting to trade)
 // as one async function: prepare with the API, sign, submit, toast the outcome
 // and refresh.
 import { createContext, useContext, useRef, useState, type ReactNode } from "react";
@@ -47,11 +47,10 @@ import type {
   Transaction,
 } from "../lib/types.js";
 import {
-  QUICK_DAYS,
+  SESSION_LIMITS,
   quickSessionRequest,
   sessionCovers,
   useQuickSession,
-  type QuickLimits,
   type QuickSession,
 } from "../wallet/quick-session.js";
 import { useTrader } from "../wallet/trader.js";
@@ -98,7 +97,7 @@ export type CloseAllResult = { closed: Market[]; failed: Array<{ market: Market;
 type Trading = {
   busy: string | null;
   quickSession: QuickSession | null;
-  /** This browser holds a live one-tap key. Trading screens show Start trading until it does. */
+  /** This browser holds a live trading key. Trading screens show Start trading until it does. */
   quickLive: boolean;
   /** Whether the quick-trading key can sign a market trade of this size without a wallet prompt. */
   quickCovers(market: Market, amountMicro: bigint | null): boolean;
@@ -136,14 +135,13 @@ type Trading = {
   /** Sends a LI.FI route from its source network; resolves to the source transaction once it is included. */
   bridge(route: Route, source: SourceToken): Promise<{ hash: Hex; route: Route } | undefined>;
   withdraw(amountMicro: bigint): Promise<boolean>;
-  /** Grants a one-tap key with `limits` (see `useQuickLimits`). */
-  enableQuickTrading(limits: QuickLimits): Promise<boolean>;
+  /** Connects this browser for trading: one wallet signature grants the trading key (no trading limit). */
+  enableQuickTrading(): Promise<boolean>;
   /**
-   * Readies one-tap for a market trade of `amountMicro`: true when the key already covers it, else (within
-   * `limits`) grants a fresh key with one wallet signature first. False means the wallet signs this trade.
+   * Readies the trading key for a market trade of `amountMicro`: true when the key already covers it, else
+   * connects again with one wallet signature first. False means nothing should be placed (the wallet declined).
    */
-  readyQuick(market: Market, amountMicro: bigint, limits: QuickLimits): Promise<boolean>;
-  revokeQuickTrading(): Promise<void>;
+  readyQuick(market: Market, amountMicro: bigint): Promise<boolean>;
 };
 
 /** The price and fee a close settled at (USDC 1e6). */
@@ -189,7 +187,7 @@ const SESSION_ORDER_MARGIN_SECONDS = 600;
 const FIRM_QUOTE_SPACING_MS = 1_000;
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The approvers refused a one-tap signature: the session's limits don't cover this trade. */
+/** The approvers refused a trading-key signature: the session's limits don't cover this trade. */
 const sessionRefused = (error: unknown) =>
   error instanceof ApiError && /user authorization rejected|invalid user signature/i.test(error.message);
 
@@ -200,7 +198,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     { notify } = useToasts();
   const quick = useQuickSession(trader.address);
   // The newest session, also right after it is granted (before React re-renders), so a trade placed
-  // in the same flow as turning one-click on already signs with it.
+  // in the same flow as connecting already signs with it.
   const sessionRef = useRef(quick.session);
   if (quick.session || sessionRef.current?.account !== trader.address) sessionRef.current = quick.session;
   const marketList = useMarketList();
@@ -310,7 +308,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   /** The account a trade is for: the connected account, or its isolated account in the market. */
   const tradeAccount = (market: Market, isolated?: boolean) =>
     isolated ? isolatedAccountOf(account(), marketIndex(market)) : account();
-  /** The one-tap key, when it is live in this tab. */
+  /** The trading key, when it is live in this tab. */
   const liveSession = () => {
     const session = sessionRef.current;
     return session?.privateKey && session.validUntil > Date.now()
@@ -319,7 +317,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   };
 
   /**
-   * How long a resting order may live when the one-tap key signs it: the contract only executes a session-signed
+   * How long a resting order may live when the trading key signs it: the contract only executes a session-signed
    * order whose deadline is within the key's validity, so it ends a little before the key does. Null when the key
    * is missing, does not cover the market, or has too little time left (the wallet signs then).
    */
@@ -334,7 +332,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   };
 
   /**
-   * Places a prepared resting order. The one-tap key signs when `viaSession` and it covers the order's notional at
+   * Places a prepared resting order. The trading key signs when `viaSession` and it covers the order's notional at
    * the trigger; if the API refuses that signature, or otherwise, the wallet signs (`prompt` is the wallet step).
    */
   async function placeResting(
@@ -395,7 +393,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     const submit = (userSignature: Hex) =>
       send<Settled>("/v1/approve", { quoteId: quote.quoteId, account: onAccount, nonce, userSignature });
     if (session) {
-      progress("Signing with one tap");
+      progress("Placing trade");
       try {
         return await submit(
           await privateKeyToAccount(session.privateKey).signTypedData(
@@ -405,14 +403,14 @@ export function TradingProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         // Past the session's limits (its total, or a winning exit above the per-trade cap) the approvers
         // refuse the session's signature. Nothing was traded. An exit is then signed by the wallet: getting out
-        // must never depend on the one-tap allowance. A new trade is not, since its price would expire while the
+        // must never depend on the trading key. A new trade is not, since its price would expire while the
         // wallet asks: the key is dropped, so the screen offers Start trading again.
         if (!sessionRefused(error)) throw error;
         if (!reduceOnly) {
           quick.clear();
           sessionRef.current = null;
           throw new TraderFacingError(
-            "One-tap trading needs turning on again in this browser. Nothing was traded. Tap Start trading, then try again.",
+            "Your trading connection needs renewing in this browser. Nothing was traded. Tap Start trading, then try again.",
           );
         }
         if (!quoteUsable(localDeadline(quote), Date.now())) throw error;
@@ -545,7 +543,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   };
 
   /**
-   * Moves `amountMicro` into (positive) or out of (negative) the isolated account for `market`. The one-tap key
+   * Moves `amountMicro` into (positive) or out of (negative) the isolated account for `market`. The trading key
    * signs when it is live and covers the market (the contract caps what it may add at its per-trade limit);
    * otherwise the wallet does.
    */
@@ -609,7 +607,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             const pay = order.isolated.payMicro;
             if (!registered && pay < MIN_ISOLATED_OPEN) {
               // The contract opens an isolated account only with MIN_ISOLATED_OPEN: open it with that, then send
-              // the excess straight back, so the trade still holds only its own amount. Both moves are one tap.
+              // the excess straight back, so the trade still holds only its own amount. Both moves sign with the trading key.
               progress("Setting the amount aside");
               await moveMargin(order.market, MIN_ISOLATED_OPEN, progress);
               setAside = MIN_ISOLATED_OPEN;
@@ -704,7 +702,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           amountMicro: order.amountMicro,
           limitPrice: parseUnits(order.limitPrice, 6),
         };
-        // The one-tap key signs when it covers the order; the order then ends before the key does.
+        // The trading key signs when it covers the order; the order then ends before the key does.
         const sessionSeconds = sessionOrderSeconds(order.market),
           session =
             sessionSeconds !== null && quickCovers(order.market, order.amountMicro) ? liveSession() : null;
@@ -745,7 +743,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         };
       })) ?? false,
 
-    // The one-tap key signs trigger orders when it can (they then expire before the key does); else the wallet.
+    // The trading key signs trigger orders when it can (they then expire before the key does); else the wallet.
     triggerOrder: (order) =>
       run("Trigger order", `Place ${triggerLabel(order.kind).toLowerCase()}`, async (progress) => {
         const sessionSeconds = sessionOrderSeconds(order.market);
@@ -1133,12 +1131,12 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         };
       })) ?? false,
 
-    enableQuickTrading: async (limits) =>
-      (await run("One-tap trading", "Turn on one-tap trading", async (progress) => {
+    enableQuickTrading: async () =>
+      (await run("Start trading", "Connect to trade", async (progress) => {
         const privateKey = generatePrivateKey(),
           sessionAddress = privateKeyToAccount(privateKey).address;
         // Covers every registered market; one added later needs a new session (sessionCovers checks the mask).
-        const request = quickSessionRequest(Math.max(1, marketList.markets.length), limits),
+        const request = quickSessionRequest(Math.max(1, marketList.markets.length)),
           nonce = randomNonce();
         const prepared = await api<Omit<Prepared, "intent"> & { grant: Record<string, unknown> }>(
           "/v1/session/prepare",
@@ -1149,8 +1147,8 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             nonce,
           },
         );
-        progress("Confirm one tap in your wallet");
-        // Only the key generated above, with exactly the quick-trading limits, may be authorized.
+        progress("Confirm in your wallet");
+        // Only the key generated above, with exactly the trading-key limits, may be authorized.
         const userSignature = await trader.signIntent(
           { ...prepared, intent: prepared.grant },
           "SessionGrant",
@@ -1159,13 +1157,13 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             session: sessionAddress,
             marketMask: BigInt(request.marketMask),
             nonce,
-            maxTradeNotional: limits.maxTradeMicro,
-            maxCumulativeNotional: limits.maxCumulativeMicro,
+            maxTradeNotional: SESSION_LIMITS.maxTradeMicro,
+            maxCumulativeNotional: SESSION_LIMITS.maxCumulativeMicro,
             maxFee: parseUnits(request.maxFee, 6),
             durationSeconds: request.durationSeconds,
           },
         );
-        progress("Turning on one tap");
+        progress("Connecting");
         const result = await api<{ validUntil: string; transaction?: Transaction }>("/v1/session/execute", {
           grant: prepared.grant,
           userSignature,
@@ -1176,56 +1174,22 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           privateKey,
           validUntil: Number(result.validUntil) * 1_000,
           marketMask: String(request.marketMask),
-          maxTradeNotional: limits.maxTradeMicro.toString(),
+          maxTradeNotional: SESSION_LIMITS.maxTradeMicro.toString(),
           maxFee: parseUnits(request.maxFee, 6).toString(),
         };
         quick.save(granted);
         sessionRef.current = granted;
         return {
-          title: "One-tap trading on",
-          detail: `Trades up to ${usdcCompact(limits.maxTradeMicro)} fill without a wallet prompt in this browser for ${QUICK_DAYS} days`,
+          title: "Connection established",
+          detail: "You can start trading.",
           txHash: result.transaction?.hash,
           value: true,
         };
       })) ?? false,
 
-    readyQuick: async (market, amountMicro, limits) =>
+    readyQuick: async (market, amountMicro) =>
       quickCovers(market, amountMicro) ||
-      (amountMicro <= limits.maxTradeMicro &&
-        (await value.enableQuickTrading(limits)) &&
-        quickCovers(market, amountMicro)),
-
-    revokeQuickTrading: () =>
-      run("Revoke", "Turn off one-tap trading", async (progress) => {
-        const session = quick.session;
-        if (!session) throw new Error("No active session");
-        const nonce = randomNonce();
-        // Gas-free: the wallet signs the revocation and the API relays it.
-        const prepared = await api<Prepared>("/v1/session/revoke/prepare", {
-          account: account(),
-          session: session.sessionAddress,
-          nonce,
-        });
-        progress("Confirm the revocation in your wallet");
-        const userSignature = await trader.signIntent(prepared, "SessionRevoke", {
-          kind: "session-revoke",
-          session: session.sessionAddress,
-          nonce,
-        });
-        progress("Turning off one tap");
-        const result = await api<Settled>("/v1/session/revoke/execute", {
-          intent: prepared.intent,
-          userSignature,
-        });
-        quick.clear();
-        sessionRef.current = null;
-        return {
-          title: "One-tap trading off",
-          detail: result.transaction ? `Block ${result.transaction.blockNumber}` : undefined,
-          txHash: result.transaction?.hash,
-          value: undefined,
-        };
-      }),
+      ((await value.enableQuickTrading()) && quickCovers(market, amountMicro)),
   };
 
   return <TradingContext.Provider value={value}>{children}</TradingContext.Provider>;

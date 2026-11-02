@@ -50,9 +50,9 @@ RFQ Markets operates on a request-for-quote model. Your counterparty for every t
 
 We do not take custody of your digital assets or your private keys. Collateral you deposit is held by the Protocol's smart contracts, under the rules those contracts enforce. We cannot access, recover, reverse or freeze transactions in your wallet. You are solely responsible for safeguarding your wallet, keys, seed phrase, passkeys and devices. If you lose access to them, we cannot help you recover your assets.
 
-### 2.5 One-tap trading
+### 2.5 Trading keys
 
-If you enable one-tap trading, your browser creates a session key that can sign trades on your behalf within the limits and the time window you approve, and that the contract will not allow to withdraw. The session key is held by your browser. Anyone with access to your browser or device while it is active may be able to trade with it. You are responsible for every trade it signs, and you can revoke it at any time.
+When you connect to trade, your browser creates a session key that can sign trades on your behalf within the limits and the time window you approve, and that the contract will not allow to withdraw. The session key is held by your browser. Anyone with access to your browser or device while it is active may be able to trade with it. You are responsible for every trade it signs, and you can revoke it at any time.
 
 ### 2.6 Development status
 

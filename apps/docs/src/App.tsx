@@ -44,8 +44,9 @@ function ThemeSwitch({ className }: { className: string }) {
 
 // Pages that were renamed keep working at their old address.
 export const MOVED: Record<string, string> = {
-  "/trading/quick-trading": "/trading/one-tap-trading",
-  "/trading/one-click-trading": "/trading/one-tap-trading",
+  "/trading/quick-trading": "/trading/connecting-to-trade",
+  "/trading/one-click-trading": "/trading/connecting-to-trade",
+  "/trading/one-tap-trading": "/trading/connecting-to-trade",
   "/start/introduction": "/",
 };
 const normalize = (path: string) => {

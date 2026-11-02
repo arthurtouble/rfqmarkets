@@ -66,8 +66,6 @@
 
 **Notional.** The size of a position in USDC: size times price.
 
-**One-tap trading.** A session key that signs market orders, cash-outs and closes for you within contract-enforced limits. Formerly called quick trading. See [One-tap trading](../trading/one-tap-trading.md).
-
 **Oracle.** Three nodes that sign aggregated exchange prices, and the contract that accepts a report from at least two of them. See [Price oracle](../markets/price-oracle.md).
 
 **Pause.** A state in which new trades are blocked but closing at the oracle price, withdrawals and liquidations continue.
@@ -80,7 +78,7 @@
 
 **RFQ.** Request for quote: asking a market maker for a firm price for a specific size.
 
-**Session key.** See *One-tap trading*.
+**Session key.** See *Trading key*.
 
 **Skew.** Traders' net position in a market, long minus short.
 
@@ -89,6 +87,8 @@
 **Spread.** The maker's margin over the oracle mid, in basis points. Adaptive, with no fixed part: zero in a calm market, wider with volatility, toxic flow, hedging cost and disagreement between sources.
 
 **Trading fee.** 0.04% (4 bps) of the notional on every fill: the market's base spread (2 bps by default) plus the platform's 2 bps.
+
+**Trading key.** The session key the app creates when you connect to trade. It signs trades, cash-outs and closes for you with no wallet prompt, and can never withdraw. Formerly called one-tap or quick trading. See [Connecting to trade](../trading/connecting-to-trade.md).
 
 **Stop loss, take profit, stop entry.** Orders that wait for the oracle mid to cross a trigger price and then trade within a signed band. See [Stop loss and take profit](../trading/stop-orders.md).
 

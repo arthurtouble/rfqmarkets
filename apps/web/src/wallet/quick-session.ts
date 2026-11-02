@@ -1,50 +1,29 @@
-// Quick trading: a browser key the user authorizes on-chain once (grantSessionWithSignature),
-// bounded by per-trade, cumulative and fee caps and a week's expiry. It can only trade within those
-// caps: withdrawals and margin moves out always need the wallet. The key is kept in this browser's
-// localStorage so one-click trading survives reloads, as on other perp venues; disconnecting the
-// wallet or turning one-click off deletes it, and revoking the grant on chain disables it everywhere.
+// The trading key: a browser key the user authorizes on-chain once (grantSessionWithSignature) when they
+// connect, so every trade after that fills with one tap. It has no trading limit of its own (the markets' risk
+// limits still apply on chain) and lasts a week. It can only trade: withdrawals and margin moves out always need
+// the wallet. The key is kept in this browser's localStorage so trading survives reloads, as on other perp venues;
+// disconnecting the wallet deletes it.
 import { useCallback, useEffect, useState } from "react";
 import { formatUnits, type Hex } from "viem";
 
-/** How long a one-tap key lasts. The approvers only honour an account's newest key granted this recently. */
+/** How long a trading key lasts. The approvers only honour an account's newest key granted this recently. */
 export const QUICK_DAYS = 7;
 /**
- * A one-tap key's fee cap per trade, in bps of its per-trade cap: room for the 4 bps trading fee and an
+ * What a trading key may sign: anything the protocol allows. Per trade, the largest position any market may
+ * hold (`RFQTypes.ABSOLUTE_MAX_MARKET_NOTIONAL`, 5M USDC), so every close fits; in total, no limit (uint128
+ * max). Opening trades stay bounded by each market's own per-trade cap, which the contract enforces.
+ */
+export const SESSION_LIMITS = {
+  maxTradeMicro: 5_000_000_000_000n,
+  maxCumulativeMicro: (1n << 128n) - 1n,
+} as const;
+/**
+ * The key's fee cap per trade, in bps of its per-trade limit: room for the 4 bps trading fee and an
  * operator-raised one. A trade whose fee would pass the cap falls back to the wallet.
  */
 export const QUICK_FEE_BPS = 10n;
-/** The per-trade fee cap (USDC micro) a key with these limits is granted. */
-export const quickMaxFee = (limits: Pick<QuickLimits, "maxTradeMicro">) =>
-  (limits.maxTradeMicro * QUICK_FEE_BPS + 9_999n) / 10_000n;
-/** No one-tap key may sign more than this a trade or in total, whatever the markets allow (USDC micro). */
-export const QUICK_CEILING = {
-  maxTradeMicro: 1_000_000_000_000n,
-  maxCumulativeMicro: 100_000_000_000_000n,
-} as const;
-/** The per-trade cap of keys saved before the cap was stored with them: the ceiling back then. */
-export const LEGACY_MAX_TRADE_MICRO = 2_500_000_000n;
-/** Round trips one key covers (at its largest size) before the wallet signs again. */
-const QUICK_TRADES = 100n;
-
-export type QuickLimits = { maxTradeMicro: bigint; maxCumulativeMicro: bigint };
-
-/**
- * One-tap limits sized to the markets' per-trade caps (USDC micro): twice the largest, rounded up to a
- * dollar, so a winning exit still fits, and enough in total for {@link QUICK_TRADES} round trips. Never
- * above {@link QUICK_CEILING}; with no caps known, the ceiling. A trade past these limits, closes
- * included, falls back to the wallet.
- */
-export function quickLimits(tradeCapsMicro: readonly bigint[]): QuickLimits {
-  const largest = tradeCapsMicro.reduce((max, cap) => (cap > max ? cap : max), 0n),
-    doubled = ((largest * 2n + 999_999n) / 1_000_000n) * 1_000_000n,
-    min = (a: bigint, b: bigint) => (a < b ? a : b);
-  const maxTradeMicro =
-    largest > 0n ? min(doubled, QUICK_CEILING.maxTradeMicro) : QUICK_CEILING.maxTradeMicro;
-  return {
-    maxTradeMicro,
-    maxCumulativeMicro: min(maxTradeMicro * 2n * QUICK_TRADES, QUICK_CEILING.maxCumulativeMicro),
-  };
-}
+/** The per-trade fee cap (USDC micro) every key is granted. */
+export const SESSION_MAX_FEE = (SESSION_LIMITS.maxTradeMicro * QUICK_FEE_BPS + 9_999n) / 10_000n;
 
 /** `RFQTypes.MAX_MARKETS`. */
 const MAX_MARKETS = 128;
@@ -61,11 +40,11 @@ export function allMarketsMask(marketCount: number): number | string {
   return marketCount <= 53 ? Number(mask) : mask.toString();
 }
 
-/** Body fields of POST /v1/session/prepare for a quick-trading key over all `marketCount` markets. */
-export const quickSessionRequest = (marketCount: number, limits: QuickLimits) => ({
-  maxTradeAmount: formatUnits(limits.maxTradeMicro, 6),
-  maxCumulativeAmount: formatUnits(limits.maxCumulativeMicro, 6),
-  maxFee: formatUnits(quickMaxFee(limits), 6),
+/** Body fields of POST /v1/session/prepare for a trading key over all `marketCount` markets. */
+export const quickSessionRequest = (marketCount: number) => ({
+  maxTradeAmount: formatUnits(SESSION_LIMITS.maxTradeMicro, 6),
+  maxCumulativeAmount: formatUnits(SESSION_LIMITS.maxCumulativeMicro, 6),
+  maxFee: formatUnits(SESSION_MAX_FEE, 6),
   durationSeconds: QUICK_DAYS * 24 * 60 * 60,
   marketMask: allMarketsMask(marketCount),
 });
@@ -76,9 +55,10 @@ export const maskIncludes = (mask: number | string, index: number) =>
 
 /**
  * `marketMask` is the granted mask, `maxTradeNotional` the granted per-trade cap and `maxFee` the per-trade
- * fee cap (USDC micro), all decimal strings. Sessions saved before the mask and cap were stored cover the
- * launch markets (3) and the ceiling. Keys saved without a fee cap were granted when trades carried no
- * fee (a 0.000001 USDC cap), so they are dropped and the next trade grants a new key.
+ * fee cap (USDC micro), all decimal strings. Sessions saved before the mask was stored cover the launch
+ * markets (3). Keys granted with a per-trade cap below {@link SESSION_LIMITS} (or none stored) date from when
+ * keys were capped, and keys without a fee cap from when trades carried no fee: both are dropped, so the
+ * next trade connects again with an uncapped key.
  */
 export type QuickSession = {
   account: string;
@@ -86,7 +66,7 @@ export type QuickSession = {
   validUntil: number;
   privateKey?: Hex;
   marketMask?: string;
-  maxTradeNotional?: string;
+  maxTradeNotional: string;
   maxFee: string;
 };
 
@@ -96,7 +76,7 @@ const live = (session: QuickSession | null) =>
   !!session && session.validUntil > Date.now() + SAFETY_MARGIN_MS;
 const PRIVATE_KEY = /^0x[0-9a-f]{64}$/i;
 
-/** Deletes every one-tap key this browser holds; the grants stay on chain until they expire or are revoked. */
+/** Deletes every trading key this browser holds; the grants stay on chain until they expire or are revoked. */
 export function forgetSessionKeys() {
   try {
     for (const key of Object.keys(localStorage))
@@ -116,6 +96,9 @@ function load(account: string | null): QuickSession | null {
       !/^0x[0-9a-f]{40}$/i.test(parsed.sessionAddress) ||
       typeof parsed.maxFee !== "string" ||
       !/^\d{1,39}$/.test(parsed.maxFee) ||
+      typeof parsed.maxTradeNotional !== "string" ||
+      !/^\d{1,39}$/.test(parsed.maxTradeNotional) ||
+      BigInt(parsed.maxTradeNotional) < SESSION_LIMITS.maxTradeMicro ||
       !live(parsed)
     )
       return null;
@@ -128,10 +111,7 @@ function load(account: string | null): QuickSession | null {
         typeof parsed.marketMask === "string" && /^\d{1,39}$/.test(parsed.marketMask)
           ? parsed.marketMask
           : undefined,
-      maxTradeNotional:
-        typeof parsed.maxTradeNotional === "string" && /^\d{1,39}$/.test(parsed.maxTradeNotional)
-          ? parsed.maxTradeNotional
-          : undefined,
+      maxTradeNotional: parsed.maxTradeNotional,
       privateKey:
         typeof parsed.privateKey === "string" && PRIVATE_KEY.test(parsed.privateKey)
           ? parsed.privateKey
@@ -181,6 +161,6 @@ export const sessionCovers = (
 ) =>
   live(session) &&
   !!session!.privateKey &&
-  amountMicro <= BigInt(session!.maxTradeNotional ?? LEGACY_MAX_TRADE_MICRO) &&
+  amountMicro <= BigInt(session!.maxTradeNotional) &&
   (amountMicro * BigInt(feeBps) + 9_999n) / 10_000n <= BigInt(session!.maxFee) &&
   (marketIndex === undefined || maskIncludes(session!.marketMask ?? "3", marketIndex));

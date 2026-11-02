@@ -1,5 +1,5 @@
 // Wallet connect and the account page: the connect sheet, refusals, the wrong
-// network, account switches, one-tap trading and disconnect.
+// network, account switches, connecting to trade and disconnect.
 //
 // A mock extension wallet (mock-wallet.js) stands in for Rabby or MetaMask and
 // signs through the local Hardhat node. WalletConnect and Base Account open
@@ -52,7 +52,7 @@ async function connect(page: Page) {
 }
 
 test.describe("wallet connect", () => {
-  // Sponsored actions such as a one-tap session grant need collateral on the account.
+  // Sponsored actions such as connecting to trade need collateral on the account.
   test.beforeAll(async () => {
     for (const account of [ACCOUNT, OTHER_ACCOUNT]) await ensureCollateral(account);
   });
@@ -165,11 +165,11 @@ test.describe("wallet connect", () => {
     await expect(page.getByText(CONNECTED)).toBeVisible();
 
     // Anything that signs asks for the switch itself first.
+    await page.goto("/updown/BTC");
     await setWallet(page, { chainId: "0x1" });
-    await expect(banner).toBeVisible();
-    await page.getByRole("button", { name: "Turn on" }).click();
-    await expect(toast(page, "One-tap trading on")).toBeVisible();
-    await expect(banner).toBeHidden();
+    // The fixture taps Start trading as soon as it shows, which switches the network and then connects.
+    await expect(toast(page, "Connection established")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Switch to RFQ Local" })).toBeHidden();
 
     // The trade page's header keeps the account menu beside the switch button, so a stuck wallet can still disconnect.
     await page.goto("/trade/BTC");
@@ -199,22 +199,35 @@ test.describe("wallet connect", () => {
     await expect(wallet.getByText("0x14dC…9955")).toBeVisible();
   });
 
-  test("one-tap trading turns on, survives a reload, and turns off", async ({ page }) => {
-    await page.goto("/account");
-    await connect(page);
-    await page.getByRole("button", { name: "Turn on" }).click();
-    await expect(toast(page, "One-tap trading on")).toBeVisible();
-    const on = page.getByText(/^On until .+\. Trades up to \$[\d,.KM]+ fill without a wallet prompt\.$/);
-    await expect(on).toBeVisible();
-    await expect(page.getByRole("button", { name: "Turn on" })).toHaveCount(0);
+  test.describe("connecting to trade", () => {
+    test.use({ autoStartTrading: false });
+    test("Start trading connects once, the connection survives a reload, and disconnecting drops it", async ({
+      page,
+    }) => {
+      await page.goto("/account");
+      await connect(page);
+      await page.goto("/updown/BTC");
+      const start = page.getByRole("button", { name: "Start trading", exact: true });
+      await start.click();
+      await expect(toast(page, "Connection established")).toBeVisible();
+      await expect(toast(page, "You can start trading.")).toBeVisible();
+      await expect(start).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Long", exact: true })).toBeVisible();
 
-    // The key is kept in this browser for the week it lasts.
-    await page.reload();
-    await expect(on).toBeVisible();
-    await page.getByRole("button", { name: "Turn off" }).click();
-    await expect(toast(page, "One-tap trading off")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Turn on", exact: true })).toBeVisible();
-    await expectNoHorizontalOverflow(page);
+      // The key is kept in this browser for the week it lasts.
+      await page.reload();
+      await expect(page.getByRole("button", { name: "Long", exact: true })).toBeVisible();
+      await expect(start).toHaveCount(0);
+
+      // Settings have no on/off switch: trading is always one tap.
+      await page.goto("/account");
+      await expect(page.getByText(/one-tap/i)).toHaveCount(0);
+      await page.getByRole("button", { name: "Disconnect" }).click();
+      await connect(page);
+      await page.goto("/updown/BTC");
+      await expect(start).toBeVisible();
+      await expectNoHorizontalOverflow(page);
+    });
   });
 
   test("the wallet menu names the wallet, copies the address and opens settings", async ({

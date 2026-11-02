@@ -65,7 +65,7 @@ const components = `
   </div>
   <h3>Badges and chips</h3>
   <div class="ds-row">
-    <span class="rfq-badge">Live</span><span class="rfq-badge rfq-badge--brand">One tap</span>
+    <span class="rfq-badge">Live</span><span class="rfq-badge rfq-badge--brand">New</span>
     <span class="rfq-badge rfq-badge--long">Up</span><span class="rfq-badge rfq-badge--short">Down</span>
     <span class="rfq-badge rfq-badge--warning">Price delayed</span>
   </div>

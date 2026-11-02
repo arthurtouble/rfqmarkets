@@ -53,7 +53,7 @@ Trades that are still in flight count too. If another trade in the same directio
 
 Every fill pays a fee in USDC, taken from your balance when the trade settles: **0.04% (4 bps) of the notional** on every market today, for market, limit and stop orders, opening or closing. It is the market's base spread (2 bps by default, set per market by the risk operator between 2 and 50 bps) plus the platform's 2 bps. There are no volume fee tiers.
 
-The message you sign includes a maximum fee, and the contract refuses any trade that charges more. A market order signs the quoted fee, with room for a better fill price on a sell. Limit and stop orders sign a ceiling of 10 bps of the notional at their protected price, and pay the market's fee when they fill. A one-tap key may pay at most 10 bps of its per-trade limit in fees on any one trade.
+The message you sign includes a maximum fee, and the contract refuses any trade that charges more. A market order signs the quoted fee, with room for a better fill price on a sell. Limit and stop orders sign a ceiling of 10 bps of the notional at their protected price, and pay the market's fee when they fill. The [trading key](../trading/connecting-to-trade.md) may pay at most 10 bps of its 5,000,000 USDC per-trade limit in fees on any one trade.
 
 Approvers enforce the fee: they refuse a fill whose fee and price premium together are less than the market's fee plus the inventory charge (less the rebate, for a reducing trade).
 

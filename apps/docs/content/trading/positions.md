@@ -40,7 +40,7 @@ The **Account value** card in Pro summarises the account as a whole, and the top
 
 Click **Close** on the position. A sheet opens titled, for example, **Close BTC long**, with a choice of how much to close: **25%**, **50%**, **75%** or **100%**. It shows the size being closed, the estimated price and the estimated profit or loss. Click **Close BTC long** (or **Close 50% of BTC long**) to request an exact quote for that amount, and sign it.
 
-A close is a close-only trade, so it can never open a position the other way. If [one-tap trading](one-tap-trading.md) is on and covers the close, it signs without a wallet prompt. Otherwise your wallet asks, so a close never depends on the one-tap limits.
+A close is a close-only trade, so it can never open a position the other way. It signs with your [trading key](connecting-to-trade.md), with no wallet prompt. If the key cannot sign it, your wallet asks, so a close never depends on the key.
 
 A close pays no trading fee. Any profit or loss on the closed part, and any funding owed, is settled into your collateral at that moment.
 
@@ -48,7 +48,7 @@ Closes are not limited by the per-trade cap. You can close a position in one go 
 
 ### Closing every position
 
-With two or more positions open, **Close all** sits above the positions (in the table's header on desktop). Its sheet lists each position with its profit or loss and the estimated total. **Close N positions** gets a separate exact quote for each position and closes them one after another; with one-tap trading on, they close without wallet prompts. If one close fails, the others still go through and the message names the position still open.
+With two or more positions open, **Close all** sits above the positions (in the table's header on desktop). Its sheet lists each position with its profit or loss and the estimated total. **Close N positions** gets a separate exact quote for each position and closes them one after another; they close without wallet prompts. If one close fails, the others still go through and the message names the position still open.
 
 ### Closing while trading is paused
 
@@ -63,7 +63,7 @@ The tabs under the chart in Pro, and at the bottom of the Portfolio page, list y
 - **Orders**: your limit and trigger orders. See [Limit orders](limit-orders.md).
 - **Trades**: every fill, described by what it did (Open long, Add to long, Reduce long, Close long, Flip to short, Liquidated), with size, price and the profit or loss it realized. **Show more** loads older trades.
 - **Funding** (Portfolio): each funding payment you paid or received, with the running total.
-- **Transfers** (Portfolio): deposits, withdrawals, one-tap trading turned on and off, liquidations and cancelled orders.
+- **Transfers** (Portfolio): deposits, withdrawals, trading connections and revoked keys, liquidations and cancelled orders.
 
 All of this is read from the public chain, so it is the same record anyone can verify on a block explorer.
 

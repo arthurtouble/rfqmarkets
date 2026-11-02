@@ -118,7 +118,7 @@ test.describe("markets list", () => {
   });
 
   test.describe("a market only the config lists", () => {
-    // AVAX is added to the served config only, not on chain, so no one-tap key can cover it: the screen is
+    // AVAX is added to the served config only, not on chain, so no trading key can cover it: the screen is
     // checked as it stands, with Start trading left alone.
     test.use({ autoStartTrading: false });
 

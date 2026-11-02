@@ -28,7 +28,7 @@ Base Account, and other smart-contract wallets, work the same way as an ordinary
 
 ### The wallet menu
 
-Once you are connected, the wallet button shows your account value. Click it to see which wallet is connected, its address and network, copy the address, open it on the block explorer, go to **Account settings** (marked "One tap on" while [one-tap trading](../trading/one-tap-trading.md) is on) or **Disconnect**. If you switch accounts inside your wallet, the app follows.
+Once you are connected, the wallet button shows your account value. Click it to see which wallet is connected, its address and network, copy the address, open it on the block explorer, go to **Account settings** or **Disconnect**. If you switch accounts inside your wallet, the app follows.
 
 ## Home: Up / Down
 
@@ -42,9 +42,7 @@ A trade has no timer. It stays open until you tap **Cash out**. If the price mov
 
 ### Your first trade
 
-The first time, a small sheet titled **Up on Ethereum** (or **Down on Bitcoin**, and so on) opens. It shows the price and the price the trade auto-closes at. Tap **Confirm Up** (or **Confirm Down**) and sign in your wallet.
-
-The sheet has a **Skip this next time** box, ticked by default. Leave it ticked to turn on [one-tap trading](../trading/one-tap-trading.md): your wallet asks for one more signature, and after that trades within the one-tap limits fill on a tap, with no sheet and no wallet prompt. Home then shows "One tap, no wallet prompt." under the buttons.
+The first time, **Start trading** stands in for the Up and Down buttons. Tap it and sign once in your wallet to [connect](../trading/connecting-to-trade.md). The app says "Connection established. You can start trading." and the buttons appear. From then on every trade fills on a tap, with no sheet and no wallet prompt.
 
 ### Sharing a trade
 
@@ -77,7 +75,7 @@ In Pro on a phone, the chart and your position in that market sit at the top, an
 - **Home** is the Up / Down screen for one market, described above.
 - **Markets** lists every market with its price, 24-hour change and funding rate, with a search box, plus venue-wide open interest and recent trades. Tap a market to open it on Home. Wider screens add more columns. See [Positions and your account](../trading/positions.md#the-markets-page).
 - **Portfolio** is your account in full: account value, margin in use and leverage, a chart of your profit or loss with realized PnL, funding and volume, then every position (with **Close all**), order, trade, funding payment and transfer. See [Positions and your account](../trading/positions.md).
-- **Account** holds your wallet, [one-tap trading](../trading/one-tap-trading.md), the appearance setting, a link to these docs and a link to the [emergency exit page](../protocol/safety-and-exits.md#the-exit-page).
+- **Account** holds your wallet, the appearance setting, a link to these docs and a link to the [emergency exit page](../protocol/safety-and-exits.md#the-exit-page).
 
 ## Appearance
 

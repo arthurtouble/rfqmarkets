@@ -18,7 +18,7 @@ type Fixtures = {
   /** The dev wallet has already accepted the terms, so the dialog stays out of the way. Off in terms.spec.ts. */
   acceptTerms: boolean;
   /**
-   * Trading screens show Start trading until the browser holds a one-tap key. On by default: whenever that button
+   * Trading screens show Start trading until the browser holds a trading key. On by default: whenever that button
    * is in the way, it is clicked (one signature), as a trader would. Off in specs that test the button itself.
    */
   autoStartTrading: boolean;

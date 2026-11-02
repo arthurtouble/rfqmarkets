@@ -1,68 +1,11 @@
-import { useTrading } from "../data/actions.js";
 import { DOCS_URL, EXIT_URL, LEGAL_LINKS } from "../lib/env.js";
 import { addressUrl } from "../lib/explorer.js";
-import { shortAddress, usdcCompact } from "../lib/format.js";
+import { shortAddress } from "../lib/format.js";
 import { NavIcons, EmptyState, Segmented } from "../ui/primitives.js";
 import { usePrefs } from "../ui/prefs.js";
-import { useQuickLimits } from "../data/quick-limits.js";
-import { LEGACY_MAX_TRADE_MICRO, QUICK_DAYS } from "../wallet/quick-session.js";
 import { useTrader } from "../wallet/trader.js";
 import { WrongNetworkBanner } from "../wallet/SwitchNetwork.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
-
-function OneClickRow() {
-  const trading = useTrading(),
-    session = trading.quickSession,
-    busy = trading.busy !== null,
-    limits = useQuickLimits();
-  const until =
-    session &&
-    new Date(session.validUntil).toLocaleString([], {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  const limit = usdcCompact(
-    session ? BigInt(session.maxTradeNotional ?? LEGACY_MAX_TRADE_MICRO) : limits.maxTradeMicro,
-  );
-  const detail = !session
-    ? `Approve once, then trades up to ${limit} fill without a wallet prompt for ${QUICK_DAYS} days.`
-    : session.privateKey
-      ? `On until ${until}. Trades up to ${limit} fill without a wallet prompt.`
-      : `Off in this browser. Turn it on again, or revoke the old key (it ends ${until} anyway).`;
-  return (
-    <div className="setting-row">
-      <div>
-        <div className="headline">One-tap trading</div>
-        <div className="footnote rfq-muted">{detail}</div>
-      </div>
-      <div className="setting-actions">
-        {session && (
-          <button
-            type="button"
-            className={`rfq-btn rfq-btn--sm ${session.privateKey ? "rfq-btn--danger" : "rfq-btn--secondary"}`}
-            disabled={busy}
-            onClick={trading.revokeQuickTrading}
-          >
-            {session.privateKey ? "Turn off" : "Revoke"}
-          </button>
-        )}
-        {!session?.privateKey && (
-          <button
-            type="button"
-            className="rfq-btn rfq-btn--sm rfq-btn--primary"
-            disabled={busy}
-            onClick={() => void trading.enableQuickTrading(limits)}
-          >
-            {session ? "Turn on again" : "Turn on"}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export function AccountPage() {
   const trader = useTrader();
@@ -118,7 +61,6 @@ export function AccountPage() {
             Connect a wallet to trade. We never hold your keys.
           </EmptyState>
         )}
-        {trader.address && <OneClickRow />}
       </section>
       <section className="rfq-card" aria-label="Preferences">
         <div className="setting-row">
