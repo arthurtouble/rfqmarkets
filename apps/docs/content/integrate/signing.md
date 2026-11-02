@@ -95,7 +95,7 @@ Closes the account's whole position in `market` at the oracle price. Only valid 
 SessionRevoke(address account,address session,uint256 nonce,uint64 deadline)
 ```
 
-Revokes `session`, a key `account` granted. Submitted with `revokeSessionWithSignature`, so turning off one-tap trading needs no ETH.
+Revokes `session`, a key `account` granted. Submitted with `revokeSessionWithSignature`, so revoking a trading key needs no ETH.
 
 ## SessionGrant
 

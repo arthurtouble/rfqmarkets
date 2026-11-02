@@ -56,6 +56,6 @@ You do not need the venue's servers to move your money. The [exit page](../proto
 | Trades, closes, limit order fills | The venue |
 | Withdrawals | The venue |
 | Cancelling a limit order | The venue |
-| Turning on one-tap trading | The venue |
-| Turning off one-tap trading | You |
+| Connecting to trade | The venue |
+| Revoking a trading key | The venue (or you, from the exit page) |
 | Anything on the exit page | You |

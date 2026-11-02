@@ -88,7 +88,7 @@ test.describe("refused in the wallet", () => {
   });
   test.beforeEach(async ({ context }) => installWallet(context));
 
-  test("a refused one-tap signature says so, and Start trading works on the second try", async ({
+  test("a refused connection signature says so, and Start trading works on the second try", async ({
     page,
     isMobile,
   }) => {
@@ -104,7 +104,7 @@ test.describe("refused in the wallet", () => {
     await expectNoHorizontalOverflow(page);
     await setWallet(page, { reject: false });
     await start.click();
-    await expect(notifications(page)).toContainText("One-tap trading on");
+    await expect(notifications(page)).toContainText("Connection established");
     await expect(start).toBeHidden();
   });
 

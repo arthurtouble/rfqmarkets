@@ -27,14 +27,9 @@ Funding is paid or received while the trade is open, as with any position. See [
 
 ## The first trade
 
-The first trade opens a small sheet titled, for example, **Up on Ethereum**. It shows:
+Before the first trade in a browser, **Start trading** stands in for the Up and Down buttons. Tap it and sign once in your wallet to [connect](connecting-to-trade.md). The app says "Connection established. You can start trading."
 
-- the **Price** the trade should fill at;
-- the price it **Auto-closes at**, and about how much you would lose if the price gets there.
-
-Tap **Confirm Up** (or **Confirm Down**) and sign the trade in your wallet. If the price moves before the trade settles, nothing is traded.
-
-The sheet has a **Skip this next time** box, ticked by default. Leave it ticked to turn on [one-tap trading](one-tap-trading.md). Your wallet asks for one more signature after the trade. From then on, trades up to $2,500 each fill on a tap, with no sheet and no wallet prompt, for 8 hours in that browser tab. Home shows "One tap, no wallet prompt." when the next trade is covered.
+From then on every trade fills on a tap, with no sheet and no wallet prompt. If the price moves before the trade settles, nothing is traded.
 
 When a trade fills, a notice says, for example, "You're Up on Ethereum with $10".
 
@@ -47,7 +42,7 @@ Home shows the open trade for that market:
 - **Cash out**, which shows the current result on the button;
 - **Share**.
 
-**Cash out** closes the whole position at the current price. It uses one-tap trading when that covers the close, and asks your wallet otherwise, so you can always cash out. The result goes into your balance.
+**Cash out** closes the whole position at the current price. It signs with your trading key, and asks your wallet if the key cannot, so you can always cash out. The result goes into your balance.
 
 If you opened a position in this market from Pro, Home shows that position the same way.
 

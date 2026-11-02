@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { useTrading } from "../data/actions.js";
+import { useTrading, type MarketOrder } from "../data/actions.js";
 import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useMarketLeverage } from "../data/markets.js";
-import { useQuickLimits } from "../data/quick-limits.js";
 import { emptyAccount, estimateLiquidationPrice, initialMarginAfter } from "../lib/account.js";
 import {
   abs,
@@ -43,7 +42,6 @@ import { useTrader } from "../wallet/trader.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
 import { StartTrading } from "./StartTrading.js";
 import { useFunds } from "./FundsDialog.js";
-import { ReviewSheet, type ReviewOrder } from "./ReviewSheet.js";
 import { useSlippage, useTicketMemory } from "./ticket-memory.js";
 import { StopTriggerField } from "./TriggerOrders.js";
 
@@ -73,7 +71,6 @@ export function OrderTicket({
   const { snapshot, status } = useMarketFeed();
   const trader = useTrader(),
     trading = useTrading(),
-    quickLimits = useQuickLimits(),
     funds = useFunds();
   const now = useServerNow(500);
   const leverageInfo = useMarketLeverage(market);
@@ -86,7 +83,6 @@ export function OrderTicket({
   const [stopPrice, setStopPrice] = useState("");
   const [reduceOnly, setReduceOnly] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
-  const [review, setReview] = useState<ReviewOrder | null>(null);
   useEffect(() => {
     setPay(memory.initial.pay ?? "");
     setLeverage(memory.initial.leverage ?? DEFAULT_LEVERAGE);
@@ -194,12 +190,10 @@ export function OrderTicket({
     memory.save({ leverage: next });
   };
 
-  const order = (): ReviewOrder => ({
+  const order = (): MarketOrder => ({
     market,
     side,
     amountMicro: notional,
-    payMicro: payMicro!,
-    leverage: lev,
     reduceOnly,
     slippageBps: effectiveSlippage,
   });
@@ -237,12 +231,8 @@ export function OrderTicket({
       }
       return;
     }
-    // A market order places at once: the first one in this browser grants a week's one-tap key (one
-    // wallet signature), so no price is held open while a wallet asks. Only a size past the key's limits
-    // goes through the review step and the wallet.
-    if (await trading.readyQuick(market, notional, quickLimits)) {
-      if (await trading.marketOrder(order())) traded();
-    } else if (notional > quickLimits.maxTradeMicro) setReview(order());
+    // A market order places at once with the trading key, so no price is held open while a wallet asks.
+    if ((await trading.readyQuick(market, notional)) && (await trading.marketOrder(order()))) traded();
   };
 
   const sideClass = side === "buy" ? "long" : "short";
@@ -489,20 +479,6 @@ export function OrderTicket({
             `${isStop ? "Place stop · " : ""}${submitLabel({ side, market, pay: usdcCompact(notional), leverage: lev, isLimit })}`)
           )}
         </button>
-      )}
-      {oneClick && !problem && (
-        <p className="footnote rfq-faint ticket-note">One-tap trading is on. No wallet prompt.</p>
-      )}
-
-      {review && (
-        <ReviewSheet
-          order={review}
-          onClose={() => setReview(null)}
-          onDone={() => {
-            setReview(null);
-            traded();
-          }}
-        />
       )}
     </div>
   );

@@ -4,7 +4,6 @@ import { useConnect, useConnectors } from "wagmi";
 import { addressUrl } from "../lib/explorer.js";
 import { useAccountValue } from "../account/useAccount.js";
 import { shortAddress, usdc } from "../lib/format.js";
-import { useTrading } from "../data/actions.js";
 import { Check } from "../ui/primitives.js";
 import { ConnectDialog } from "./ConnectDialog.js";
 import { SwitchNetworkButton } from "./SwitchNetwork.js";
@@ -26,7 +25,6 @@ export function WalletMenu({
   const trader = useTrader();
   // The same account value as Home and Portfolio (the balance plus open Home trades).
   const { value } = useAccountValue();
-  const { quickSession } = useTrading();
   const connectors = useConnectors();
   const { mutate: connect } = useConnect();
   const [open, setOpen] = useState(false);
@@ -137,7 +135,7 @@ export function WalletMenu({
             </a>
           )}
           <Link to="/account" onClick={() => setOpen(false)}>
-            Account settings{quickSession?.privateKey && <span className="wallet-badge">One tap on</span>}
+            Account settings
           </Link>
           {trader.source === "dev" &&
             switchable.map((connector) => (

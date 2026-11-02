@@ -205,8 +205,8 @@ test.describe("docs site", () => {
 
     // The edge answers renamed pages with a redirect (_redirects); the app does the same.
     await page.goto(docs("/trading/quick-trading"));
-    await expect(heading(page)).toHaveText("One-tap trading");
-    await expect(page).toHaveURL(docs("/trading/one-tap-trading"));
+    await expect(heading(page)).toHaveText("Connecting to trade");
+    await expect(page).toHaveURL(docs("/trading/connecting-to-trade"));
     await page.goto(docs("/trading/positions/"));
     await expect(heading(page)).toHaveText("Positions and your account");
     await expect(page).toHaveURL(docs("/trading/positions"));

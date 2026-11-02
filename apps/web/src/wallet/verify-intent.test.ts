@@ -545,7 +545,7 @@ test("withdrawals must pay the signing wallet the requested amount", () => {
   );
 });
 
-test("session grants must authorize this tab's key with the quick-trading limits", () => {
+test("session grants must authorize this tab's key with the trading-key limits", () => {
   const grant = {
     account: ACCOUNT,
     session: SESSION,

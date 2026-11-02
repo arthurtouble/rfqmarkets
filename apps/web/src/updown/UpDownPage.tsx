@@ -6,11 +6,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useAccount, useAccountValue, useIsolatedAccount } from "../account/useAccount.js";
-import { useTrading, type ClosedAt } from "../data/actions.js";
+import { useTrading, type ClosedAt, type MarketOrder } from "../data/actions.js";
 import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useMarketLeverage, useMarketList } from "../data/markets.js";
 import { useProtocol } from "../data/queries.js";
-import { useQuickLimits } from "../data/quick-limits.js";
 import { useTicks } from "../data/ticks.js";
 import { initialMarginAfter } from "../lib/account.js";
 import { abs, microToInput, parseUsdcInput, signedUsdc, usdc, usdcCompact, usdPrice } from "../lib/format.js";
@@ -55,8 +54,6 @@ import { WalletMenu } from "../wallet/WalletMenu.js";
 import { useFunds } from "../trade/FundsDialog.js";
 import { MarketSwitcher, PriceHeader } from "../trade/MarketHeader.js";
 import { PriceChart } from "../trade/PriceChart.js";
-import type { ReviewOrder } from "../trade/ReviewSheet.js";
-import { ConfirmSheet } from "./ConfirmSheet.js";
 import { StartTrading } from "../trade/StartTrading.js";
 import { ShareSheet } from "./ShareCard.js";
 
@@ -374,7 +371,6 @@ function NewBet({
   const { snapshot, status } = useMarketFeed();
   const trader = useTrader(),
     trading = useTrading(),
-    quickLimits = useQuickLimits(),
     funds = useFunds();
   const now = useServerNow(1_000);
   const leverageInfo = useMarketLeverage(market);
@@ -384,9 +380,7 @@ function NewBet({
   const choices = multiplierChoices(marketMax);
   const [size, setSize] = useState(() => load(SIZE_KEY) ?? String(DEFAULT_SIZE));
   const [chosen, setChosen] = useState(() => Number(load(MULTIPLIER_KEY)) || DEFAULT_MULTIPLIER);
-  const [review, setReview] = useState<ReviewOrder | null>(null);
   const multiplier = pickMultiplier(chosen, choices);
-  useEffect(() => setReview(null), [market]);
 
   const sizeMicro = parseUsdcInput(size);
   const notional = sizeMicro ?? 0n;
@@ -459,29 +453,20 @@ function NewBet({
     store(MULTIPLIER_KEY, String(next));
   };
   // Remembered only once the trade fills, so a cancelled one leaves nothing behind.
-  const remember = (order: ReviewOrder) =>
-    store(
-      betKey(order.market),
-      betRecordText({ stake: order.payMicro, multiplier: order.leverage, notional: order.amountMicro }),
-    );
+  const remember = () => store(betKey(market), betRecordText({ stake: stakeMicro!, multiplier, notional }));
   const trade = async (side: Side) => {
     if (!stakeMicro || problems[side]) return;
     const word = UP_DOWN[side];
-    const order: ReviewOrder = {
+    const order: MarketOrder = {
       market,
       side,
       amountMicro: notional,
-      payMicro: stakeMicro,
-      leverage: multiplier,
       reduceOnly: false,
       title: `${word} ${marketName(market)} · ${usdcCompact(notional)} at ${leverageLabel(multiplier)}`,
       isolated: { payMicro: stakeMicro },
     };
-    // One tap: the first trade in this browser grants a week's one-tap key (one wallet signature). Only a
-    // size past the key's limits goes through the confirm step and the wallet.
-    if (await trading.readyQuick(market, notional, quickLimits)) {
-      if (await trading.marketOrder(order)) remember(order);
-    } else if (notional > quickLimits.maxTradeMicro) setReview(order);
+    // Fills from the button with the trading key: no confirm step and no wallet prompt.
+    if ((await trading.readyQuick(market, notional)) && (await trading.marketOrder(order))) remember();
   };
 
   // Why a button is off, once under both (no amount, no price) or for the one side that is closed.
@@ -586,17 +571,6 @@ function NewBet({
         <p id="updown-reason" className="footnote rfq-muted center" role="status">
           {waiting ? "Loading your balance" : reason}
         </p>
-      )}
-
-      {review && (
-        <ConfirmSheet
-          order={review}
-          onClose={() => setReview(null)}
-          onFilled={() => {
-            remember(review);
-            setReview(null);
-          }}
-        />
       )}
     </section>
   );

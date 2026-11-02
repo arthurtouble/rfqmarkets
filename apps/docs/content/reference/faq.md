@@ -38,7 +38,7 @@ As long as you like. There is no timer. It stays open until you tap **Cash out**
 
 ## Do I pay gas?
 
-Only to deposit, and to turn off one-tap trading. Trades, closes, withdrawals, order cancellations and turning one-tap trading on are paid by the venue.
+Only to deposit. Trades, closes, withdrawals, order cancellations and connecting to trade are paid by the venue.
 
 ## What wallets work?
 

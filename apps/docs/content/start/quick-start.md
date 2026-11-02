@@ -35,11 +35,9 @@ Home shows one market at a time. Switch between **Bitcoin** and **Ethereum** fro
 2. Pick a multiplier: **2×**, **3×**, **5×** or **10×**. Your position is the amount times the multiplier: $10 at 2× is a $20 position. Positions are capped at 25 USDC per trade for now, so $10 at 3× is too big. The line under the buttons shows the position and what a 1% move your way would earn.
 3. Tap **Up** if you think the price will rise, or **Down** if you think it will fall.
 
-The first time, a sheet titled **Up on Bitcoin** (or **Down on Bitcoin**) shows the price and the **Auto-closes at** price. If the price reaches that level, the trade closes and you lose your amount. Tap **Confirm Up** and sign in your wallet.
+The first time, tap **Start trading** and sign once in your wallet (a *SessionGrant*, free to sign) to [connect](../trading/connecting-to-trade.md). The app says "Connection established. You can start trading."
 
-Your wallet shows a typed-data signature request titled *TradeIntent*. It lists the account, market, size, the worst price you accept, a maximum fee of zero, a nonce and a deadline about 30 seconds away. Signing is free. The app then collects the approvers' signatures and submits the trade. A notice says "You're Up on Bitcoin with $10" and links to the transaction.
-
-Leave **Skip this next time** ticked if you want later trades to fill on a tap. Your wallet asks for one more signature to turn on [one-tap trading](../trading/one-tap-trading.md).
+Now tap **Up** or **Down**. The trade fills straight away, with no wallet prompt: the app signs it, collects the approvers' signatures and submits it. A notice says "You're Up on Bitcoin with $10" and links to the transaction. Home shows the **Auto-closes at** price: if the price reaches that level, the trade closes and you lose your amount.
 
 ## 4. Watch the trade
 

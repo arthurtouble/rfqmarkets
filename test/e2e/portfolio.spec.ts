@@ -268,14 +268,14 @@ test.describe("positions and portfolio", () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test("the account page shows the wallet, one-tap trading and help links", async ({ page }) => {
+  test("the account page shows the wallet and help links, with no one-tap switch", async ({ page }) => {
     const { account } = await devWallet();
     await page.goto("/account");
     await expect(
       page.getByRole("region", { name: "Wallet" }).getByText(`${account.slice(0, 6)}…${account.slice(-4)}`),
     ).toBeVisible();
     await expect(page.getByText("Local dev wallet", { exact: false })).toBeVisible();
-    await expect(page.getByText(/trades up to \$[\d,.KM]+ fill without a wallet prompt/i)).toBeVisible();
+    await expect(page.getByText(/one-tap|trades up to/i)).toHaveCount(0);
     for (const name of [/Help and docs/, /Emergency exit/])
       await expect(page.getByRole("link", { name })).toHaveAttribute("target", "_blank");
     await expectNoHorizontalOverflow(page);
@@ -300,38 +300,31 @@ test.describe("positions and portfolio", () => {
     }
   });
 
-  test("with one-tap trading on, a close signs with the session key, not the wallet", async ({ page }) => {
+  test("once connected, a close signs with the trading key, not the wallet", async ({ page }) => {
     const { account } = await devWallet();
+    // Every account starts flat here, so Home offers Start trading (clicked by the fixture) before the position opens.
+    await page.goto("/updown/ETH");
+    await expect(page.getByText("Connection established", { exact: true })).toBeVisible();
     await trade("ETH", "sell", "1500");
-    await page.goto("/account");
-    await page.getByRole("button", { name: "Turn on" }).click();
-    await expect(page.getByText(/^On until/)).toBeVisible();
-    try {
-      await page.getByRole("link", { name: "Portfolio" }).first().click();
-      const prepared = page.waitForResponse((response) => response.url().endsWith("/v1/prepare"));
-      const approved = page.waitForRequest((request) => request.url().endsWith("/v1/approve"));
-      await page.getByRole("button", { name: "Close ETH short" }).click();
-      await page
-        .getByRole("dialog", { name: "Close ETH short" })
-        .getByRole("button", { name: "Close ETH short" })
-        .click();
-      const intent = (await (await prepared).json()) as Json;
-      const { userSignature } = (await approved).postDataJSON() as Json;
-      const signer = verifyTypedData(
-        intent.domain,
-        withoutDomainType(intent.types),
-        intent.intent,
-        userSignature,
-      );
-      expect(signer).not.toBe(account);
-      await expect(page.getByText("ETH position closed", { exact: true })).toBeVisible();
-      await expect.poll(async () => (await sizes()).ETH).toBe(0n);
-    } finally {
-      // The reload clears this tab's session key, so the grant is revoked rather than turned off.
-      await page.goto("/account");
-      await page.getByRole("button", { name: /^(Turn off|Revoke)$/ }).click();
-      await expect(page.getByText(/^Approve once, then trades up to/)).toBeVisible();
-    }
+    await page.getByRole("link", { name: "Portfolio" }).first().click();
+    const prepared = page.waitForResponse((response) => response.url().endsWith("/v1/prepare"));
+    const approved = page.waitForRequest((request) => request.url().endsWith("/v1/approve"));
+    await page.getByRole("button", { name: "Close ETH short" }).click();
+    await page
+      .getByRole("dialog", { name: "Close ETH short" })
+      .getByRole("button", { name: "Close ETH short" })
+      .click();
+    const intent = (await (await prepared).json()) as Json;
+    const { userSignature } = (await approved).postDataJSON() as Json;
+    const signer = verifyTypedData(
+      intent.domain,
+      withoutDomainType(intent.types),
+      intent.intent,
+      userSignature,
+    );
+    expect(signer).not.toBe(account);
+    await expect(page.getByText("ETH position closed", { exact: true })).toBeVisible();
+    await expect.poll(async () => (await sizes()).ETH).toBe(0n);
   });
 
   test("warns when a position is close to liquidation", async ({ page }) => {

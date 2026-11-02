@@ -19,7 +19,7 @@ npm run build:web            # production bundle in dist/web
 | `src/lib/` | Pure code: wire types, formatting, account marking, indicative quotes, SSE hook. |
 | `src/wallet/` | wagmi config, the trader interface (browser wallet or local dev key), connect dialog, wallet menu, quick-trading key. |
 | `src/data/` | The shared market stream, TanStack Query hooks and every user action. |
-| `src/updown/` | The home screen: one centred column with the market, a live tick chart (`data/ticks.ts`), stake and multiplier, and Up / Down buttons that place a market order (one tap once one-click trading covers the size, else the review sheet). An open bet shows its live result, a Cash out button and Share; after a cash out the result stays up until the next bet. Share (`ShareCard.tsx`, text in `lib/share.ts`) draws a 1080 × 1350 image card with the market, Up or Down, the return and the tick line, then shares it, saves it or copies a caption and link. Sizing and the tick window are in `lib/updown.ts`. The terminal is one tap away as Pro. |
+| `src/updown/` | The home screen: one centred column with the market, a live tick chart (`data/ticks.ts`), stake and multiplier, and Up / Down buttons that place a market order (one tap with the trading key; **Start trading** connects first). An open bet shows its live result, a Cash out button and Share; after a cash out the result stays up until the next bet. Share (`ShareCard.tsx`, text in `lib/share.ts`) draws a 1080 × 1350 image card with the market, Up or Down, the return and the tick line, then shares it, saves it or copies a caption and link. Sizing and the tick window are in `lib/updown.ts`. The terminal is one tap away as Pro. |
 | `src/trade/`, `src/markets/`, `src/portfolio/`, `src/account/` | Pages and their components. `trade/MarketChart.tsx` is the price header and chart: a line with ranges in Simple, candlesticks in Advanced (`trade/CandleChart.tsx`, TradingView Lightweight Charts, loaded on first use). |
 | `src/positions/` | Open positions (table on desktop, cards on phones), the close sheet and close all. |
 | `src/ui/` | Small shared primitives and toasts. |
@@ -53,12 +53,12 @@ The API and the edge are not trusted to decide what a user signs or sends:
   read-only. Base and Base Sepolia always use their public RPC, never the
   API's `rpcUrl`. Local builds set no pins and take the API's config.
 - **Intent checks** (`wallet/verify-intent.ts`). Before every signature,
-  with the wallet or the one-click key, the payload must use the
+  with the wallet or the trading key, the payload must use the
   `RFQ Markets`/`1` domain on the settlement chain and clearing contract, the
   protocol's own type definitions and the connected account, and its fields
   must match the request: withdrawal recipient and amount, trade market, side,
   size, limit price and fee cap against the quote, trigger and slippage, and
-  the session key and limits of a one-click grant. On a mismatch nothing is
+  the session key and limits of a trading-key grant. On a mismatch nothing is
   signed and the error says so.
 
 ## Data layer for the UI
@@ -86,9 +86,9 @@ can be priced. `parseSlippagePercent("0.5")` → `50`, `clampSlippageBps(n)`,
 
 - `firmQuote(order)` → the firm `POST /v1/quote` for a `MarketOrder` (`{ market, side, amountMicro, reduceOnly?, slippageBps? }`), held about 30 s.
 - `marketOrder(order, quote?)` → `true` when it filled. With a reviewed `quote` it signs exactly that quote, or refuses once `quoteUsable` says it is about to lapse; failures show a toast and return `false`.
-- `quickCovers(market, amountMicro)` says whether the one-click session signs this trade with no review; `enableQuickTrading()` → `true` once on.
+- `quickCovers(market, amountMicro)` says whether the trading key signs this trade; `enableQuickTrading()` connects (grants the key) → `true` once connected.
 - The ticket sizes by pay × leverage: `positionNotional`, `leverageCeiling` (tiers), `maxPay` (funds, fee, per-trade cap and tier), `ticketProblem` (the first blocker, in the order the button shows it), `submitLabel`, `reducesPosition`.
-- `friendlyError(message)` (`lib/errors.ts`) turns API, approver and wallet reasons into the copy toasts and the review sheet show.
+- `friendlyError(message)` (`lib/errors.ts`) turns API, approver and wallet reasons into the copy toasts and banners show.
 - `trade/ticket-memory.ts` remembers pay and leverage per market and the slippage setting in `localStorage`.
 
 **Trigger orders and TP/SL** (`useTrading()` in `data/actions.tsx`, checks in `lib/orders.ts`).

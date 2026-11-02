@@ -1,5 +1,5 @@
 // Placing market trades from the order ticket: sizing by position and leverage,
-// one-tap trading turned on by the first trade, blocked states and a paused
+// connecting with Start trading, blocked states and a paused
 // market. Runs in the desktop and mobile projects.
 import { readFileSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
@@ -56,9 +56,9 @@ async function setMarketEnabled(market: number, enabled: boolean) {
 }
 
 test.describe("placing trades", () => {
-  test.describe("starting from no one-tap key", () => {
+  test.describe("starting from no trading key", () => {
     test.use({ autoStartTrading: false });
-    test("Start trading turns on one tap with one signature, then a Long fills with no review", async ({
+    test("Start trading connects with one signature, then a Long fills with no review", async ({
       page,
       isMobile,
     }) => {
@@ -67,7 +67,9 @@ test.describe("placing trades", () => {
       const start = ticket.getByRole("button", { name: "Start trading", exact: true });
       await expect(start).toBeVisible();
       await start.click();
-      await expect(page.getByRole("status", { name: "Notifications" })).toContainText("One-tap trading on");
+      await expect(page.getByRole("status", { name: "Notifications" })).toContainText(
+        "Connection established. You can start trading.",
+      );
       await size(ticket, "100", "5×");
       await expect(ticket.getByText("Margin $20")).toBeVisible();
       await expect(submit(ticket)).toHaveText("Long BTC · $100 at 5×");
@@ -84,7 +86,6 @@ test.describe("placing trades", () => {
       const again = await openTicket(page, isMobile);
       await again.getByRole("group", { name: "Direction" }).getByRole("button", { name: "Short" }).click();
       await size(again, "20", "2×");
-      await expect(again.getByText("One-tap trading is on. No wallet prompt.")).toBeVisible();
       await submit(again).click();
       await expect(notifications).toContainText("Short BTC $20.00 filled");
       await expect(page.getByRole("dialog", { name: "Review order" })).toHaveCount(0);

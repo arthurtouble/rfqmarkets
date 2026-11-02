@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  QUICK_CEILING,
+  SESSION_LIMITS,
   allMarketsMask,
   forgetSessionKeys,
   maskIncludes,
-  quickLimits,
   quickSessionRequest,
   sessionCovers,
   type QuickSession,
@@ -19,32 +18,20 @@ test("the session mask covers every registered market", () => {
   assert.equal(allMarketsMask(54), ((1n << 54n) - 1n).toString());
   assert.equal(allMarketsMask(128), ((1n << 128n) - 1n).toString());
   for (const invalid of [0, 129, 2.5]) assert.throws(() => allMarketsMask(invalid));
-  assert.deepEqual(quickSessionRequest(3, quickLimits([25_000_000n])), {
-    maxTradeAmount: "50",
-    maxCumulativeAmount: "10000",
-    // 10 bps of the 50 USDC per-trade cap.
-    maxFee: "0.05",
+  assert.deepEqual(quickSessionRequest(3), {
+    // Any trade the protocol allows: the largest position a market may hold, and no total limit.
+    maxTradeAmount: "5000000",
+    maxCumulativeAmount: "340282366920938463463374607431768.211455",
+    // 10 bps of the per-trade limit.
+    maxFee: "5000",
     durationSeconds: 7 * 24 * 60 * 60,
     marketMask: 7,
   });
 });
 
-test("one-tap limits follow the market caps under a fixed ceiling", () => {
-  // Twice the largest cap, rounded up to a dollar, so a winning exit still fits; 100 round trips in total.
-  assert.deepEqual(quickLimits([25_000_000n, 10_000_000n]), {
-    maxTradeMicro: 50_000_000n,
-    maxCumulativeMicro: 10_000_000_000n,
-  });
-  assert.deepEqual(quickLimits([12_345_678n]), {
-    maxTradeMicro: 25_000_000n,
-    maxCumulativeMicro: 5_000_000_000n,
-  });
-  assert.deepEqual(quickLimits([1_000_000_000_000n]), QUICK_CEILING);
-  assert.deepEqual(quickLimits([300_000_000_000n]), {
-    maxTradeMicro: 600_000_000_000n,
-    maxCumulativeMicro: QUICK_CEILING.maxCumulativeMicro,
-  });
-  assert.deepEqual(quickLimits([]), QUICK_CEILING);
+test("the trading key has no limit of its own", () => {
+  assert.equal(SESSION_LIMITS.maxTradeMicro, 5_000_000n * 1_000_000n);
+  assert.equal(SESSION_LIMITS.maxCumulativeMicro, (1n << 128n) - 1n);
 });
 
 test("mask membership and session coverage by market", () => {
@@ -62,9 +49,6 @@ test("mask membership and session coverage by market", () => {
   };
   assert.equal(sessionCovers(session, 50_000_000n, 2), true);
   assert.equal(sessionCovers(session, 50_000_001n, 2), false);
-  // Sessions saved before the cap was stored were granted at the ceiling.
-  assert.equal(sessionCovers({ ...session, maxTradeNotional: undefined }, 2_500_000_000n, 2), true);
-  assert.equal(sessionCovers({ ...session, maxTradeNotional: undefined }, 2_500_000_001n, 2), false);
   assert.equal(sessionCovers(session, 1n, 3), false);
   // Sessions saved before the mask was stored cover the launch markets only.
   assert.equal(sessionCovers({ ...session, marketMask: undefined }, 1n, 1), true);
@@ -84,6 +68,7 @@ test("sessions expire 30 seconds early and keys can be forgotten", () => {
     validUntil: Date.now() + 3_600_000,
     privateKey: "0x01",
     marketMask: "3",
+    maxTradeNotional: "50000000",
     maxFee: "50000",
   };
   assert.equal(sessionCovers({ ...base, validUntil: Date.now() + 20_000 }, 1n, 0), false);

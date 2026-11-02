@@ -25,15 +25,9 @@ Larger positions need more margin per dollar, so leverage falls in tiers as size
 
 The button says what will happen, for example **Long BTC · $250 at 5×**. When something is missing, it says that instead: **Enter an amount**, **Over the per-trade limit**, **Add funds** and so on. Over the limit, the line under the amount says how much fits, for example "Up to $5.00 at 5× per trade".
 
-## Reviewing a market order
+## One tap, no review
 
-Unless one-tap trading is on, every market order opens a **Review order** sheet before your wallet does. The sheet fetches a firm price for your exact size and restates the trade in a sentence ("Long 0.0025 BTC on Bitcoin at 5×, paying $50. It fills at the price protection or better, or not at all."), then lists the entry price, price protection, estimated liquidation price, margin and position size.
-
-The firm price is held for about 30 seconds, and a countdown under the button shows how long is left. When it runs out, the button changes to **Refresh quote**; you can only sign a price that is still held. Nothing is traded until you confirm.
-
-If you do not have a one-tap session, the sheet also has a **Skip this step next time** box, ticked by default. Leave it ticked to turn on [one-tap trading](one-tap-trading.md): it costs one extra signature now and skips this review and the wallet prompt in this tab for the next four hours, for trades up to twice the venue's per-trade cap. Untick it if you would rather confirm every trade in your wallet.
-
-Click **Confirm and sign** to continue. When one-tap trading is on and covers the trade, there is no review: the ticket shows "One-tap trading is on. No wallet prompt." and the order goes straight through.
+Before your first trade in a browser, **Start trading** stands in for the trade button. Tap it and sign once in your wallet to [connect](connecting-to-trade.md); the app says "Connection established. You can start trading." After that, a market order goes straight through when you click, with no review sheet and no wallet prompt.
 
 ## Price protection
 
@@ -45,8 +39,8 @@ The contract enforces the protection. If the price the maker approves is worse t
 
 ## What happens after you click
 
-1. **Getting a firm quote.** The app asks the venue for a quote for your exact size. In the review sheet the price is held for about 30 seconds. The app stops offering it a moment before it lapses, so there is time to sign.
-2. **Confirm in your wallet.** You sign a *TradeIntent*: your account, the market, the exact size in base units, your limit price, the maximum fee, a random one-time nonce and a deadline 30 seconds away. With [one-tap trading](one-tap-trading.md) on, the app signs instantly with your session key instead.
+1. **Getting a firm quote.** The app asks the venue for a quote for your exact size. The price is held for about 30 seconds.
+2. **Signing.** The app signs a *TradeIntent* with your [trading key](connecting-to-trade.md), instantly: your account, the market, the exact size in base units, your limit price, the maximum fee, a random one-time nonce and a deadline 30 seconds away.
 3. **Collecting approver signatures.** The venue re-prices your trade against a fresh oracle report. If the new price is still inside your limit, it reserves the maker's capacity for your trade and asks the three approvers to check and co-sign it. Two signatures are enough.
 4. **Settlement.** The venue simulates the transaction, submits it to Base and pays the gas. The contract verifies everything again and settles the trade.
 

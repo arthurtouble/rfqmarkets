@@ -21,7 +21,7 @@ export const sections = [
       "limit-orders",
       "stop-orders",
       "positions",
-      "one-tap-trading",
+      "connecting-to-trade",
       "deposits-and-withdrawals",
       "leaderboard",
     ],

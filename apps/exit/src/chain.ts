@@ -288,7 +288,7 @@ export class ExitChain {
   }
 
   /**
-   * Active one-tap trading keys this account granted, from SessionGranted logs. Wallet RPCs limit log
+   * Active trading keys this account granted, from SessionGranted logs. Wallet RPCs limit log
    * ranges, so the scan walks back in chunks and gives up quietly; the page also takes a key by hand.
    */
   async sessions(account: string, maxChunks = 40, chunk = 9_000): Promise<Session[] | null> {

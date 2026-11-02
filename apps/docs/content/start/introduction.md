@@ -17,7 +17,7 @@ The point of this design is a clean trading experience without giving up custody
 - **Protect positions with a take profit and stop loss** in Pro, or enter on a breakout with a stop order. Both trigger on the oracle price and fill within a slippage band you choose.
 - **Place market orders or resting limit orders in Pro.** A market order fills at once, all or nothing, within a price protection you sign. A limit order waits until the maker's executable price reaches your limit.
 - **Connect the way you like**: a browser wallet, a phone wallet through WalletConnect, or a passkey with Base Account, which needs nothing installed.
-- **Trade without wallet pop-ups** by turning on one-tap trading, a short-lived session key that can trade within limits the contract enforces and can never withdraw.
+- **Trade without wallet pop-ups.** One signature [connects you](../trading/connecting-to-trade.md), and every trade after that fills with one tap. The key it creates can trade but never withdraw.
 - **Withdraw any time** your margin allows, with one signature and no gas.
 - **Leave without the venue.** If the venue's servers disappear, your wallet can still withdraw, cancel and claim directly from the contract through the exit page.
 
