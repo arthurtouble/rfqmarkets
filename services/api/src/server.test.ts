@@ -725,8 +725,9 @@ test("firm quotes include measured hedge cost, latency, and venue basis", async 
       payload: { market: "BTC", side: "buy", amount: "100" },
     })
   ).json();
-  assert(BigInt(quote.spread.hedgeBps) >= 4n);
-  assert.equal(quote.spread.basisBps, "3");
+  // In tenths of a bp: at least the 4 bps venue cost and exactly the 3 bps basis.
+  assert(BigInt(quote.spread.hedgeBps) >= 40n);
+  assert.equal(quote.spread.basisBps, "30");
   const health = (
     await target.inject({ method: "GET", url: "/internal/metrics", headers: { authorization: "Bearer ops" } })
   ).json();

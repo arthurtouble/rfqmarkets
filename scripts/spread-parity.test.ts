@@ -37,7 +37,7 @@ test("calibration replays active spread component caps, rounding, mode, latency,
   const actual = JSON.parse(result.stdout) as number[];
   assert.equal(actual.length, rows.length);
   rows.forEach((row, i) =>
-    assert.equal(actual[i], Number(adaptiveSpread(row).totalBps), `spread parity vector ${i}`),
+    assert.equal(actual[i], Number(adaptiveSpread(row).totalBps) / 10, `spread parity vector ${i}`),
   );
 });
 
@@ -48,7 +48,13 @@ test("independent calibration replay matches full integer quote and pending enve
       price = market === "BTC" ? 100_000_000_000n : 4_000_000_000n;
     return {
       request: { market, side, amount: `${100 + i}.${(i * 17).toString().padStart(6, "0")}` },
-      snapshot: { market, bid: price - 1000n, ask: price + 1000n, observedAtMs: 0 },
+      snapshot: {
+        market,
+        bid: price - 1000n,
+        ask: price + 1000n,
+        observedAtMs: 0,
+        volatilityBps: i % 7 === 0 ? 0 : (i * 0.37) % 180,
+      },
       settled: { BTC: BigInt(i - 500) * 1_000_000_000n, ETH: BigInt(400 - i) * 100_000_000n },
       pending: [
         { market: "BTC" as const, delta: BigInt(i) * 1_000_000n },
@@ -85,7 +91,7 @@ test("independent calibration replay matches full integer quote and pending enve
         crypto.randomUUID(),
         {
           maxNotional: 1_000_000n * 1_000_000n,
-          baseSpreadBps: spread.totalBps,
+          baseSpreadBps: 0n,
           feeBps: 2n,
           toleranceBps: 8n,
           spread,

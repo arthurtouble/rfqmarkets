@@ -18,6 +18,7 @@ import {
   parseUsdc,
   quoteRequestSchema,
   RATE,
+  SPREAD_UNITS_PER_BPS,
   tradingFeeBps,
   type PriceSnapshot,
   type PricingParameters,
@@ -72,7 +73,7 @@ export type MarketView = {
   source: string;
   volatilityBps: number;
   volatility: PriceSnapshot["volatility"];
-  /** The quoted spread over the mid for a small trade (the adaptive total), in bps. */
+  /** The quoted spread over the mid for a small trade (the adaptive total), in bps (0.1 bp steps). */
   baseSpreadBps: number;
   /** The trading fee every fill in this market pays, in bps of notional. */
   feeBps: number;
@@ -357,7 +358,7 @@ export class QuoteEngine {
         source: snapshot.source ?? "configured",
         volatilityBps: snapshot.volatilityBps ?? 0,
         volatility: snapshot.volatility,
-        baseSpreadBps: Number(spread.totalBps),
+        baseSpreadBps: Number(spread.totalBps) / Number(SPREAD_UNITS_PER_BPS),
         feeBps: Number(tradingFeeBps(name)),
         aggregateBase: aggregateBase.toString(),
         fundingApr: fundingApr.toString(),
@@ -559,7 +560,6 @@ export class QuoteEngine {
     const pricing: PricingParameters = {
       ...launchPricing,
       maxNotional: admission.maxTradeNotional,
-      baseSpreadBps: spread.totalBps,
       feeBps: tradingFeeBps(request.market),
       spread,
     };

@@ -7,6 +7,7 @@ import {
 } from "../../../packages/shared/src/hedge-risk.js";
 import type { Market } from "../../../packages/shared/src/markets.js";
 import { low128 } from "../../../packages/shared/src/numeric.js";
+import { toSpreadUnits } from "../../../packages/shared/src/pricing.js";
 import type { HedgeRiskConfig } from "./options.js";
 import { reject, type Rejection } from "./rejection.js";
 
@@ -69,9 +70,10 @@ export function checkHedgeRisk(input: {
   )
     return reject("guarded hedge limit exceeded");
   if (spread && marketRisk?.execution) {
-    const requiredHedge = BigInt(Math.max(0, Math.ceil(marketRisk.execution.estimatedCostBps))),
-      requiredBasis = BigInt(
-        Math.ceil(Math.min(MAX_REQUIRED_BASIS_BPS, Math.abs(marketRisk.execution.basisBps))),
+    // Spread components are in tenths of a bp (adaptive-v3), rounded up as `adaptiveSpread` does.
+    const requiredHedge = toSpreadUnits(marketRisk.execution.estimatedCostBps),
+      requiredBasis = toSpreadUnits(
+        Math.min(MAX_REQUIRED_BASIS_BPS, Math.abs(marketRisk.execution.basisBps)),
       );
     if (BigInt(spread.hedgeBps) < requiredHedge || BigInt(spread.basisBps) < requiredBasis)
       return reject("venue execution spread rejected");

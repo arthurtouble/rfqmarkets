@@ -1,7 +1,12 @@
 import type { ApproverPayload } from "../../../packages/shared/src/approver-payload.js";
 import type { MakerApproval, TradeIntent } from "../../../packages/shared/src/eip712.js";
 import { BASE, USDC, abs, ceilDiv } from "../../../packages/shared/src/numeric.js";
-import { PLATFORM_MARKUP_BPS, quotedPrice } from "../../../packages/shared/src/pricing.js";
+import {
+  PLATFORM_MARKUP_BPS,
+  quotedPrice,
+  SPREAD_UNITS_PER_BPS,
+  spreadChargeOf,
+} from "../../../packages/shared/src/pricing.js";
 import { reject, type Rejection } from "./rejection.js";
 
 type WireQuote = ApproverPayload["quote"];
@@ -13,8 +18,8 @@ type WireQuote = ApproverPayload["quote"];
  */
 export const minimumChargeBps = (baseSpreadBps: number | bigint) =>
   BigInt(baseSpreadBps) + PLATFORM_MARKUP_BPS;
-/** Adaptive-spread bounds the approver accepts from the leader. */
-export const MAX_SPREAD_BPS = 100n;
+/** Adaptive-spread bound the approver accepts from the leader: 100 bps, in spread units (0.1 bp). */
+export const MAX_SPREAD_UNITS = 100n * SPREAD_UNITS_PER_BPS;
 /** Oldest price observation a quote may be built on. */
 export const MAX_QUOTE_AGE_MS = 8_000;
 /** Per-trade notional ceiling; with a chain connection the market limit word also applies. */
@@ -30,7 +35,7 @@ export function checkQuoteModel(
 
 /**
  * Recompute the leader's adaptive spread: the components must sum to the capped total and the expected
- * price must equal mid +/- (spread + impact) premium. The market's base spread is not a floor here: it is
+ * price must equal mid +/- (spread + impact) premium, where a negative impact is a rebate. The market's base spread is not a floor here: it is
  * charged as the fee, which `checkPricePolicy` requires.
  */
 export function checkQuoteSpread(quote: WireQuote, wireBaseDelta: string): Rejection | undefined {
@@ -46,18 +51,17 @@ export function checkQuoteSpread(quote: WireQuote, wireBaseDelta: string): Rejec
     ].map(BigInt),
     total = BigInt(spread.totalBps),
     sum = components.reduce((value, item) => value + item, 0n);
-  if (total > MAX_SPREAD_BPS || total !== (sum > MAX_SPREAD_BPS ? MAX_SPREAD_BPS : sum))
+  if (total > MAX_SPREAD_UNITS || total !== (sum > MAX_SPREAD_UNITS ? MAX_SPREAD_UNITS : sum))
     return reject("quote spread rejected");
   const notional = BigInt(quote.amount),
-    impact = BigInt(quote.impactCharge) > 0n ? BigInt(quote.impactCharge) : 0n,
     // Quotes are priced from the oracle mid (packages/shared/src/pricing.ts quotedPrice).
     expected = quotedPrice({
       buy: !wireBaseDelta.startsWith("-"),
       bid: BigInt(quote.bid),
       ask: BigInt(quote.ask),
       notional,
-      spreadCharge: ceilDiv(notional * total, 10_000n),
-      impactCharge: impact,
+      spreadCharge: spreadChargeOf(notional, total),
+      impactCharge: BigInt(quote.impactCharge),
     });
   if (expected !== BigInt(quote.expectedPrice)) return reject("quote spread price mismatch");
 }
@@ -65,7 +69,9 @@ export function checkQuoteSpread(quote: WireQuote, wireBaseDelta: string): Rejec
 /**
  * Quote freshness, base/notional rounding and a minimum charge: the fee plus
  * the price premium over the mid must reach the market's trading fee (its base
- * spread and the platform's 2 bps) and the impact charge. `capNotional` applies the static
+ * spread and the platform's 2 bps) plus the impact charge. A negative impact charge (a rebate for an
+ * inventory-reducing trade, bounded by `checkImpact` and the contract) lowers the requirement, so the
+ * price may then be better than the mid. `capNotional` applies the static
  * per-trade ceiling when no chain limit word is available.
  */
 export function checkPricePolicy(input: {
@@ -83,12 +89,15 @@ export function checkPricePolicy(input: {
     observedAge = nowMs - quote.observedAtMs,
     mid = (BigInt(quote.bid) + BigInt(quote.ask)) / 2n;
   const baseRounding = abs(abs(intent.baseDelta) - (notional * BASE) / mid),
-    positiveImpact = approval.impactCharge > 0n ? approval.impactCharge : 0n,
-    minimumCharge = ceilDiv(notional * minimumChargeBps(input.baseSpreadBps), 10_000n) + positiveImpact,
-    // A fee pays part of the charge; the price premium must cover the rest.
-    premiumCharge = minimumCharge > approval.fee ? minimumCharge - approval.fee : 0n,
+    minimumCharge =
+      ceilDiv(notional * minimumChargeBps(input.baseSpreadBps), 10_000n) + approval.impactCharge,
+    // A fee pays part of the charge; the price premium (negative for a rebate) must cover the rest.
+    premiumCharge = minimumCharge - approval.fee,
     anchor = mid,
-    minimumPremium = ceilDiv(anchor * premiumCharge, notional);
+    minimumPremium =
+      premiumCharge >= 0n
+        ? ceilDiv(anchor * premiumCharge, notional)
+        : -((anchor * -premiumCharge) / notional);
   const underpriced =
     intent.baseDelta > 0n
       ? approval.executionPrice < anchor + minimumPremium

@@ -151,7 +151,7 @@ test("adaptive risk components are monotone, bounded, and identity independent",
       venueBasisBps: 999,
       confidenceBps: 999,
     }).totalBps,
-    100n,
+    1_000n, // 100 bps, in tenths of a bp
   );
   assert.deepEqual(adaptiveSpread({ volatilityBps: 12 }), adaptiveSpread({ volatilityBps: 12 }));
 });
@@ -167,7 +167,7 @@ test("adaptive spread is charged outside the contract-verifiable inventory floor
   const spread = adaptiveSpread({ volatilityBps: 50, toxicityScoreBps: 2_000 });
   const parameters = {
     maxNotional: 1_000_000n * USDC,
-    baseSpreadBps: spread.totalBps,
+    baseSpreadBps: 0n,
     feeBps: 2n,
     toleranceBps: 8n,
     spread,
@@ -181,7 +181,8 @@ test("adaptive spread is charged outside the contract-verifiable inventory floor
     crypto.randomUUID(),
     parameters,
   );
-  assert.equal(quote.spread?.modelVersion, "adaptive-v2");
-  assert.equal(quote.impactCharge, impactCost({ BTC: 0n, ETH: 0n }, "BTC", 100_000n * USDC));
+  assert.equal(quote.spread?.modelVersion, "adaptive-v3");
+  // The required inventory charge, doubled by 50 bps of short-horizon risk.
+  assert.equal(quote.impactCharge, 2n * impactCost({ BTC: 0n, ETH: 0n }, "BTC", 100_000n * USDC));
   assert(quote.expectedPrice > snapshot.ask);
 });

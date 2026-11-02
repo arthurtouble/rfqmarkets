@@ -64,12 +64,15 @@ test("each market's own fee applies, and small trades fill at the touch, not pas
       basisBps: "0",
       uncertaintyBps: "0",
       totalBps: "0",
-      modelVersion: "adaptive-v2",
+      modelVersion: "adaptive-v3",
     },
   });
   assert.deepEqual(touchPrices(calm), { bid: 100_000n * USDC, ask: 100_000n * USDC });
-  const wide = market({ spread: { ...calm.spread!, volatilityBps: "5", totalBps: "5" } });
+  // Spread components are in tenths of a bp: 50 is 5 bps, 3 is 0.3 bps ($3 on $100,000).
+  const wide = market({ spread: { ...calm.spread!, volatilityBps: "50", totalBps: "50" } });
   assert.deepEqual(touchPrices(wide), { bid: 99_950n * USDC, ask: 100_050n * USDC });
+  const fine = market({ spread: { ...calm.spread!, volatilityBps: "3", totalBps: "3" } });
+  assert.deepEqual(touchPrices(fine), { bid: 99_997n * USDC, ask: 100_003n * USDC });
 });
 
 test("slippage widens the protected price on the trader's side", () => {
@@ -116,8 +119,8 @@ test("a market listed after launch quotes locally without an impact estimate", (
   const snapshot: MarketSnapshot = { ...snapshotWith(market()), markets: { BTC: market(), SOL: sol } };
   const quote = quoteOf(indicativeQuote(snapshot, "SOL", "buy", 300n * USDC, NOW));
   assert.equal(quote.impactCharge, "0");
-  // No spread (volatility 1 bps rounds to nothing) and no impact: the buy fills at the mid.
-  assert.equal(quote.expectedPrice, (150n * USDC).toString());
+  // No impact, only the 0.2 bps volatility spread from 1 bps of risk: the buy fills just above the mid.
+  assert.equal(quote.expectedPrice, 150_003_000n.toString());
   // The launch markets keep their registered impact.
   assert.ok("quote" in indicativeQuote(snapshot, "BTC", "buy", 1_000n * USDC, NOW));
 });

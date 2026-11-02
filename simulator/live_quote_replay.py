@@ -1,5 +1,5 @@
-"""Independent integer replay of adaptive-v2 quote inputs, not live qualification."""
-import json,sys
+"""Independent integer replay of adaptive-v3 quote inputs, not live qualification."""
+import json,math,sys
 from walk_forward_calibration import Observation,spread,CURRENT_WEIGHTS
 BASE=10**18
 USDC=10**6
@@ -30,12 +30,16 @@ def replay(item):
     for btc in (low['BTC'],high['BTC']):
         for eth in (low['ETH'],high['ETH']):
             costs.append(potential(btc+(delta if market=='BTC' else 0),eth+(delta if market=='ETH' else 0))-potential(btc,eth))
-    impact=max(0,max(costs));inputs=item.get('spreadInputs',{})
+    raw=max(costs);vol=min(2000,max(0,float(snapshot.get('volatilityBps',0))))
+    # pricing.ts quotedImpact: charges steepen with volatility, reductions get half back up to 5 bps.
+    impact=(raw*(1000+min(3000,math.floor(vol*20)))+999)//1000 if raw>=0 else -min((-raw)//2,notional*5//10000)
+    inputs=item.get('spreadInputs',{})
     spread_bps=spread(Observation(0,inputs.get('volatilityBps',0),inputs.get('toxicityScoreBps',0),inputs.get('hedgeCostBps',0),inputs.get('venueBasisBps',0),0,hedge_latency_ms=inputs.get('hedgeLatencyMs',0),confidence_bps=inputs.get('confidenceBps',0),risk_mode=inputs.get('riskMode','normal')),CURRENT_WEIGHTS)
     ceil=lambda numerator,denominator:(numerator+denominator-1)//denominator
-    spread_charge=ceil(notional*spread_bps,10000);fee=ceil(notional*2,10000)
+    spread_charge=ceil(notional*round(spread_bps*10),100000);fee=ceil(notional*2,10000)
     # pricing.ts quotedPrice: the mid moved by spread and impact.
-    premium=ceil(mid*(spread_charge+impact),notional)
+    charge=spread_charge+impact
+    premium=ceil(mid*charge,notional) if charge>=0 else -((mid*-charge)//notional)
     expected=mid+premium if buy else mid-premium
     tolerance=ceil(expected*8,10000);worst=expected+tolerance if buy else expected-tolerance
     return {name:str(value) for name,value in dict(notional=notional,delta=delta,baseDelta=base,expectedPrice=expected,worstPrice=worst,fee=fee,impactCharge=impact).items()}
