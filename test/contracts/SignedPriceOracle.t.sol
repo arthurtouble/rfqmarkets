@@ -275,6 +275,44 @@ contract SignedPriceOracleTest is ClearingFixture {
         assertEq(clearing.positionOf(alice.account, 0).size, 1e16);
     }
 
+    /// @notice The platform's charge is an explicit fee, so the contract measures the delivered inventory charge
+    /// from the oracle mid: a small fill may sit inside the oracle's bid/ask, but never on the wrong side of the mid.
+    function test_fillsInsideTheOracleBandAtTheMidPlusImpact() public {
+        vm.startPrank(governance);
+        signed.setClearing(address(clearing));
+        clearing.setOracle(address(signed));
+        vm.stopPrank();
+        fundMaker(FLOOR);
+        openVenue();
+        Trader memory alice = newTrader("alice", 10_000e6);
+        bytes memory proof = encode(
+            batch(nodeKeys[1], t, prices2(100_000e6, 4_000e6)), batch(nodeKeys[2], t, prices2(100_000e6, 4_000e6))
+        );
+        clearing.refreshOracle(proof);
+
+        // 0.01 BTC buy: the inventory charge is 0.005 USDC, so 100,001 delivers it from the 100,000 mid while
+        // sitting below the 100,005 ask.
+        (TradeIntent memory intent, MakerApproval memory approval,) = quote(alice.account, 0, 1e16, false);
+        approval.oracleReportHash = keccak256(proof);
+        intent.limitPrice = 100_001e6;
+        approval.executionPrice = 100_001e6;
+        approval.intentHash = intentDigest(intent);
+        execute(alice, intent, approval, proof);
+        assertEq(clearing.positionOf(alice.account, 0).size, 1e16);
+
+        // A buy below the mid does not deliver the charge.
+        (intent, approval,) = quote(alice.account, 0, 1e16, false);
+        approval.oracleReportHash = keccak256(proof);
+        intent.limitPrice = 99_999e6;
+        approval.executionPrice = 99_999e6;
+        approval.intentHash = intentDigest(intent);
+        bytes memory userSignature = sign(alice.key, intent);
+        bytes memory first = signApproval(approverKeys[0], approval);
+        bytes memory second = signApproval(approverKeys[1], approval);
+        vm.expectRevert(InvalidTrade.selector);
+        clearing.executeTrade(intent, approval, proof, userSignature, first, second);
+    }
+
     /// @dev Same vector as packages/shared/src/signed-oracle.test.ts, so node signatures and the adapter agree.
     function test_digestMatchesTheOracleNodeVector() public {
         vm.chainId(8453);

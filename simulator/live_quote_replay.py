@@ -34,10 +34,9 @@ def replay(item):
     spread_bps=spread(Observation(0,inputs.get('volatilityBps',0),inputs.get('toxicityScoreBps',0),inputs.get('hedgeCostBps',0),inputs.get('venueBasisBps',0),0,hedge_latency_ms=inputs.get('hedgeLatencyMs',0),confidence_bps=inputs.get('confidenceBps',0),risk_mode=inputs.get('riskMode','normal')),CURRENT_WEIGHTS)
     ceil=lambda numerator,denominator:(numerator+denominator-1)//denominator
     spread_charge=ceil(notional*spread_bps,10000);fee=ceil(notional*2,10000)
-    # pricing.ts quotedPrice: the mid moved by spread and impact, never inside the oracle touch.
+    # pricing.ts quotedPrice: the mid moved by spread and impact.
     premium=ceil(mid*(spread_charge+impact),notional)
-    touch_impact=ceil(mid*(impact+1),notional) if impact>0 else 0
-    expected=max(mid+premium,ask+touch_impact) if buy else min(mid-premium,bid-touch_impact)
+    expected=mid+premium if buy else mid-premium
     tolerance=ceil(expected*8,10000);worst=expected+tolerance if buy else expected-tolerance
     return {name:str(value) for name,value in dict(notional=notional,delta=delta,baseDelta=base,expectedPrice=expected,worstPrice=worst,fee=fee,impactCharge=impact).items()}
 

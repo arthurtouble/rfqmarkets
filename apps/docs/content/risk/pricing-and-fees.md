@@ -10,11 +10,11 @@ The price starts from the oracle **mid**, halfway between the oracle bid and ask
 spread charge    = notional × spread (bps) ÷ 10,000
 inventory charge = change in the maker's inventory cost caused by this trade
 premium          = (spread charge + inventory charge) as a price difference
-buy price        = the higher of  mid + premium  and  oracle ask + inventory charge
-sell price       = the lower of   mid − premium  and  oracle bid − inventory charge
+buy price        = mid + premium
+sell price       = mid − premium
 ```
 
-The contract never lets a buy fill below the oracle ask or a sell above the oracle bid. The oracle's bid and ask are as far apart as the exchanges it reads disagree, usually a few basis points, so when the spread is smaller than that gap the oracle side sets the price.
+The contract checks the inventory charge against the same mid, so the price does not depend on how far apart the exchanges the oracle reads are. That gap is the oracle's bid and ask; it still sets how open positions are valued (see [Margin](margin.md)), but not what a trade pays.
 
 The app shows the estimated price and, on its own line, the fee. In Pro, the market details show the bid and ask a small trade fills at right now, the gap between them as **Spread**, and the **Trading fee**.
 
@@ -71,6 +71,6 @@ Opening a 20 USDC long on BTC when the oracle bid and ask are both 100,000, the 
 - fee: 20 × 0.0004 = 0.008 USDC;
 - signed limit: about 100,080 (8 bps above).
 
-If the exchanges disagree and the oracle ask is 100,020, the same trade fills at about 100,020 and pays the same 0.008 USDC fee.
+If the exchanges disagree and the oracle shows 99,980 / 100,020, the same trade still fills at about 100,000, the mid, and pays the same 0.008 USDC fee.
 
-The round-trip cost of opening and closing in calm conditions is therefore the oracle's bid-ask width plus 8 bps in fees (4 bps each way).
+The round-trip cost of opening and closing in calm conditions is therefore about 8 bps in fees (4 bps each way).

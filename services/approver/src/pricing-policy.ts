@@ -30,7 +30,7 @@ export function checkQuoteModel(
 
 /**
  * Recompute the leader's adaptive spread: the components must sum to the capped total and the expected
- * price must equal mid +/- (spread + impact) premium, or the oracle touch +/- impact when that is wider. The market's base spread is not a floor here: it is
+ * price must equal mid +/- (spread + impact) premium. The market's base spread is not a floor here: it is
  * charged as the fee, which `checkPricePolicy` requires.
  */
 export function checkQuoteSpread(quote: WireQuote, wireBaseDelta: string): Rejection | undefined {
@@ -50,7 +50,7 @@ export function checkQuoteSpread(quote: WireQuote, wireBaseDelta: string): Rejec
     return reject("quote spread rejected");
   const notional = BigInt(quote.amount),
     impact = BigInt(quote.impactCharge) > 0n ? BigInt(quote.impactCharge) : 0n,
-    // Quotes are priced from the oracle mid, never inside the touch (packages/shared/src/pricing.ts quotedPrice).
+    // Quotes are priced from the oracle mid (packages/shared/src/pricing.ts quotedPrice).
     expected = quotedPrice({
       buy: !wireBaseDelta.startsWith("-"),
       bid: BigInt(quote.bid),

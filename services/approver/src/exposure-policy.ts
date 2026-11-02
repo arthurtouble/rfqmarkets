@@ -173,7 +173,7 @@ export function buildGrossContext(input: {
 /**
  * The approved impact charge must cover the quadratic inventory cost of this
  * trade at the safety mark, and the execution price must actually deliver it
- * relative to the safety touch.
+ * relative to that mark (the oracle mid), as `RFQRiskMath.tradeAssessment` does.
  */
 export function checkImpact(input: {
   markets: ExposureMarket[];
@@ -189,8 +189,8 @@ export function checkImpact(input: {
     absoluteBase = abs(intent.baseDelta),
     deliveredImpact =
       intent.baseDelta > 0n
-        ? (absoluteBase * approval.executionPrice) / BASE - (absoluteBase * prices.ask) / BASE
-        : (absoluteBase * prices.bid) / BASE - (absoluteBase * approval.executionPrice) / BASE;
+        ? (absoluteBase * approval.executionPrice) / BASE - (absoluteBase * prices.mark) / BASE
+        : (absoluteBase * prices.mark) / BASE - (absoluteBase * approval.executionPrice) / BASE;
   if (approval.impactCharge < impactCost(exposure, symbol, delta) || deliveredImpact < approval.impactCharge)
     return reject("independent impact check rejected");
 }

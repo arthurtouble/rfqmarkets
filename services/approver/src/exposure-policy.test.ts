@@ -135,11 +135,16 @@ test("checkImpact requires the charged impact to be covered and delivered", asyn
       "independent impact check rejected",
       `${side}: undercharged impact`,
     );
-    const anchor = side === "buy" ? context.prices.ask : context.prices.bid;
+    // Delivered impact is measured from the oracle mid, as the contract measures it.
+    const anchor = context.prices.mark;
     assert.equal(
       error(checkImpact({ ...context, approval: { ...context.approval, executionPrice: anchor } })),
       "independent impact check rejected",
       `${side}: impact not delivered by the execution price`,
     );
+    // Inside a wide oracle band, a fill at the mid plus impact is accepted.
+    const band = 50_000_000n,
+      wide = { bid: context.prices.mark - band, ask: context.prices.mark + band, mark: context.prices.mark };
+    assert.equal(checkImpact({ ...context, prices: wide }), undefined, `${side}: inside a wide band`);
   }
 });

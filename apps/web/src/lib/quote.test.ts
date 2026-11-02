@@ -54,7 +54,7 @@ test("each market's own fee applies, and small trades fill at the touch, not pas
   assert.equal(marketFeeBps(snapshotWith(market()), "BTC"), 4);
   assert.equal(marketFeeBps(null, "BTC"), 4);
   assert.equal(quoteOf(indicativeQuote(own, "BTC", "buy", 1_000n * USDC, NOW)).fee, 700_000n.toString());
-  // A calm spread is zero, so a small trade fills at the oracle side; a wide one moves past it from the mid.
+  // A calm spread is zero, so a small trade fills at the mid inside the oracle's band; a wider one moves off it.
   const calm = market({
     spread: {
       baseBps: "0",
@@ -67,7 +67,7 @@ test("each market's own fee applies, and small trades fill at the touch, not pas
       modelVersion: "adaptive-v2",
     },
   });
-  assert.deepEqual(touchPrices(calm), { bid: 99_990n * USDC, ask: 100_010n * USDC });
+  assert.deepEqual(touchPrices(calm), { bid: 100_000n * USDC, ask: 100_000n * USDC });
   const wide = market({ spread: { ...calm.spread!, volatilityBps: "5", totalBps: "5" } });
   assert.deepEqual(touchPrices(wide), { bid: 99_950n * USDC, ask: 100_050n * USDC });
 });
@@ -116,7 +116,8 @@ test("a market listed after launch quotes locally without an impact estimate", (
   const snapshot: MarketSnapshot = { ...snapshotWith(market()), markets: { BTC: market(), SOL: sol } };
   const quote = quoteOf(indicativeQuote(snapshot, "SOL", "buy", 300n * USDC, NOW));
   assert.equal(quote.impactCharge, "0");
-  assert.ok(BigInt(quote.expectedPrice) > 150n * USDC);
+  // No spread (volatility 1 bps rounds to nothing) and no impact: the buy fills at the mid.
+  assert.equal(quote.expectedPrice, (150n * USDC).toString());
   // The launch markets keep their registered impact.
   assert.ok("quote" in indicativeQuote(snapshot, "BTC", "buy", 1_000n * USDC, NOW));
 });
