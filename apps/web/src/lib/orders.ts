@@ -84,7 +84,7 @@ export type TpslInput = {
   stopLossMicro?: bigint;
   slippageBps?: number;
   durationSeconds?: number;
-  /** The account holding the position when it is not the trader's own: a Home trade's isolated account. */
+  /** The account holding the position when it is not the trader's own: an isolated trade's isolated account. */
   account?: string;
 };
 

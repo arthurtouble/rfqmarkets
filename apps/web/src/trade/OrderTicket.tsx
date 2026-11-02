@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useIsolatedAccount } from "../account/useAccount.js";
 import { useTrading, type MarketOrder } from "../data/actions.js";
 import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useMarketLeverage } from "../data/markets.js";
@@ -44,6 +45,7 @@ import { StartTrading } from "./StartTrading.js";
 import { useFunds } from "./FundsDialog.js";
 import { useSlippage, useTicketMemory } from "./ticket-memory.js";
 import { StopTriggerField } from "./TriggerOrders.js";
+import { MarginModeChoice, useMarginMode } from "./MarginModeChoice.js";
 
 type OrderType = "market" | "limit" | "stop";
 const PAY_PRESETS = [25, 50, 75, 100] as const;
@@ -97,6 +99,10 @@ export function OrderTicket({
   const lev = Math.min(leverage, marketMax);
   const isLimit = orderType === "limit";
   const isStop = orderType === "stop";
+  // Limit, stop and close-only orders rest on (or reduce) the main account, so only a market order can be isolated.
+  const crossOnly = orderType !== "market" || reduceOnly;
+  const isolated = useMarginMode(crossOnly) === "isolated";
+  const { account: isolatedAccount } = useIsolatedAccount(market);
   const effectiveSlippage = slippageBps;
 
   // The amount box holds the position size; the margin it takes follows from the leverage.
@@ -130,20 +136,36 @@ export function OrderTicket({
       ? initialMarginAfter(account, snapshot, market, signedNotional)
       : null;
   const fee = quote ? BigInt(quote.fee) : 0n;
-  const marginShort =
-    !!account && marginAfter !== null && !reduceOnly && marginAfter + fee > BigInt(account.openingEquity);
+  // An isolated trade moves its margin out of the free balance, so the balance must cover it.
+  const marginShort = isolated
+    ? !!account && payMicro !== null && payMicro + fee > BigInt(account.availableMargin)
+    : !!account && marginAfter !== null && !reduceOnly && marginAfter + fee > BigInt(account.openingEquity);
   const noFunds = !!account && BigInt(account.collateral) === 0n;
   const liquidation = useMemo(() => {
     if (!snapshot || notional === 0n || !payMicro) return null;
-    const base = account ?? {
-      ...emptyAccount(trader.address ?? "", snapshot),
-      collateral: payMicro.toString(),
-    };
+    // An isolated trade is liquidated against its own margin (plus what its account already holds).
+    const held = isolated && isolatedAccount ? BigInt(isolatedAccount.collateral) : 0n;
+    const base =
+      isolated && isolatedAccount
+        ? { ...isolatedAccount, collateral: (held + payMicro).toString() }
+        : !isolated && account
+          ? account
+          : { ...emptyAccount(trader.address ?? "", snapshot), collateral: payMicro.toString() };
     return estimateLiquidationPrice(base, snapshot, market, signedNotional);
-  }, [account, snapshot, market, signedNotional, notional, payMicro, trader.address]);
+  }, [
+    account,
+    isolated,
+    isolatedAccount,
+    snapshot,
+    market,
+    signedNotional,
+    notional,
+    payMicro,
+    trader.address,
+  ]);
 
   const fresh = status === "live" && !!live && now - live.observedAtMs <= STALE_AFTER_MS;
-  const position = account?.positions[market];
+  const position = (isolated ? isolatedAccount : account)?.positions[market];
   const reduces =
     reduceOnly ||
     (!!position && reducesPosition(BigInt(position.size), BigInt(position.notional), signedNotional));
@@ -196,6 +218,7 @@ export function OrderTicket({
     amountMicro: notional,
     reduceOnly,
     slippageBps: effectiveSlippage,
+    ...(isolated ? { isolated: { payMicro: payMicro! } } : {}),
   });
   const traded = () => {
     choosePay("");
@@ -331,6 +354,8 @@ export function OrderTicket({
           options={presets.map((step) => ({ id: String(step), label: leverageLabel(step) }))}
         />
       </div>
+
+      <MarginModeChoice crossOnly={crossOnly} />
 
       {isLimit && (
         <div className="rfq-field">

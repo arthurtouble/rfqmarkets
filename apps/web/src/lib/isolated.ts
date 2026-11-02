@@ -1,4 +1,4 @@
-// Isolated accounts: each Home trade holds its own margin in an account derived from the owner and the market,
+// Isolated accounts: a trade opened with isolated margin holds its own margin in an account derived from the owner and the market,
 // so its loss stops at that margin. Mirrors packages/shared/src/isolated.ts with viem, which the app already ships.
 import { encodeAbiParameters, getAddress, keccak256, slice, toHex, type Address } from "viem";
 
@@ -38,7 +38,7 @@ export function homeTotals(accounts: ReadonlyArray<{ equity: string; unrealizedP
   );
 }
 
-/** Money left in an isolated account with no open position: margin a Home trade set aside but never used. */
+/** Money left in an isolated account with no open position: margin an isolated trade'set aside but never used. */
 export type IdleMargin<M extends string = string> = { market: M; account: string; heldMicro: bigint };
 
 /**

@@ -84,8 +84,9 @@ export type MarketOrder = {
   /** The success toast's title, when the screen has its own words for the trade. */
   title?: string;
   /**
-   * Home: hold the trade's margin, `payMicro`, in its own isolated account so the loss stops there. A new
-   * isolated account opens with MIN_ISOLATED_OPEN and the excess goes straight back.
+   * Isolated margin (chosen in the ticket; cross is the default): hold the trade's margin, `payMicro`, in the
+   * market's isolated account so the loss stops there. A new isolated account opens with MIN_ISOLATED_OPEN and
+   * the excess goes straight back.
    */
   isolated?: { payMicro: bigint };
 };
@@ -126,7 +127,7 @@ type Trading = {
   /** Closes the whole position at the oracle price (while trading is paused). Resolves true once closed. */
   emergencyClose(market: Market): Promise<boolean>;
   /**
-   * Moves everything held in `market`'s isolated account back to the balance: for a Home trade's margin left
+   * Moves everything held in `market`'s isolated account back to the balance: for an isolated trade's margin left
    * there with no open position (a trade that failed after its amount was set aside). Resolves true once moved.
    */
   returnMargin(market: Market): Promise<boolean>;
@@ -616,7 +617,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
               setAside = pay;
               isolated = true;
             }
-            const move = isolated ? null : marginTopUp(pay, held, registered);
+            // Adding to an open isolated position adds its margin on top; otherwise the account is left holding
+            // exactly this trade's margin.
+            const adding = !isolated && registered && (await isolatedOpen(order.market)) === true;
+            const move = isolated ? null : adding ? pay : marginTopUp(pay, held, registered);
             if (move !== null) {
               if (move !== 0n) {
                 progress("Setting the amount aside");
@@ -656,7 +660,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             if (open !== false)
               throw new TraderFacingError(
                 open
-                  ? `The app lost track of this trade, but it went through. Check Your trade on Home.`
+                  ? `The app lost track of this trade, but it went through. Check your positions in Portfolio.`
                   : `${why} ${usdc(setAside)} may still be set aside for ${order.market}. Use Return to balance on Home or in Portfolio if it is.`,
               );
             progress("Returning the amount to your balance");
@@ -833,7 +837,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         progress(
           affected > 1 ? `Confirm in your wallet (cancels ${affected} orders)` : "Confirm in your wallet",
         );
-        // A Home trade's TP/SL rests on its isolated account, which the owner signs for.
+        // An isolated trade's TP/SL rests on its isolated account, which the owner signs for.
         const market = marketIndex(order.market),
           onIsolated =
             String((prepared.intent as { account?: string }).account ?? "").toLowerCase() ===

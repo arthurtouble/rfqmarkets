@@ -147,9 +147,9 @@ test("simple mode opens a Long, takes a TP/SL from Pro's positions panel, and ca
   await expect(bet).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("simple-open.png") });
 
-  // The Home trade shows in Pro's positions panel, and its TP/SL cell opens the sheet.
+  // The Home trade is the same cross-margin position Pro shows, and its TP/SL cell opens the sheet.
   await page.goto("/trade/BTC");
-  const homeTrades = page.getByRole("region", { name: "Home trades" });
+  const homeTrades = page.getByRole("region", { name: "Open positions" });
   await expect(homeTrades).toBeVisible();
   await homeTrades.getByRole("button", { name: "Set BTC take-profit and stop-loss" }).click();
   const sheet = page.getByRole("dialog");

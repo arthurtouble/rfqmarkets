@@ -148,7 +148,7 @@ export type Expectation =
   | {
       kind: "trigger";
       market: number;
-      /** For the connected account's isolated account in `market` (a Home trade's TP/SL). */
+      /** For the connected account's isolated account in `market` (an isolated trade's TP/SL). */
       isolated?: boolean;
       triggerKind: TriggerKind;
       triggerPrice: bigint;

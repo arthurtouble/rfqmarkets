@@ -153,7 +153,7 @@ export function useIndexerSync() {
   const client = useQueryClient();
   const { address } = useTrader();
   const { markets } = useMarketList();
-  // A Home trade only touches the trader's isolated account, but their history reads include it.
+  // An isolated trade only touches the trader's isolated account, but their history reads include it.
   const isolated = useRef(new Set<string>());
   isolated.current = useMemo(
     () =>
@@ -197,7 +197,7 @@ export function useOpenOrders(address: string | null, market?: Market) {
 }
 
 type FinalityOption = { finalized?: boolean };
-/** The trader's history reads include their isolated accounts, where Home trades hold their own margin. */
+/** The trader's history reads include their isolated accounts, where isolated trades hold their own margin. */
 const WITH_ISOLATED = "isolated=true";
 const finalityParam = (options?: FinalityOption) => (options?.finalized ? "finalized=true" : "");
 const query = (...parts: string[]) => {

@@ -121,7 +121,7 @@ export function homeProblem(
 }
 
 /**
- * What a position of `notional` loses if the price goes from `entry` to `exit`. A Home trade holds only its
+ * What a position of `notional` loses if the price goes from `entry` to `exit`. An isolated trade holds only its
  * amount, so at its auto-close price this is about that amount; a position on the main balance can lose more.
  */
 export const lossAt = (notional: bigint, entry: bigint, exit: bigint) =>
@@ -157,7 +157,7 @@ export const feeWords = (notionalMicro: bigint, feeBps: number) => {
 };
 
 /**
- * What cashing out a Home trade puts back in the balance: what the trade is worth now (`worthMicro`: its
+ * What cashing out an isolated trade puts back in the balance: what the trade is worth now (`worthMicro`: its
  * isolated account's equity, or its amount plus PnL and funding on the main balance) less the closing fee,
  * never below zero.
  */

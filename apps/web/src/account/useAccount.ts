@@ -27,7 +27,7 @@ export function useAccount(): { account: AccountState | null; loading: boolean; 
 }
 
 /**
- * The connected account's isolated account in `market` (where Home trades hold their own margin), marked to the
+ * The connected account's isolated account in `market` (where isolated trades hold their own margin), marked to the
  * live prices; null with no wallet or before the market list names the market's index. `loading` holds until
  * the first read answers, so Home does not offer a new trade over one it has not seen yet.
  */
@@ -52,7 +52,7 @@ const combineIsolated = (results: UseQueryResult<AccountState>[]): IsolatedReads
 });
 
 /**
- * The connected trader's isolated accounts (where Home trades hold their own margin), marked to the live
+ * The connected trader's isolated accounts (where isolated trades hold their own margin), marked to the live
  * prices, and whether they are all read. The indexer names the isolated accounts the trader has moved margin
  * into; `ready` is false until it has answered and each of those accounts has been read once.
  */
@@ -77,7 +77,7 @@ export function useIsolatedAccountsState(): { accounts: AccountState[]; ready: b
 export const useIsolatedAccounts = (): AccountState[] => useIsolatedAccountsState().accounts;
 
 /**
- * What the trader's account is worth: the balance's equity plus every Home trade's (Portfolio's "Account
+ * What the trader's account is worth: the balance's equity plus every isolated position's (Portfolio's "Account
  * value"). The header and Home show this same number, so they always agree with Portfolio. Null until both the
  * account and its isolated accounts have been read.
  */
@@ -93,7 +93,7 @@ export function useAccountValue(): { value: bigint | null; homeEquity: bigint; l
   };
 }
 
-/** Isolated accounts holding money with no open position (a Home trade that did not go through), by market. */
+/** Isolated accounts holding money with no open position (an isolated trade that did not go through), by market. */
 export function useIdleMargin(): IdleMargin<Market>[] {
   const { address } = useTrader();
   const { markets } = useMarketList();

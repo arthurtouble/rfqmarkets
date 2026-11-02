@@ -17,7 +17,7 @@ import { useMarketList } from "../data/markets.js";
 import { dayChange, dayRange, searchMarkets, type DayStats } from "../lib/market-stats.js";
 import type { Market, RiskMarket } from "../lib/types.js";
 import { AssetIcon, Banner, Change, EmptyState, NavIcons, Rows, marketName } from "../ui/primitives.js";
-import { useDesktop } from "../ui/prefs.js";
+import { homePath, useDesktop, usePrefs } from "../ui/prefs.js";
 import { SearchField } from "../ui/SearchField.js";
 import { Sparkline } from "../ui/Sparkline.js";
 import { PriceStatusBadge, pct } from "../trade/MarketHeader.js";
@@ -37,6 +37,7 @@ function MarketRow({
   advanced: boolean;
 }) {
   const { status: stream } = useMarketFeed();
+  const { view } = usePrefs();
   const { live, last, status } = useMarketPrice(market);
   const change = dayChange(stats, live?.mid),
     day = dayRange(stats, live?.mid);
@@ -48,7 +49,7 @@ function MarketRow({
   const price = live?.mid ?? last?.mid;
   return (
     <Link
-      to="/updown/$market"
+      to={homePath(view)}
       params={{ market }}
       className="market-row"
       data-market={market}

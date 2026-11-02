@@ -139,6 +139,8 @@ dialog.sheet > .rfq-sheet { width: 100%; max-height: 92dvh; overflow-y: auto; ov
 .ticket-leverage__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
 .ticket-leverage__head .footnote { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ticket-options__body { gap: var(--space-4); padding: var(--space-1) 0; }
+.margin-mode { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.margin-mode .rfq-seg { flex: 0 0 auto; }
 .review-sentence b { font-weight: 600; }
 
 /* Account and positions ------------------------------------------------- */

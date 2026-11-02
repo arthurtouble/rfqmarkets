@@ -9,7 +9,7 @@ import { WalletMenu } from "../wallet/WalletMenu.js";
 
 export function AccountPage() {
   const trader = useTrader();
-  const { theme, setTheme } = usePrefs();
+  const { theme, setTheme, view, setView, marginMode, setMarginMode } = usePrefs();
   const explorer = trader.address ? addressUrl(trader.chain.id, trader.address) : undefined;
   return (
     <div className="page narrow account-page">
@@ -63,6 +63,44 @@ export function AccountPage() {
         )}
       </section>
       <section className="rfq-card" aria-label="Preferences">
+        <div className="setting-row">
+          <div>
+            <div className="headline">Trading view</div>
+            <div className="footnote rfq-muted">
+              What Home opens. Simple is Up or Down; Pro adds the full order ticket. Same account and
+              positions either way.
+            </div>
+          </div>
+          <Segmented
+            variant="switch"
+            label="Trading view"
+            value={view}
+            onChange={setView}
+            options={[
+              { id: "simple", label: "Simple" },
+              { id: "pro", label: "Pro" },
+            ]}
+          />
+        </div>
+        <div className="setting-row">
+          <div>
+            <div className="headline">Default margin</div>
+            <div className="footnote rfq-muted">
+              Cross shares your balance across positions, one per market. Isolated sets each trade's margin
+              aside, so that is the most it can lose. You can also change it on the order form.
+            </div>
+          </div>
+          <Segmented
+            variant="switch"
+            label="Default margin"
+            value={marginMode}
+            onChange={setMarginMode}
+            options={[
+              { id: "cross", label: "Cross" },
+              { id: "isolated", label: "Isolated" },
+            ]}
+          />
+        </div>
         <div className="setting-row">
           <div>
             <div className="headline">Appearance</div>

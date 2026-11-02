@@ -8,7 +8,7 @@ import { abs, baseAmount, parseUsdcInput, sentence, signedUsdc, usdc, usdPrice }
 import { pairedOrder } from "../lib/orders.js";
 import type { AccountState, RestingOrder } from "../lib/types.js";
 import { AccountHistory, FundingHistory, TradeHistory } from "../portfolio/History.js";
-import { HomeBets, Positions } from "../positions/Positions.js";
+import { Positions } from "../positions/Positions.js";
 import { AssetIcon, Banner, Change, EmptyState, NavIcons, Rows, Tabs } from "../ui/primitives.js";
 import { useDesktop } from "../ui/prefs.js";
 import { useTrader } from "../wallet/trader.js";
@@ -31,7 +31,7 @@ export function AccountCard({ account }: { account: AccountState | null }) {
           {usdc(value)}
         </div>
         {homeEquity > 0n && (
-          <div className="caption rfq-faint">Includes {usdc(homeEquity)} in Home trades</div>
+          <div className="caption rfq-faint">Includes {usdc(homeEquity)} in isolated positions</div>
         )}
       </div>
       <Rows
@@ -108,10 +108,7 @@ export function ActivityTabs({ account, full = false }: { account: AccountState 
           </EmptyState>
         ) : tab === "positions" ? (
           positionCount ? (
-            <>
-              <Positions account={account} />
-              <HomeBets accounts={bets} />
-            </>
+            <Positions account={account} />
           ) : (
             <EmptyState>Your open trades show up here.</EmptyState>
           )

@@ -1,7 +1,7 @@
 // Open positions (cards on phones, a table on desktop), the close sheet for one
 // position and the close-all sheet. Math lives in lib/positions.ts.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useIdleMargin } from "../account/useAccount.js";
+import { useIdleMargin, useIsolatedAccounts } from "../account/useAccount.js";
 import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useProtocol } from "../data/queries.js";
@@ -55,21 +55,41 @@ function NearLiquidation({ view }: { view: PositionView }) {
   );
 }
 
-/** Without `onTpsl` the TP/SL controls are left out. `holderOf` names the account holding a market's position
- * when it is not the trader's own (a Home trade's isolated account), so its TP/SL is read there. */
-type PositionActions = {
-  onClose: (market: Market) => void;
-  onTpsl?: (market: Market) => void;
-  holderOf?: (market: Market) => string | undefined;
-};
+/**
+ * One open position and the account holding it: the main (cross margin) account, or the market's isolated
+ * account for a trade opened with isolated margin. Home and Pro trade the same accounts, so a market holds one
+ * cross position whichever screen opened it.
+ */
+export type PositionRow = { view: PositionView; holder: AccountState; isolated: boolean };
+const rowKey = (row: PositionRow) => `${row.isolated ? "isolated" : "cross"}:${row.view.market}`;
+const rowLabel = (row: PositionRow) =>
+  `${row.view.market} ${sideWord(row.view)}${row.isolated ? " isolated" : ""}`;
 
-export function PositionCard({ view, onClose, onTpsl, holderOf }: { view: PositionView } & PositionActions) {
+/** The margin tag: only isolated positions carry one, since cross is the default. */
+const MarginTag = ({ row }: { row: PositionRow }) =>
+  row.isolated ? (
+    <span className="rfq-badge" title="Isolated margin: this position's loss stops at its own margin">
+      Isolated
+    </span>
+  ) : null;
+
+/** Without `onTpsl` the TP/SL controls are left out. */
+type PositionActions = {
+  onClose: (row: PositionRow) => void;
+  onTpsl?: (row: PositionRow) => void;
+};
+/** The account a row's TP/SL rests on, when it is not the trader's own (an isolated account). */
+const holderOf = (row: PositionRow) => (row.isolated ? row.holder.account : undefined);
+
+export function PositionCard({ row, onClose, onTpsl }: { row: PositionRow } & PositionActions) {
+  const { view } = row;
   return (
-    <article className="rfq-pos" aria-label={`${view.market} ${sideWord(view)}`}>
+    <article className="rfq-pos" aria-label={rowLabel(row)}>
       <div className="rfq-pos__head">
         <AssetIcon market={view.market} small />
         <span className="headline">{view.market}</span>
         <SideBadge view={view} />
+        <MarginTag row={row} />
         <span className="rfq-pos__pnl num">
           <Pnl view={view} />
         </span>
@@ -108,7 +128,7 @@ export function PositionCard({ view, onClose, onTpsl, holderOf }: { view: Positi
           <ProtectionSummary
             market={view.market}
             size={view.long ? view.size : -view.size}
-            account={holderOf?.(view.market)}
+            account={holderOf(row)}
           />
         </div>
       )}
@@ -119,7 +139,7 @@ export function PositionCard({ view, onClose, onTpsl, holderOf }: { view: Positi
             type="button"
             className="rfq-btn rfq-btn--secondary"
             aria-label={`Set ${view.market} take-profit and stop-loss`}
-            onClick={() => onTpsl(view.market)}
+            onClick={() => onTpsl(row)}
           >
             TP/SL
           </button>
@@ -127,8 +147,8 @@ export function PositionCard({ view, onClose, onTpsl, holderOf }: { view: Positi
         <button
           type="button"
           className="rfq-btn rfq-btn--secondary"
-          aria-label={`Close ${view.market} ${sideWord(view)}`}
-          onClick={() => onClose(view.market)}
+          aria-label={`Close ${rowLabel(row)}`}
+          onClick={() => onClose(row)}
         >
           Close
         </button>
@@ -138,12 +158,11 @@ export function PositionCard({ view, onClose, onTpsl, holderOf }: { view: Positi
 }
 
 function PositionsTable({
-  positions,
+  rows,
   onClose,
   onTpsl,
-  holderOf,
   onCloseAll,
-}: { positions: PositionView[]; onCloseAll?: () => void } & PositionActions) {
+}: { rows: PositionRow[]; onCloseAll?: () => void } & PositionActions) {
   return (
     <div className="rfq-table-wrap">
       <table className="rfq-table positions-table">
@@ -169,122 +188,145 @@ function PositionsTable({
           </tr>
         </thead>
         <tbody>
-          {positions.map((view) => (
-            <tr key={view.market}>
-              <td>
-                <span className="cell-market">
-                  <AssetIcon market={view.market} small />
-                  {view.market}
-                  <SideBadge view={view} />
-                </span>
-              </td>
-              <td>
-                {usdc(view.notional)}
-                <div className="caption rfq-faint">
-                  {baseAmount(view.size)} {view.market}
-                </div>
-              </td>
-              <td>
-                {usdPrice(view.entryPrice)}
-                <div className="caption rfq-faint">{usdPrice(view.markPrice)}</div>
-              </td>
-              <td>
-                <LiquidationPrice view={view} />
-              </td>
-              <td>{usdc(view.margin)}</td>
-              <td>{signedUsdc(view.funding)}</td>
-              <td>
-                <Pnl view={view} />
-              </td>
-              <td>
-                {onTpsl ? (
+          {rows.map((row) => {
+            const { view } = row;
+            return (
+              <tr key={rowKey(row)}>
+                <td>
+                  <span className="cell-market">
+                    <AssetIcon market={view.market} small />
+                    {view.market}
+                    <SideBadge view={view} />
+                    <MarginTag row={row} />
+                  </span>
+                </td>
+                <td>
+                  {usdc(view.notional)}
+                  <div className="caption rfq-faint">
+                    {baseAmount(view.size)} {view.market}
+                  </div>
+                </td>
+                <td>
+                  {usdPrice(view.entryPrice)}
+                  <div className="caption rfq-faint">{usdPrice(view.markPrice)}</div>
+                </td>
+                <td>
+                  <LiquidationPrice view={view} />
+                </td>
+                <td>{usdc(view.margin)}</td>
+                <td>{signedUsdc(view.funding)}</td>
+                <td>
+                  <Pnl view={view} />
+                </td>
+                <td>
+                  {onTpsl ? (
+                    <button
+                      type="button"
+                      className="tpsl-cell"
+                      aria-label={`Set ${view.market} take-profit and stop-loss`}
+                      onClick={() => onTpsl(row)}
+                    >
+                      <ProtectionSummary
+                        market={view.market}
+                        size={view.long ? view.size : -view.size}
+                        empty="Add"
+                        account={holderOf(row)}
+                      />
+                    </button>
+                  ) : (
+                    <span className="rfq-faint">—</span>
+                  )}
+                </td>
+                <td>
                   <button
                     type="button"
-                    className="tpsl-cell"
-                    aria-label={`Set ${view.market} take-profit and stop-loss`}
-                    onClick={() => onTpsl(view.market)}
+                    className="rfq-btn rfq-btn--sm rfq-btn--secondary"
+                    aria-label={`Close ${rowLabel(row)}`}
+                    onClick={() => onClose(row)}
                   >
-                    <ProtectionSummary
-                      market={view.market}
-                      size={view.long ? view.size : -view.size}
-                      empty="Add"
-                      account={holderOf?.(view.market)}
-                    />
+                    Close
                   </button>
-                ) : (
-                  <span className="rfq-faint">—</span>
-                )}
-              </td>
-              <td>
-                <button
-                  type="button"
-                  className="rfq-btn rfq-btn--sm rfq-btn--secondary"
-                  aria-label={`Close ${view.market} ${sideWord(view)}`}
-                  onClick={() => onClose(view.market)}
-                >
-                  Close
-                </button>
-              </td>
-            </tr>
-          ))}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
+/** Every open position: the main account's (cross margin) first, then any isolated ones, by market. */
+export function positionRows(account: AccountState | null, isolatedAccounts: AccountState[]): PositionRow[] {
+  return [
+    ...openPositions(account).map((view) => ({ view, holder: account!, isolated: false })),
+    ...isolatedAccounts.flatMap((holder) =>
+      openPositions(holder).map((view) => ({ view, holder, isolated: true })),
+    ),
+  ];
+}
+
 /**
- * Open positions with their close actions: a table on desktop, cards on phones
- * or when `only` limits the list to one market (the mobile trade page).
+ * Every open position in one list with its close and TP/SL actions: a table on desktop, cards on phones or
+ * when `only` limits the list to one market (the mobile trade page). Positions opened with isolated margin sit
+ * in the list with an Isolated tag; Close all covers the cross positions, which close together.
  */
 export function Positions({ account, only }: { account: AccountState | null; only?: Market }) {
   const desktop = useDesktop();
-  const [closing, setClosing] = useState<Market | null>(null);
+  const isolatedAccounts = useIsolatedAccounts();
+  const [closing, setClosing] = useState<string | null>(null);
   const [closingAll, setClosingAll] = useState(false);
-  const [protecting, setProtecting] = useState<Market | null>(null);
-  const positions = openPositions(account).filter((view) => !only || view.market === only);
-  if (!account || !positions.length) return null;
-  const closingView = closing ? positionView(account, closing) : null;
+  const [protecting, setProtecting] = useState<string | null>(null);
+  const rows = positionRows(account, isolatedAccounts).filter((row) => !only || row.view.market === only);
+  if (!rows.length) return null;
+  const cross = rows.filter((row) => !row.isolated).map((row) => row.view);
+  const closingRow = rows.find((row) => rowKey(row) === closing);
+  const closingView = closingRow ? positionView(closingRow.holder, closingRow.view.market) : null;
+  const protectingRow = rows.find((row) => rowKey(row) === protecting);
+  const onClose = (row: PositionRow) => setClosing(rowKey(row));
+  const onTpsl = (row: PositionRow) => setProtecting(rowKey(row));
+  const onCloseAll = !only && cross.length > 1 ? () => setClosingAll(true) : undefined;
   return (
-    <div className="positions">
+    <section className="positions" aria-label="Open positions">
       {desktop && !only ? (
         <>
-          {positions.map((view) => (
-            <NearLiquidation key={view.market} view={view} />
+          {rows.map((row) => (
+            <NearLiquidation key={rowKey(row)} view={row.view} />
           ))}
-          <PositionsTable
-            positions={positions}
-            onClose={setClosing}
-            onTpsl={setProtecting}
-            onCloseAll={positions.length > 1 ? () => setClosingAll(true) : undefined}
-          />
+          <PositionsTable rows={rows} onClose={onClose} onTpsl={onTpsl} onCloseAll={onCloseAll} />
         </>
       ) : (
         <>
-          {!only && positions.length > 1 && (
+          {onCloseAll && (
             <div className="positions__bar">
-              <button
-                type="button"
-                className="rfq-btn rfq-btn--sm rfq-btn--secondary"
-                onClick={() => setClosingAll(true)}
-              >
+              <button type="button" className="rfq-btn rfq-btn--sm rfq-btn--secondary" onClick={onCloseAll}>
                 Close all
               </button>
             </div>
           )}
           <div className="positions__cards">
-            {positions.map((view) => (
-              <PositionCard key={view.market} view={view} onClose={setClosing} onTpsl={setProtecting} />
+            {rows.map((row) => (
+              <PositionCard key={rowKey(row)} row={row} onClose={onClose} onTpsl={onTpsl} />
             ))}
           </div>
         </>
       )}
-      {closingView && <ClosePositionSheet view={closingView} onClose={() => setClosing(null)} />}
-      {protecting && positions.some((view) => view.market === protecting) && (
-        <TpslSheet account={account} market={protecting} onClose={() => setProtecting(null)} />
+      {closingView && closingRow && (
+        <ClosePositionSheet
+          view={closingView}
+          onClose={() => setClosing(null)}
+          isolated={closingRow.isolated}
+        />
       )}
-      {closingAll && <CloseAllSheet positions={positions} onClose={() => setClosingAll(false)} />}
-    </div>
+      {protectingRow && (
+        <TpslSheet
+          account={protectingRow.holder}
+          market={protectingRow.view.market}
+          onClose={() => setProtecting(null)}
+        />
+      )}
+      {closingAll && <CloseAllSheet positions={cross} onClose={() => setClosingAll(false)} />}
+    </section>
   );
 }
 
@@ -292,7 +334,7 @@ type Preset = `${(typeof CLOSE_PRESETS)[number]}`;
 
 /**
  * Close a share of one position at a firm quote, or all of it at the oracle price while trading is paused.
- * `isolated` closes a Home trade on its own margin, which returns to the balance once it is fully closed.
+ * `isolated` closes a position held with isolated margin, whose margin returns to the balance once it is fully closed.
  */
 export function ClosePositionSheet({
   view,
@@ -327,7 +369,7 @@ export function ClosePositionSheet({
   const fee = quote ? BigInt(quote.fee) : null;
   const net = preview.realizedPnl - (fee ?? 0n);
   const busy = trading.busy !== null;
-  // The oracle-price exit closes the main account's position only; a Home bet waits for trading to resume.
+  // The oracle-price exit closes the main account's position only; an isolated one waits for trading to resume.
   const blocked = paused && isolated;
   const label = paused
     ? `Close ${view.market} at oracle price`
@@ -346,7 +388,7 @@ export function ClosePositionSheet({
       <div className="sheet-body">
         {blocked ? (
           <Banner tone="warning">
-            <b>Trading is paused.</b> You can cash out this Home trade once trading resumes.
+            <b>Trading is paused.</b> You can close this isolated position once trading resumes.
           </Banner>
         ) : paused ? (
           <Banner tone="warning">
@@ -475,7 +517,7 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
 }
 
 /**
- * Money a Home trade set aside in its own isolated account that has no open position (a trade that did not go
+ * Money an isolated trade set aside in its own isolated account that has no open position (a trade that did not go
  * through after its amount was moved). The balance and Withdraw don't count it, so it is offered back here.
  */
 /** How long margin must sit with no position before it is offered back: reads can trail a fill by a few blocks. */
@@ -518,54 +560,6 @@ export function IdleMargin() {
           </button>
         </div>
       ))}
-    </section>
-  );
-}
-
-/**
- * Open Home trades: one-tap trades that each hold their own margin in an isolated account, so the stake is the
- * most they can lose. They close in full or in part here and take a TP/SL on their own account; close-all stays
- * with the main account.
- */
-export function HomeBets({ accounts }: { accounts: AccountState[] }) {
-  const desktop = useDesktop();
-  const [closing, setClosing] = useState<Market | null>(null);
-  const [protecting, setProtecting] = useState<Market | null>(null);
-  const bets = accounts.flatMap((account) => openPositions(account).map((view) => ({ account, view })));
-  if (!bets.length) return null;
-  const views = bets.map((bet) => bet.view);
-  const closingBet = closing ? bets.find((bet) => bet.view.market === closing) : undefined;
-  const closingView = closingBet ? positionView(closingBet.account, closingBet.view.market) : null;
-  const holderOf = (market: Market) => bets.find((bet) => bet.view.market === market)?.account.account;
-  const protectingBet = protecting ? bets.find((bet) => bet.view.market === protecting) : undefined;
-  return (
-    <section className="positions home-bets" aria-label="Home trades">
-      <div className="positions__bar">
-        <span className="footnote rfq-muted">Home trades, each on its own margin</span>
-      </div>
-      {desktop ? (
-        <PositionsTable positions={views} onClose={setClosing} onTpsl={setProtecting} holderOf={holderOf} />
-      ) : (
-        <div className="positions__cards">
-          {views.map((view) => (
-            <PositionCard
-              key={view.market}
-              view={view}
-              onClose={setClosing}
-              onTpsl={setProtecting}
-              holderOf={holderOf}
-            />
-          ))}
-        </div>
-      )}
-      {closingView && <ClosePositionSheet view={closingView} onClose={() => setClosing(null)} isolated />}
-      {protectingBet && (
-        <TpslSheet
-          account={protectingBet.account}
-          market={protectingBet.view.market}
-          onClose={() => setProtecting(null)}
-        />
-      )}
     </section>
   );
 }

@@ -15,7 +15,7 @@ import { PnlChart } from "./PnlChart.js";
 
 type Home = ReturnType<typeof homeTotals>;
 
-/** Account value and PnL; dashes until the account (and its Home trades) have been read. */
+/** Account value and PnL; dashes until the account (and its isolated positions) have been read. */
 function ValueCard({ account, home }: { account: AccountState | null; home: Home }) {
   const funds = useFunds();
   const { value } = useAccountValue();
@@ -35,7 +35,7 @@ function ValueCard({ account, home }: { account: AccountState | null; home: Home
           </Change>
         )}
         {home.equity > 0n && (
-          <div className="caption rfq-faint">Includes {usdc(home.equity)} in Home trades</div>
+          <div className="caption rfq-faint">Includes {usdc(home.equity)} in isolated positions</div>
         )}
       </div>
       {account?.liquidatable && (

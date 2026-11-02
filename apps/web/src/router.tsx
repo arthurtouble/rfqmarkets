@@ -16,6 +16,7 @@ import { RestrictedNotice, TermsDialog, UnavailableHere, useLocationStatus } fro
 import { FundsProvider, useFunds } from "./trade/FundsDialog.js";
 import { UpDownPage } from "./updown/UpDownPage.js";
 import { NavIcons } from "./ui/primitives.js";
+import { homePath, storedView, usePrefs } from "./ui/prefs.js";
 import { load, store } from "./lib/storage.js";
 import { useTrader } from "./wallet/trader.js";
 import { WalletMenu } from "./wallet/WalletMenu.js";
@@ -67,20 +68,17 @@ function ShellLayout() {
           ? "account"
           : "home";
   const current = (name: string) => (section === name ? ("page" as const) : undefined);
+  // Home opens the saved trading view: Simple (Up/Down) or Pro (the terminal).
+  const home = homePath(usePrefs().view);
   return (
     <div className="app">
       <header className="rfq-topbar topbar">
-        <Link
-          to="/updown/$market"
-          params={{ market: lastMarket() }}
-          className="rfq-logo"
-          aria-label="RFQ Markets home"
-        >
+        <Link to={home} params={{ market: lastMarket() }} className="rfq-logo" aria-label="RFQ Markets home">
           <Mascot size={28} />
           RFQ Markets
         </Link>
         <nav className="rfq-nav" aria-label="Main">
-          <Link to="/updown/$market" params={{ market: lastMarket() }} aria-current={current("home")}>
+          <Link to={home} params={{ market: lastMarket() }} aria-current={current("home")}>
             Home
           </Link>
           <Link to="/markets" aria-current={current("markets")}>
@@ -130,7 +128,7 @@ function ShellLayout() {
       </main>
       {location.status !== "sanctioned" && <TermsDialog />}
       <nav className="rfq-tabbar tabbar" aria-label="Main">
-        <Link to="/updown/$market" params={{ market: lastMarket() }} aria-current={current("home")}>
+        <Link to={home} params={{ market: lastMarket() }} aria-current={current("home")}>
           {NavIcons.home}
           <span>Home</span>
         </Link>
@@ -167,7 +165,9 @@ const indexRoute = createRoute({
     // The previous app used ?view=markets; keep old links working.
     const view = new URLSearchParams(location.searchStr).get("view");
     throw redirect(
-      view === "markets" ? { to: "/markets" } : { to: "/updown/$market", params: { market: lastMarket() } },
+      view === "markets"
+        ? { to: "/markets" }
+        : { to: homePath(storedView()), params: { market: lastMarket() } },
     );
   },
 });
