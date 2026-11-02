@@ -11,9 +11,10 @@ test("checkQuoteModel requires the configured spread model", () => {
     spread = payload.quote.spread;
   assert.equal(checkQuoteModel(spread, undefined), undefined);
   assert.equal(checkQuoteModel(undefined, undefined), undefined);
-  assert.equal(checkQuoteModel(spread, "adaptive-v1"), undefined);
-  assert.equal(error(checkQuoteModel(undefined, "adaptive-v1")), "quote model mismatch");
-  assert.equal(error(checkQuoteModel(spread, "adaptive-v2")), "quote model mismatch");
+  assert.equal(checkQuoteModel(spread, "adaptive-v2"), undefined);
+  assert.equal(error(checkQuoteModel(undefined, "adaptive-v2")), "quote model mismatch");
+  // Approvers still on the model that priced the base spread in refuse the fee-based quotes.
+  assert.equal(error(checkQuoteModel(spread, "adaptive-v1")), "quote model mismatch");
 });
 
 test("checkQuoteSpread recomputes the spread breakdown and expected price", () => {
@@ -26,8 +27,8 @@ test("checkQuoteSpread recomputes the spread breakdown and expected price", () =
     spread = quote.spread!;
   assert.equal(checkQuoteSpread({ ...quote, spread: undefined }, payload.intent.baseDelta), undefined);
   for (const changed of [
-    { ...spread, baseBps: "1", totalBps: "1" },
-    { ...spread, volatilityBps: "200", totalBps: "202" },
+    { ...spread, baseBps: "1", totalBps: "2" },
+    { ...spread, volatilityBps: "200", totalBps: "200" },
     { ...spread, totalBps: "3" },
     { ...spread, volatilityBps: "200", totalBps: "99" },
   ])
@@ -35,12 +36,8 @@ test("checkQuoteSpread recomputes the spread breakdown and expected price", () =
       error(checkQuoteSpread({ ...quote, spread: changed }, payload.intent.baseDelta)),
       "quote spread rejected",
     );
-  // The market's on-chain base spread is a floor on the base component.
-  assert.equal(checkQuoteSpread(quote, payload.intent.baseDelta, Number(spread.baseBps)), undefined);
-  assert.equal(
-    error(checkQuoteSpread(quote, payload.intent.baseDelta, Number(spread.baseBps) + 1)),
-    "quote spread below market base",
-  );
+  // A calm market quotes no spread at all: the market's base spread is in the fee instead.
+  assert.equal(spread.totalBps, "0");
   // A capped total is accepted when the components exceed the cap.
   const capped = { ...spread, volatilityBps: "200", totalBps: "100" };
   assert.equal(
@@ -69,8 +66,9 @@ test("checkPricePolicy enforces freshness, rounding, notional cap and a minimum 
       capNotional: true,
       baseSpreadBps: 2,
     };
-  // Fills carry no fee: the markup is in the price.
-  assert.equal(base.approval.fee, 0n);
+  // The base spread and the platform's 2 bps are the fee (4 bps, 40 cents on $1,000); a calm quote carries
+  // only the inventory charge over the mid.
+  assert.equal(base.approval.fee, 400_000n);
   assert.equal(checkPricePolicy(base), undefined);
   const sell = buildFixture({ side: "sell" });
   assert.equal(
@@ -82,20 +80,21 @@ test("checkPricePolicy enforces freshness, rounding, notional cap and a minimum 
     { ...base, nowMs: fixture.nowMs - 5_001 },
     { ...base, intent: { ...base.intent, baseDelta: base.intent.baseDelta * 2n } },
     { ...base, approval: { ...base.approval, fee: -1n } },
-    // A market with a wider base spread needs a wider charge than this quote carries.
+    // A market with a wider base spread needs a larger fee than this quote carries.
     { ...base, baseSpreadBps: 3 },
+    // Without the fee the mid price is too cheap, on either side.
+    { ...base, approval: { ...base.approval, fee: 0n } },
     { ...base, approval: { ...base.approval, executionPrice: BigInt(base.quote.ask) } },
     {
       ...base,
       quote: sell.payload.quote,
       intent: sell.intent,
-      approval: { ...sell.approval, executionPrice: BigInt(sell.payload.quote.bid) },
+      approval: { ...sell.approval, fee: 0n },
     },
   ];
   for (const input of rejected) assert.equal(error(checkPricePolicy(input)), "policy rejected");
-  // The charge is base spread + markup (4 bps here, 40 cents on $1,000) plus impact over the touch. A
-  // price premium short of it is rejected; an on-chain fee pays its share, so a smaller premium passes
-  // when a fee covers the gap.
+  // The charge is base spread + markup (4 bps here, 40 cents on $1,000) plus impact over the mid. A
+  // fee and price premium short of it are rejected: the fee pays its share and the premium the rest.
   const touch = BigInt(base.quote.ask),
     notional = BigInt(base.quote.amount),
     impact = base.approval.impactCharge;

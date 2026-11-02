@@ -20,12 +20,11 @@ import { marketIndex, marketRegistry, type Market } from "../../../packages/shar
 import { encodeMarketSymbol } from "../../../packages/shared/src/markets-chain.js";
 import { encodeLocalReport, oracleAdapterAbi } from "../../../packages/shared/src/oracle-report.js";
 import {
-  PLATFORM_MARKUP_BPS,
+  tradingFeeBps,
   adaptiveSpread,
   constructQuote,
   launchPricing,
 } from "../../../packages/shared/src/pricing.js";
-import { DEFAULT_BASE_SPREAD_BPS } from "../../../packages/shared/src/markets.js";
 import { quoteToWire } from "../../../packages/shared/src/wire.js";
 import type { ChainClients, ClearingReader } from "./chain-state.js";
 
@@ -42,7 +41,7 @@ export interface PayloadOptions {
   side?: "buy" | "sell";
   amount?: string;
   user?: BaseWallet;
-  /** Defaults to the adaptive-v1 spread; false omits the spread breakdown. */
+  /** Defaults to the adaptive-v2 spread; false omits the spread breakdown. */
   spread?: boolean;
   /** Overrides for the local oracle report observation. */
   report?: Partial<{ bid: bigint; ask: bigint; observedAt: bigint; validUntil: bigint; market: number }>;
@@ -62,8 +61,6 @@ export interface Fixture {
   nowMs: number;
 }
 
-const LEADER_BASE_BPS = BigInt(DEFAULT_BASE_SPREAD_BPS) + PLATFORM_MARKUP_BPS;
-
 /** A consistent, signed leader envelope priced like the leader would price it. */
 export function buildFixture(options: PayloadOptions = {}): Fixture {
   const nowMs = options.nowMs ?? Date.now(),
@@ -82,9 +79,10 @@ export function buildFixture(options: PayloadOptions = {}): Fixture {
     {
       ...launchPricing,
       maxNotional: 10n ** 15n,
-      // The leader quotes the market's base spread plus the platform markup, and no fee.
-      baseSpreadBps: LEADER_BASE_BPS,
-      spread: options.spread === false ? undefined : adaptiveSpread({ baseBps: Number(LEADER_BASE_BPS) }),
+      // The leader charges the market's base spread plus the platform's 2 bps as the fee and quotes a calm
+      // market at the mid.
+      feeBps: tradingFeeBps(market),
+      spread: options.spread === false ? undefined : adaptiveSpread(),
     },
   );
   const report = encodeLocalReport({

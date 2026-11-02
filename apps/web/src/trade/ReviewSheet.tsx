@@ -4,7 +4,8 @@ import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { emptyAccount, estimateLiquidationPrice } from "../lib/account.js";
 import type { HeldQuote } from "../lib/clock.js";
 import { useAccount } from "../account/useAccount.js";
-import { abs, baseAmount, usdc, usdcCompact, usdPrice } from "../lib/format.js";
+import { abs, baseAmount, feeLabel, usdc, usdcCompact, usdPrice } from "../lib/format.js";
+import { marketFeeBps } from "../lib/quote.js";
 import { friendlyError } from "../lib/errors.js";
 import { errorMessage } from "../lib/http.js";
 import { leverageLabel, quoteSecondsLeft, quoteUsable, SIDE_WORD } from "../lib/ticket.js";
@@ -97,6 +98,7 @@ export function ReviewSheet({
               side === "buy" ? "Price protection (max)" : "Price protection (min)",
               usdPrice(quote?.worstPrice),
             ],
+            ["Fee", feeLabel(quote?.fee, marketFeeBps(snapshot, market))],
             ["Liquidation price", liquidation === null ? "—" : usdPrice(liquidation)],
             ["Margin", usdc(payMicro)],
             ["Position size", usdc(amountMicro), "is-total"],

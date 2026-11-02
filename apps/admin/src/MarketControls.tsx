@@ -266,9 +266,9 @@ export function MarketControls() {
           onToggle={(market) => setEditing({ kind: "toggle", market })}
         />
         <p className="footnote rfq-faint">
-          Limits, caps and risk parameters apply on the next trade and fence quotes already approved. Quotes
-          pick up a new spread within a minute. A new market trades once the oracle prices it and it is
-          opened.
+          Limits, caps and risk parameters apply on the next trade and fence quotes already approved. A
+          market's base spread is charged as its trading fee, plus the platform's 2 bps; quotes pick up a new
+          spread within a minute. A new market trades once the oracle prices it and it is opened.
         </p>
       </section>
 
@@ -489,7 +489,12 @@ const FIELDS: Array<{ field: DraftField; label: string; unit: string; hint?: str
     hint: "Move applied to the maker's skew in the stress test",
   },
   { field: "impactK", label: "Impact K", unit: "", hint: "Inventory-impact charge coefficient (BTC 10,000)" },
-  { field: "spread", label: "Base spread", unit: "bps", hint: "Empty uses the default spread" },
+  {
+    field: "spread",
+    label: "Base spread",
+    unit: "bps",
+    hint: "Charged in the fee with the platform's 2 bps; empty uses the default",
+  },
 ];
 
 function SettingsForm({
@@ -674,7 +679,7 @@ function DefaultSpread(shared: Shared) {
         <span className={`rfq-field__hint${invalid ? " is-down" : ""}`}>
           {invalid
             ? "Whole bps from 2 to 50, or empty for 2"
-            : "Markets without their own spread quote with this base."}
+            : "Markets without their own spread charge this base, plus the platform's 2 bps, as their fee."}
         </span>
       </div>
       <button

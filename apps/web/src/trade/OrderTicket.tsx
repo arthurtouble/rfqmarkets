@@ -7,6 +7,8 @@ import { emptyAccount, estimateLiquidationPrice, initialMarginAfter } from "../l
 import {
   abs,
   baseAmount,
+  feeLabel,
+  feeRate,
   microToInput,
   parseUsdcInput,
   priceDecimals,
@@ -21,7 +23,7 @@ import {
   maxLeverageAt,
 } from "../lib/leverage.js";
 import { triggerProblem } from "../lib/orders.js";
-import { STALE_AFTER_MS, indicativeQuote } from "../lib/quote.js";
+import { STALE_AFTER_MS, indicativeQuote, marketFeeBps } from "../lib/quote.js";
 import { SLIPPAGE_PRESETS_BPS, slippageToPercent } from "../lib/slippage.js";
 import {
   isDecimalDraft,
@@ -118,7 +120,7 @@ export function OrderTicket({
   const quote = result && "quote" in result ? result.quote : null;
 
   const tradeCap = live ? BigInt(live.operatingMaxTradeNotional) : 0n;
-  const feeBps = snapshot?.pricing.feeBps ?? 0;
+  const feeBps = marketFeeBps(snapshot, market);
   const available = account ? BigInt(account.availableMargin) : null;
   const payCeiling =
     available === null
@@ -423,6 +425,8 @@ export function OrderTicket({
       <Rows
         rows={[
           [orderType === "market" ? "Entry price" : "Current price", usdPrice(quote?.expectedPrice)],
+          // A limit or stop order pays the fee when it fills, on the notional at its fill price.
+          ["Fee", orderType === "market" && quote ? feeLabel(quote.fee, feeBps) : feeRate(feeBps)],
           ["Liquidation price", liquidation === null ? "—" : usdPrice(liquidation)],
           ...(orderType === "market"
             ? ([

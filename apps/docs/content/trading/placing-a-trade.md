@@ -19,7 +19,7 @@ The ticket sits on the right of the Pro screen on a computer. On a phone, tap **
 
 The ticket remembers what you paid and the leverage you picked for each market, and your slippage setting, on this device.
 
-Under the controls the ticket shows the **Entry price** you can expect (the **Current price** for a limit order), your estimated **Liquidation price** after the trade and the **Price protection**, the worst price you will sign. There is no fee row because trades carry no fee.
+Under the controls the ticket shows the **Entry price** you can expect (the **Current price** for a limit order), the **Fee** (0.04% of the size), your estimated **Liquidation price** after the trade and the **Price protection**, the worst price you will sign.
 
 Larger positions need more margin per dollar, so leverage falls in tiers as size grows: on BTC and ETH, 20× is available up to a $25,000 position, 16× up to $100,000, and less beyond. [Margin](../risk/margin.md#rates) has the full table. If you pick more leverage than your size allows, the button says how much you can use, for example **Up to 16× at this size**.
 
@@ -39,7 +39,7 @@ Click **Confirm and sign** to continue. When one-tap trading is on and covers th
 
 Every market order carries a limit price that you sign. By default the app sets it 8 basis points (0.08%) beyond the firm quote: above it for a long, below it for a short. On a $250 position that is 20 cents of room.
 
-The contract enforces the protection. If the price the maker approves is worse than your limit, or the fee is higher than the maximum you signed, the contract rejects the trade. The venue's servers cannot widen your protection after you sign, and they cannot fill you at a worse price. Trades carry no fee, so the maximum fee you sign on a market order is zero.
+The contract enforces the protection. If the price the maker approves is worse than your limit, or the fee is higher than the maximum you signed, the contract rejects the trade. The venue's servers cannot widen your protection after you sign, and they cannot fill you at a worse price. The maximum fee you sign on a market order is the quoted fee, with room for a sell that fills at a better price.
 
 **Options** → **Max slippage** lets you choose 0.05%, 0.08%, 0.25%, 0.5% or 1%. Tighter protection fails more often when the price moves between your click and the trade's inclusion; wider protection fills more often at a possibly worse price. Either way a failed trade costs nothing. Integrators can choose any protection from 1 to 500 basis points with `slippageBps` on the [quote endpoint](../integrate/api.md#trading).
 
@@ -56,7 +56,7 @@ Only one action runs at a time. Wait for the notice to finish before placing ano
 
 ## Fees
 
-There is no trading fee on any order: market, limit or stop, opening or closing. The platform earns a 2 basis point markup inside the maker's spread, so it is already in the price you see. [Pricing and fees](../risk/pricing-and-fees.md) explains how the price is built.
+Every fill pays a trading fee of 0.04% (4 basis points) of its notional, whether it is a market, limit or stop order, opening or closing. The ticket and the review show it on its own line. The price itself carries only the maker's adaptive spread and inventory charge, which are zero or close to it for a small trade in a calm market. [Pricing and fees](../risk/pricing-and-fees.md) explains how the price and fee are built.
 
 There is no gas cost to you for trading. The venue pays it.
 

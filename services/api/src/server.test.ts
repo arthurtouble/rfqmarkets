@@ -9,7 +9,7 @@ import { buildApprover } from "../../approver/src/server.js";
 import { buildApi } from "./server.js";
 import { importApproverRecovery } from "../../../scripts/host/approver-recovery.js";
 import { DEFAULT_BASE_SPREAD_BPS } from "../../../packages/shared/src/markets.js";
-import { PLATFORM_MARKUP_BPS } from "../../../packages/shared/src/pricing.js";
+import { PLATFORM_MARKUP_BPS, ceilDiv, parseUsdc } from "../../../packages/shared/src/pricing.js";
 
 const directory = mkdtempSync(join(tmpdir(), "rfq-services-"));
 const chainId = 31_337n;
@@ -1028,9 +1028,10 @@ test("market intents bind reduce-only and cannot be re-prepared with weaker sema
   await target.close();
 });
 
-test("quotes carry no fee and intents cap the fee at zero, so a fill cannot charge one", async () => {
+test("quotes charge the market's base spread and the platform's 2 bps as a fee, not in the price", async () => {
   const target = buildApi();
   await target.ready();
+  const feeBps = BigInt(DEFAULT_BASE_SPREAD_BPS) + PLATFORM_MARKUP_BPS;
   for (const [side, amount, nonce] of [
     ["sell", "200", "881001"],
     ["sell", "10", "881003"],
@@ -1045,15 +1046,22 @@ test("quotes carry no fee and intents cap the fee at zero, so a fill cannot char
       payload: { quoteId: quote.quoteId, account: user.address, nonce },
     });
     assert.equal(prepared.statusCode, 200, prepared.body);
-    assert.equal(quote.fee, "0", `a ${amount} USDC ${side} has no fee`);
-    assert.equal(prepared.json().intent.maxFee, "0", `a ${amount} USDC ${side} caps its fee at zero`);
-    // The platform markup is in the price: the base component is the market's spread plus the markup.
+    const notional = parseUsdc(amount);
     assert.equal(
-      BigInt(quote.spread.baseBps),
-      BigInt(DEFAULT_BASE_SPREAD_BPS) + PLATFORM_MARKUP_BPS,
-      `a ${side} quotes the markup`,
+      BigInt(quote.fee),
+      ceilDiv(notional * feeBps, 10_000n),
+      `a ${amount} USDC ${side} pays 4 bps`,
     );
+    assert(
+      BigInt(prepared.json().intent.maxFee) >= BigInt(quote.fee),
+      `a ${amount} USDC ${side} caps its fee`,
+    );
+    // No base component: the market's spread is the fee.
+    assert.equal(quote.spread.baseBps, "0", `a ${side} quotes no base spread`);
   }
+  const markets = (await target.inject({ method: "GET", url: "/v1/markets" })).json();
+  assert.equal(markets.markets.ETH.feeBps, Number(feeBps));
+  assert.equal(markets.pricing.feeBps, Number(feeBps));
   await target.close();
 });
 
@@ -1492,10 +1500,10 @@ test("trigger orders sign a TriggeredTradeIntent with a slippage-bounded limit a
     assert.equal(prepared.intent.triggerAbove, false);
     assert.equal(prepared.intent.reduceOnly, true);
     assert.equal(prepared.intent.baseDelta, "-10000000000000000");
-    // 95,000 less 2%. A sell has no upper price bound, so the fee cap is 2 bps of the notional at twice
+    // 95,000 less 2%. A sell has no upper price bound, so the fee cap is 10 bps of the notional at twice
     // the trigger, enough for a take-profit that gaps far through its trigger to still fill.
     assert.equal(prepared.intent.limitPrice, "93100000000");
-    assert.equal(prepared.intent.maxFee, "380000");
+    assert.equal(prepared.intent.maxFee, "1900000");
     assert.deepEqual(prepared.trigger, { triggerPrice: "95000000000", triggerAbove: false });
 
     const entry = (

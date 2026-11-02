@@ -19,7 +19,7 @@ The session the app creates has limits sized to the venue's own per-trade cap:
 | Markets | Every market listed when you turn it on |
 | Largest single trade | Twice the largest per-trade cap, so a winning cash-out still fits, and never above 2,500 USDC. At the current 25 USDC cap that is 50 USDC |
 | Total traded over the session | 40 of those, opens and closes together, and never above 10,000 USDC. At the current cap that is 2,000 USDC |
-| Highest fee on any one trade | 0.000001 USDC, the smallest the contract accepts, since trades carry no fee |
+| Highest fee on any one trade | 0.1% (10 bps) of the per-trade limit, room for the 0.04% trading fee. Keys granted before trades carried a fee are replaced on the next trade |
 | Duration | 4 hours |
 
 Each browser tab has its own session, and only the newest one you turned on signs trades: turning one-tap trading on in a new tab retires the key in the old one. A market listed after you turned one-tap trading on is not covered; turn it off and on again to include it.

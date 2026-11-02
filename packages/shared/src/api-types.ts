@@ -49,7 +49,10 @@ export type MarketState = {
   observedAtMs: number;
   source: string;
   volatilityBps: number;
+  /** The quoted spread over the mid for a small trade (the adaptive total), in bps. */
   baseSpreadBps: number;
+  /** The trading fee this market charges, in bps of notional. Absent from older servers: use `pricing.feeBps`. */
+  feeBps?: number;
   spread?: SpreadBreakdown;
   fundingApr: string;
   fundingIndex: string;

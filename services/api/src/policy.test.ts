@@ -181,7 +181,7 @@ test("adaptive spread is charged outside the contract-verifiable inventory floor
     crypto.randomUUID(),
     parameters,
   );
-  assert.equal(quote.spread?.modelVersion, "adaptive-v1");
+  assert.equal(quote.spread?.modelVersion, "adaptive-v2");
   assert.equal(quote.impactCharge, impactCost({ BTC: 0n, ETH: 0n }, "BTC", 100_000n * USDC));
   assert(quote.expectedPrice > snapshot.ask);
 });

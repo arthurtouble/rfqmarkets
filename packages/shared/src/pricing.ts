@@ -1,6 +1,6 @@
 import type { RiskMode } from "./api-types.js";
 import { BASE, RATE, USDC, abs, ceilDiv } from "./numeric.js";
-import { marketRegistry, type Market } from "./markets.js";
+import { baseSpreadOf, DEFAULT_BASE_SPREAD_BPS, marketRegistry, type Market } from "./markets.js";
 
 export { BASE, RATE, USDC, ceilDiv } from "./numeric.js";
 export type { Market } from "./markets.js";
@@ -133,28 +133,45 @@ export interface PricingParameters {
   spread?: SpreadBreakdown;
 }
 /**
- * The platform's charge per fill, in bps of notional. It is quoted in the
- * price as part of the spread's base component, not charged as a separate
- * fee, so trades show no fee. Approvers require it on top of the market's
- * on-chain base spread.
+ * The platform's share of every fill's trading fee, in bps of notional. The contract also moves an
+ * insurance share of this amount from maker backing on every fill (`RFQSettlement.shareMarkup`).
  */
 export const PLATFORM_MARKUP_BPS = 2n;
+/**
+ * The trading fee a market charges, in bps of notional: its on-chain base spread (`marketSpread(id)`,
+ * else `defaultSpread()`, else 2 bps) plus the platform's 2 bps. It is charged as an explicit fee, not
+ * in the price, so a small trade in a calm market fills at the oracle mid and pays only this fee.
+ * Approvers require the fee plus any price premium to reach it.
+ */
+export const tradingFeeBps = (market?: Market) =>
+  BigInt(
+    market !== undefined && marketRegistry.has(market)
+      ? baseSpreadOf(marketRegistry.get(market))
+      : DEFAULT_BASE_SPREAD_BPS,
+  ) + PLATFORM_MARKUP_BPS;
+/** The fee of a market without its own base spread: 4 bps (0.04%). */
+export const DEFAULT_TRADING_FEE_BPS = BigInt(DEFAULT_BASE_SPREAD_BPS) + PLATFORM_MARKUP_BPS;
 export const launchPricing: PricingParameters = {
   maxNotional: 25_000n * USDC,
-  baseSpreadBps: 2n,
-  // No separate fee: the platform's charge is PLATFORM_MARKUP_BPS in the price.
-  feeBps: 0n,
+  // No fixed spread: the price premium comes only from the adaptive model and the inventory charge.
+  baseSpreadBps: 0n,
+  feeBps: DEFAULT_TRADING_FEE_BPS,
   toleranceBps: 8n,
 };
 const bounded = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, Number.isFinite(value) ? value : 0));
 const bps = (value: number) => BigInt(Math.ceil(Math.max(0, value)));
-/** Deterministic market-wide quote-risk decomposition. */
+/** Nearest whole bps (half up): a calm market's sub-bps volatility adds nothing to the price. */
+const nearestBps = (value: number) => BigInt(Math.floor(Math.max(0, value) + 0.5));
+/**
+ * Deterministic market-wide quote-risk decomposition: the spread over the oracle mid, before the
+ * size-dependent inventory charge. There is no fixed base: the market's base spread is charged as the
+ * trading fee (`tradingFeeBps`), so `baseBps` is zero unless a caller adds one (at most 50 bps).
+ */
 export function adaptiveSpread(inputs: AdaptiveSpreadInputs = {}): SpreadBreakdown {
-  // The base component carries the market's spread (at most 50 bps) plus the platform markup.
-  const baseBps = bps(bounded(inputs.baseBps ?? 2, 1, 50 + Number(PLATFORM_MARKUP_BPS)));
+  const baseBps = bps(bounded(inputs.baseBps ?? 0, 0, 50));
   const observedVol = bounded(inputs.volatilityBps ?? 0, 0, 2_000);
-  const volatilityBps = bps(Math.min(40, observedVol / 5));
+  const volatilityBps = nearestBps(Math.min(40, observedVol / 5));
   const toxicityBps = bps(Math.min(35, (bounded(inputs.toxicityScoreBps ?? 0, 0, 10_000) * 35) / 10_000));
   const hedgeCost = bounded(inputs.hedgeCostBps ?? 0, 0, 50),
     latency = bounded(inputs.hedgeLatencyMs ?? 0, 0, 30_000);
@@ -177,7 +194,7 @@ export function adaptiveSpread(inputs: AdaptiveSpreadInputs = {}): SpreadBreakdo
   };
 }
 /** Spread model the leader quotes with; approvers reject quotes from any other model. */
-export const QUOTE_MODEL_VERSION = "adaptive-v1";
+export const QUOTE_MODEL_VERSION = "adaptive-v2";
 export function marginRate(notional: bigint, initial: boolean) {
   if (notional <= 25_000n * USDC) return initial ? 2_000n : 1_200n;
   if (notional <= 100_000n * USDC) return initial ? 2_500n : 1_500n;
@@ -222,6 +239,30 @@ export function marketMarginView(scaleBps: bigint | number) {
     maintenanceMarginBps: Number(scaledMarginRate(0n, false, scaleBps)),
   };
 }
+/**
+ * The price a fill of `notional` pays before its fee: the oracle mid moved by the spread and inventory
+ * charges, but never inside the oracle's bid/ask. The contract requires a buy to pay at least the ask
+ * plus the impact charge (a sell at most the bid less it; `RFQRiskMath.tradeAssessment`), so when the
+ * exchanges disagree by more than the model spread the touch sets the price. The touch branch charges one
+ * micro-USDC more impact so the contract's floored comparison still sees the full charge.
+ */
+export function quotedPrice(input: {
+  buy: boolean;
+  bid: bigint;
+  ask: bigint;
+  notional: bigint;
+  /** The adaptive spread's charge, in USDC micro. */
+  spreadCharge: bigint;
+  impactCharge: bigint;
+}): bigint {
+  const { buy, bid, ask, notional, spreadCharge, impactCharge } = input,
+    mid = (bid + ask) / 2n,
+    premium = ceilDiv(mid * (spreadCharge + impactCharge), notional),
+    model = buy ? mid + premium : mid - premium,
+    touchImpact = impactCharge > 0n ? ceilDiv(mid * (impactCharge + 1n), notional) : 0n,
+    touch = buy ? ask + touchImpact : bid - touchImpact;
+  return buy ? (model > touch ? model : touch) : model < touch ? model : touch;
+}
 export function constructQuote(
   request: QuoteRequest,
   snapshot: PriceSnapshot,
@@ -248,13 +289,16 @@ export function constructQuote(
     impactCharge = rawImpact > 0n ? rawImpact : 0n,
     spread = parameters.spread,
     spreadBps = spread?.totalBps ?? parameters.baseSpreadBps,
-    baseSpread = ceilDiv(notional * spreadBps, 10_000n),
+    // The market's base spread is in the fee; the price carries only the model spread and impact.
     fee = ceilDiv(notional * parameters.feeBps, 10_000n),
-    // Priced from the oracle mid: the adaptive spread is the whole charge over it. The oracle's bid/ask band (the
-    // exchanges' disagreement) is not charged again on top.
-    anchor = mid,
-    premium = ceilDiv(anchor * (baseSpread + impactCharge), notional),
-    expectedPrice = request.side === "buy" ? anchor + premium : anchor - premium,
+    expectedPrice = quotedPrice({
+      buy: request.side === "buy",
+      bid: snapshot.bid,
+      ask: snapshot.ask,
+      notional,
+      spreadCharge: ceilDiv(notional * spreadBps, 10_000n),
+      impactCharge,
+    }),
     toleranceBps = request.slippageBps === undefined ? parameters.toleranceBps : BigInt(request.slippageBps),
     tolerance = ceilDiv(expectedPrice * toleranceBps, 10_000n),
     worstPrice = request.side === "buy" ? expectedPrice + tolerance : expectedPrice - tolerance;

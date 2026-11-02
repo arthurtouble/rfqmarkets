@@ -86,10 +86,10 @@ export const SIGNABLE_TYPES = {
 export type PrimaryType = keyof typeof SIGNABLE_TYPES;
 
 const BASE = 10n ** 18n;
-/** Fee the API charges on resting orders (services/api/src/orders.ts ORDER_FEE_BPS). */
-export const ORDER_FEE_BPS = 2n;
-/** Ceiling on a market order's fee cap, in bps of its worst-case notional. The launch fee is 2 bps. */
-export const MAX_TRADE_FEE_BPS = 50n;
+/** Fee cap the API signs into resting orders (services/api/src/orders.ts ORDER_FEE_BPS). */
+export const ORDER_FEE_BPS = 10n;
+/** Ceiling on a market order's fee cap, in bps of its worst-case notional. The launch fee is 4 bps. */
+export const MAX_TRADE_FEE_BPS = 60n;
 /**
  * How far a quote's expected price may sit past its own mid (spread plus impact), in bps. The API sizes
  * a quote at the mid, so this bounds how much a tampered mid could enlarge a trade.

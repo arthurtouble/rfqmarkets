@@ -30,6 +30,7 @@ import {
   DOMAIN_NAME,
   DOMAIN_VERSION,
   IntentMismatchError,
+  ORDER_FEE_BPS,
   SIGNABLE_TYPES,
   quoteTerms,
   verifyPrepared,
@@ -356,7 +357,7 @@ test("checks limit orders against the typed limit price and size", () => {
     ...tradeIntent,
     baseDelta: delta,
     limitPrice,
-    maxFee: (((delta * limitPrice) / E18) * 2n + 9_999n) / 10_000n,
+    maxFee: (((delta * limitPrice) / E18) * ORDER_FEE_BPS + 9_999n) / 10_000n,
     nonce: 7n,
     deadline: 1_700_086_400n,
   };
@@ -414,7 +415,7 @@ test("checks trigger orders and TP/SL legs against the requested trigger", () =>
     ...tradeIntent,
     baseDelta: -size,
     limitPrice,
-    maxFee: (((size * triggerPrice * 2n) / E18) * 2n + 9_999n) / 10_000n,
+    maxFee: (((size * triggerPrice * 2n) / E18) * ORDER_FEE_BPS + 9_999n) / 10_000n,
     nonce: 9n,
     reduceOnly: true,
   };

@@ -9,7 +9,8 @@ import { useMarketFeed, useNow } from "../data/market-feed.js";
 import { emptyAccount, estimateLiquidationPrice } from "../lib/account.js";
 import { RequoteBackoff, type HeldQuote } from "../lib/clock.js";
 import { friendlyError } from "../lib/errors.js";
-import { usdPrice, usdcCompact } from "../lib/format.js";
+import { feeLabel, usdPrice, usdcCompact } from "../lib/format.js";
+import { marketFeeBps } from "../lib/quote.js";
 import { errorMessage } from "../lib/http.js";
 import { leverageLabel, quoteUsable } from "../lib/ticket.js";
 import type { Quote } from "../lib/types.js";
@@ -119,6 +120,7 @@ export function ConfirmSheet({
         <Rows
           rows={[
             ["Price", quote ? usdPrice(quote.expectedPrice) : problem || gaveUp ? "—" : "Getting a price…"],
+            ["Fee", feeLabel(quote?.fee, marketFeeBps(snapshot, market))],
             ["Auto-closes at", autoClose === null ? "—" : usdPrice(autoClose)],
           ]}
         />

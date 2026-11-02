@@ -30,7 +30,7 @@ On Home, the multiplier goes up to 10×. In Pro, up to 20× on BTC and ETH for p
 
 ## Are there trading fees?
 
-No. No trade pays a fee, whether it opens or closes, market, limit or stop. The platform earns a 2 basis point markup inside the quoted price. See [Pricing and fees](../risk/pricing-and-fees.md).
+Yes, one: 0.04% (4 basis points) of the notional on every fill, whether it opens or closes, market, limit or stop. The price itself carries no fixed spread, so a small trade in a calm market fills at the oracle price and pays only the fee. See [Pricing and fees](../risk/pricing-and-fees.md).
 
 ## How long does an Up / Down trade last?
 

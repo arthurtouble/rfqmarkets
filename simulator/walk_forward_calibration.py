@@ -43,10 +43,11 @@ def spread(row: Observation, weights: tuple[float,float,float,float]) -> float:
     hedge=bounded(row.hedge_cost_bps,0,50)
     latency=bounded(row.hedge_latency_ms,0,30000)
     mode=4 if row.risk_mode=="guarded" else 12 if row.risk_mode=="reduce_only" else 0
-    # Preserve active JS operation order, including ceil per component.
+    # Preserve active JS operation order: no base component (it is the trading fee), volatility to the
+    # nearest bps (half up), every other component rounded up.
     volatility=vol/5 if weights==CURRENT_WEIGHTS else vol*weights[0]
     toxic=toxicity*35/10000 if weights==CURRENT_WEIGHTS else toxicity*weights[1]
-    components=[2,math.ceil(min(40,volatility)),math.ceil(min(35,toxic)),math.ceil(min(30,hedge*weights[2]+mode+math.sqrt(latency/1000)*vol/25)),math.ceil(min(25,abs(bounded(row.basis_bps,-500,500))*weights[3])),math.ceil(min(20,bounded(row.confidence_bps,0,500)/2))]
+    components=[0,math.floor(min(40,volatility)+.5),math.ceil(min(35,toxic)),math.ceil(min(30,hedge*weights[2]+mode+math.sqrt(latency/1000)*vol/25)),math.ceil(min(25,abs(bounded(row.basis_bps,-500,500))*weights[3])),math.ceil(min(20,bounded(row.confidence_bps,0,500)/2))]
     return min(100,sum(components))
 
 def loss(rows: list[Observation], weights: tuple[float,float,float,float]) -> float:
@@ -78,7 +79,7 @@ def calibrate(rows: list[Observation]):
     train,validation,holdout,boundaries=partition(rows)
     finalists=sorted(GRID,key=lambda weights:(loss(train,weights),weights))[:24]
     weights=min(finalists,key=lambda value:(worst_regime_loss(validation,value),loss(validation,value),value))
-    result={"status":"research-only","activeSpreadModel":"adaptive-v1","rounding":"ceil-per-component","candidateSpreadModel":"bounded-rounded-research-weights","weights":{"volatility":weights[0],"toxicity":weights[1],"hedgeCost":weights[2],"basis":weights[3]},"boundaries":boundaries,"train":metrics(train,weights),"validation":metrics(validation,weights),"holdout":metrics(holdout,weights),"currentHoldout":metrics(holdout,CURRENT_WEIGHTS)}
+    result={"status":"research-only","activeSpreadModel":"adaptive-v2","rounding":"nearest-volatility-ceil-others","candidateSpreadModel":"bounded-rounded-research-weights","weights":{"volatility":weights[0],"toxicity":weights[1],"hedgeCost":weights[2],"basis":weights[3]},"boundaries":boundaries,"train":metrics(train,weights),"validation":metrics(validation,weights),"holdout":metrics(holdout,weights),"currentHoldout":metrics(holdout,CURRENT_WEIGHTS)}
     result["holdoutByRegime"]={regime:metrics([row for row in holdout if row.regime==regime],weights) for regime in sorted(set(row.regime for row in holdout))}
     result["eligibleForShadow"]=result["holdout"]["underquoteRate"]<=.05 and result["holdout"]["objective"]<=result["currentHoldout"]["objective"]
     return result

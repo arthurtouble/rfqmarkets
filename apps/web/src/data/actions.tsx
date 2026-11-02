@@ -271,10 +271,15 @@ export function TradingProvider({ children }: { children: ReactNode }) {
 
   const account = () => trader.address as Address;
 
-  /** Whether the quick-trading key may sign a trade of `amountMicro` in `market` (limits and market mask). */
+  /** Whether the quick-trading key may sign a trade of `amountMicro` in `market` (limits, fee cap, market mask). */
   const quickCovers = (market: Market, amountMicro: bigint | null) =>
     amountMicro !== null &&
-    sessionCovers(sessionRef.current, amountMicro, marketList.get(market)?.index ?? Number.MAX_SAFE_INTEGER);
+    sessionCovers(
+      sessionRef.current,
+      amountMicro,
+      marketList.get(market)?.index ?? Number.MAX_SAFE_INTEGER,
+      marketList.get(market)?.feeBps,
+    );
   const requestQuote = (order: MarketOrder) =>
     api<Quote>("/v1/quote", {
       market: order.market,
@@ -1172,6 +1177,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           validUntil: Number(result.validUntil) * 1_000,
           marketMask: String(request.marketMask),
           maxTradeNotional: limits.maxTradeMicro.toString(),
+          maxFee: parseUnits(request.maxFee, 6).toString(),
         };
         quick.save(granted);
         sessionRef.current = granted;
