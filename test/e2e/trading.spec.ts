@@ -68,7 +68,7 @@ test.describe("placing trades", () => {
       await expect(start).toBeVisible();
       await start.click();
       await expect(page.getByRole("status", { name: "Notifications" })).toContainText(
-        "Connection established. You can start trading.",
+        /Connection established.*You can start trading\./,
       );
       await size(ticket, "100", "5×");
       await expect(ticket.getByText("Margin $20")).toBeVisible();

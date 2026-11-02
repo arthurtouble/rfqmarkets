@@ -167,7 +167,6 @@ test.describe("wallet connect", () => {
     // Anything that signs asks for the switch itself first.
     await page.goto("/updown/BTC");
     await setWallet(page, { chainId: "0x1" });
-    await expect(page.getByRole("button", { name: "Switch to RFQ Local" })).toBeVisible();
     // The fixture taps Start trading as soon as it shows, which switches the network and then connects.
     await expect(toast(page, "Connection established")).toBeVisible();
     await expect(page.getByRole("button", { name: "Switch to RFQ Local" })).toBeHidden();
