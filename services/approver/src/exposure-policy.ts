@@ -109,16 +109,22 @@ export function checkExposure(input: {
   if (intent.reduceOnly && !admission.reduction) return reject("reduce-only intent does not reduce position");
 }
 
-/** Outstanding gross reservations in any other market need a fresh stored price there. */
+/**
+ * Outstanding gross reservations in any other market need a fresh stored price there, unless the trade's
+ * verified report prices that market too (the contract stores the report's prices before any check) or the
+ * trade is a reduction (the contract lets a reduction settle against another market's stale price).
+ */
 export function checkCrossMarketFreshness(
   grossReservations: GrossReservationBook,
   grossId: string,
   snapshot: ChainSnapshot,
   market: MarketIndex,
+  exempt: { covered?: ReadonlySet<number>; reduction?: boolean } = {},
 ): Rejection | undefined {
+  if (exempt.reduction) return undefined;
   const priorGross = grossReservations.bounds(grossId, snapshot.markets.length);
   for (const [other, state] of snapshot.markets.entries()) {
-    if (other === market) continue;
+    if (other === market || exempt.covered?.has(other)) continue;
     const otherPriceTime = Number(state.lastPriceTime);
     if (
       priorGross[other].longBase + priorGross[other].shortBase > 0n &&

@@ -12,6 +12,7 @@ import {
 } from "../../../packages/shared/src/markets.js";
 import { BASE, abs } from "../../../packages/shared/src/numeric.js";
 import type { OracleObservation } from "../../../packages/shared/src/oracle-report.js";
+import { isPositionReduction } from "../../../packages/shared/src/exposure-admission.js";
 import { checkUserAuthorization, checkUserSignature, recoverSigner } from "./authorization.js";
 import { checkChainPolicy, readChainState, verifySignedReport, type ChainClients } from "./chain-state.js";
 import {
@@ -57,10 +58,11 @@ async function verifyWhenHeadCatchesUp(
   clearingAddress: string,
   blockNumber: number,
   market: number,
+  covered?: Set<number>,
 ) {
   for (let attempt = 0, block = blockNumber; ; attempt++) {
     try {
-      return await verifySignedReport(chain, report, clearingAddress, block, market);
+      return await verifySignedReport(chain, report, clearingAddress, block, market, covered);
     } catch (error) {
       if (attempt >= HEAD_CATCH_UP_ATTEMPTS) throw error;
       await new Promise((resolve) => setTimeout(resolve, HEAD_CATCH_UP_MS));
@@ -237,6 +239,7 @@ async function chainChecks(
     return reject("triggered fill does not match position");
 
   let observation = request.observation;
+  const covered = new Set<number>();
   if (options.oracleMode === "signed") {
     try {
       observation = await verifyWhenHeadCatchesUp(
@@ -245,6 +248,7 @@ async function chainChecks(
         domain.verifyingContract,
         snapshot.blockNumber,
         market,
+        covered,
       );
     } catch (error) {
       console.warn("approver oracle verification failed:", String(error).slice(0, 400));
@@ -323,7 +327,10 @@ async function chainChecks(
   if (clock && clock.block >= gross.finalizedBlock && clock.timestamp >= gross.finalizedTimestamp)
     journal.finalize(clock.block, clock.timestamp, clock.hash);
 
-  const freshness = checkCrossMarketFreshness(gross, approval.intentHash.toLowerCase(), snapshot, market);
+  const freshness = checkCrossMarketFreshness(gross, approval.intentHash.toLowerCase(), snapshot, market, {
+    covered,
+    reduction: isPositionReduction(snapshot.position.size, intent.baseDelta),
+  });
   if (freshness) return freshness;
   const pending = gross.bounds(approval.intentHash.toLowerCase(), snapshot.books.length)[market];
   const grossContext = buildGrossContext({

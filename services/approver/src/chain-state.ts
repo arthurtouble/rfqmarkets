@@ -341,6 +341,8 @@ export async function verifySignedReport(
   clearingAddress: string,
   blockNumber: number,
   market: number,
+  /** Filled with every market the report prices: the trade refreshes all of them on chain first. */
+  covered?: Set<number>,
 ): Promise<OracleObservation> {
   const adapter = new Interface(oracleAdapterAbi),
     oracleAddress = await chain.clearing.oracle({ blockTag: blockNumber }),
@@ -362,9 +364,9 @@ export async function verifySignedReport(
       toQuantity(blockNumber),
     ]),
     [values] = adapter.decodeFunctionResult("verify", raw),
-    observation = Array.from(values as OracleObservationInput[], toOracleObservation).find(
-      (item) => item.market === BigInt(market),
-    );
+    observations = Array.from(values as OracleObservationInput[], toOracleObservation),
+    observation = observations.find((item) => item.market === BigInt(market));
+  for (const item of observations) covered?.add(Number(item.market));
   if (!observation) throw new Error("oracle consensus omitted the market");
   return observation;
 }

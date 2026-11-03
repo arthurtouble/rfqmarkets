@@ -15,7 +15,7 @@ import {
 } from "../../../packages/shared/src/eip712.js";
 import { maskAllows, toExposureBook, toLimitWord } from "../../../packages/shared/src/clearing-structs.js";
 import type { ExposureBook, ExposureMarket } from "../../../packages/shared/src/exposure-admission.js";
-import { pendingMakerDebit } from "../../../packages/shared/src/exposure-admission.js";
+import { isPositionReduction, pendingMakerDebit } from "../../../packages/shared/src/exposure-admission.js";
 import { finalizedClock } from "../../../packages/shared/src/finalized-clock.js";
 import {
   finalizeGross,
@@ -672,6 +672,7 @@ export class ExecutionService {
             userSignature,
             reservationRevision,
             grossSnapshot,
+            coveredMarkets: oracleReport?.markets,
           });
         } finally {
           release();
@@ -759,6 +760,8 @@ export class ExecutionService {
     userSignature: string;
     reservationRevision: number;
     grossSnapshot?: GrossSnapshot;
+    /** Markets the settlement report prices: the trade refreshes them on chain before any check. */
+    coveredMarkets?: readonly number[];
   }): Reply | typeof RESERVATION_CONFLICT | undefined {
     const { ctx } = this,
       { journal, grossReservations, pending } = ctx,
@@ -779,9 +782,12 @@ export class ExecutionService {
       if (intent.market >= states.length) return Reply.error(409, "unknown market");
       const asks = states.map((state) => BigInt(state.lastAsk));
       asks[intent.market] = quote.snapshot.ask;
-      const priorGross = grossReservations.bounds(quote.quoteId, states.length);
+      const priorGross = grossReservations.bounds(quote.quoteId, states.length),
+        covered = new Set(input.coveredMarkets ?? []),
+        // Like the contract, a reduction does not need other markets' prices to be current.
+        reduction = isPositionReduction(position.size, fill.baseDelta);
       for (const [other, otherState] of states.entries()) {
-        if (other === intent.market) continue;
+        if (other === intent.market || covered.has(other) || reduction) continue;
         if (
           priorGross[other].longBase + priorGross[other].shortBase > 0n &&
           (Number(otherState.lastPriceTime) === 0 ||
