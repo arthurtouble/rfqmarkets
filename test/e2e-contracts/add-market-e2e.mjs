@@ -218,11 +218,12 @@ try {
   assert.equal(account.initialMargin, account.onchain.initialMargin);
   assert.equal(account.maintenanceMargin, account.onchain.maintenanceMargin);
 
-  // Reducing works the same way; a SOL quote above its own trade cap is refused.
+  // Reducing works the same way; a SOL quote above its own trade cap is refused with a final answer.
   await trade("SOL", "sell", "100", "912");
   const [reduced] = await clearing.positionOf(user.address, 2);
   assert(reduced > 0n && reduced < size);
-  await post("/v1/quote", { market: "SOL", side: "buy", amount: "60000" }, 503);
+  const overCap = await post("/v1/quote", { market: "SOL", side: "buy", amount: "60000" }, 409);
+  assert.equal(overCap.error, "amount exceeds market limit");
   console.log(
     "Add-market E2E passed: governance addMarket(SOL) reached the API and approvers through the clearing registry; SOL opened, reduced and margined with BTC at the chain's figures",
   );
