@@ -106,6 +106,9 @@ export const randomNonce = () => BigInt(hexlify(randomBytes(16))).toString();
 type Prepared = { domain: Wire; types: Record<string, TypedDataField[]>; intent?: Wire; grant?: Wire };
 type Settlement = { chainId: bigint; clearing: string; markets: Map<string, number> };
 
+/** Answers a fresh quote can clear: the price moved past the signed protection, or the quote lapsed. */
+const REQUOTE_CODES = new Set<string>(["price_moved", "quote_expired"]);
+
 /** Default trigger slippage the API applies when a request names none (services/api schemas.ts). */
 const DEFAULT_TRIGGER_SLIPPAGE_BPS = 100;
 
@@ -313,15 +316,30 @@ export class RfqClient {
     );
   }
 
-  /** Closes `fraction` bps (default all) of the position in `market`. */
+  /**
+   * Closes `fraction` bps (default all) of the position in `market`. A close whose price moves past its
+   * protection, or whose quote lapses, before it settles is re-quoted once, as the app does: in a fast market
+   * the trader still wants out.
+   */
   async close(input: { market: string; fraction?: number; account?: string }) {
-    const account = await this.accountOf(input.account),
-      quote = await this.request<Wire & { quoteId: string }>("/v1/close/quote", {
+    const account = await this.accountOf(input.account);
+    const attempt = async () =>
+      this.fill(
+        await this.request<Wire & { quoteId: string }>("/v1/close/quote", {
+          account,
+          market: input.market,
+          fraction: input.fraction ?? 10_000,
+        }),
         account,
-        market: input.market,
-        fraction: input.fraction ?? 10_000,
-      });
-    return this.fill(quote, account, true, { market: input.market });
+        true,
+        { market: input.market },
+      );
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof RfqApiError) || !REQUOTE_CODES.has(error.code)) throw error;
+      return attempt();
+    }
   }
 
   /** Closes every open position, one signed reduce-only fill per market. */
@@ -333,11 +351,17 @@ export class RfqClient {
         unavailable?: Array<{ market: string; error: string }>;
       }>("/v1/close/all/quote", { account, fraction }),
       results = [];
-    for (const quote of quotes)
-      results.push({
-        market: quote.market,
-        result: await this.fill(quote, account, true, { market: quote.market }),
-      });
+    for (const quote of quotes) {
+      let result;
+      try {
+        result = await this.fill(quote, account, true, { market: quote.market });
+      } catch (error) {
+        // Closing the earlier markets can outlast this quote, or the price can move past it: re-quote this one.
+        if (!(error instanceof RfqApiError) || !REQUOTE_CODES.has(error.code)) throw error;
+        result = await this.close({ market: quote.market, fraction, account });
+      }
+      results.push({ market: quote.market, result });
+    }
     // A market the API could not price with the others is tried once more on its own; if it still cannot
     // close, that error is thrown after every other position closed.
     for (const { market } of unavailable)

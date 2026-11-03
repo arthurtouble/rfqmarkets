@@ -124,3 +124,18 @@ export function staleOracleFailure(error: unknown) {
   text = text.toLowerCase();
   return text.includes("staleprice") || text.includes("0xd7815800") || text.includes("0x45805f5d");
 }
+
+/**
+ * The oracle adapter's `InvalidReport` (by name or selector). A fresh, valid report gets it when simulated
+ * against a block older than the report's observation time, which a later block clears.
+ */
+export function futureReportFailure(error: unknown) {
+  let text: string;
+  try {
+    text = `${String(error)} ${JSON.stringify(error, (_key, value) => (typeof value === "bigint" ? String(value) : value))}`;
+  } catch {
+    text = String(error);
+  }
+  text = text.toLowerCase();
+  return text.includes("invalidreport") || text.includes("0xb55ac754");
+}

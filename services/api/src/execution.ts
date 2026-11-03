@@ -44,7 +44,12 @@ import { abs, marketIndex, marketRegistry, unixSeconds } from "./markets.js";
 import type { IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
 import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import { signingAccount, validOwnerSignature } from "./owner-signature.js";
-import { approverPolicyRejection, publicError, staleOracleFailure } from "./public-error.js";
+import {
+  approverPolicyRejection,
+  futureReportFailure,
+  publicError,
+  staleOracleFailure,
+} from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
 import type { CreatedQuote, QuoteEngine } from "./quoting.js";
 import { archiveApiCommitments } from "./recovery.js";
@@ -724,12 +729,23 @@ export class ExecutionService {
           try {
             const adapter = await this.chain.oracleAdapter();
             oracleFee = BigInt(await adapter.updateFee(report).catch(() => 0n));
-            await chain.provider.call({
+            const simulation = {
               from: ctx.sponsor.address,
               to: chain.config.clearingAddress,
               data: this.executeTradeData(intent, approval, report, userSignature, selected, trigger),
               value: oracleFee,
-            });
+            };
+            // The adapter refuses a report observed after the block it runs in; this RPC's head can trail the
+            // approvers' by a block, so give it a moment to reach the report instead of failing the trade.
+            for (let wait = 0; ; wait++) {
+              try {
+                await chain.provider.call(simulation);
+                break;
+              } catch (error) {
+                if (wait >= 3 || !futureReportFailure(error)) throw error;
+                await new Promise((resolve) => setTimeout(resolve, 1_000));
+              }
+            }
           } catch (error) {
             if (attempt === 0 && staleOracleFailure(error)) continue;
             return Reply.error(409, "settlement simulation failed", {

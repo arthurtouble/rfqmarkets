@@ -50,7 +50,9 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "npm run dev:stack -- --web --mine-every-second",
+      // Production parity: the dev/mainnet oracle path (signing oracle nodes, SignedPriceOracle, approvers that
+      // verify signed reports, no dev-chain shortcuts in the trade path), with only the faucet kept for funding.
+      command: "npm run dev:stack -- --web --mine-every-second --parity",
       url: urls.web,
       // dev:stack stops its chain and services on SIGTERM.
       gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },

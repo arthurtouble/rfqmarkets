@@ -36,8 +36,12 @@ const deployment = JSON.parse(readFileSync(resolve(".local-state", "deployment.j
 // RFQ_MARKET_DATA=sim runs offline with random-walk prices; the default streams Coinbase public tickers.
 const signed = deployment.oracle?.kind === "signed" ? deployment.oracle : undefined;
 // Production parity (a SignedPriceOracle deployment) always simulates venue prices: the oracle nodes sign them.
+// RFQ_SIM_VOLATILITY (basis points per minute, default 20) runs the random walk hotter, for volatile-market runs.
+const volatility = Number(process.env.RFQ_SIM_VOLATILITY ?? "20");
 const simulated =
-  process.env.RFQ_MARKET_DATA === "sim" || signed ? new SimulatedMarketDataSource() : undefined;
+  process.env.RFQ_MARKET_DATA === "sim" || signed
+    ? new SimulatedMarketDataSource({ volatilityBpsPerMinute: volatility })
+    : undefined;
 // Parity mode runs the dev/mainnet code paths end to end: oracle nodes sign multi-market batches, the API quotes
 // from SignedOracleSource without dev-chain shortcuts, approvers verify reports against the adapter, and the
 // contract stores every price a report carries. Only the venue quotes and the chain are local.
@@ -86,8 +90,14 @@ const stack = await startServiceStack({
   hedge: { token: "local-development-hedge-token" },
   api: {
     publicRpcUrl: deployment.rpcUrl,
-    // Parity mode leaves devFund off: no dev faucet, no chain-time shortcuts, simulations before every send.
-    chain: { devFund: !signed, devWallet: deployment.devWallet, riskOperator: deployment.riskOperator },
+    // Parity mode leaves devFund off (no chain-time shortcuts or autofunding, a simulation before every send) but
+    // keeps the faucet routes so browser tests can fund fresh wallets.
+    chain: {
+      devFund: !signed,
+      devFaucet: true,
+      devWallet: deployment.devWallet,
+      riskOperator: deployment.riskOperator,
+    },
     // Every trading screen asks for a one-tap key, and the browser tests open hundreds of fresh pages for the
     // same dev wallet: the production budget (5, then one per 10 s) would refuse most of their session grants.
     sponsoredActionRatePerSecond: 50,

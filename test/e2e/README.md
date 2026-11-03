@@ -16,7 +16,7 @@ npx playwright show-report             # last HTML report
 ```
 
 Outside CI an already running stack is reused, so keep
-`npm run dev:stack -- --web --mine-every-second` open in another terminal while
+`npm run dev:stack -- --web --mine-every-second --parity` open in another terminal while
 iterating. The flag mines a block once a second, as Base does; with automine each
 transaction gets its own later second, and a long run pushes chain time far
 enough ahead of the wall clock that oracle reports look stale. The

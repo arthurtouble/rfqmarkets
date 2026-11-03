@@ -92,7 +92,7 @@ export function registerOperationsRoutes(
 
   app.get("/v1/config", async () => ({
     chainId: `0x${domain.chainId.toString(16)}`,
-    chainName: ctx.devFund ? "RFQ Local" : domain.chainId === 84532n ? "Base Sepolia" : "Base",
+    chainName: domain.chainId === 31337n ? "RFQ Local" : domain.chainId === 84532n ? "Base Sepolia" : "Base",
     rpcUrl: options.publicRpcUrl,
     clearingAddress: domain.verifyingContract,
     tokenAddress: options.chain?.tokenAddress,
