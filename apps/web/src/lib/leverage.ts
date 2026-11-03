@@ -68,3 +68,24 @@ export function leveragePresets(
   const below = [...new Set(steps)].filter((step) => step > 0 && step < maxLeverage).sort((a, b) => a - b);
   return [...below, maxLeverage];
 }
+
+/**
+ * Tappable marks under the leverage slider: 1x, then quarters of the market's max (whole numbers), then the max,
+ * e.g. [1, 10, 20, 30, 40] at 40x and [1, 5, 10, 15, 20] at 20x. Evenly spaced, so the labels never overlap.
+ */
+export function leverageMarks(maxLeverage: number): number[] {
+  if (!Number.isFinite(maxLeverage) || maxLeverage <= 0) return [];
+  if (maxLeverage <= 1) return [maxLeverage];
+  const quarters = [1, 2, 3]
+    .map((k) => Math.round((maxLeverage * k) / 4))
+    .filter((v) => v > 1 && v < maxLeverage);
+  return [...new Set([1, ...quarters, maxLeverage])];
+}
+
+/** Parses typed leverage ("12", "12.5x"): a positive number with at most two decimals, else null. */
+export function parseLeverage(text: string): number | null {
+  const trimmed = text.trim().replace(/x$/i, "").trim();
+  if (!/^\d+(\.\d{0,2})?$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return value > 0 ? value : null;
+}

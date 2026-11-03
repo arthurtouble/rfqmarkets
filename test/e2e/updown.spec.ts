@@ -144,6 +144,21 @@ test.describe("Up / Down", () => {
       ).toBeVisible();
       await page.getByRole("tab", { name: /Positions/ }).click();
       await expect(page.getByRole("region", { name: "Home trades" })).toHaveCount(0);
+      // Margin goes in from the balance and comes back out while the position stays open.
+      const heldBefore = BigInt((await held()).collateral);
+      const editMargin = async (move: "Add" | "Remove") => {
+        await page.getByRole("button", { name: `Add or remove ${MARKET} margin` }).click();
+        const sheet = page.getByRole("dialog", { name: `${MARKET} short margin` });
+        if (move === "Remove") await sheet.getByRole("button", { name: "Remove", exact: true }).click();
+        await sheet.getByLabel(move === "Add" ? "Amount to add" : "Amount to remove").fill("5");
+        await expectNoHorizontalOverflow(page);
+        await sheet.getByRole("button", { name: new RegExp(`^${move} \\$5\\.00 margin$`) }).click();
+        await expect(sheet).toBeHidden();
+      };
+      await editMargin("Add");
+      await expect.poll(async () => BigInt((await held()).collateral)).toBe(heldBefore + 5_000_000n);
+      await editMargin("Remove");
+      await expect.poll(async () => BigInt((await held()).collateral)).toBe(heldBefore);
       const close = page.getByRole("button", { name: `Close ${MARKET} short isolated` });
       await expectNoHorizontalOverflow(page);
       await close.click();

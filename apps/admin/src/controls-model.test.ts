@@ -60,6 +60,8 @@ test("roles come from the contract's addresses, case-insensitively", () => {
 
 test("leverage and the margin multiplier convert both ways, never allowing more than asked", () => {
   assert.equal(leverageOf(2_500), 20);
+  assert.equal(leverageOf(1_250), 40);
+  assert.equal(marginScaleFor(40), 1_250);
   assert.equal(leverageOf(10_000), 5);
   assert.equal(marginScaleFor(20), 2_500);
   assert.equal(marginScaleFor(3), 16_667);
@@ -75,7 +77,7 @@ test("a draft round-trips, and out-of-range values are explained per field", () 
     ...toDraft(btc),
     maxTrade: "2000000",
     side: "3000000",
-    leverage: "25",
+    leverage: "45",
     shock: "3",
     impactK: "1.5",
     spread: "1",

@@ -17,10 +17,12 @@ import {
   usdPrice,
 } from "../lib/format.js";
 import {
+  clampLeverage,
   DEFAULT_MARGIN_SCALE_BPS,
-  leveragePresets,
+  leverageMarks,
   marginFromLeverage,
   maxLeverageAt,
+  parseLeverage,
 } from "../lib/leverage.js";
 import { triggerProblem } from "../lib/orders.js";
 import { STALE_AFTER_MS, indicativeQuote, marketFeeBps } from "../lib/quote.js";
@@ -38,7 +40,7 @@ import {
   ticketProblem,
 } from "../lib/ticket.js";
 import type { AccountState, Market, Quote, Side } from "../lib/types.js";
-import { Banner, Down, Rows, Segmented, Up } from "../ui/primitives.js";
+import { Banner, Down, Rows, Segmented, Slider, Up } from "../ui/primitives.js";
 import { useTrader } from "../wallet/trader.js";
 import { WalletMenu } from "../wallet/WalletMenu.js";
 import { StartTrading } from "./StartTrading.js";
@@ -95,8 +97,10 @@ export function OrderTicket({
   const live = snapshot?.markets[market];
   const marketMax = leverageInfo?.maxLeverage ?? live?.maxLeverage ?? 20;
   const scaleBps = leverageInfo?.marginScaleBps ?? live?.marginScaleBps ?? DEFAULT_MARGIN_SCALE_BPS;
-  const presets = leverageInfo?.presets ?? leveragePresets(marketMax);
-  const lev = Math.min(leverage, marketMax);
+  const marks = leverageMarks(marketMax);
+  const lev = clampLeverage(leverage, marketMax);
+  // The typed leverage while the box has focus; it shows the chosen value otherwise.
+  const [levDraft, setLevDraft] = useState<string | null>(null);
   const isLimit = orderType === "limit";
   const isStop = orderType === "stop";
   // Limit, stop and close-only orders rest on (or reduce) the main account, so only a market order can be isolated.
@@ -347,12 +351,36 @@ export function OrderTicket({
             )}
           </span>
         </div>
-        <Segmented
-          label="Leverage"
-          value={String(lev)}
-          onChange={(next) => chooseLeverage(Number(next))}
-          options={presets.map((step) => ({ id: String(step), label: leverageLabel(step) }))}
-        />
+        <div className="ticket-leverage__row">
+          <Slider
+            label="Leverage"
+            min={1}
+            max={marketMax}
+            value={lev}
+            onChange={(next) => {
+              setLevDraft(null);
+              chooseLeverage(next);
+            }}
+            marks={marks}
+            format={leverageLabel}
+          />
+          <div className="rfq-field__box ticket-leverage__input">
+            <input
+              inputMode="decimal"
+              aria-label="Leverage (type a number)"
+              value={levDraft ?? String(lev)}
+              onChange={(event) => {
+                const text = event.target.value;
+                if (text !== "" && !/^\d*\.?\d{0,2}x?$/i.test(text)) return;
+                setLevDraft(text);
+                const typed = parseLeverage(text);
+                if (typed !== null) chooseLeverage(clampLeverage(typed, marketMax));
+              }}
+              onBlur={() => setLevDraft(null)}
+            />
+            <span>x</span>
+          </div>
+        </div>
       </div>
 
       <MarginModeChoice crossOnly={crossOnly} />

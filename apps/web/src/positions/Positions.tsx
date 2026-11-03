@@ -5,7 +5,16 @@ import { useIdleMargin, useIsolatedAccounts } from "../account/useAccount.js";
 import { useTrading } from "../data/actions.js";
 import { useMarketFeed, useServerNow } from "../data/market-feed.js";
 import { useProtocol } from "../data/queries.js";
-import { baseAmount, feeLabel, signedUsdc, usdc, usdPrice } from "../lib/format.js";
+import { estimateLiquidationPrice } from "../lib/account.js";
+import {
+  baseAmount,
+  feeLabel,
+  microToInput,
+  parseUsdcInput,
+  signedUsdc,
+  usdc,
+  usdPrice,
+} from "../lib/format.js";
 import {
   CLOSE_PRESETS,
   closeAllPreview,
@@ -16,8 +25,9 @@ import {
   type PositionView,
 } from "../lib/positions.js";
 import { indicativeQuote, marketFeeBps } from "../lib/quote.js";
+import { isDecimalDraft } from "../lib/ticket.js";
 import type { AccountState, Market } from "../lib/types.js";
-import { AssetIcon, Banner, Change, Rows, Segmented, Sheet, marketName } from "../ui/primitives.js";
+import { AssetIcon, Banner, Change, Rows, Segmented, Sheet, Slider, marketName } from "../ui/primitives.js";
 import { useDesktop } from "../ui/prefs.js";
 import { ProtectionSummary, TpslSheet } from "../trade/TriggerOrders.js";
 
@@ -77,11 +87,13 @@ const MarginTag = ({ row }: { row: PositionRow }) =>
 type PositionActions = {
   onClose: (row: PositionRow) => void;
   onTpsl?: (row: PositionRow) => void;
+  /** Add or remove margin; offered on isolated positions only, since cross positions share the balance. */
+  onMargin?: (row: PositionRow) => void;
 };
 /** The account a row's TP/SL rests on, when it is not the trader's own (an isolated account). */
 const holderOf = (row: PositionRow) => (row.isolated ? row.holder.account : undefined);
 
-export function PositionCard({ row, onClose, onTpsl }: { row: PositionRow } & PositionActions) {
+export function PositionCard({ row, onClose, onTpsl, onMargin }: { row: PositionRow } & PositionActions) {
   const { view } = row;
   return (
     <article className="rfq-pos" aria-label={rowLabel(row)}>
@@ -134,6 +146,16 @@ export function PositionCard({ row, onClose, onTpsl }: { row: PositionRow } & Po
       )}
       <NearLiquidation view={view} />
       <div className="rfq-pos__actions">
+        {onMargin && row.isolated && (
+          <button
+            type="button"
+            className="rfq-btn rfq-btn--secondary"
+            aria-label={`Add or remove ${view.market} margin`}
+            onClick={() => onMargin(row)}
+          >
+            Margin
+          </button>
+        )}
         {onTpsl && (
           <button
             type="button"
@@ -161,6 +183,7 @@ function PositionsTable({
   rows,
   onClose,
   onTpsl,
+  onMargin,
   onCloseAll,
 }: { rows: PositionRow[]; onCloseAll?: () => void } & PositionActions) {
   return (
@@ -213,7 +236,20 @@ function PositionsTable({
                 <td>
                   <LiquidationPrice view={view} />
                 </td>
-                <td>{usdc(view.margin)}</td>
+                <td>
+                  {onMargin && row.isolated ? (
+                    <button
+                      type="button"
+                      className="tpsl-cell margin-cell"
+                      aria-label={`Add or remove ${view.market} margin`}
+                      onClick={() => onMargin(row)}
+                    >
+                      {usdc(view.margin)} <span className="rfq-faint">Edit</span>
+                    </button>
+                  ) : (
+                    usdc(view.margin)
+                  )}
+                </td>
                 <td>{signedUsdc(view.funding)}</td>
                 <td>
                   <Pnl view={view} />
@@ -269,7 +305,7 @@ export function positionRows(account: AccountState | null, isolatedAccounts: Acc
 /**
  * Every open position in one list with its close and TP/SL actions: a table on desktop, cards on phones or
  * when `only` limits the list to one market (the mobile trade page). Positions opened with isolated margin sit
- * in the list with an Isolated tag; Close all covers the cross positions, which close together.
+ * in the list with an Isolated tag and a Margin action to add or remove margin; Close all covers every position.
  */
 export function Positions({ account, only }: { account: AccountState | null; only?: Market }) {
   const desktop = useDesktop();
@@ -279,18 +315,22 @@ export function Positions({ account, only }: { account: AccountState | null; onl
   const [closing, setClosing] = useState<string | null>(null);
   const [closingAll, setClosingAll] = useState(false);
   const [protecting, setProtecting] = useState<string | null>(null);
+  const [margining, setMargining] = useState<string | null>(null);
   const rows = positionRows(account, isolatedAccounts).filter((row) => !only || row.view.market === only);
   if (!rows.length) return null;
   const cross = rows.filter((row) => !row.isolated).map((row) => row.view);
+  const isolatedRows = rows.filter((row) => row.isolated);
   const closingRow = rows.find((row) => rowKey(row) === closing);
   const closingView = closingRow ? positionView(closingRow.holder, closingRow.view.market) : null;
   const protectingRow = rows.find((row) => rowKey(row) === protecting);
-  // Closing and TP/SL need the trading connection: without it, tapping them asks to connect first and the
-  // sheet opens once connected. While trading is paused the oracle-price exit stays open without it.
+  // Closing, TP/SL and margin edits need the trading connection: without it, tapping them asks to connect
+  // first and the sheet opens once connected. While trading is paused the oracle-price exit stays open without it.
   const gate = (open: () => void) => (paused ? open() : void trading.requireConnection(open));
   const onClose = (row: PositionRow) => gate(() => setClosing(rowKey(row)));
   const onTpsl = (row: PositionRow) => void trading.requireConnection(() => setProtecting(rowKey(row)));
-  const onCloseAll = !only && cross.length > 1 ? () => gate(() => setClosingAll(true)) : undefined;
+  const onMargin = (row: PositionRow) => void trading.requireConnection(() => setMargining(rowKey(row)));
+  const marginRow = rows.find((row) => rowKey(row) === margining);
+  const onCloseAll = !only && rows.length > 1 ? () => gate(() => setClosingAll(true)) : undefined;
   return (
     <section className="positions" aria-label="Open positions">
       {desktop && !only ? (
@@ -298,7 +338,13 @@ export function Positions({ account, only }: { account: AccountState | null; onl
           {rows.map((row) => (
             <NearLiquidation key={rowKey(row)} view={row.view} />
           ))}
-          <PositionsTable rows={rows} onClose={onClose} onTpsl={onTpsl} onCloseAll={onCloseAll} />
+          <PositionsTable
+            rows={rows}
+            onClose={onClose}
+            onTpsl={onTpsl}
+            onMargin={onMargin}
+            onCloseAll={onCloseAll}
+          />
         </>
       ) : (
         <>
@@ -311,7 +357,13 @@ export function Positions({ account, only }: { account: AccountState | null; onl
           )}
           <div className="positions__cards">
             {rows.map((row) => (
-              <PositionCard key={rowKey(row)} row={row} onClose={onClose} onTpsl={onTpsl} />
+              <PositionCard
+                key={rowKey(row)}
+                row={row}
+                onClose={onClose}
+                onTpsl={onTpsl}
+                onMargin={onMargin}
+              />
             ))}
           </div>
         </>
@@ -330,12 +382,19 @@ export function Positions({ account, only }: { account: AccountState | null; onl
           onClose={() => setProtecting(null)}
         />
       )}
-      {closingAll && <CloseAllSheet positions={cross} onClose={() => setClosingAll(false)} />}
+      {marginRow && account && (
+        <MarginSheet row={marginRow} balance={account} onClose={() => setMargining(null)} />
+      )}
+      {closingAll && (
+        <CloseAllSheet
+          positions={cross}
+          isolated={isolatedRows.map((row) => row.view)}
+          onClose={() => setClosingAll(false)}
+        />
+      )}
     </section>
   );
 }
-
-type Preset = `${(typeof CLOSE_PRESETS)[number]}`;
 
 /**
  * Close a share of one position at a firm quote, or all of it at the oracle price while trading is paused.
@@ -355,8 +414,8 @@ export function ClosePositionSheet({
     { snapshot } = useMarketFeed(),
     now = useServerNow(1_000);
   const paused = protocol.data?.paused ?? false;
-  const [preset, setPreset] = useState<Preset>("100");
-  const fractionBps = paused ? 10_000 : Number(preset) * 100;
+  const [share, setShare] = useState(100);
+  const fractionBps = paused ? 10_000 : share * 100;
   const live = snapshot?.markets[view.market];
   // The firm close quote prices an exact size; the local indicative quote for the same notional estimates price and fee.
   const rough = closePreview(view, fractionBps, live);
@@ -380,7 +439,7 @@ export function ClosePositionSheet({
     ? `Close ${view.market} at oracle price`
     : fractionBps === 10_000
       ? `Close ${view.market} ${sideWord(view)}`
-      : `Close ${preset}% of ${view.market} ${sideWord(view)}`;
+      : `Close ${share}% of ${view.market} ${sideWord(view)}`;
   // The sheet stays open when the close fails, so the error toast sits beside a way to try again.
   const close = async () => {
     const closed = paused
@@ -400,12 +459,23 @@ export function ClosePositionSheet({
             <b>Trading is paused.</b> You can still close the whole position at the oracle price.
           </Banner>
         ) : (
-          <Segmented
-            label="Amount to close"
-            value={preset}
-            onChange={setPreset}
-            options={CLOSE_PRESETS.map((value) => ({ id: String(value) as Preset, label: `${value}%` }))}
-          />
+          <div className="ticket-leverage">
+            <div className="ticket-leverage__head">
+              <span className="callout rfq-muted">Amount to close</span>
+              <span className="footnote tnum" aria-live="polite">
+                {share}%
+              </span>
+            </div>
+            <Slider
+              label="Amount to close"
+              min={1}
+              max={100}
+              value={share}
+              onChange={setShare}
+              marks={[1, ...CLOSE_PRESETS]}
+              format={(value) => `${value}%`}
+            />
+          </div>
         )}
         <Rows
           rows={[
@@ -417,7 +487,9 @@ export function ClosePositionSheet({
             ["Fee", paused ? "None" : feeLabel(fee, marketFeeBps(snapshot, view.market))],
             [
               "Left open",
-              preview.remainingSize > 0n ? `${baseAmount(preview.remainingSize)} ${view.market}` : "Nothing",
+              preview.remainingSize > 0n
+                ? `${baseAmount(preview.remainingSize)} ${view.market} · ${usdc((preview.remainingSize * preview.price) / 10n ** 18n)}`
+                : "Nothing",
             ],
             [
               "Estimated PnL",
@@ -449,18 +521,35 @@ export function ClosePositionSheet({
 }
 
 /** Close every open position: one firm quote each, or one oracle-price exit each while paused. */
-export function CloseAllSheet({ positions, onClose }: { positions: PositionView[]; onClose: () => void }) {
+export function CloseAllSheet({
+  positions,
+  isolated = [],
+  onClose,
+}: {
+  positions: PositionView[];
+  /** Isolated positions: they close after the cross ones, and their margin returns to the balance. */
+  isolated?: PositionView[];
+  onClose: () => void;
+}) {
   const trading = useTrading(),
     protocol = useProtocol(),
     { snapshot } = useMarketFeed();
   const paused = protocol.data?.paused ?? false;
-  const total = closeAllPreview(positions, snapshot?.markets ?? {});
+  // While paused only the main account's positions can exit at the oracle price; isolated ones wait.
+  const all = paused ? positions : [...positions, ...isolated];
+  const total = closeAllPreview(all, snapshot?.markets ?? {});
   const busy = trading.busy !== null;
   const close = async () => {
     let closedAny = false;
     if (paused)
       for (const view of positions) closedAny = (await trading.emergencyClose(view.market)) || closedAny;
-    else closedAny = !!(await trading.closeAll())?.closed.length;
+    else
+      closedAny = !!(
+        await trading.closeAll(
+          10_000,
+          isolated.map((view) => view.market),
+        )
+      )?.closed.length;
     if (closedAny) onClose();
   };
   return (
@@ -469,17 +558,19 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
         {paused && (
           <Banner tone="warning">
             <b>Trading is paused.</b> Each position closes at the oracle price, one wallet prompt each.
+            {isolated.length > 0 && " Isolated positions can close once trading resumes."}
           </Banner>
         )}
         <Rows
           rows={[
-            ...positions.map(
-              (view) =>
+            ...all.map(
+              (view, index) =>
                 [
                   <span key="market" className="cell-market">
                     <AssetIcon market={view.market} small />
                     {view.market}
                     <SideBadge view={view} />
+                    {index >= positions.length && <span className="rfq-badge">Isolated</span>}
                   </span>,
                   <Change key="pnl" value={view.pnl}>
                     {signedUsdc(view.pnl)}
@@ -504,7 +595,7 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
         <button
           type="button"
           className="rfq-btn rfq-btn--lg rfq-btn--danger rfq-btn--block"
-          disabled={busy}
+          disabled={busy || !all.length}
           onClick={close}
         >
           {busy ? (
@@ -513,7 +604,129 @@ export function CloseAllSheet({ positions, onClose }: { positions: PositionView[
               Closing…
             </>
           ) : (
-            `Close ${positions.length} positions`
+            `Close ${all.length} positions`
+          )}
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+type MarginMove = "add" | "remove";
+
+/**
+ * Add margin to an isolated position from the balance, or take some back. Adding moves the liquidation price away;
+ * removing is limited to what keeps the position above its initial margin, which the contract checks too.
+ */
+export function MarginSheet({
+  row,
+  balance,
+  onClose,
+}: {
+  row: PositionRow;
+  /** The main account, whose free balance pays for added margin. */
+  balance: AccountState;
+  onClose: () => void;
+}) {
+  const trading = useTrading(),
+    { snapshot } = useMarketFeed();
+  const { view, holder } = row;
+  const [move, setMove] = useState<MarginMove>("add");
+  const [text, setText] = useState("");
+  const positive = (value: bigint) => (value > 0n ? value : 0n);
+  const limit = positive(BigInt(move === "add" ? balance.availableMargin : holder.availableMargin));
+  const amount = parseUsdcInput(text);
+  const delta = amount ? (move === "add" ? amount : -amount) : 0n;
+  const held = BigInt(holder.collateral);
+  const after = held + delta;
+  const liquidationAfter =
+    snapshot && delta !== 0n
+      ? estimateLiquidationPrice({ ...holder, collateral: after.toString() }, snapshot, view.market)
+      : view.liquidationPrice;
+  const problem =
+    amount === null || amount === 0n
+      ? text
+        ? "Enter an amount"
+        : null
+      : amount > limit
+        ? move === "add"
+          ? "More than your available balance"
+          : "More than you can take out while the position is open"
+        : null;
+  const busy = trading.busy !== null;
+  const submit = async () => {
+    if (await trading.adjustMargin(view.market, delta)) onClose();
+  };
+  return (
+    <Sheet open onClose={onClose} title={`${view.market} ${sideWord(view)} margin`} labelledBy="margin-title">
+      <div className="sheet-body">
+        <Segmented
+          label="Add or remove margin"
+          className="margin-sheet__tabs"
+          value={move}
+          onChange={(next) => {
+            setMove(next);
+            setText("");
+          }}
+          options={[
+            { id: "add", label: "Add" },
+            { id: "remove", label: "Remove" },
+          ]}
+        />
+        <div className="rfq-field">
+          <label htmlFor="margin-amount">{move === "add" ? "Amount to add" : "Amount to remove"}</label>
+          <div className="rfq-field__box">
+            <input
+              id="margin-amount"
+              inputMode="decimal"
+              placeholder="0.00"
+              value={text}
+              onChange={(event) => isDecimalDraft(event.target.value) && setText(event.target.value)}
+            />
+            <span>USDC</span>
+            <button
+              type="button"
+              className="rfq-chip"
+              disabled={limit === 0n}
+              onClick={() => setText(microToInput(limit - (limit % 10_000n)))}
+            >
+              Max
+            </button>
+          </div>
+          <span className={`footnote ${problem ? "rfq-down" : "rfq-faint"}`}>
+            {problem ??
+              (move === "add"
+                ? `${usdc(limit)} available in your balance`
+                : `Up to ${usdc(limit)} can come out while the position is open`)}
+          </span>
+        </div>
+        <Rows
+          rows={[
+            ["Isolated margin", delta ? `${usdc(held)} → ${usdc(after)}` : usdc(held)],
+            [
+              "Liq. price",
+              delta
+                ? `${usdPrice(view.liquidationPrice)} → ${usdPrice(liquidationAfter)}`
+                : usdPrice(view.liquidationPrice),
+              "is-total",
+            ],
+          ]}
+        />
+        <button
+          type="button"
+          className="rfq-btn rfq-btn--lg rfq-btn--primary rfq-btn--block"
+          disabled={busy || !!problem || !amount}
+          onClick={submit}
+        >
+          {busy ? (
+            <>
+              <span className="rfq-spinner" />
+              {move === "add" ? "Adding…" : "Removing…"}
+            </>
+          ) : move === "add" ? (
+            `Add ${amount ? `${usdc(amount)} ` : ""}margin`
+          ) : (
+            `Remove ${amount ? `${usdc(amount)} ` : ""}margin`
           )}
         </button>
       </div>

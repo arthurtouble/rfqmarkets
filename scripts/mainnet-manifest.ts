@@ -26,7 +26,7 @@ const MARKET_SYMBOL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,30}$/;
 const risk = (defaults: { impactK: number; shockBps: number; marginScaleBps: number }) => ({
   impactK: int(1, 1_000_000).default(defaults.impactK),
   shockBps: int(500, 10_000).default(defaults.shockBps),
-  marginScaleBps: int(2_500, 50_000).default(defaults.marginScaleBps),
+  marginScaleBps: int(1_250, 50_000).default(defaults.marginScaleBps),
 });
 // SignedPriceOracle consensus parameters; bounds match the oracle's constructor checks.
 const oracleParams = z

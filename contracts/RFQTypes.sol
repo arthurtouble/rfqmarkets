@@ -29,18 +29,14 @@ uint256 constant ABSOLUTE_MAX_TRADE_NOTIONAL = 1_000_000e6;
 uint256 constant ABSOLUTE_MAX_MARKET_NOTIONAL = 5_000_000e6;
 
 /// @dev Anti-spam floor for an account's first deposit; registered accounts are walked during resolution.
-/// @dev Lowest per-market margin multiplier. 2_500 scales the first tier to 5% initial / 3% maintenance (20x).
-uint16 constant MIN_MARGIN_SCALE_BPS = 2_500;
+/// @dev Lowest per-market margin multiplier. 1_250 scales the first tier to 2.5% initial / 1.5% maintenance (40x).
+uint16 constant MIN_MARGIN_SCALE_BPS = 1_250;
 uint16 constant MAX_MARGIN_SCALE_BPS = 50_000;
 
 /// @dev Bounds of a market's base quote spread. The quoting services add volatility, hedge and toxicity
 /// components on top and cap the total at 100 bps.
 uint16 constant MIN_BASE_SPREAD_BPS = 2;
 uint16 constant MAX_BASE_SPREAD_BPS = 50;
-
-/// @dev The platform's charge per fill, quoted in the price on top of the base spread instead of as a fee.
-/// Approvers enforce it; settlement moves the insurance share of it from maker backing to insurance.
-uint256 constant PLATFORM_MARKUP_BPS = 2;
 
 uint256 constant MIN_FIRST_DEPOSIT = 10e6;
 /// @dev Domain tag for isolated account addresses: address(keccak256(abi.encode(tag, owner, market))).

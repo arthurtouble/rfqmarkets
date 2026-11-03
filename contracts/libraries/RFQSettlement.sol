@@ -99,7 +99,7 @@ library RFQSettlement {
         if (approval.oracleReportHash != keccak256(report)) revert OracleInvalid();
         uint256 notional =
             RFQRiskMath.validateEconomics(intent, approval, observation.bid, observation.ask, sessionSigner);
-        uint256 stress = RFQRiskMath.checkExposureTrade(intent, approval.executionPrice);
+        RFQRiskMath.checkExposureTrade(intent, approval.executionPrice);
 
         Position storage position = $.accounts[intent.account].positions[intent.market];
         int256 previousSize = position.size;
@@ -110,7 +110,6 @@ library RFQSettlement {
         $.nonceUsed[intent.account][intent.nonce] = true;
         if (sessionSigner != address(0)) $.sessions[sessionSigner].usedNotional += uint128(notional);
         chargeFee(intent.account, approval.fee);
-        shareMarkup(notional, stress);
         if (RFQRiskMath.isReduction(previousSize, previousSize + intent.baseDelta)) {
             RFQLedger.requireMaintenanceMargin(intent.account);
         } else {
@@ -175,28 +174,14 @@ library RFQSettlement {
         emit IRFQClearingEvents.MarginTransferred(to, from, market, moved);
     }
 
-    /// @dev 20% of each fee goes to insurance while it is below a quarter of the capital floor, else 10%.
+    /// @dev 20% of each fee goes to insurance while it is below a quarter of the capital floor, else 10%. The
+    /// platform's 2 bps is part of the fee (quote model adaptive-v2), so this is the only insurance share of a fill.
     function chargeFee(address account, uint256 fee) private {
         RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
         RFQLedger.changeCollateral(account, -int256(fee));
         uint256 insuranceShare = insuranceShareOf(fee);
         $.insuranceBalance += insuranceShare;
         $.makerBacking += fee - insuranceShare;
-    }
-
-    /// @dev The trader pays the platform markup inside the price, so the maker holds it. Insurance takes the
-    /// same share of it as of a fee, moved from maker backing; the trader's balance is untouched and the
-    /// total of maker backing and insurance is unchanged. Only backing above the capital floor moves, so the
-    /// share never takes the maker below the floor that opening trades require, nor below `stress`, the
-    /// stress loss the exposure check just admitted.
-    function shareMarkup(uint256 notional, uint256 stress) private {
-        RFQClearingNamespace.Layout storage $ = RFQClearingStorage.layout();
-        uint256 share = insuranceShareOf(notional * PLATFORM_MARKUP_BPS / 10_000);
-        uint256 floor = stress > $.baseRiskCapitalTarget ? stress : $.baseRiskCapitalTarget;
-        uint256 excess = $.makerBacking > floor ? $.makerBacking - floor : 0;
-        if (share > excess) share = excess;
-        $.makerBacking -= share;
-        $.insuranceBalance += share;
     }
 
     function insuranceShareOf(uint256 charge) private view returns (uint256) {

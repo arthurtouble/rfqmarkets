@@ -21,7 +21,7 @@ that changes markets at once, with no timelock, inside an envelope governance se
 | Set the envelope (`setRiskOperatorBounds`) | Yes | No | No |
 
 The contract's absolute limits bind everyone: 1,000,000 USDC per trade, 5,000,000 USDC net and gross per market,
-margin from 0.25x to 5x the base tiers (20x to 1x first-tier leverage), stress shock from 5% to 100%.
+margin from 0.125x to 5x the base tiers (40x to 1x first-tier leverage), stress shock from 5% to 100%.
 
 The operator cannot move funds, pause or unpause, upgrade, rotate approvers, change the oracle or touch
 governance. A compromised operator key can at worst open markets up to the envelope and narrow spreads to 2 bps;

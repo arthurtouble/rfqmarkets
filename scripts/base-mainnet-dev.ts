@@ -191,7 +191,8 @@ export async function appointRiskOperatorDev(
     maxGrossLimit: DEV_CEILINGS.grossUsdc,
     minImpactK: 1,
     minShockBps: 500,
-    minMarginScaleBps: 2_500,
+    // The contract floor (40x), so the operator can raise any market to 40x without a governance step.
+    minMarginScaleBps: 1_250,
   };
   return [
     await confirmed(clearing.setRiskOperatorBounds(bounds), confirmations),

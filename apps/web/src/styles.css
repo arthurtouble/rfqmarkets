@@ -396,3 +396,25 @@ dialog.sheet { text-align: start; }
 .rfq-tip__button::after { content: ""; position: absolute; inset: -13px; }
 .rfq-tip__body { position: absolute; z-index: 20; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); width: max-content; max-width: min(260px, 80vw); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: 0 4px 16px rgb(0 0 0 / 0.18), inset 0 0 0 1px var(--line); color: var(--text); font: 400 13px/1.4 var(--font-sans); text-align: left; }
 .updown-bet__details { display: flex; justify-content: center; gap: var(--space-4); flex-wrap: wrap; }
+
+/* Slider (leverage, close amount) ---------------------------------------- */
+.rfq-slider { display: grid; gap: var(--space-1); min-width: 0; }
+.rfq-slider input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; margin: 0; background: transparent; cursor: pointer; }
+.rfq-slider input[type="range"]:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: var(--radius-full); }
+.rfq-slider input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: var(--radius-full); background: linear-gradient(to right, var(--brand) var(--fill, 0%), var(--line) var(--fill, 0%)); }
+.rfq-slider input[type="range"]::-moz-range-track { height: 4px; border-radius: var(--radius-full); background: var(--line); }
+.rfq-slider input[type="range"]::-moz-range-progress { height: 4px; border-radius: var(--radius-full); background: var(--brand); }
+.rfq-slider input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: var(--on-brand); box-shadow: 0 0 0 2px var(--brand), 0 1px 4px rgb(0 0 0 / 0.25); }
+.rfq-slider input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; border: 0; border-radius: 50%; background: var(--on-brand); box-shadow: 0 0 0 2px var(--brand), 0 1px 4px rgb(0 0 0 / 0.25); }
+.rfq-slider__marks { position: relative; height: 28px; margin: 0 10px; }
+.rfq-slider__mark { position: absolute; top: 0; transform: translateX(-50%); min-height: 28px; min-width: 32px; padding: 0 var(--space-1); border: 0; border-radius: var(--radius-sm); background: none; color: var(--text-tertiary); font: 500 12px/28px var(--font-sans); font-variant-numeric: tabular-nums; cursor: pointer; }
+.rfq-slider__mark:first-child { transform: translateX(-10px); }
+.rfq-slider__mark:last-child { transform: translateX(calc(-100% + 10px)); }
+.rfq-slider__mark:hover { color: var(--text); }
+.rfq-slider__mark[aria-pressed="true"] { color: var(--brand-text); }
+.ticket-leverage__row { display: flex; align-items: flex-start; gap: var(--space-3); }
+.ticket-leverage__row .rfq-slider { flex: 1; }
+.ticket-leverage__input { flex: 0 0 76px; min-height: 36px; }
+.ticket-leverage__input input { text-align: right; }
+.margin-sheet__tabs { justify-self: stretch; }
+.margin-cell { display: inline-flex; align-items: baseline; gap: var(--space-1); }

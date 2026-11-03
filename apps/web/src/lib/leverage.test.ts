@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   clampLeverage,
+  leverageMarks,
   leveragePresets,
   marginForScale,
   marginFromLeverage,
   maxLeverageAt,
+  parseLeverage,
   sizeFromLeverage,
 } from "./leverage.js";
 
@@ -64,4 +66,24 @@ test("clamps leverage into [1, max]", () => {
   assert.equal(clampLeverage(0.2, 20), 1);
   assert.equal(clampLeverage(7.5, 20), 7.5);
   assert.equal(clampLeverage(Number.NaN, 20), 1);
+});
+
+test("slider marks are 1x, quarters of the max and the max, evenly spaced", () => {
+  assert.deepEqual(leverageMarks(40), [1, 10, 20, 30, 40]);
+  assert.deepEqual(leverageMarks(20), [1, 5, 10, 15, 20]);
+  assert.deepEqual(leverageMarks(5), [1, 3, 4, 5]);
+  assert.deepEqual(leverageMarks(1), [1]);
+  assert.deepEqual(leverageMarks(0), []);
+});
+
+test("40x first tier at the lowest margin multiplier", () => {
+  assert.equal(maxLeverageAt(0n, 1_250), 40);
+  assert.equal(marginForScale(1_250).maxLeverage, 40);
+});
+
+test("typed leverage accepts a number with an optional x, up to two decimals", () => {
+  assert.equal(parseLeverage("12"), 12);
+  assert.equal(parseLeverage(" 12.5x "), 12.5);
+  assert.equal(parseLeverage("40X"), 40);
+  for (const bad of ["", "x", "0", "-3", "1.234", "abc", "1e2"]) assert.equal(parseLeverage(bad), null, bad);
 });

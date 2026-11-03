@@ -50,7 +50,11 @@ Yes, in Pro. Click **TP/SL** on the position, enter a take-profit price, a stop-
 
 ## Can I close part of a position?
 
-Yes. **Close** offers 25%, 50%, 75% or 100% of the position. **Close all** closes every position at once.
+Yes. **Close** has a slider from 1% to 100% of the position, with 25%, 50%, 75% and 100% to tap, and shows what stays open. **Close all** closes every position at once, isolated ones included.
+
+## Can I add or remove margin on a position?
+
+On an isolated position, yes: **Margin** (or the margin figure in the positions table) adds money from your balance, which moves the liquidation price away, or takes some back, as long as the position keeps its initial margin. A cross position already uses your whole balance, so depositing adds to its margin.
 
 ## Does it work on a phone?
 

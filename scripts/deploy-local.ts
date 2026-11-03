@@ -76,7 +76,7 @@ await (
     maxGrossLimit: 5_000_000_000_000n,
     minImpactK: 1,
     minShockBps: 500,
-    minMarginScaleBps: 2_500,
+    minMarginScaleBps: 1_250,
   })
 ).wait();
 // The dev wallet keeps 50,000 USDC and no standing allowance, so the app's approve-then-deposit flow runs locally.
