@@ -150,8 +150,11 @@ export function exposureAdmission(input: {
       book = books[i];
     let longs = book.longBase,
       shorts = book.shortBase;
+    // As RFQRiskMath.checkExposureTrade: another market's stale price does not block a reduction, since that
+    // market's terms are the same before and after.
     if (
       longs + shorts !== 0n &&
+      !(reduction && i !== market) &&
       (state.lastPriceTime === 0n || timestamp < state.lastPriceTime || timestamp - state.lastPriceTime > 15n)
     )
       return reject("stale_gross_price");

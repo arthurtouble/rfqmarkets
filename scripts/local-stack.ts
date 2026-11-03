@@ -4,10 +4,12 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import {
   CoinbaseMarketDataSource,
+  SignedOracleSource,
   SimulatedMarketDataSource,
   type OracleMarket,
 } from "../services/api/src/oracle.js";
 import { startServiceStack, stopOnSignals } from "./lib/service-stack.js";
+import { startSimulatedOracleNodes } from "./lib/simulated-oracle-nodes.js";
 import { isKnownMarket } from "../packages/shared/src/markets.js";
 
 const deployment = JSON.parse(readFileSync(resolve(".local-state", "deployment.json"), "utf8")) as {
@@ -21,9 +23,47 @@ const deployment = JSON.parse(readFileSync(resolve(".local-state", "deployment.j
   riskOperator?: { account: string; privateKey: string };
   deploymentBlock?: number;
   approvers: Array<{ address: string; privateKey: string }>;
+  oracleAddress: string;
+  /** Set by `RFQ_ORACLE=signed npm run deploy:local`: the production oracle adapter and its node keys. */
+  oracle?: {
+    kind: "signed";
+    signers: Array<{ address: string; privateKey: string }>;
+    threshold: number;
+    maxDeviationBps: number;
+    maxSkew: number;
+  };
 };
 // RFQ_MARKET_DATA=sim runs offline with random-walk prices; the default streams Coinbase public tickers.
-const simulated = process.env.RFQ_MARKET_DATA === "sim" ? new SimulatedMarketDataSource() : undefined;
+const signed = deployment.oracle?.kind === "signed" ? deployment.oracle : undefined;
+// Production parity (a SignedPriceOracle deployment) always simulates venue prices: the oracle nodes sign them.
+const simulated =
+  process.env.RFQ_MARKET_DATA === "sim" || signed ? new SimulatedMarketDataSource() : undefined;
+// Parity mode runs the dev/mainnet code paths end to end: oracle nodes sign multi-market batches, the API quotes
+// from SignedOracleSource without dev-chain shortcuts, approvers verify reports against the adapter, and the
+// contract stores every price a report carries. Only the venue quotes and the chain are local.
+let oracleNodes: Awaited<ReturnType<typeof startSimulatedOracleNodes>> | undefined;
+if (signed) {
+  await simulated!.start();
+  oracleNodes = await startSimulatedOracleNodes({
+    keys: signed.signers.map((signer) => signer.privateKey),
+    chainId: BigInt(deployment.chainId),
+    adapter: deployment.oracleAddress,
+    clearing: deployment.clearingAddress,
+    rpcUrl: deployment.rpcUrl,
+    mids: () => simulated!.prices(),
+  });
+}
+const oracleSource = signed
+  ? new SignedOracleSource({
+      nodes: oracleNodes!.urls,
+      signers: signed.signers.map((signer) => signer.address),
+      threshold: signed.threshold,
+      maxDeviationBps: signed.maxDeviationBps,
+      maxSkewSeconds: signed.maxSkew,
+      chainId: BigInt(deployment.chainId),
+      adapter: deployment.oracleAddress,
+    })
+  : (simulated ?? new CoinbaseMarketDataSource());
 
 const stack = await startServiceStack({
   stateDirectory: resolve(".local-state", deployment.deploymentId ?? "legacy-runtime"),
@@ -33,11 +73,12 @@ const stack = await startServiceStack({
   startBlock: deployment.deploymentBlock ?? 0,
   rpcUrl: deployment.rpcUrl,
   sponsorKey: deployment.sponsorPrivateKey,
-  oracleSource: simulated ?? new CoinbaseMarketDataSource(),
+  oracleSource,
   approvers: {
     keys: deployment.approvers.map((approver) => approver.privateKey),
     rpc: () => ({ primary: deployment.rpcUrl, secondary: deployment.rpcUrl }),
-    maxFutureSeconds: 30,
+    maxFutureSeconds: signed ? 5 : 30,
+    ...(signed ? { oracleMode: "signed" as const } : {}),
     tokenPrefix: "local-transport",
   },
   // This token is limited to loopback development. Deployed environments must
@@ -45,7 +86,8 @@ const stack = await startServiceStack({
   hedge: { token: "local-development-hedge-token" },
   api: {
     publicRpcUrl: deployment.rpcUrl,
-    chain: { devFund: true, devWallet: deployment.devWallet, riskOperator: deployment.riskOperator },
+    // Parity mode leaves devFund off: no dev faucet, no chain-time shortcuts, simulations before every send.
+    chain: { devFund: !signed, devWallet: deployment.devWallet, riskOperator: deployment.riskOperator },
     // Every trading screen asks for a one-tap key, and the browser tests open hundreds of fresh pages for the
     // same dev wallet: the production budget (5, then one per 10 s) would refuse most of their session grants.
     sponsoredActionRatePerSecond: 50,
@@ -81,9 +123,14 @@ if (simulated) {
   await new Promise<void>((done) => control.listen(4600, "127.0.0.1", done));
   stack.add({ close: () => new Promise<void>((done) => control.close(() => done())) });
 }
+if (oracleNodes) stack.add({ close: oracleNodes.close });
 
 console.log(
-  `Local RFQ services ready: API :4100; private approvers :4201-4203; indexer :4300; hedge worker :4400; stream gateway :4500; market data ${simulated ? "simulated (price control :4600)" : "Coinbase"}`,
+  `Local RFQ services ready: API :4100; private approvers :4201-4203; indexer :4300; hedge worker :4400; stream gateway :4500; market data ${simulated ? "simulated (price control :4600)" : "Coinbase"}${
+    signed
+      ? `; production-parity oracle: ${oracleNodes!.urls.length} signing nodes :4901-4903, SignedPriceOracle`
+      : ""
+  }`,
 );
 console.log("Run `npm run dev:web` for the trade UI and `npm run dev:admin` for private hedge operations");
 stopOnSignals(stack);

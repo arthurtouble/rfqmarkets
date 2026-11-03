@@ -55,6 +55,24 @@ test("independent exposure model rejects netting bypasses, stale gross and incom
   input.timestamp = 116n;
   assert.equal(exposureAdmission(input).reason, "stale_gross_price");
 });
+test("like the contract, another market's stale price does not block a reduction, but does block new risk", () => {
+  // ETH (market 1) holds a short; BTC gross is outstanding and its stored price is 16 s old.
+  const input = fixture();
+  input.market = 1;
+  input.position = { size: -BASE, entryPrice: 4_000_000_000n, lastFundingIndex: 0n };
+  input.books[1] = { longBase: 0n, shortBase: BASE, limits: word(max) };
+  input.markets[1] = { ...input.markets[1], lastPriceTime: 116n };
+  input.timestamp = 116n;
+  input.books[0].limits = word(max);
+  input.delta = BASE / 2n; // buys back half the short
+  assert.equal(exposureAdmission(input).allowed, true);
+  input.delta = -BASE / 2n; // adds to the short
+  assert.equal(exposureAdmission(input).reason, "stale_gross_price");
+  // The traded market itself must always be fresh, reduction or not.
+  input.delta = BASE / 2n;
+  input.markets[1] = { ...input.markets[1], lastPriceTime: 100n };
+  assert.equal(exposureAdmission(input).reason, "stale_gross_price");
+});
 test("tightened caps permit improvements and disabled markets permit safe owner reductions", () => {
   const input = fixture();
   input.position = { size: BASE / 10n, entryPrice: 100_000_000_000n, lastFundingIndex: 0n };

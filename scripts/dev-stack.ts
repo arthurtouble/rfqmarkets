@@ -1,9 +1,14 @@
 // One command for the whole local venue: compile, chain, deploy, services.
-// Usage: npm run dev:stack [-- --web] [-- --coinbase] [-- --skip-compile] [-- --mine-every-second]
+// Usage: npm run dev:stack [-- --web] [-- --coinbase] [-- --skip-compile] [-- --mine-every-second] [-- --parity]
+// --parity runs production parity: the SignedPriceOracle adapter, three signing oracle nodes, approvers that
+// verify signed reports and an API without dev-chain shortcuts (see docs/operations/testing.md).
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdirSync, openSync } from "node:fs";
 
 const args = new Set(process.argv.slice(2));
+const parity = args.has("--parity") || process.env.RFQ_ORACLE === "signed";
+// Signed reports are stamped with wall-clock time, so chain time must track it: mine once a second, as Base does.
+if (parity) args.add("--mine-every-second");
 const rpcUrl = "http://127.0.0.1:8545";
 const children: ChildProcess[] = [];
 let stopping = false;
@@ -88,8 +93,10 @@ try {
     ".local-state/chain.log",
   );
   await waitForRpc();
-  run("deploy:local");
-  start("services", "dev:services", { RFQ_MARKET_DATA: args.has("--coinbase") ? "coinbase" : "sim" });
+  run("deploy:local", parity ? { RFQ_ORACLE: "signed" } : {});
+  start("services", "dev:services", {
+    RFQ_MARKET_DATA: args.has("--coinbase") && !parity ? "coinbase" : "sim",
+  });
   await waitForHttp("http://127.0.0.1:4100/health");
   if (args.has("--web")) start("web", "dev:web");
   console.log(

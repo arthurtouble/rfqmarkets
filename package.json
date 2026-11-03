@@ -42,6 +42,8 @@
     "dev:chain:timed": "hardhat --verbosity 0 node --network hardhatTimed --hostname 127.0.0.1 --port 8545",
     "deploy:local": "node --import tsx scripts/deploy-local.ts",
     "smoke": "node --import tsx scripts/smoke.ts",
+    "journey": "node --import tsx scripts/smoke/trade-journey.ts",
+    "test:parity": "bash scripts/test-parity.sh",
     "soak:runtime": "node --import tsx scripts/smoke/runtime-soak.ts",
     "test": "npm run check:docs && npm run check:tokens && npm run test:contracts && npm run validate:upgrades && npm run test:python && npm run test:services && npm run test:web && npm run test:ops-apps && npm run test:cloudflare-edge && npm run typecheck && npm run build && npm run validate:cloudflare-static",
     "build": "npm run build:web && npm run build:exit && npm run build:admin && npm run build:docs && npm run build:internal-docs && npm run build:design-system",

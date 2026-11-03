@@ -58,7 +58,7 @@ async function verifyWhenHeadCatchesUp(
   clearingAddress: string,
   blockNumber: number,
   market: number,
-  covered?: Set<number>,
+  covered?: Map<number, OracleObservation>,
 ) {
   for (let attempt = 0, block = blockNumber; ; attempt++) {
     try {
@@ -239,7 +239,7 @@ async function chainChecks(
     return reject("triggered fill does not match position");
 
   let observation = request.observation;
-  const covered = new Set<number>();
+  const covered = new Map<number, OracleObservation>();
   if (options.oracleMode === "signed") {
     try {
       observation = await verifyWhenHeadCatchesUp(
@@ -313,6 +313,7 @@ async function chainChecks(
     market,
     prices,
     observation?.observedAt ?? BigInt(Math.floor(input.quote.observedAtMs / 1000)),
+    covered,
   );
   const exposure = checkExposure({ snapshot, markets, market, intent, approval });
   if (exposure) return exposure;

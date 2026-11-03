@@ -15,6 +15,7 @@ import {
   markedMarkets,
 } from "./exposure-policy.js";
 import { safetyPrices } from "./oracle-policy.js";
+import type { OracleObservation } from "../../../packages/shared/src/oracle-report.js";
 import { PRICES, buildFixture, chainState, fakeChain, word } from "./test-fixtures.js";
 
 const error = (rejection: { body: { error: string } } | undefined) => rejection?.body.error;
@@ -76,6 +77,48 @@ test("markedMarkets re-marks only the intent market", async () => {
   const { snapshot, markets } = await setup({ market: "ETH" });
   assert.equal(markets[0], snapshot.markets[0]);
   assert.equal(markets[1].lastBid, PRICES.ETH);
+});
+
+test("markedMarkets stores every newer price the report carries, as the contract does before its checks", async () => {
+  const { snapshot, prices } = await setup({ market: "ETH" }),
+    stored = snapshot.markets[0],
+    newer = { market: 0n, bid: 1n, ask: 2n, observedAt: stored.lastPriceTime + 20n, validUntil: 0n },
+    older = { ...newer, observedAt: stored.lastPriceTime - 1n };
+  const marked = markedMarkets(snapshot, 1, prices, 1n, new Map([[0, newer]]));
+  assert.deepEqual(
+    [marked[0].lastBid, marked[0].lastAsk, marked[0].lastPriceTime],
+    [1n, 2n, stored.lastPriceTime + 20n],
+  );
+  assert.equal(marked[1].lastBid, prices.bid, "the intent market keeps the verified safety prices");
+  // Stored prices never move back in time (RFQLedger.touchOracle).
+  assert.equal(markedMarkets(snapshot, 1, prices, 1n, new Map([[0, older]]))[0], stored);
+});
+
+test("checkExposure accepts new risk when the report refreshes another market's stale price", async () => {
+  const context = await setup({ market: "BTC" }),
+    later = BigInt(context.snapshot.blockTimestamp) + 16n,
+    // ETH carries gross risk and its stored price is now 16 s old.
+    snapshot: ChainSnapshot = {
+      ...context.snapshot,
+      blockTimestamp: Number(later),
+      books: context.snapshot.books.map((book, index) =>
+        index === 1 ? { ...book, longBase: BASE, shortBase: 0n } : book,
+      ),
+    },
+    markets = (reported?: Map<number, OracleObservation>) =>
+      markedMarkets(snapshot, 0, context.prices, later, reported);
+  const exposure = (marked: ReturnType<typeof markets>) =>
+    checkExposure({ ...context, snapshot, markets: marked })?.body as { reason?: string } | undefined;
+  assert.equal(exposure(markets())?.reason, "stale_gross_price");
+  const eth = snapshot.markets[1];
+  assert.equal(
+    exposure(
+      markets(
+        new Map([[1, { market: 1n, bid: eth.lastBid, ask: eth.lastAsk, observedAt: later, validUntil: 0n }]]),
+      ),
+    ),
+    undefined,
+  );
 });
 
 test("checkExposure surfaces the model's reason and enforces reduce-only intents", async () => {

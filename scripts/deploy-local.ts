@@ -34,7 +34,26 @@ const chain = await provider.getNetwork();
 if (chain.chainId !== 31_337n) throw new Error(`unexpected local chain ${chain.chainId}`);
 const approvers = [Wallet.createRandom(), Wallet.createRandom(), Wallet.createRandom()];
 const token = (await deploy("MockUSDC")) as unknown as Contract;
-const oracle = await deploy("MockPriceOracle");
+// RFQ_ORACLE=signed deploys the production oracle adapter (SignedPriceOracle, 2-of-3 node signers, the dev
+// consensus parameters) instead of the mock, so the local stack runs the same oracle path as dev and mainnet.
+const signedOracle = process.env.RFQ_ORACLE === "signed";
+const oracleSigners = signedOracle
+  ? [Wallet.createRandom(), Wallet.createRandom(), Wallet.createRandom()]
+  : [];
+const ORACLE_THRESHOLD = 2,
+  ORACLE_MAX_DEVIATION_BPS = 50,
+  ORACLE_MAX_SKEW_SECONDS = 5;
+const oracle = signedOracle
+  ? await deploy("SignedPriceOracle", [
+      ownerAddress,
+      oracleSigners.map((signer) => signer.address),
+      ORACLE_THRESHOLD,
+      ORACLE_MAX_DEVIATION_BPS,
+      ORACLE_MAX_SKEW_SECONDS,
+      0,
+      0,
+    ])
+  : await deploy("MockPriceOracle");
 const riskMath = await deploy("RFQRiskMath");
 libraryAddresses.RFQRiskMath = await riskMath.getAddress();
 const signatureVerifier = await deploy("RFQSignatureVerifier");
@@ -52,6 +71,12 @@ const init = clearingInterface.encodeFunctionData("initialize", [
 ]);
 const proxy = await deploy("TestProxy", [await implementation.getAddress(), ownerAddress, init]);
 const clearing = new Contract(await proxy.getAddress(), artifact("RFQClearing").abi, deployer);
+if (signedOracle)
+  await (
+    await (
+      new Contract(await oracle.getAddress(), artifact("SignedPriceOracle").abi, deployer) as any
+    ).setClearing(await proxy.getAddress())
+  ).wait();
 await (await clearing.unpause()).wait();
 const adminWord = await provider.getStorage(
     await proxy.getAddress(),
@@ -93,6 +118,20 @@ const deployment = {
   proxyAdminAddress,
   tokenAddress: await token.getAddress(),
   oracleAddress: await oracle.getAddress(),
+  ...(signedOracle
+    ? {
+        oracle: {
+          kind: "signed",
+          signers: oracleSigners.map((signer) => ({
+            address: signer.address,
+            privateKey: signer.privateKey,
+          })),
+          threshold: ORACLE_THRESHOLD,
+          maxDeviationBps: ORACLE_MAX_DEVIATION_BPS,
+          maxSkew: ORACLE_MAX_SKEW_SECONDS,
+        },
+      }
+    : {}),
   riskMathAddress: await riskMath.getAddress(),
   signatureVerifierAddress: await signatureVerifier.getAddress(),
   implementationAddress: await implementation.getAddress(),
