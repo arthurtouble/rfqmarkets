@@ -132,6 +132,8 @@ export function OrderTicket({
     available === null
       ? null
       : maxPay({ availableMicro: available, leverage: lev, feeBps, tradeCapMicro: tradeCap, scaleBps });
+  // The biggest position the free margin opens at this leverage, after the fee and within the per-trade cap.
+  const buyingPower = payCeiling === null ? null : positionNotional(payCeiling, lev);
   const overCap = tradeCap > 0n && notional > tradeCap;
   const ceiling = sizeMicro ? Math.min(marketMax, maxLeverageAt(sizeMicro, scaleBps)) : marketMax;
 
@@ -202,7 +204,6 @@ export function OrderTicket({
   const problem = ticketIssue ?? stopProblem;
   const marketable =
     isLimit && quote && limitMicro !== null && limitMarketable(side, BigInt(quote.expectedPrice), limitMicro);
-  const oneClick = orderType === "market" && notional > 0n && trading.quickCovers(market, notional);
   const busy = trading.busy !== null;
 
   const choosePay = (text: string) => {
@@ -266,7 +267,10 @@ export function OrderTicket({
   const meta = overCap ? (
     <span>Up to {usdc(tradeCap)} per trade</span>
   ) : account ? (
-    <span>Available {usdc(account.availableMargin)}</span>
+    <span>
+      Available {usdc(account.availableMargin)}
+      {buyingPower !== null && <> · Buying power {usdc(buyingPower)}</>}
+    </span>
   ) : (
     <span>{live ? `Positions up to ${usdc(tradeCap)} per trade` : ""}</span>
   );
@@ -525,7 +529,7 @@ export function OrderTicket({
           {busy ? (
             <>
               <span className="rfq-spinner" />
-              {oneClick ? "Placing trade" : "Confirm in your wallet"}
+              {orderType === "market" ? "Placing trade" : "Placing order"}
             </>
           ) : (
             (problem ??

@@ -94,11 +94,11 @@ can be priced. `parseSlippagePercent("0.5")` → `50`, `clampSlippageBps(n)`,
 **Trigger orders and TP/SL** (`useTrading()` in `data/actions.tsx`, checks in `lib/orders.ts`).
 
 - `triggerOrder({ market, kind: "stop-loss" | "take-profit" | "stop-entry", side, amountMicro, triggerPriceMicro, slippageBps? })`, or `{ sizing: "position", … }` to close the whole position → orderId.
-- `placeTpsl({ market, takeProfitMicro?, stopLossMicro?, slippageBps? })` → both legs' orderIds; one wallet prompt per leg, then both are placed.
+- `placeTpsl({ market, takeProfitMicro?, stopLossMicro?, slippageBps? })` → both legs' orderIds; both legs sign with the trading key, then both are placed.
 - `cancelOrder(order)`: cancelling either TP/SL leg cancels both (shared nonce).
 - `useOpenOrders(address, market?)` → open limit and trigger orders (`type`, `triggerPrice`, `triggerAbove`, `pairId`); `protectiveOrders(orders, market)`, `pairedOrder(order, orders)`.
 - `tpslProblem(size, mid, tp?, sl?)` and `triggerProblem(kind, side, trigger, mid)` give the reason a price would be rejected, for inline validation.
-- Orders are always signed with the wallet: `POST /v1/orders` accepts only the owner's signature, so the quick-trading key cannot place resting orders. (`sessionCoversDeadline` exists for when it can.)
+- Limit, stop and TP/SL orders sign with the trading key when it covers them, and then expire before the key does (`sessionOrderSeconds`). If the API refuses the session's signature, the wallet signs instead. Cancelling an order always asks the wallet: the contract accepts a *CancelIntent* only from the owner.
 
 **Screens** (`trade/TriggerOrders.tsx`). `TpslSheet` sets, replaces (new pair first, then the old one is cancelled) or removes a position's TP/SL, with ±% presets from the current price, estimated PnL at each trigger, a slippage band in Advanced, and warnings for a stop past the liquidation price or a TP/SL that covers only part of a grown position. Positions show the TP/SL (table column on desktop, card row and button on phones). The ticket's **Stop** type (Advanced) places a stop entry, or a reduce-only stop with Reduce only. The Orders tab lists limit, stop and TP/SL orders (cards on phones) with the trigger, the fill bound, the estimated PnL at the trigger and why an open order is waiting. `useOrderFillAlerts()` toasts when a resting order fills in the background, and open orders refresh every 5 s because off-chain changes (a TP/SL retired when its position closes) are not on the indexer stream.
 

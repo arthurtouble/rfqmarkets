@@ -78,7 +78,8 @@ export function ConnectDialog({ open, onClose }: { open: boolean; onClose: () =>
     <Sheet open={open} onClose={onClose} title="Connect a wallet" labelledBy="connect-title">
       <div className="sheet-body connect-sheet">
         <div className="body rfq-muted">
-          Trade on {trader.chain.name}. Your wallet signs every order, and RFQ Markets never holds your keys.
+          Trade on {trader.chain.name}. Connect once and every trade fills with one tap. RFQ Markets never
+          holds your keys.
         </div>
         {sections.installed.length > 0 && (
           <section className="wallet-group" aria-labelledby="wallets-installed">

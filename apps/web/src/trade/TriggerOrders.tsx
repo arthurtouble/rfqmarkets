@@ -289,8 +289,8 @@ export function TpslSheet({
         )}
         {existing.length > 0 && (
           <p className="footnote rfq-faint">
-            Replacing places the new orders first, then cancels the old ones. Cancelling asks for one wallet
-            signature.
+            Replacing places the new orders first, then cancels the old ones. Cancelling the old ones asks for
+            one wallet signature.
           </p>
         )}
         {!trading.quickLive ? (
@@ -306,7 +306,7 @@ export function TpslSheet({
             {busy ? (
               <>
                 <span className="rfq-spinner" />
-                {existing.length ? "Confirm in your wallet" : "Placing"}
+                {existing.length ? "Replacing" : "Placing"}
               </>
             ) : (
               (problem ?? action)

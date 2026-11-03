@@ -111,9 +111,9 @@ type Trading = {
   marketOrder(order: MarketOrder, quote?: Quote): Promise<boolean>;
   /** Places a 24-hour limit order. Resolves true once it is open. */
   limitOrder(order: LimitOrder): Promise<boolean>;
-  /** Places a stop-loss, take-profit or stop-entry order; resolves to its orderId. Signed with the wallet. */
+  /** Places a stop-loss, take-profit or stop-entry order; resolves to its orderId. Signed with the trading key. */
   triggerOrder(order: TriggerOrderInput): Promise<string | undefined>;
-  /** Places a TP and/or SL for the whole position (two legs, one nonce, one wallet prompt per leg). Resolves to the placed orderIds. */
+  /** Places a TP and/or SL for the whole position (two legs, one nonce, both signed with the trading key). Resolves to the placed orderIds. */
   placeTpsl(input: TpslInput): Promise<string[] | undefined>;
   /** Cancels an order by its nonce; for a TP/SL leg this cancels both legs. */
   cancelOrder(order: RestingOrder): Promise<void>;
@@ -964,7 +964,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
           for (const [index, { market, first, isolated }] of legs.entries()) {
             try {
               const holder = tradeAccount(market, isolated);
-              // Quotes live seconds; wallet prompts for earlier positions can outlast later quotes.
+              // Quotes live seconds; closing earlier positions can outlast later quotes.
               const quote =
                 first && quoteUsable(localDeadline(first), Date.now())
                   ? first

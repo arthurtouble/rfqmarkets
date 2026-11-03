@@ -5,7 +5,8 @@ import { useTrading } from "../data/actions.js";
 
 export function StartTrading({ label = "Start trading" }: { label?: string }) {
   const trading = useTrading(),
-    busy = trading.busy !== null;
+    busy = trading.busy !== null,
+    connecting = trading.busy === "Start trading";
   return (
     <>
       <button
@@ -18,7 +19,7 @@ export function StartTrading({ label = "Start trading" }: { label?: string }) {
         {busy ? (
           <>
             <span className="rfq-spinner" />
-            Confirm in your wallet
+            {connecting ? "Confirm in your wallet" : "Working"}
           </>
         ) : (
           label
