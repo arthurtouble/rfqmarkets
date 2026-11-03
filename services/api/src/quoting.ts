@@ -627,7 +627,7 @@ export class QuoteEngine {
       const localTimestamp = ctx.devFund ? versions.blockTimestamp : undefined;
       oracleReport =
         localTimestamp === undefined
-          ? { report: oracleQuote.report, validUntil: oracleQuote.validUntil }
+          ? { report: oracleQuote.report, validUntil: oracleQuote.validUntil, markets: oracleQuote.markets }
           : {
               report: encodeLocalReport(
                 marketIndex(request.market),

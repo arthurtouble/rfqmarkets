@@ -10,7 +10,12 @@ export type ProtocolVersions = {
   blockTimestamp: number;
 };
 
-export type OracleReport = { report: string; validUntil: number };
+export type OracleReport = {
+  report: string;
+  validUntil: number;
+  /** On-chain indexes of every market the report prices (the trade refreshes them all), when known. */
+  markets?: readonly number[];
+};
 
 /** Firm quotes stay addressable for a grace period after expiry so late retries get a clean answer. */
 const QUOTE_RETENTION_MS = 60_000;

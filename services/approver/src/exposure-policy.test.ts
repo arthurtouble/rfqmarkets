@@ -114,6 +114,14 @@ test("checkCrossMarketFreshness requires a fresh other-market price while gross 
     error(checkCrossMarketFreshness(book, "0xnew", unpriced, 0)),
     "outstanding gross risk requires fresh cross-market price",
   );
+  // The trade's own verified report prices ETH too, so the contract refreshes it before any check.
+  assert.equal(checkCrossMarketFreshness(book, "0xnew", stale, 0, { covered: new Set([0, 1]) }), undefined);
+  assert.equal(
+    error(checkCrossMarketFreshness(book, "0xnew", stale, 0, { covered: new Set([0]) })),
+    "outstanding gross risk requires fresh cross-market price",
+  );
+  // A reduction settles against another market's stale price on chain, so it is not held up here either.
+  assert.equal(checkCrossMarketFreshness(book, "0xnew", unpriced, 0, { reduction: true }), undefined);
 });
 
 test("buildGrossContext uses safety asks and settled net notional", async () => {
