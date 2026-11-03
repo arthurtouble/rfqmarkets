@@ -19,6 +19,7 @@ import {
   effectiveSpread,
   leverageOf,
   listingDefaults,
+  MAX_LEVERAGE,
   parseDraft,
   planChanges,
   planDefaultSpread,
@@ -210,7 +211,7 @@ export function MarketControls() {
                 {state
                   ? state.bounds.minMarginScaleBps
                     ? `${leverageOf(state.bounds.minMarginScaleBps)}x`
-                    : "20x"
+                    : `${MAX_LEVERAGE}x`
                   : "—"}
               </dd>
             </div>

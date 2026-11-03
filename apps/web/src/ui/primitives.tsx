@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { StreamStatus } from "../lib/event-stream.js";
 import type { Market } from "../lib/types.js";
 import type { MascotMood } from "../../../../packages/design-system/mascot.js";
@@ -197,6 +197,67 @@ export function Segmented<T extends string>({
           {option.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * A range slider with tappable marks under it (e.g. leverage steps or close percentages). The fill shows how
+ * far along the value is; marks set the value exactly.
+ */
+export function Slider({
+  value,
+  min,
+  max,
+  step = 1,
+  onChange,
+  label,
+  marks = [],
+  format = String,
+  id,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (value: number) => void;
+  label: string;
+  marks?: readonly number[];
+  format?: (value: number) => string;
+  id?: string;
+}) {
+  const span = max - min;
+  const at = (v: number) => (span > 0 ? ((Math.min(Math.max(v, min), max) - min) / span) * 100 : 100);
+  return (
+    <div className="rfq-slider">
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={Math.min(Math.max(value, min), max)}
+        aria-label={label}
+        aria-valuetext={format(value)}
+        style={{ "--fill": `${at(value)}%` } as CSSProperties}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+      {marks.length > 0 && (
+        <div className="rfq-slider__marks" role="group" aria-label={`${label} steps`}>
+          {marks.map((mark) => (
+            <button
+              key={mark}
+              type="button"
+              className="rfq-slider__mark"
+              style={{ left: `${at(mark)}%` }}
+              aria-pressed={mark === value}
+              onClick={() => onChange(mark)}
+            >
+              {format(mark)}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

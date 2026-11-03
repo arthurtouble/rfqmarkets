@@ -260,19 +260,20 @@ contract TriggeredOrdersTest is ClearingFixture {
 
     // ---- Leverage ----
 
-    function test_governanceCanScaleMarginDownTo20x() public {
+    function test_governanceCanScaleMarginDownTo40x() public {
         vm.startPrank(governance);
         vm.expectRevert(InvalidConfiguration.selector);
         clearing.setMarketRisk(0, 10_000, 4_000, MIN_MARGIN_SCALE_BPS - 1);
         clearing.setMarketRisk(0, 10_000, 4_000, MIN_MARGIN_SCALE_BPS);
         vm.stopPrank();
-        assertEq(RFQRiskMath.scaledMarginRate(10_000e6, true, MIN_MARGIN_SCALE_BPS), 500);
-        assertEq(RFQRiskMath.scaledMarginRate(10_000e6, false, MIN_MARGIN_SCALE_BPS), 300);
+        assertEq(MIN_MARGIN_SCALE_BPS, 1_250);
+        assertEq(RFQRiskMath.scaledMarginRate(10_000e6, true, MIN_MARGIN_SCALE_BPS), 250);
+        assertEq(RFQRiskMath.scaledMarginRate(10_000e6, false, MIN_MARGIN_SCALE_BPS), 150);
 
-        // 1,000 USDC of collateral opens a 0.19 BTC (19,000 USDC) position: about 19x.
-        Trader memory bob = newTrader("bob", 1_000e6);
-        trade(bob, 0, 19e16, false);
-        assertEq(clearing.positionOf(bob.account, 0).size, 19e16);
-        assertLe(clearing.initialMargin(bob.account), 1_000e6);
+        // 700 USDC of collateral opens a 0.24 BTC (24,000 USDC) position: about 34x, past the old 20x floor.
+        Trader memory bob = newTrader("bob", 700e6);
+        trade(bob, 0, 24e16, false);
+        assertEq(clearing.positionOf(bob.account, 0).size, 24e16);
+        assertLe(clearing.initialMargin(bob.account), 700e6);
     }
 }

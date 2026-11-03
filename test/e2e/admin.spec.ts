@@ -116,8 +116,8 @@ test.describe("markets and risk", () => {
     await btc.getByRole("button", { name: "Edit" }).click();
     const edit = page.getByRole("dialog", { name: "Edit BTC" });
     await edit.getByLabel("Base spread").fill("6");
-    await edit.getByLabel("Max leverage").fill("25");
-    await expect(edit.getByText("Between 1x and 20x")).toBeVisible();
+    await edit.getByLabel("Max leverage").fill("45");
+    await expect(edit.getByText("Between 1x and 40x")).toBeVisible();
     await expect(edit.getByRole("button", { name: "Fix the highlighted fields" })).toBeDisabled();
     await edit.getByLabel("Max leverage").fill("20");
     await expectNoHorizontalOverflow(page);

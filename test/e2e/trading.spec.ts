@@ -21,13 +21,11 @@ async function openTicket(page: Page, isMobile: boolean, market = "BTC"): Promis
 
 const submit = (ticket: Locator) => ticket.getByRole("button", { name: /^(Long|Short|Limit) [A-Z]+ · / });
 
-/** Fills the position size and picks a leverage preset. */
+/** Fills the position size and types the leverage ("5×") into the box beside the slider. */
 async function size(ticket: Locator, position: string, leverage: string) {
   await ticket.getByLabel("Position size in USDC").fill(position);
-  await ticket
-    .getByRole("group", { name: "Leverage" })
-    .getByRole("button", { name: leverage, exact: true })
-    .click();
+  await ticket.getByLabel("Leverage (type a number)").fill(leverage.replace("×", ""));
+  await expect(ticket.getByRole("slider", { name: "Leverage" })).toHaveValue(leverage.replace("×", ""));
 }
 
 /** Sets a market enabled or paused through local governance; returns once mined. */

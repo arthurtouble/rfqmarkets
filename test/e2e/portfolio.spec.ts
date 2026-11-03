@@ -187,6 +187,9 @@ test.describe("positions and portfolio", () => {
     await page.getByRole("button", { name: "Close BTC long" }).click();
     const sheet = page.getByRole("dialog", { name: "Close BTC long" });
     await expect(sheet.getByText("Estimated PnL")).toBeVisible();
+    // Any share from 1% to 100% on the slider; the marks under it jump to the usual steps.
+    await sheet.getByRole("slider", { name: "Amount to close" }).fill("30");
+    await expect(sheet.getByRole("button", { name: "Close 30% of BTC long" })).toBeVisible();
     await sheet.getByRole("button", { name: "50%" }).click();
     await expectNoHorizontalOverflow(page);
     await sheet.getByRole("button", { name: "Close 50% of BTC long" }).click();

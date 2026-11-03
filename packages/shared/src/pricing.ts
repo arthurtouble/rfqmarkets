@@ -254,7 +254,7 @@ export const MARGIN_TIERS = [
 ] as const;
 /** Per-market margin multiplier of the base tiers (`marketParams(id).marginScaleBps`); 10_000 = 1x. */
 export const DEFAULT_MARGIN_SCALE_BPS = 10_000;
-export const MIN_MARGIN_SCALE_BPS = 2_500;
+export const MIN_MARGIN_SCALE_BPS = 1_250;
 export const MAX_MARGIN_SCALE_BPS = 50_000;
 /** Mirrors `RFQRiskMath.scaledMarginRate`: the base tier rate times the market multiplier, capped at 100%. */
 export function scaledMarginRate(notional: bigint, initial: boolean, scaleBps: bigint | number) {
@@ -265,7 +265,7 @@ export function scaledMarginRate(notional: bigint, initial: boolean, scaleBps: b
 export function legMargin(notional: bigint, initial: boolean, scaleBps: bigint | number) {
   return (notional * scaledMarginRate(notional, initial, scaleBps)) / 10_000n;
 }
-/** Leverage the first tier's scaled initial margin allows, rounded down to 0.01x (20 at 2_500). */
+/** Leverage the first tier's scaled initial margin allows, rounded down to 0.01x (20 at 2_500, 40 at 1_250). */
 export function maxLeverage(scaleBps: bigint | number) {
   return Number(1_000_000n / scaledMarginRate(0n, true, scaleBps)) / 100;
 }

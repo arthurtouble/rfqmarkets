@@ -29,8 +29,8 @@ uint256 constant ABSOLUTE_MAX_TRADE_NOTIONAL = 1_000_000e6;
 uint256 constant ABSOLUTE_MAX_MARKET_NOTIONAL = 5_000_000e6;
 
 /// @dev Anti-spam floor for an account's first deposit; registered accounts are walked during resolution.
-/// @dev Lowest per-market margin multiplier. 2_500 scales the first tier to 5% initial / 3% maintenance (20x).
-uint16 constant MIN_MARGIN_SCALE_BPS = 2_500;
+/// @dev Lowest per-market margin multiplier. 1_250 scales the first tier to 2.5% initial / 1.5% maintenance (40x).
+uint16 constant MIN_MARGIN_SCALE_BPS = 1_250;
 uint16 constant MAX_MARGIN_SCALE_BPS = 50_000;
 
 /// @dev Bounds of a market's base quote spread. The quoting services add volatility, hedge and toxicity

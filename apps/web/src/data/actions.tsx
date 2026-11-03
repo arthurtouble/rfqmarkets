@@ -122,8 +122,11 @@ type Trading = {
    * when it settles. With `isolated`, closes the isolated account's position and returns its margin to the balance.
    */
   closePosition(market: Market, fractionBps?: number, isolated?: boolean): Promise<ClosedAt | undefined>;
-  /** Closes `fractionBps` of every open position, one quote each. Quick trading signs within its limits without prompts. */
-  closeAll(fractionBps?: number): Promise<CloseAllResult | undefined>;
+  /**
+   * Closes `fractionBps` of every open position, one quote each: the main account's, then each market in
+   * `isolatedMarkets` (a full close there also returns its margin). Quick trading signs within its limits without prompts.
+   */
+  closeAll(fractionBps?: number, isolatedMarkets?: readonly Market[]): Promise<CloseAllResult | undefined>;
   /** Closes the whole position at the oracle price (while trading is paused). Resolves true once closed. */
   emergencyClose(market: Market): Promise<boolean>;
   /**
@@ -131,6 +134,11 @@ type Trading = {
    * there with no open position (a trade that failed after its amount was set aside). Resolves true once moved.
    */
   returnMargin(market: Market): Promise<boolean>;
+  /**
+   * Adds margin to (positive) or removes it from (negative) an open isolated position in `market`, moving it from
+   * or to the balance. Removing is limited to what keeps the position above its initial margin. Resolves true once moved.
+   */
+  adjustMargin(market: Market, amountMicro: bigint): Promise<boolean>;
   /** Deposits Base USDC from the wallet: gas-free (one signature) when the wallet can, else approve and deposit. */
   deposit(amountMicro: bigint): Promise<boolean>;
   /** Sends a LI.FI route from its source network; resolves to the source transaction once it is included. */
@@ -932,7 +940,7 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         };
       }),
 
-    closeAll: (fractionBps = 10_000) =>
+    closeAll: (fractionBps = 10_000, isolatedMarkets = []) =>
       run(
         "Close all",
         fractionBps < 10_000 ? `Close ${fractionBps / 100}% of every position` : "Close all positions",
@@ -943,20 +951,40 @@ export function TradingProvider({ children }: { children: ReactNode }) {
             fraction: fractionBps,
           });
           const outcome: CloseAllResult = { closed: [], failed: [] };
-          if (!quotes.length) return { title: "No open positions", value: outcome };
+          const legs = [
+            ...quotes.map((quote) => ({
+              market: quote.market!,
+              first: quote as Quote | null,
+              isolated: false,
+            })),
+            ...isolatedMarkets.map((market) => ({ market, first: null as Quote | null, isolated: true })),
+          ];
+          if (!legs.length) return { title: "No open positions", value: outcome };
           let lastTx: Transaction | undefined;
-          for (const [index, first] of quotes.entries()) {
-            const market = first.market!;
+          for (const [index, { market, first, isolated }] of legs.entries()) {
             try {
+              const holder = tradeAccount(market, isolated);
               // Quotes live seconds; wallet prompts for earlier positions can outlast later quotes.
-              const quote = quoteUsable(localDeadline(first), Date.now())
-                ? first
-                : await api<Quote>("/v1/close/quote", { account: account(), market, fraction: fractionBps });
+              const quote =
+                first && quoteUsable(localDeadline(first), Date.now())
+                  ? first
+                  : await api<Quote>("/v1/close/quote", { account: holder, market, fraction: fractionBps });
               const step = (detail: string) =>
-                progress(`${market} (${index + 1} of ${quotes.length}): ${detail}`);
-              const { result } = await settleClose(market, fractionBps, quote, step);
+                progress(`${market} (${index + 1} of ${legs.length}): ${detail}`);
+              const { result } = await settleClose(market, fractionBps, quote, step, isolated);
               lastTx = result.transaction ?? lastTx;
               outcome.closed.push(market);
+              // A fully closed isolated position's margin goes back to the balance; if that fails it stays set
+              // aside for the market and is offered back on the positions screen.
+              if (isolated && fractionBps === 10_000)
+                await moveMarginRetrying(
+                  market,
+                  async () => {
+                    const { held } = await isolatedState(market);
+                    return held > 0n ? -held : 0n;
+                  },
+                  step,
+                ).catch(() => undefined);
             } catch (error) {
               outcome.failed.push({ market, error: friendlyError(errorMessage(error, "Unavailable")) });
             }
@@ -1008,6 +1036,26 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         );
         return { title: `${usdc(held)} is back in your balance`, value: true };
       })) ?? false,
+
+    adjustMargin: async (market, amountMicro) =>
+      (await run(
+        amountMicro > 0n ? "Add margin" : "Remove margin",
+        amountMicro > 0n
+          ? `Add ${usdc(amountMicro)} margin to ${market}`
+          : `Remove ${usdc(-amountMicro)} margin from ${market}`,
+        async (progress) => {
+          if (amountMicro === 0n) return { title: "Nothing to move", value: true };
+          const result = await moveMargin(market, amountMicro, progress);
+          return {
+            title:
+              amountMicro > 0n
+                ? `${usdc(amountMicro)} added to your ${market} margin`
+                : `${usdc(-amountMicro)} is back in your balance`,
+            txHash: result?.transaction?.hash,
+            value: true,
+          };
+        },
+      )) ?? false,
 
     deposit: async (amount) =>
       (await run("Deposit", `Deposit ${usdc(amount)}`, async (progress) => {

@@ -44,10 +44,7 @@ async function openTicket(page: Page, isMobile: boolean): Promise<Locator> {
 
 async function sizeTicket(ticket: Locator, position: string) {
   await ticket.getByLabel("Position size in USDC").fill(position);
-  await ticket
-    .getByRole("group", { name: "Leverage" })
-    .getByRole("button", { name: "2×", exact: true })
-    .click();
+  await ticket.getByLabel("Leverage (type a number)").fill("2");
 }
 
 const submit = (ticket: Locator) => ticket.getByRole("button", { name: /^(Long|Short) BTC · / });

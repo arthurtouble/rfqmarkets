@@ -7,8 +7,10 @@
 /** RFQTypes.sol bounds the contract enforces for everyone, governance included. */
 export const ABSOLUTE_MAX_TRADE_NOTIONAL = 1_000_000n * 1_000_000n;
 export const ABSOLUTE_MAX_MARKET_NOTIONAL = 5_000_000n * 1_000_000n;
-export const MIN_MARGIN_SCALE_BPS = 2_500;
+export const MIN_MARGIN_SCALE_BPS = 1_250;
 export const MAX_MARGIN_SCALE_BPS = 50_000;
+/** The most leverage the contract allows a market: the first tier at the lowest margin multiplier. */
+export const MAX_LEVERAGE = 40;
 export const MIN_SHOCK_BPS = 500;
 export const MAX_SHOCK_BPS = 10_000;
 export const MAX_IMPACT_K = 1_000_000;
@@ -85,7 +87,7 @@ export function roleOf(
 
 // ---- Units ----
 
-/** Leverage the first margin tier allows at a margin multiplier: 20x at 2_500 (0.25x), 5x at 10_000. */
+/** Leverage the first margin tier allows at a margin multiplier: 40x at 1_250 (0.125x), 20x at 2_500 (0.25x), 5x at 10_000. */
 export const leverageOf = (marginScaleBps: number) => Math.floor(5_000_000 / marginScaleBps) / 100;
 /** The margin multiplier for a target leverage, rounded up so the result never allows more than asked. */
 export const marginScaleFor = (leverage: number) => Math.ceil(50_000 / leverage);
@@ -163,7 +165,8 @@ export function parseDraft(
     errors.gross = `At most ${dollars(ABSOLUTE_MAX_MARKET_NOTIONAL)}`;
   if (side === undefined || side === 0n) errors.side = "Enter a whole dollar amount above zero";
   else if (gross !== undefined && side > gross) errors.side = "Cannot exceed the gross cap";
-  if (leverage === undefined || leverage < 1 || leverage > 20) errors.leverage = "Between 1x and 20x";
+  if (leverage === undefined || leverage < 1 || leverage > MAX_LEVERAGE)
+    errors.leverage = `Between 1x and ${MAX_LEVERAGE}x`;
   if (
     shock === undefined ||
     shock < MIN_SHOCK_BPS / 100 ||

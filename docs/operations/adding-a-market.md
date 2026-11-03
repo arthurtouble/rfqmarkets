@@ -21,7 +21,7 @@ Markets live in the clearing contract's registry. Governance lists one with `RFQ
 | `grossLimit`, `sideLimit` | Gross open interest cap and per-side cap | `0 < sideLimit ≤ grossLimit ≤ 5M` USDC |
 | `impactK` | Inventory-impact coefficient | 1 to 1,000,000 |
 | `shockBps` | Stress shock used by `portfolioStress` | 500 to 10,000 |
-| `marginScaleBps` | Multiplier on the base margin tiers (10,000 = 1x) | 2,500 (20x first tier) to 50,000 |
+| `marginScaleBps` | Multiplier on the base margin tiers (10,000 = 1x) | 1,250 (40x first tier) to 50,000 |
 
 Production governance is the 72-hour timelock. Queue the exact calldata, list the market disabled with minimal caps, and enable it only after the market passes the checks in the next sections. `addMarket` reverts while resolution is active. Indexes are permanent: never reuse one or reinterpret it.
 

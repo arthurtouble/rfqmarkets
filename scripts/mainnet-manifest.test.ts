@@ -133,7 +133,7 @@ test("mainnet manifest rejects a weak or malformed oracle configuration", () => 
     "the Pyth fields are gone",
   );
   for (const risk of [
-    { marginScaleBps: 2000 },
+    { marginScaleBps: 1_000 },
     { marginScaleBps: 60000 },
     { shockBps: 100 },
     { impactK: 0 },
