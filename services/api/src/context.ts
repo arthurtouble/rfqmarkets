@@ -48,6 +48,11 @@ export interface ApiOptions {
     clearingAddress: string;
     tokenAddress: string;
     devFund?: boolean;
+    /**
+     * Local chain only: the faucet and dev-wallet routes without devFund's trade-path shortcuts (chain-time
+     * advances, autofunding, skipped simulations). The production-parity stack uses it to fund browser tests.
+     */
+    devFaucet?: boolean;
     devWallet?: { account: string; privateKey: string };
     /** Local development only: the risk operator key the operations console signs market changes with. */
     riskOperator?: { account: string; privateKey: string };
@@ -129,6 +134,8 @@ export class ApiContext {
   readonly fetchImpl: typeof fetch;
   /** Local Hardhat profile: mint, autofund and clock advance are allowed. */
   readonly devFund: boolean;
+  /** Faucet and dev-wallet routes: always with devFund, or alone with `chain.devFaucet`. */
+  readonly devFaucet: boolean;
   readonly maxActiveQuotes: number;
 
   /** Latest market prices; quoting refreshes them from the oracle source. A market may have none yet. */
@@ -156,7 +163,8 @@ export class ApiContext {
       verifyingContract: getAddress(options.verifyingContract ?? DEFAULT_VERIFYING_CONTRACT),
     };
     this.devFund = Boolean(options.chain?.devFund);
-    if (this.devFund && !isLocalDevChain(this.domain.chainId, options.chain?.rpcUrl))
+    this.devFaucet = this.devFund || Boolean(options.chain?.devFaucet);
+    if (this.devFaucet && !isLocalDevChain(this.domain.chainId, options.chain?.rpcUrl))
       throw new Error("development funding requires local chain 31337 on a loopback RPC");
     this.maxActiveQuotes = options.maxActiveQuotes ?? 50_000;
     this.fetchImpl = options.fetchImpl ?? fetch;

@@ -31,7 +31,7 @@ import { Reply } from "./http.js";
 import { marketIndex, marketName, unixSeconds } from "./markets.js";
 import { isolatedAccountAddress, type IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
 import { signingAccount, validOwnerSignature } from "./owner-signature.js";
-import { failureReason, publicError, staleOracleFailure } from "./public-error.js";
+import { failureReason, futureReportFailure, publicError, staleOracleFailure } from "./public-error.js";
 import type { QuoteEngine } from "./quoting.js";
 import {
   cancelExecuteSchema,
@@ -276,6 +276,10 @@ function registerSignedAction<P extends z.ZodTypeAny, E extends z.ZodTypeAny, I 
 }
 
 /** Owner withdrawals, isolated margin moves, nonce cancellation, position close and session-key grants. */
+/** How long a simulation waits for the chain head to reach a fresh report's observation time (Base: 2 s blocks). */
+const HEAD_CATCH_UP_ATTEMPTS = 4;
+const HEAD_CATCH_UP_MS = 1_000;
+
 export function registerSignedActions(
   app: FastifyInstance,
   ctx: ApiContext,
@@ -302,6 +306,25 @@ export function registerSignedActions(
       if (!staleOracleFailure(error)) throw error;
       await quoting.refreshOpenMarketPrices(0).catch(() => undefined);
       await provider.call(request);
+    }
+  };
+
+  /**
+   * Simulates a sponsored action that carries a just-signed oracle report. The adapter refuses a report observed
+   * after the block it runs in (`InvalidReport`), and the latest block can be a second or two older than the
+   * freshest report, so a refusal is retried as the head moves on; the transaction itself lands later still.
+   */
+  const simulateWhenHeadCatchesUp = async (
+    provider: { call(request: { from: string; to: string; data: string; value?: bigint }): Promise<unknown> },
+    request: { from: string; to: string; data: string; value?: bigint },
+  ) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await provider.call(request);
+      } catch (error) {
+        if (attempt >= HEAD_CATCH_UP_ATTEMPTS || !futureReportFailure(error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, HEAD_CATCH_UP_MS));
+      }
     }
   };
 
@@ -561,7 +584,12 @@ export function registerSignedActions(
         ]);
       // Simulate first on live chains: a reverting close would still spend sponsor gas.
       if (!ctx.devFund && !resumed)
-        await provider.call({ from: ctx.sponsor!.address, to: config.clearingAddress, data, value });
+        await simulateWhenHeadCatchesUp(provider, {
+          from: ctx.sponsor!.address,
+          to: config.clearingAddress,
+          data,
+          value,
+        });
       const receipt = await sender.submit(
         operationId,
         {

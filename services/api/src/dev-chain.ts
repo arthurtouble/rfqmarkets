@@ -39,6 +39,10 @@ export class DevChain {
   get enabled() {
     return this.ctx.devFund;
   }
+  /** Faucet methods also serve the production-parity stack, which has no other trade-path shortcuts. */
+  private get faucet() {
+    return this.ctx.devFaucet;
+  }
 
   /** Mine a block at wall-clock time so local oracle reports and deadlines are never in the past. */
   async advanceTime() {
@@ -72,7 +76,7 @@ export class DevChain {
   async mintAndDeposit(operation: string, key: string, account: string, amount: bigint, nonce: string) {
     const chain = this.ctx.chain,
       sender = this.ctx.sender;
-    if (!this.enabled || !chain || !sender) throw new Error("local funding is not configured");
+    if (!this.faucet || !chain || !sender) throw new Error("local funding is not configured");
     const timestamp = await this.advanceTime();
     await sender.submit(`${operation}-mint:${key}`, {
       to: chain.config.tokenAddress,
@@ -98,7 +102,7 @@ export class DevChain {
     const chain = this.ctx.chain,
       sender = this.ctx.sender,
       provider = this.ctx.provider;
-    if (!this.enabled || !chain || !sender || !provider) throw new Error("local funding is not configured");
+    if (!this.faucet || !chain || !sender || !provider) throw new Error("local funding is not configured");
     if (BigInt(await provider.getBalance(account)) < FAUCET_GAS_WEI)
       await provider.send("hardhat_setBalance", [account, toBeHex(FAUCET_GAS_WEI)]);
     return sender.submit(`faucet-mint:${key}`, {
@@ -127,7 +131,7 @@ export class DevChain {
 }
 
 export function registerDevRoutes(app: FastifyInstance, ctx: ApiContext, dev: DevChain) {
-  if (!ctx.devFund) return;
+  if (!ctx.devFaucet) return;
   const wallet = ctx.options.chain?.devWallet;
   if (wallet) app.get("/v1/dev/wallet", async () => ({ mode: "local-development", ...wallet }));
   const riskOperator = ctx.options.chain?.riskOperator;

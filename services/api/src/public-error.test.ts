@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { approverPolicyRejection, publicError, staleOracleFailure } from "./public-error.js";
+import {
+  approverPolicyRejection,
+  futureReportFailure,
+  publicError,
+  staleOracleFailure,
+} from "./public-error.js";
 test("public action errors cannot expose transport credentials or provider request bodies", () => {
   const message = "RPC https://provider/private-token Bearer signer-token signed-body";
   assert.equal(publicError(new Error(message), "action failed"), "action failed");
@@ -88,4 +93,10 @@ test("stale price reverts are recognised for a refresh-and-retry, including erro
   assert.equal(staleOracleFailure(new Error('execution reverted (data="0xd7815800")')), true);
   assert.equal(staleOracleFailure({ data: "0x50cb02e4", value: 1n }), false);
   assert.equal(publicError({ data: "0xd7815800" }, "action failed"), "Oracle or authorization expired");
+});
+
+test("a report from after the simulated block is recognised so the simulation can wait for the head", () => {
+  assert.equal(futureReportFailure({ data: "0xb55ac754" }), true);
+  assert.equal(futureReportFailure(new Error("execution reverted: InvalidReport()")), true);
+  assert.equal(futureReportFailure({ data: "0xd7815800", value: 1n }), false);
 });
