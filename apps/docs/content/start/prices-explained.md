@@ -1,6 +1,6 @@
 # Prices explained
 
-The app shows several prices, and they mean different things. This page explains each one and where it comes from. If you only remember one thing: the big number at the top is a reference, the **Price** on the Home confirm sheet (the **Entry price** on the Pro ticket) is what you will probably pay, and the **Price protection** is the worst you can pay.
+The app shows several prices, and they mean different things. This page explains each one and where it comes from. If you only remember one thing: the big number at the top is a reference, the **Entry price** on the Pro ticket is what you will probably pay, and the **Price protection** is the worst you can pay.
 
 ## Oracle bid, ask and mid
 
@@ -22,11 +22,11 @@ The 0.04% trading fee is shown on its own line, not in this price. Typing an amo
 
 ## Firm quote
 
-When you place the order, the app asks the venue for a firm quote at that moment for that exact size. The firm quote is what the Home confirm sheet and the Pro review sheet show, what the approvers check and what the contract executes. It normally matches the estimate closely, but it is computed fresh, so it can differ by a few basis points if the market moved between your last screen update and your click.
+When you place the order, the app asks the venue for a firm quote at that moment for that exact size. The firm quote is what your trade is signed at, what the approvers check and what the contract executes. It normally matches the estimate closely, but it is computed fresh, so it can differ by a few basis points if the market moved between your last screen update and your click.
 
 ## Price protection
 
-This is the worst price you accept: a maximum for a long, a minimum for a short. By default the app sets it 8 basis points (0.08%) worse than the firm quote (you can change this under **Options** on the Pro ticket), and it goes into the message you sign as your limit price. The contract refuses to execute your trade at any price worse than this. If the market moves further than that before your trade is included, the trade fails and nothing happens; you are never filled at a worse price than you signed. The Pro ticket and review sheet show it.
+This is the worst price you accept: a maximum for a long, a minimum for a short. By default the app sets it 8 basis points (0.08%) worse than the firm quote (you can change this under **Options** on the Pro ticket), and it goes into the message you sign as your limit price. The contract refuses to execute your trade at any price worse than this. If the market moves further than that before your trade is included, the trade fails and nothing happens; you are never filled at a worse price than you signed. The Pro ticket shows it.
 
 ## Mark
 

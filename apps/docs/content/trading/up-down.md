@@ -17,7 +17,7 @@ If a button is greyed out, the line under it says why, for example "Prices are c
 
 An Up / Down trade is a market order for a perpetual position of amount × multiplier. Up is a long and Down is a short. It is the same position you would open in Pro, so it also shows on Portfolio and in Pro.
 
-There is no expiry and no timer. The trade stays open until you tap **Cash out**. Opening and cashing out each pay the 0.04% trading fee on the trade's size; the confirm sheet shows it.
+There is no expiry and no timer. The trade stays open until you tap **Cash out**. Opening and cashing out each pay the 0.04% trading fee on the trade's size; the info button next to **Margin** on Home shows it.
 
 You can lose the whole amount. If the price moves against you far enough, the trade closes on its own at the **auto-close price**, which is the liquidation price. The higher the multiplier, the closer that price: with only the amount in your account, a move of roughly 7% against you closes a 10× trade.
 

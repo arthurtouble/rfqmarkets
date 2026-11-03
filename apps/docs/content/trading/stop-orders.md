@@ -19,11 +19,11 @@ Every open position has a **TP/SL** control: a column in the positions table on 
 1. Enter a **Take-profit price**, a **Stop-loss price**, or both. The chips under each field set the price a fixed distance from the current price: +1%, +2%, +5% or +10% for a long's take profit and −1% to −10% for its stop loss, and the other way round for a short.
 2. Read the hint under each field. Once you enter a price, it shows the estimated profit or loss if the order fills there.
 3. Choose the **Max slippage past the trigger**: 0.5%, 1%, 2% or 5%. The default is 1%.
-4. Click **Set TP/SL** and sign in your wallet.
+4. Click **Set TP/SL**. Both orders are placed straight away, with no wallet prompt.
 
 The sheet warns you if your stop loss is past the estimated liquidation price, because the position would be liquidated before the stop could fire.
 
-The position then shows its levels, for example "TP $105,000 · SL $95,000". To change them, open the sheet again, edit the prices and click **Replace TP/SL**. The new pair is placed first and the old one cancelled after, so the position is never left unprotected; each step asks for a signature. To remove both, clear the prices and click **Remove TP/SL**.
+The position then shows its levels, for example "TP $105,000 · SL $95,000". To change them, open the sheet again, edit the prices and click **Replace TP/SL**. The new pair is placed first and the old one cancelled after, so the position is never left unprotected. The new pair places with no wallet prompt; cancelling the old one asks your wallet for one signature. To remove both, clear the prices and click **Remove TP/SL**.
 
 If you add to the position after setting TP/SL, the existing orders still cover only the old size. The position shows a **Partial** badge and the sheet asks you to replace them to cover the whole position.
 
@@ -34,7 +34,7 @@ A stop entry is placed from the ticket in **Pro**:
 1. Switch the order type to **Stop**.
 2. Choose **Long** or **Short** and enter the amount in USDC.
 3. Enter the **Trigger price**. A long stop must be above the current price and fires when the price rises to it; a short stop must be below and fires when the price falls to it. The hint says what will happen, for example "Buys at market when the price rises to $105,000".
-4. Click **Place stop · Long BTC · $20.00** and sign in your wallet.
+4. Click **Place stop · Long BTC · $20.00**. The stop is placed straight away, with no wallet prompt.
 
 Tick **Close only** under **Options** as well if the stop should only shrink an existing position. Stops from the ticket are good for 30 days and use the default 1% slippage band.
 
