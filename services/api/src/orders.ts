@@ -12,7 +12,14 @@ import {
   type TradeIntent,
   type Trigger,
 } from "../../../packages/shared/src/eip712.js";
-import { BASE, ceilDiv, formatUsdc, parseUsdc } from "../../../packages/shared/src/policy.js";
+import {
+  BASE,
+  ceilDiv,
+  formatUsdc,
+  MIN_TRADE_ERROR,
+  MIN_TRADE_NOTIONAL,
+  parseUsdc,
+} from "../../../packages/shared/src/policy.js";
 import {
   triggerAboveFor,
   triggerLimitPrice,
@@ -836,6 +843,7 @@ export class LimitOrders {
       const parsed = orderPrepareSchema.safeParse(request.body);
       if (!parsed.success) return reply.code(400).send({ error: "invalid limit order" });
       const { market, side, amount, durationSeconds, nonce, reduceOnly } = parsed.data;
+      if (parseUsdc(amount) < MIN_TRADE_NOTIONAL) return reply.code(409).send({ error: MIN_TRADE_ERROR });
       try {
         const account = getAddress(parsed.data.account);
         this.assertCanPrepare(account);
@@ -901,6 +909,8 @@ export class LimitOrders {
         return reply.code(400).send({ error: "stop-loss and take-profit orders are reduce-only" });
       if (input.sizing === "amount" && (!input.side || !input.amount))
         return reply.code(400).send({ error: "amount sizing requires side and amount" });
+      if (input.sizing === "amount" && parseUsdc(input.amount!) < MIN_TRADE_NOTIONAL)
+        return reply.code(409).send({ error: MIN_TRADE_ERROR });
       if (input.sizing === "position" && !reduceOnly)
         return reply.code(400).send({ error: "position sizing is reduce-only" });
       try {

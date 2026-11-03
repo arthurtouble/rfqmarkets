@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { Contract, Interface, JsonRpcProvider, verifyTypedData, Wallet } from "ethers";
 import type { Page } from "@playwright/test";
 import { expect, expectNoHorizontalOverflow, test } from "./fixtures.js";
+import { isolatedAccountOf } from "../../apps/web/src/lib/isolated.js";
 import { devWallet, urls } from "./stack.js";
 
 type Json = Record<string, any>;
@@ -218,6 +219,50 @@ test.describe("positions and portfolio", () => {
     await expect(page.getByText(/^Closed (BTC, ETH|ETH, BTC)$/)).toBeVisible();
     await expect.poll(async () => Object.values(await sizes()).every((size) => size === 0n)).toBe(true);
     await expect(page.getByRole("button", { name: "Close all" })).toHaveCount(0);
+  });
+
+  test("Close all also closes isolated positions and returns their margin", async ({ page, isMobile }) => {
+    const { account } = await devWallet();
+    const isolated = isolatedAccountOf(account, 0);
+    const held = async () =>
+      (await (await fetch(`${urls.api}/v1/account/${isolated}`)).json()) as {
+        collateral: string;
+        positions: Record<string, { size: string }>;
+      };
+    await trade("ETH", "sell", "1500");
+    // An isolated BTC long from the ticket: its margin sits in the market's own account.
+    await page.goto("/trade/BTC");
+    let ticket = page.getByRole("region", { name: "Order ticket" });
+    if (isMobile) {
+      await page.getByRole("button", { name: "Long", exact: true }).last().click();
+      ticket = page.getByRole("dialog", { name: "Trade BTC" });
+    }
+    try {
+      await ticket
+        .getByRole("group", { name: "Margin mode" })
+        .getByRole("button", { name: "Isolated", exact: true })
+        .click();
+      await ticket.getByLabel("Position size in USDC").fill("100");
+      await ticket.getByLabel("Leverage (type a number)").fill("5");
+      await ticket.getByRole("button", { name: "Long BTC · $100 at 5×" }).click();
+      await expect(page.getByRole("status", { name: "Notifications" })).toContainText(
+        "Long BTC $100.00 filled",
+      );
+      await expect.poll(async () => BigInt((await held()).positions.BTC?.size ?? "0")).toBeGreaterThan(0n);
+
+      await page.goto("/portfolio");
+      await page.getByRole("button", { name: "Close all" }).click();
+      const sheet = page.getByRole("dialog", { name: "Close all positions" });
+      await expect(sheet.getByText("Isolated", { exact: true })).toBeVisible();
+      await sheet.getByRole("button", { name: "Close 2 positions" }).click();
+      await expect(page.getByText(/^Closed (BTC, ETH|ETH, BTC)$/)).toBeVisible();
+      await expect.poll(async () => (await sizes()).ETH ?? 0n).toBe(0n);
+      await expect.poll(async () => BigInt((await held()).positions.BTC?.size ?? "0")).toBe(0n);
+      // The isolated margin went back to the balance, so nothing is left set aside.
+      await expect.poll(async () => (await held()).collateral).toBe("0");
+    } finally {
+      await page.evaluate(() => localStorage.removeItem("rfq.margin"));
+    }
   });
 
   test("while trading is paused, closes at the oracle price", async ({ page }) => {

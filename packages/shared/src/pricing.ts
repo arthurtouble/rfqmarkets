@@ -253,6 +253,13 @@ export const MARGIN_TIERS = [
   { maxNotional: undefined, initialBps: 10_000n, maintenanceBps: 6_000n },
 ] as const;
 /** Per-market margin multiplier of the base tiers (`marketParams(id).marginScaleBps`); 10_000 = 1x. */
+/**
+ * The smallest trade a new quote or order is sized at (USDC 1e6). Below about a cent, rounding the price to whole
+ * micro-USDC moves it by whole percents and re-pricing at settlement rounds the trade to nothing, so it could only
+ * fail after the trader signed; a dollar also keeps sponsored gas from being spent on dust.
+ */
+export const MIN_TRADE_NOTIONAL = 1_000_000n;
+export const MIN_TRADE_ERROR = "amount below the minimum trade of $1";
 export const DEFAULT_MARGIN_SCALE_BPS = 10_000;
 export const MIN_MARGIN_SCALE_BPS = 1_250;
 export const MAX_MARGIN_SCALE_BPS = 50_000;

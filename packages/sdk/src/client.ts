@@ -327,16 +327,21 @@ export class RfqClient {
   /** Closes every open position, one signed reduce-only fill per market. */
   async closeAll(input: { fraction?: number; account?: string } = {}) {
     const account = await this.accountOf(input.account),
-      { quotes } = await this.request<{ quotes: Array<Wire & { quoteId: string; market: string }> }>(
-        "/v1/close/all/quote",
-        { account, fraction: input.fraction ?? 10_000 },
-      ),
+      fraction = input.fraction ?? 10_000,
+      { quotes, unavailable = [] } = await this.request<{
+        quotes: Array<Wire & { quoteId: string; market: string }>;
+        unavailable?: Array<{ market: string; error: string }>;
+      }>("/v1/close/all/quote", { account, fraction }),
       results = [];
     for (const quote of quotes)
       results.push({
         market: quote.market,
         result: await this.fill(quote, account, true, { market: quote.market }),
       });
+    // A market the API could not price with the others is tried once more on its own; if it still cannot
+    // close, that error is thrown after every other position closed.
+    for (const { market } of unavailable)
+      results.push({ market, result: await this.close({ market, fraction, account }) });
     return results;
   }
 

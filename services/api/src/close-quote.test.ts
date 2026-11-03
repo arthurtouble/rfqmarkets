@@ -11,7 +11,7 @@ const iface = new Interface(clearingApiAbi);
  * An API whose chain reports every position flat, so close quotes stop before pricing. The market
  * registry read fails, so the API keeps the launch markets (BTC, ETH).
  */
-function flatChainApi() {
+function flatChainApi(openSize = 0n) {
   const reads: string[] = [];
   class Chain extends JsonRpcProvider {
     override async send(method: string) {
@@ -21,7 +21,12 @@ function flatChainApi() {
     override async call(request: TransactionRequest) {
       const parsed = iface.parseTransaction({ data: String(request.data) })!;
       if (parsed.name === "positionOf") reads.push(parsed.name);
-      if (parsed.name === "positionOf") return iface.encodeFunctionResult("positionOf", [0n, 0n, 0n]);
+      if (parsed.name === "positionOf")
+        return iface.encodeFunctionResult("positionOf", [
+          parsed.args[1] === 0n ? openSize : 0n,
+          openSize ? 100_000n * 1_000_000n : 0n,
+          0n,
+        ]);
       throw new Error(`unexpected ${parsed.name}`);
     }
   }
@@ -88,6 +93,24 @@ test("closing a flat position is refused and close-all returns no quotes", async
     assert.equal(all.json().account, getAddress(account));
     assert.deepEqual(all.json().quotes, []);
     assert.equal(reads.length, 3, "the single close, then one read per market");
+  } finally {
+    await close();
+  }
+});
+
+test("a market that cannot be priced is listed as unavailable, not a failed close-all", async () => {
+  // BTC is open but its quote cannot be built (here every chain read beyond positions fails, as in an
+  // oracle or RPC outage for that market): the other positions must still get their quotes.
+  const { app, close } = flatChainApi(10n ** 17n);
+  try {
+    await app.ready();
+    const account = Wallet.createRandom().address;
+    const all = await post(app, "/v1/close/all/quote", { account });
+    assert.equal(all.statusCode, 200, all.body);
+    assert.deepEqual(all.json().quotes, []);
+    assert.equal(all.json().unavailable.length, 1);
+    assert.equal(all.json().unavailable[0].market, "BTC");
+    assert.equal(typeof all.json().unavailable[0].error, "string");
   } finally {
     await close();
   }

@@ -946,7 +946,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
         fractionBps < 10_000 ? `Close ${fractionBps / 100}% of every position` : "Close all positions",
         async (progress) => {
           progress("Getting prices");
-          const { quotes } = await api<{ quotes: Quote[] }>("/v1/close/all/quote", {
+          const { quotes, unavailable = [] } = await api<{
+            quotes: Quote[];
+            unavailable?: { market: Market }[];
+          }>("/v1/close/all/quote", {
             account: account(),
             fraction: fractionBps,
           });
@@ -957,6 +960,9 @@ export function TradingProvider({ children }: { children: ReactNode }) {
               first: quote as Quote | null,
               isolated: false,
             })),
+            // A market the API could not price with the others (an oracle outage, say) gets its own close quote,
+            // so its failure is reported beside the positions that did close.
+            ...unavailable.map(({ market }) => ({ market, first: null as Quote | null, isolated: false })),
             ...isolatedMarkets.map((market) => ({ market, first: null as Quote | null, isolated: true })),
           ];
           if (!legs.length) return { title: "No open positions", value: outcome };
@@ -1298,7 +1304,10 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   value.cancelOrder = async (order) => void (await requireConnection(() => direct.cancelOrder(order)));
   value.closePosition = (market, fractionBps, isolated) =>
     requireConnection(() => direct.closePosition(market, fractionBps, isolated));
-  value.closeAll = (fractionBps) => requireConnection(() => direct.closeAll(fractionBps));
+  value.closeAll = (fractionBps, isolatedMarkets) =>
+    requireConnection(() => direct.closeAll(fractionBps, isolatedMarkets));
+  value.adjustMargin = async (market, amountMicro) =>
+    (await requireConnection(() => direct.adjustMargin(market, amountMicro))) ?? false;
   value.returnMargin = async (market) =>
     (await requireConnection(() => direct.returnMargin(market))) ?? false;
 

@@ -149,8 +149,13 @@ export function OrderTicket({
   const noFunds = !!account && BigInt(account.collateral) === 0n;
   const liquidation = useMemo(() => {
     if (!snapshot || notional === 0n || !payMicro) return null;
-    // An isolated trade is liquidated against its own margin (plus what its account already holds).
-    const held = isolated && isolatedAccount ? BigInt(isolatedAccount.collateral) : 0n;
+    // An isolated trade is liquidated against its own margin, plus the margin of the isolated position it adds to.
+    // Money left idle in an isolated account with no position does not count: the trade tops it up (or returns
+    // the excess) to exactly its own margin first.
+    const held =
+      isolated && isolatedAccount && BigInt(isolatedAccount.positions[market]?.size ?? "0") !== 0n
+        ? BigInt(isolatedAccount.collateral)
+        : 0n;
     const base =
       isolated && isolatedAccount
         ? { ...isolatedAccount, collateral: (held + payMicro).toString() }

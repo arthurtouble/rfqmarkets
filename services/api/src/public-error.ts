@@ -1,3 +1,5 @@
+import { MIN_TRADE_ERROR } from "../../../packages/shared/src/pricing.js";
+
 /** Never expose provider URLs, transport credentials or signed request bodies. */
 export function publicError(error: unknown, fallback: string): string {
   const safeMessages = new Set([
@@ -8,6 +10,8 @@ export function publicError(error: unknown, fallback: string): string {
     "deposit collateral before placing orders",
     "oracle report lacks inclusion time",
     "hedging unavailable: only exposure-reducing trades are allowed",
+    "amount exceeds market limit",
+    MIN_TRADE_ERROR,
   ]);
   if (error instanceof Error && safeMessages.has(error.message)) return error.message;
   const names: Record<string, string> = {

@@ -15,6 +15,8 @@ import {
   constructQuote,
   launchPricing,
   marketMarginView,
+  MIN_TRADE_ERROR,
+  MIN_TRADE_NOTIONAL,
   parseUsdc,
   quoteRequestSchema,
   RATE,
@@ -661,13 +663,18 @@ export class QuoteEngine {
       if (!guards.admitQuoteWork(request, reply)) return;
       const parsed = quoteRequestSchema.safeParse(request.body);
       if (!parsed.success) return reply.code(400).send({ error: "invalid quote request" });
+      if (parseUsdc(parsed.data.amount) < MIN_TRADE_NOTIONAL)
+        return reply.code(409).send({ error: MIN_TRADE_ERROR });
       try {
         const created = await this.createQuote(parsed.data);
         return quoteToWire(created.quote);
       } catch (error) {
+        const message = publicError(error, "quote rejected");
+        // A size over the market's limit is the request's own problem: asking again will not help.
+        const final = message === "amount exceeds market limit";
         return reply
-          .code(ctx.options.oracleSource || ctx.options.hedgeRiskSource ? 503 : 409)
-          .send({ error: publicError(error, "quote rejected") });
+          .code(!final && (ctx.options.oracleSource || ctx.options.hedgeRiskSource) ? 503 : 409)
+          .send({ error: message });
       }
     });
 
@@ -705,13 +712,20 @@ export class QuoteEngine {
               BigInt((await ctx.clearing!.positionOf(account, marketIndex(market), blockTag)).size),
             ),
           ),
-          quotes = [];
+          quotes = [],
+          unavailable: { market: Market; error: string }[] = [];
+        // One market that cannot be priced (its oracle is out, say) must not block closing the others: it is
+        // listed as unavailable, and the client retries it on its own.
         for (const [index, market] of markets.entries()) {
           if (sizes[index] === 0n) continue;
-          const quote = await this.closeQuote(account, market, sizes[index], parsed.data.fraction);
-          if (quote) quotes.push(quoteToWire(quote));
+          try {
+            const quote = await this.closeQuote(account, market, sizes[index], parsed.data.fraction);
+            if (quote) quotes.push(quoteToWire(quote));
+          } catch (error) {
+            unavailable.push({ market, error: publicError(error, "close quote rejected") });
+          }
         }
-        return { account, quotes };
+        return { account, quotes, unavailable };
       } catch (error) {
         return reply.code(503).send({ error: publicError(error, "close quote rejected") });
       }

@@ -374,6 +374,22 @@ test("real oracle source drives quotes and fails closed when unavailable", async
   const quote = response.json();
   assert(BigInt(quote.expectedPrice) > 89_990n * 1_000_000n);
   assert(Number(quote.expiresAtMs) <= (now + 10) * 1_000);
+  // Dust is refused up front (it could only fail after signing), and a size over the market's limit is a
+  // final answer, not a retriable outage, even with a live oracle.
+  const dust = await oracleApi.inject({
+    method: "POST",
+    url: "/v1/quote",
+    payload: { market: "BTC", side: "buy", amount: "0.99" },
+  });
+  assert.equal(dust.statusCode, 409, dust.body);
+  assert.equal(dust.json().error, "amount below the minimum trade of $1");
+  const huge = await oracleApi.inject({
+    method: "POST",
+    url: "/v1/quote",
+    payload: { market: "BTC", side: "buy", amount: "1000000000" },
+  });
+  assert.equal(huge.statusCode, 409, huge.body);
+  assert.equal(huge.json().error, "amount exceeds market limit");
   await oracleApi.close();
   const failed = buildApi({
     oracleSource: {
