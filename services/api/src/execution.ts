@@ -44,7 +44,7 @@ import { abs, marketIndex, marketRegistry, unixSeconds } from "./markets.js";
 import type { IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
 import { readViews, type ViewCall } from "../../../packages/shared/src/rpc.js";
 import { signingAccount, validOwnerSignature } from "./owner-signature.js";
-import { approverPolicyRejection, publicError } from "./public-error.js";
+import { approverPolicyRejection, publicError, staleOracleFailure } from "./public-error.js";
 import type { OracleReport, ProtocolVersions } from "./quote-store.js";
 import type { CreatedQuote, QuoteEngine } from "./quoting.js";
 import { archiveApiCommitments } from "./recovery.js";
@@ -165,12 +165,6 @@ function errorText(error: unknown) {
   } catch {
     return String(error);
   }
-}
-
-/** `StalePrice` reverts (by name or selector) mean the proof aged out and a refresh may succeed. */
-function staleOracleFailure(error: unknown) {
-  const text = errorText(error).toLowerCase();
-  return text.includes("staleprice") || text.includes("0xd7815800") || text.includes("0x45805f5d");
 }
 
 function toExposureMarket(value: ChainMarketState): ExposureMarket {
@@ -966,12 +960,18 @@ export class ExecutionService {
     const { clearing, provider, config } = chain;
     try {
       await this.dev.autofund(intent.account, quote.quoteId);
-      const receipt = await sender.submit(`trade:${quote.quoteId}`, {
-        to: config.clearingAddress,
-        data: this.executeTradeData(intent, approval, report, userSignature, approvals, trigger),
-        value: oracleFee,
-        gasLimit: TRADE_GAS_LIMIT,
-      });
+      // A trade still queued behind the sponsor's single lane when its proof expires is dropped unsigned:
+      // broadcast, it could only revert as Stale and spend gas.
+      const receipt = await sender.submit(
+        `trade:${quote.quoteId}`,
+        {
+          to: config.clearingAddress,
+          data: this.executeTradeData(intent, approval, report, userSignature, approvals, trigger),
+          value: oracleFee,
+          gasLimit: TRADE_GAS_LIMIT,
+        },
+        { deadline: Number(approval.deadline) },
+      );
       this.chain.invalidateQuoteSnapshot();
       this.quoting.invalidateMarkets();
       journal
@@ -1031,6 +1031,8 @@ export class ExecutionService {
         },
       };
     } catch (error) {
+      if (error instanceof Error && error.message.endsWith("expired before broadcast"))
+        return Reply.error(409, "quote expired", { retriable: true });
       return Reply.error(409, publicError(error, "chain submission failed"));
     }
   }

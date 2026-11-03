@@ -12,6 +12,8 @@ export interface OracleQuote {
   snapshot: PriceSnapshot;
   report: string;
   validUntil: number;
+  /** On-chain indexes of every market `report` prices, when it prices more than the quoted one. */
+  markets?: readonly number[];
 }
 export type OracleListener = (market: OracleMarket) => void;
 export interface OracleSource {
@@ -311,6 +313,8 @@ export class SignedOracleSource extends BaseOracleSource {
     const combined = this.client.latest();
     if (!combined || combined.observedAt <= this.lastObservedAt) return;
     this.lastObservedAt = combined.observedAt;
+    // One combined report prices every market in it, so a trade's report refreshes them all on chain.
+    const markets = combined.prices.map((item) => item.market);
     for (const market of marketSymbols()) {
       const price = combined.prices.find((item) => item.market === marketId(market));
       if (!price) {
@@ -321,6 +325,7 @@ export class SignedOracleSource extends BaseOracleSource {
         snapshot: this.snapshot(market, price.bid, price.ask, combined.observedAt * 1_000),
         report: combined.report,
         validUntil: combined.validUntil,
+        markets,
       };
       this.emit(market);
     }

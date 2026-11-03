@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { approverPolicyRejection, publicError } from "./public-error.js";
+import { approverPolicyRejection, publicError, staleOracleFailure } from "./public-error.js";
 test("public action errors cannot expose transport credentials or provider request bodies", () => {
   const message = "RPC https://provider/private-token Bearer signer-token signed-body";
   assert.equal(publicError(new Error(message), "action failed"), "action failed");
@@ -81,4 +81,11 @@ test("a policy reason that blocks quorum reaches the trader; infrastructure fail
     ),
     undefined,
   );
+});
+
+test("stale price reverts are recognised for a refresh-and-retry, including errors that carry bigints", () => {
+  assert.equal(staleOracleFailure({ data: "0xd7815800", value: 1n }), true);
+  assert.equal(staleOracleFailure(new Error('execution reverted (data="0xd7815800")')), true);
+  assert.equal(staleOracleFailure({ data: "0x50cb02e4", value: 1n }), false);
+  assert.equal(publicError({ data: "0xd7815800" }, "action failed"), "Oracle or authorization expired");
 });

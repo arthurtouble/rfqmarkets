@@ -9,6 +9,7 @@ const COPY: Array<[RegExp, string]> = [
   ],
   [/^quote expired$|quote.*expired/i, `The price expired before you signed. ${NOTHING} Try again.`],
   [/price moved beyond signed protection/i, `The price moved. ${NOTHING} Try again.`],
+  [/oracle or authorization expired/i, `The price went stale before it settled. ${NOTHING} Try again.`],
   [/^market disabled$|^market is paused$/i, "This market is paused. You can still close."],
   [/reduce-only intent does not reduce position/i, "Close only needs an open position at least this large."],
   [/market trade limit exceeded/i, "That's over this market's limit for one trade. Try a smaller amount."],
