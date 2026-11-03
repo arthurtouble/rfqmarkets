@@ -189,6 +189,9 @@ test("the ticket names the first thing to fix", () => {
   assert.equal(ticketProblem({ ...ready, priceLive: false }), "Waiting for a fresh price");
   assert.equal(ticketProblem({ ...ready, amountText: "", payMicro: null }), "Enter an amount");
   assert.equal(ticketProblem({ ...ready, amountText: "0", payMicro: null }), "Enter a valid amount");
+  // Below a dollar a trade could only fail after signing (its re-priced size rounds to nothing).
+  assert.equal(ticketProblem({ ...ready, notionalMicro: USDC - 1n }), "The smallest trade is $1");
+  assert.equal(ticketProblem({ ...ready, notionalMicro: USDC, payMicro: USDC / 5n }), null);
   assert.equal(ticketProblem({ ...ready, notionalMicro: 25_001n * USDC }), "Over the per-trade limit");
   assert.equal(ticketProblem({ ...ready, tradeCapMicro: 0n, notionalMicro: 10n ** 15n }), null);
   assert.equal(ticketProblem({ ...ready, leverage: 20, leverageCeiling: 16 }), "Up to 16× at this size");

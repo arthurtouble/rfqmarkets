@@ -12,6 +12,8 @@ const COPY: Array<[RegExp, string]> = [
   [/oracle or authorization expired/i, `The price went stale before it settled. ${NOTHING} Try again.`],
   [/^market disabled$|^market is paused$/i, "This market is paused. You can still close."],
   [/reduce-only intent does not reduce position/i, "Close only needs an open position at least this large."],
+  [/amount below the minimum trade/i, "The smallest trade is $1."],
+  [/amount exceeds market limit/i, "That's over this market's limit for one trade. Try a smaller amount."],
   [/market trade limit exceeded/i, "That's over this market's limit for one trade. Try a smaller amount."],
   [
     /hedge risk requires exposure reduction|hedging unavailable: only exposure-reducing/i,

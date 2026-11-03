@@ -3,7 +3,7 @@
 // account's available margin keeps the trade inside initial margin, because
 // the tiers never ask for more than notional / leverage while leverage is
 // within what the tier allows.
-import { MARGIN_TIERS } from "../../../../packages/shared/src/pricing.js";
+import { MARGIN_TIERS, MIN_TRADE_NOTIONAL } from "../../../../packages/shared/src/pricing.js";
 import { maxLeverageAt, sizeFromLeverage } from "./leverage.js";
 import type { Side } from "./types.js";
 
@@ -114,6 +114,7 @@ export function ticketProblem(check: TicketCheck): string | null {
   if (!check.priceLive) return "Waiting for a fresh price";
   if (!check.amountText) return "Enter an amount";
   if (check.payMicro === null) return "Enter a valid amount";
+  if (check.notionalMicro < MIN_TRADE_NOTIONAL) return "The smallest trade is $1";
   if (check.tradeCapMicro > 0n && check.notionalMicro > check.tradeCapMicro)
     return "Over the per-trade limit";
   if (check.leverage > check.leverageCeiling)

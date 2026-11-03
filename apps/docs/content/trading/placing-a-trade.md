@@ -63,6 +63,7 @@ A refused trade costs nothing. Nothing reaches the contract until settlement, an
 | --- | --- | --- |
 | **Waiting for a fresh price** | The app has not had a recent price update. | Wait a moment. If it persists, the price stream is down. |
 | **Over the per-trade limit** | Your position is above the market's per-trade limit. | Pay less, lower the leverage, or split the trade. |
+| **The smallest trade is $1** | The position is under $1. Limit and stop orders have the same floor; closing a position has none. | Enter a larger size. |
 | **Up to N× at this size** | The leverage is above what the margin tier allows for this position. | Pick a lower leverage or pay less. |
 | **Long is closed right now** (or Short) | The maker is only accepting trades in the other direction in this market. | Trade the other direction, close, or wait. |
 | **Paused · closing only** | The market is paused. Only trades that reduce your position are accepted. | Trade in the opposite direction of your position, no larger than it, or close it. |
