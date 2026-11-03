@@ -44,6 +44,12 @@ const DEFAULT_TRADE_LIMIT = 1_000_000n * 1_000_000n;
 const DEFAULT_MARKET_LIMIT = 5_000_000n * 1_000_000n;
 /** A cross-market price older than this is refreshed on chain before quoting against gross risk. */
 const CROSS_MARKET_PRICE_MAX_AGE_SECONDS = 8;
+/**
+ * Withdrawals and isolated margin moves carry no oracle report, so the contract checks the stored
+ * price of every market the paying account holds (MAX_ORACLE_AGE, 15 s) when the transaction lands.
+ * Refreshing anything older than this leaves ~10 s for the simulation, the sender queue and inclusion.
+ */
+export const SIGNED_ACTION_PRICE_MAX_AGE_SECONDS = 5;
 /** Local oracle reports and dev-chain proofs are valid for one minute. */
 const LOCAL_REPORT_TTL_SECONDS = 60;
 /** A firm quote must leave this much proof validity for wallet signing and inclusion. */
@@ -164,6 +170,7 @@ const midOf = (snapshot: PriceSnapshot) => (snapshot.bid + snapshot.ask) / 2n;
 export class QuoteEngine {
   readonly shadowTelemetry = new ShadowModelTelemetry();
   private marketReadCache: { at: number; promise: Promise<MarketsSnapshot> } | undefined;
+  private readonly refreshing = new Map<string, Promise<void>>();
   private marketStateCache:
     { at: number; count: number; promise: ReturnType<QuoteEngine["loadMarketState"]> } | undefined;
 
@@ -400,43 +407,49 @@ export class QuoteEngine {
   /**
    * Read the block-pinned quote snapshot. When another market carries live or reserved gross risk
    * and its on-chain price is stale, refresh it on chain first so cross-margin checks stay valid.
+   *
+   * A market the settlement report already prices (`covered`) is skipped: the trade's own report
+   * refreshes it in the same transaction. A failed refresh is logged, not thrown: a reduction is
+   * allowed against another market's stale price, and anything else fails its simulation with a
+   * retriable error instead of failing the quote.
    */
-  private async readFreshQuoteSnapshot(market: Market | null) {
+  private async readFreshQuoteSnapshot(
+    market: Market | null,
+    options: { maxAgeSeconds?: number; covered?: Promise<OracleQuote | undefined> } = {},
+  ) {
     const { ctx } = this,
-      clearing = ctx.clearing!,
-      selected = market === null ? -1 : marketIndex(market);
+      selected = market === null ? -1 : marketIndex(market),
+      maxAge = options.maxAgeSeconds ?? CROSS_MARKET_PRICE_MAX_AGE_SECONDS;
     let snapshot = await this.chain.readQuoteSnapshot();
     if (!snapshot.block || snapshot.paused || snapshot.resolutionRequired)
       throw new Error("market is paused");
-    const blockTag = { blockTag: snapshot.blockNumber },
-      reserved = ctx.grossReservations.bounds(undefined, snapshot.markets.length);
-    // Read with the snapshot (one batched call per block), not one exposure read per market per quote.
-    const books = snapshot.markets.map((_, index) =>
-      index === selected ? null : (snapshot.books[index] as { longBase: bigint; shortBase: bigint }),
-    );
-    let refreshed = false;
+    const reserved = ctx.grossReservations.bounds(undefined, snapshot.markets.length),
+      // The RPC's latest block can trail real time by a block or two; the transaction that relies on
+      // this price lands later still, so age is measured from whichever clock is ahead.
+      now = Math.max(snapshot.block.timestamp, unixSeconds());
+    const stale: number[] = [];
     for (const [otherIndex, otherState] of snapshot.markets.entries()) {
-      const otherBook = books[otherIndex];
+      const otherBook = snapshot.books[otherIndex] as { longBase: bigint; shortBase: bigint } | undefined;
       if (otherIndex === selected || !otherBook) continue;
       const gross =
         BigInt(otherBook.longBase) +
         BigInt(otherBook.shortBase) +
         reserved[otherIndex].longBase +
         reserved[otherIndex].shortBase;
-      if (
-        ctx.sender &&
-        gross !== 0n &&
-        snapshot.block.timestamp - Number(otherState.lastPriceTime) > CROSS_MARKET_PRICE_MAX_AGE_SECONDS
-      ) {
-        await this.refreshOnChainPrice(
-          marketRegistry.symbol(otherIndex),
-          snapshot.block.timestamp,
-          snapshot.blockNumber,
-        );
-        refreshed = true;
-      }
+      if (ctx.sender && gross !== 0n && now - Number(otherState.lastPriceTime) > maxAge)
+        stale.push(otherIndex);
     }
-    if (refreshed) {
+    if (stale.length && options.covered) {
+      const covering = await options.covered.catch(() => undefined);
+      const priced = new Set(covering?.markets ?? []);
+      for (let i = stale.length - 1; i >= 0; i--) if (priced.has(stale[i])) stale.splice(i, 1);
+    }
+    if (stale.length) {
+      try {
+        await this.refreshOnChainPrices(stale, snapshot.block.timestamp, snapshot.blockNumber);
+      } catch (error) {
+        console.warn("on-chain price refresh failed:", error instanceof Error ? error.message : error);
+      }
       this.chain.invalidateQuoteSnapshot();
       snapshot = await this.chain.readQuoteSnapshot();
       if (!snapshot.block || snapshot.paused || snapshot.resolutionRequired)
@@ -446,48 +459,80 @@ export class QuoteEngine {
   }
 
   /**
-   * Refresh the on-chain price of every market with open interest whose price is stale, so an
-   * account with positions passes the contract's freshness check outside a trade (withdrawals).
+   * Refresh the on-chain price of every market with open interest whose price is not recent, so an
+   * account with positions passes the contract's freshness check outside a trade (withdrawals,
+   * isolated margin moves). Those actions carry no oracle report of their own and must land within
+   * MAX_ORACLE_AGE (15 s) of the stored price, so this refreshes well before that runs out.
    */
-  async refreshOpenMarketPrices() {
+  async refreshOpenMarketPrices(maxAgeSeconds = SIGNED_ACTION_PRICE_MAX_AGE_SECONDS) {
     if (this.ctx.devFund) await this.dev.advanceTime();
-    await this.readFreshQuoteSnapshot(null);
+    await this.readFreshQuoteSnapshot(null, { maxAgeSeconds });
   }
 
-  /** Push a fresh price for `otherMarket` on chain (`refreshOracle`), sponsored by the leader. */
-  private async refreshOnChainPrice(otherMarket: Market, blockTimestamp: number, blockNumber: number) {
+  /**
+   * Push fresh prices for `markets` on chain (`refreshOracle`), sponsored by the leader. A report that
+   * prices several of them refreshes them all in one transaction. Concurrent callers share one push.
+   */
+  private refreshOnChainPrices(markets: number[], blockTimestamp: number, blockNumber: number) {
+    const key = [...markets].sort((a, b) => a - b).join(",");
+    const active = this.refreshing.get(key);
+    if (active) return active;
+    const run = (async () => {
+      const pending = new Set(markets);
+      for (const otherIndex of markets) {
+        if (!pending.has(otherIndex)) continue;
+        const priced = await this.refreshOnChainPrice(
+          marketRegistry.symbol(otherIndex),
+          blockTimestamp,
+          blockNumber,
+        );
+        for (const index of priced) pending.delete(index);
+        pending.delete(otherIndex);
+      }
+    })().finally(() => this.refreshing.delete(key));
+    this.refreshing.set(key, run);
+    return run;
+  }
+
+  /** Push a fresh price for `otherMarket` on chain; returns the market indexes the pushed report priced. */
+  private async refreshOnChainPrice(
+    otherMarket: Market,
+    blockTimestamp: number,
+    blockNumber: number,
+  ): Promise<readonly number[]> {
     const { ctx } = this,
       clearing = ctx.clearing!,
       sender = ctx.sender!,
       otherIndex = marketIndex(otherMarket),
       blockTag = { blockTag: blockNumber };
-    {
-      let report: string,
-        value = 0n;
-      if (ctx.devFund) {
-        const price = ctx.prices[otherMarket];
-        if (!price) throw new Error(`no price for ${otherMarket}`);
-        report = encodeLocalReport(
-          otherIndex,
-          price.bid,
-          price.ask,
-          blockTimestamp,
-          blockTimestamp + LOCAL_REPORT_TTL_SECONDS,
-        );
-      } else {
-        const observation = await this.settlementOracle(otherMarket);
-        ctx.prices[otherMarket] = observation.snapshot;
-        report = observation.report;
-        const adapter = await this.chain.oracleAdapter(blockNumber);
-        value = BigInt(await adapter.updateFee(report, blockTag));
-      }
-      await sender.submit(`oracle:${otherMarket}:${keccak256(report)}`, {
-        to: ctx.domain.verifyingContract,
-        data: clearing.interface.encodeFunctionData("refreshOracle", [report]),
-        value,
-        gasLimit: 750_000n,
-      });
+    let report: string,
+      priced: readonly number[] = [otherIndex],
+      value = 0n;
+    if (ctx.devFund) {
+      const price = ctx.prices[otherMarket];
+      if (!price) throw new Error(`no price for ${otherMarket}`);
+      report = encodeLocalReport(
+        otherIndex,
+        price.bid,
+        price.ask,
+        blockTimestamp,
+        blockTimestamp + LOCAL_REPORT_TTL_SECONDS,
+      );
+    } else {
+      const observation = await this.settlementOracle(otherMarket);
+      ctx.prices[otherMarket] = observation.snapshot;
+      report = observation.report;
+      priced = observation.markets ?? priced;
+      const adapter = await this.chain.oracleAdapter(blockNumber);
+      value = BigInt(await adapter.updateFee(report, blockTag));
     }
+    await sender.submit(`oracle:${otherMarket}:${keccak256(report)}`, {
+      to: ctx.domain.verifyingContract,
+      data: clearing.interface.encodeFunctionData("refreshOracle", [report]),
+      value,
+      gasLimit: 750_000n,
+    });
+    return priced;
   }
 
   async createQuote(request: QuoteRequest, options: QuoteOptions = {}): Promise<CreatedQuote> {
@@ -505,9 +550,10 @@ export class QuoteEngine {
     if (clearing && provider) {
       if (ctx.devFund) await this.dev.advanceTime();
       // The signed price does not depend on the chain snapshot, so fetch both at once.
+      const observing = this.refreshPrice(request.market);
       const [snapshot, observed] = await Promise.all([
-        this.readFreshQuoteSnapshot(request.market),
-        this.refreshPrice(request.market),
+        this.readFreshQuoteSnapshot(request.market, { covered: observing }),
+        observing,
       ]);
       oracleQuote = observed;
       const quoteMid = midOf(this.priceOf(request.market)),

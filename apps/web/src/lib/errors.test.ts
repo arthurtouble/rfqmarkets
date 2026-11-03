@@ -5,6 +5,7 @@ import { friendlyError } from "./errors.js";
 test("API and wallet reasons become plain language", () => {
   assert.match(friendlyError("User rejected the request."), /cancelled in your wallet/);
   assert.match(friendlyError("quote expired"), /price expired/);
+  assert.match(friendlyError("Oracle or authorization expired"), /went stale.*Nothing was traded/);
   assert.match(friendlyError("The quote expired. Review the new price"), /price expired/);
   assert.match(friendlyError("market disabled"), /paused/);
   assert.match(friendlyError("market is paused"), /paused/);

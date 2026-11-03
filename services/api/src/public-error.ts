@@ -105,3 +105,18 @@ export function failureReason(error: unknown): string {
   const code = typeof value?.code === "string" ? `${value.code}: ` : "";
   return `${code}${text}`.slice(0, 200);
 }
+
+/**
+ * `Stale` / `StalePrice` reverts (by name or selector): an oracle proof or a stored on-chain price aged
+ * out, so the same action can succeed once the price is refreshed.
+ */
+export function staleOracleFailure(error: unknown) {
+  let text: string;
+  try {
+    text = `${String(error)} ${JSON.stringify(error, (_key, value) => (typeof value === "bigint" ? String(value) : value))}`;
+  } catch {
+    text = String(error);
+  }
+  text = text.toLowerCase();
+  return text.includes("staleprice") || text.includes("0xd7815800") || text.includes("0x45805f5d");
+}

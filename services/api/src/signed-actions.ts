@@ -31,7 +31,7 @@ import { Reply } from "./http.js";
 import { marketIndex, marketName, unixSeconds } from "./markets.js";
 import { isolatedAccountAddress, type IsolatedOwnerReader } from "../../../packages/shared/src/isolated.js";
 import { signingAccount, validOwnerSignature } from "./owner-signature.js";
-import { failureReason, publicError } from "./public-error.js";
+import { failureReason, publicError, staleOracleFailure } from "./public-error.js";
 import type { QuoteEngine } from "./quoting.js";
 import {
   cancelExecuteSchema,
@@ -285,6 +285,25 @@ export function registerSignedActions(
 ) {
   const deadline = async (chainTime: () => Promise<number>) =>
     BigInt((await chainTime()) + ACTION_TTL_SECONDS);
+  /**
+   * Simulates a sponsored action that needs fresh stored prices. If a price lapsed between the refresh and
+   * the simulation (the contract allows 15 s), refresh every open market once more and simulate again, so a
+   * trader does not see "Oracle or authorization expired" for a price the API can renew itself.
+   */
+  const simulateWithFreshPrices = async (
+    provider: { call(request: { from: string; to: string; data: string }): Promise<unknown> },
+    to: string,
+    data: string,
+  ) => {
+    const request = { from: ctx.sponsor!.address, to, data };
+    try {
+      await provider.call(request);
+    } catch (error) {
+      if (!staleOracleFailure(error)) throw error;
+      await quoting.refreshOpenMarketPrices(0).catch(() => undefined);
+      await provider.call(request);
+    }
+  };
 
   registerSignedAction(app, ctx, chain, {
     path: "/v1/withdraw",
@@ -324,8 +343,7 @@ export function registerSignedActions(
         signature,
       ]);
       // Simulate first on live chains: a reverting withdrawal would still spend sponsor gas.
-      if (!ctx.devFund && !resumed)
-        await provider.call({ from: ctx.sponsor!.address, to: config.clearingAddress, data });
+      if (!ctx.devFund && !resumed) await simulateWithFreshPrices(provider, config.clearingAddress, data);
       const receipt = await sender.submit(
         operationId,
         { to: config.clearingAddress, data },
@@ -408,8 +426,7 @@ export function registerSignedActions(
         signature,
       ]);
       // Simulate first on live chains: a reverting move would still spend sponsor gas.
-      if (!ctx.devFund && !resumed)
-        await provider.call({ from: ctx.sponsor!.address, to: config.clearingAddress, data });
+      if (!ctx.devFund && !resumed) await simulateWithFreshPrices(provider, config.clearingAddress, data);
       const receipt = await sender.submit(
         operationId,
         { to: config.clearingAddress, data },
