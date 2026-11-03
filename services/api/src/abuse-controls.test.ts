@@ -540,8 +540,10 @@ test("terminal orders leave memory after the retention window; live ones stay li
     t.mock.timers.tick(301_000);
     // Placing another order runs the resting-order check, which expires the first.
     const second = await order(2);
-    for (let i = 0; i < 50 && !(await listed()).includes(`${first}:expired`); i++)
-      await new Promise((resolve) => setImmediate(resolve));
+    // The check runs on a short real timer (only Date is mocked): wait for it rather than for a fixed number of
+    // event-loop turns, which raced the timer on slower machines.
+    for (let i = 0; i < 200 && !(await listed()).includes(`${first}:expired`); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
     assert.deepEqual((await listed()).sort(), [`${first}:expired`, `${second}:open`].sort());
     // Still listed (order history, fill notices) within the retention window.
     t.mock.timers.tick(TERMINAL_ORDER_RETENTION_MS - 1_000);

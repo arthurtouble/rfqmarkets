@@ -14,6 +14,7 @@ import type {
 import { marketName, type MarketIndex } from "../../../packages/shared/src/markets.js";
 import { BASE, abs, low128 } from "../../../packages/shared/src/numeric.js";
 import { impactCost, type Exposure } from "../../../packages/shared/src/pricing.js";
+import type { OracleObservation } from "../../../packages/shared/src/oracle-report.js";
 import type { ChainSnapshot } from "./chain-state.js";
 import { APPROVAL_LIFETIME_SECONDS } from "./envelope.js";
 import type { SafetyPrices } from "./oracle-policy.js";
@@ -62,14 +63,29 @@ export function checkMarketEnabled(
   if (!market.enabled && !isPositionReduction(positionSize, delta)) return reject("market disabled");
 }
 
-/** Chain markets with the intent market re-marked at the verified safety prices. */
+/**
+ * Chain markets as the contract sees them inside the trade: every other market the verified report prices is
+ * re-marked at that observation when it is newer than the stored price (RFQLedger.touchOracle stores them before
+ * any check), and the intent market at the verified safety prices.
+ */
 export function markedMarkets(
   snapshot: ChainSnapshot,
   market: MarketIndex,
   prices: SafetyPrices,
   priceTime: bigint,
+  reported: ReadonlyMap<number, OracleObservation> = new Map(),
 ): ExposureMarket[] {
   const markets = [...snapshot.markets];
+  for (const [index, observation] of reported) {
+    const stored = markets[index];
+    if (index === market || !stored || observation.observedAt <= stored.lastPriceTime) continue;
+    markets[index] = {
+      ...stored,
+      lastBid: observation.bid,
+      lastAsk: observation.ask,
+      lastPriceTime: observation.observedAt,
+    };
+  }
   markets[market] = {
     ...markets[market],
     lastBid: prices.bid,
@@ -119,7 +135,7 @@ export function checkCrossMarketFreshness(
   grossId: string,
   snapshot: ChainSnapshot,
   market: MarketIndex,
-  exempt: { covered?: ReadonlySet<number>; reduction?: boolean } = {},
+  exempt: { covered?: { has(market: number): boolean }; reduction?: boolean } = {},
 ): Rejection | undefined {
   if (exempt.reduction) return undefined;
   const priorGross = grossReservations.bounds(grossId, snapshot.markets.length);

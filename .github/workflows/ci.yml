@@ -71,10 +71,31 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 14
+  # The dev/mainnet code path end to end: signing oracle nodes, SignedPriceOracle, signed-mode approvers and an API
+  # without dev-chain shortcuts, driven through the trader's whole journey with idle gaps that let prices go stale.
+  # The browser tests above run the local oracle mode, which never exercised this path.
+  parity:
+    name: production-parity journey
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:parity
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: parity-stack-log
+          path: .local-state/*.log
+          retention-days: 14
   # Single required check that stays stable however the jobs above are split.
   validate:
-    needs: [checks, e2e]
+    needs: [checks, e2e, parity]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: test "${{ needs.checks.result }}" = success && test "${{ needs.e2e.result }}" = success
+      - run: test "${{ needs.checks.result }}" = success && test "${{ needs.e2e.result }}" = success && test "${{ needs.parity.result }}" = success
