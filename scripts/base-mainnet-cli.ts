@@ -6,6 +6,8 @@ import { MainnetRpcProvider } from "./mainnet-rpc.js";
 import {
   appointRiskOperatorDev,
   configureDev,
+  parseLeverageTargets,
+  setMarketLeverageDev,
   devPreflight,
   generateDevIdentities,
   handoverDev,
@@ -44,6 +46,7 @@ import { checkReleaseEvidence } from "./release-evidence.js";
 //   dev-configure     DEV_MANIFEST [--unpause]
 //   dev-upgrade       DEV_MANIFEST
 //   dev-risk-operator DEV_MANIFEST OPERATOR_ADDRESS   (after a v1.2 upgrade)
+//   dev-market-leverage DEV_MANIFEST BTC=40,ETH=40    (max leverage per market, 1x to 40x)
 //   dev-handover      DEV_MANIFEST TIMELOCK GOVERNANCE_SAFE EMERGENCY_SAFE
 //   dev-verify        DEV_MANIFEST
 //   dev-basescan      DEV_MANIFEST
@@ -448,6 +451,26 @@ switch (command) {
       JSON.stringify(
         {
           transactions: await appointRiskOperatorDev(owner, record, operator),
+          verify: await verifyDev(provider, record, manifest),
+        },
+        null,
+        2,
+      ),
+    );
+    break;
+  }
+  case "dev-market-leverage": {
+    const targets = parseLeverageTargets(flags[0] ?? "");
+    const manifest = loadDevManifest(),
+      provider = rpc(),
+      owner = devOwner(provider),
+      record = loadRecord(DEV_RECORD);
+    await requireMainnet(provider);
+    confirm("dev-market-leverage", owner.address, record.contracts.clearingProxy.slice(2, 10).toLowerCase());
+    console.log(
+      JSON.stringify(
+        {
+          transactions: await setMarketLeverageDev(owner, record, targets),
           verify: await verifyDev(provider, record, manifest),
         },
         null,

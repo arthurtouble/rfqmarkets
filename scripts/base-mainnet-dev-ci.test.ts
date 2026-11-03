@@ -8,6 +8,7 @@ import {
   rpcUrl,
   type RuntimeIdentities,
 } from "./base-mainnet-dev-ci.js";
+import { marginScaleForLeverage, parseLeverageTargets } from "./base-mainnet-dev.js";
 import { LISTING_RISK, validateDevManifest } from "./mainnet-manifest.js";
 
 const owner = Wallet.createRandom().address,
@@ -151,6 +152,21 @@ test("confirmation strings match what base-mainnet-cli expects", () => {
     devConfirmation("dev-risk-operator", owner, undefined, "0x1234ABCD00000000000000000000000000000000"),
     `dev-risk-operator-8453-${owner.toLowerCase()}-1234abcd`,
   );
+  assert.equal(
+    devConfirmation("dev-market-leverage", owner, record),
+    `dev-market-leverage-8453-${owner.toLowerCase()}-abcdef01`,
+  );
+});
+
+test("market leverage targets parse as SYMBOL=LEVERAGE within 1x to 40x", () => {
+  assert.deepEqual(parseLeverageTargets("BTC=40, ETH=25"), [
+    { symbol: "BTC", leverage: 40 },
+    { symbol: "ETH", leverage: 25 },
+  ]);
+  assert.equal(marginScaleForLeverage(40), 1_250);
+  assert.equal(marginScaleForLeverage(20), 2_500);
+  for (const bad of ["", "BTC", "BTC=0", "BTC=41", "=20", "BTC=x"])
+    assert.throws(() => parseLeverageTargets(bad), /SYMBOL=LEVERAGE/, bad);
 });
 
 test("the RPC is RFQ_BASE_MAINNET_RPC_URL, else the public Base RPC, never Alchemy", () => {
