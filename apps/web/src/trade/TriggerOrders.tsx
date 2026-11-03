@@ -293,7 +293,7 @@ export function TpslSheet({
             signature.
           </p>
         )}
-        {!trading.quickLive && !removing ? (
+        {!trading.quickLive ? (
           <StartTrading />
         ) : (
           <button

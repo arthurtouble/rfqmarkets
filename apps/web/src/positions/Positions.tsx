@@ -274,6 +274,8 @@ export function positionRows(account: AccountState | null, isolatedAccounts: Acc
 export function Positions({ account, only }: { account: AccountState | null; only?: Market }) {
   const desktop = useDesktop();
   const isolatedAccounts = useIsolatedAccounts();
+  const trading = useTrading(),
+    paused = useProtocol().data?.paused ?? false;
   const [closing, setClosing] = useState<string | null>(null);
   const [closingAll, setClosingAll] = useState(false);
   const [protecting, setProtecting] = useState<string | null>(null);
@@ -283,9 +285,12 @@ export function Positions({ account, only }: { account: AccountState | null; onl
   const closingRow = rows.find((row) => rowKey(row) === closing);
   const closingView = closingRow ? positionView(closingRow.holder, closingRow.view.market) : null;
   const protectingRow = rows.find((row) => rowKey(row) === protecting);
-  const onClose = (row: PositionRow) => setClosing(rowKey(row));
-  const onTpsl = (row: PositionRow) => setProtecting(rowKey(row));
-  const onCloseAll = !only && cross.length > 1 ? () => setClosingAll(true) : undefined;
+  // Closing and TP/SL need the trading connection: without it, tapping them asks to connect first and the
+  // sheet opens once connected. While trading is paused the oracle-price exit stays open without it.
+  const gate = (open: () => void) => (paused ? open() : void trading.requireConnection(open));
+  const onClose = (row: PositionRow) => gate(() => setClosing(rowKey(row)));
+  const onTpsl = (row: PositionRow) => void trading.requireConnection(() => setProtecting(rowKey(row)));
+  const onCloseAll = !only && cross.length > 1 ? () => gate(() => setClosingAll(true)) : undefined;
   return (
     <section className="positions" aria-label="Open positions">
       {desktop && !only ? (
