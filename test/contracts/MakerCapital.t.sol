@@ -26,31 +26,16 @@ contract MakerCapitalTest is ClearingFixture {
         assertTrue(custodyMatchesBuckets());
     }
 
-    function test_tradesMoveTheInsuranceShareOfTheMarkupFromMakerBacking() public {
+    /// @notice The platform's 2 bps is charged inside the fee, so a fill with no fee moves nothing to
+    /// insurance: there is no second share taken from maker backing.
+    function test_aFillWithoutAFeeLeavesInsuranceAndBackingAlone() public {
         uint256 maker = clearing.makerBacking();
         uint256 insurance = clearing.insuranceBalance();
         int256 collateral = clearing.totalCustomerCollateral();
-        // 0.5 BTC at 100,000 is 50,000 USDC; the 2 bps markup is 10 USDC, and insurance, below a quarter of
-        // the floor, takes a fifth of it.
-        trade(alice, 0, 5e17, false);
-        uint256 moved = clearing.insuranceBalance() - insurance;
-        assertApproxEqAbs(moved, 2e6, 1e3);
-        assertEq(clearing.makerBacking(), maker - moved);
-        // The trader pays nothing extra for it.
-        assertEq(clearing.totalCustomerCollateral(), collateral);
-        assertTrue(custodyMatchesBuckets());
-    }
-
-    function test_theMarkupShareNeverTakesTheMakerBelowTheFloor() public {
-        vm.prank(governance);
-        clearing.withdrawMakerExcess(treasury, 50_000e6);
-        assertEq(clearing.makerBacking(), FLOOR);
-        uint256 insurance = clearing.insuranceBalance();
         trade(alice, 0, 5e17, false);
         assertEq(clearing.insuranceBalance(), insurance);
-        assertEq(clearing.makerBacking(), FLOOR);
-        // Trading continues: the next opening trade still meets the floor.
-        trade(alice, 0, 1e17, false);
+        assertEq(clearing.makerBacking(), maker);
+        assertEq(clearing.totalCustomerCollateral(), collateral);
         assertTrue(custodyMatchesBuckets());
     }
 
@@ -124,7 +109,7 @@ contract MakerCapitalTest is ClearingFixture {
         clearing.withdrawMakerExcess(treasury, 1e6);
     }
 
-    function test_aFeeAndTheMarkupBothShareWithInsurance() public {
+    function test_insuranceTakesItsShareOfTheFeeOnly() public {
         uint256 maker = clearing.makerBacking();
         uint256 insurance = clearing.insuranceBalance();
         int256 collateral = clearing.collateralOf(alice.account);
@@ -134,18 +119,18 @@ contract MakerCapitalTest is ClearingFixture {
         approval.fee = 5e6;
         approval.intentHash = intentDigest(intent);
         execute(alice, intent, approval, proof);
-        // The trader pays the 5 USDC fee and nothing for the markup. Insurance, below a quarter of the
-        // floor, takes a fifth of each: 1 USDC of the fee and about 2 of the 10 USDC markup.
+        // The trader pays the 5 USDC fee. Insurance, below a quarter of the floor, takes a fifth of it (1 USDC)
+        // and the maker the rest; nothing more moves out of maker backing.
         assertEq(clearing.collateralOf(alice.account), collateral - 5e6);
-        uint256 moved = clearing.insuranceBalance() - insurance;
-        assertApproxEqAbs(moved, 3e6, 1e3);
+        assertEq(clearing.insuranceBalance() - insurance, 1e6);
+        assertEq(clearing.makerBacking(), maker + 4e6);
         assertEq(clearing.makerBacking() + clearing.insuranceBalance(), maker + insurance + 5e6);
         assertTrue(custodyMatchesBuckets());
     }
 
-    /// @notice Stress above backing no longer refuses a trade (the per-market caps bound risk), and the markup
-    /// share still never moves backing that stress would need into insurance.
-    function test_stressAboveBackingIsAdmittedAndKeepsTheMarkupShare() public {
+    /// @notice Stress above backing no longer refuses a trade (the per-market caps bound risk), and the fill
+    /// moves nothing from backing into insurance.
+    function test_stressAboveBackingIsAdmitted() public {
         Trader memory whale = newTrader("whale", 1_000_000e6);
         uint256 insurance = clearing.insuranceBalance();
         // Backing is 150,000 and BTC stress is 40% of skew: 5 BTC at 100k is 200,000 of stress.
@@ -153,7 +138,7 @@ contract MakerCapitalTest is ClearingFixture {
         trade(whale, 0, 5e18, false);
         assertGt(clearing.portfolioStress(), clearing.makerBacking(), "stress exceeds backing");
         assertFalse(clearing.makerIncident(), "nothing is owed to customers yet");
-        assertEq(clearing.insuranceBalance(), insurance, "no backing above stress, so no markup share moved");
+        assertEq(clearing.insuranceBalance(), insurance);
         assertTrue(custodyMatchesBuckets());
     }
 

@@ -136,8 +136,8 @@ export interface PricingParameters {
   spread?: SpreadBreakdown;
 }
 /**
- * The platform's share of every fill's trading fee, in bps of notional. The contract also moves an
- * insurance share of this amount from maker backing on every fill (`RFQSettlement.shareMarkup`).
+ * The platform's share of every fill's trading fee, in bps of notional. Insurance takes its share of the
+ * whole fee on chain (`RFQSettlement.chargeFee`); nothing else moves to insurance on a fill.
  */
 export const PLATFORM_MARKUP_BPS = 2n;
 /**
