@@ -8,7 +8,8 @@
 //
 // Env: RFQ_API_URL (default http://127.0.0.1:4100), RFQ_JOURNEY_KEY or RFQ_JOURNEY_KEY_FILE (JSON with privateKey;
 // default the local dev wallet), RFQ_QA_PASS (dev geofence pass), RFQ_JOURNEY_NOTIONAL (USDC per opening trade,
-// default 50), RFQ_JOURNEY_STALE_SECONDS (wait that ages stored prices past the contract's 15 s, default 20),
+// default 50), RFQ_JOURNEY_READY_SECONDS (wait this long for both markets to show fresh oracle prices first, for runs
+// right after a deploy; default 0), RFQ_JOURNEY_STALE_SECONDS (wait that ages stored prices past the contract's 15 s, default 20),
 // RFQ_PRICE_CONTROL_URL (local simulated prices; enables the triggered-fill step), RFQ_JOURNEY_MARKETS (two
 // comma-separated markets, default BTC,ETH). Exits non-zero on the first failure, naming the step and the API's answer.
 import { readFileSync, existsSync } from "node:fs";
@@ -99,6 +100,28 @@ const marketIndex = async (market: string) => {
 };
 
 console.log(`Trade journey: ${wallet.address} on ${api}, ${notional} USDC trades, ${first} and ${second}\n`);
+
+const readySeconds = Number(process.env.RFQ_JOURNEY_READY_SECONDS ?? "0");
+if (readySeconds > 0)
+  await step(`wait for live prices in ${first} and ${second} (up to ${readySeconds} s)`, () =>
+    waitFor(
+      "fresh oracle prices",
+      async () => {
+        try {
+          const { markets, serverTimeMs } = await client.request<{
+            serverTimeMs: number;
+            markets: Record<string, { observedAtMs: number }>;
+          }>("/v1/markets");
+          return [first, second].every(
+            (market) => serverTimeMs - (markets[market]?.observedAtMs ?? 0) < 10_000,
+          );
+        } catch {
+          return false;
+        }
+      },
+      readySeconds * 1_000,
+    ),
+  );
 
 // Start flat so every assertion below is about this run.
 await step("start flat (close anything left open)", async () => {

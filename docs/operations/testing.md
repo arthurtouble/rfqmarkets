@@ -6,9 +6,10 @@ Each layer catches a different class of bug. A change is only covered when the l
 | --- | --- | --- | --- |
 | Unit | `npm run test:services`, `npm run test:web`, `npm run test:coverage` | Service, approver, SDK and app logic in isolation | Every change; CI |
 | Contracts | `npm run test:foundry`, `npm run test:contracts` | Solidity tests, invariants and local-chain contract e2e | Contract changes; CI |
+| Model vs contract | `node --import tsx test/e2e-contracts/admission-differential.mjs` (in `test:contracts`) | Random trades replayed through the approvers' exposure model and the contract; they must agree on every stale-price rejection | CI |
 | Browser e2e | `npm run test:e2e` | Every app, desktop and phone, against `dev:stack` in **local oracle mode** | Before a deploy; CI |
 | Production parity | `npm run test:parity` | The trader's journey against `dev:stack -- --parity` | Every change; CI |
-| Post-deploy journey | `npm run journey` against dev with the QA wallet | The same journey on the deployed dev stack | After every dev deploy |
+| Post-deploy journey | `journey` job in `deploy-cloudflare-dev.yml` | The same journey on dev with the QA wallet ($5 trades) | After every dev deploy (needs secrets `RFQ_QA_WALLET_KEY`, `RFQ_QA_PASS`) |
 
 ## Local oracle mode versus production parity
 
