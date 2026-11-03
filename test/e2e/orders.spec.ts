@@ -123,6 +123,36 @@ async function waitForMid(page: Page, near: number) {
 const presetButton = (sheet: Locator, label: string) =>
   sheet.getByRole("button", { name: label, exact: true });
 
+test.describe("before the trading connection is established", () => {
+  test.use({ autoStartTrading: false });
+  test("Close and TP/SL ask to establish the connection first, then carry on", async ({ page, stack }) => {
+    const wallet = await setup(page, stack);
+    await trade(wallet, "buy", "300");
+    await page.goto(`/trade/${MARKET}`);
+    await waitForMid(page, PRICE);
+    const prompt = page.getByRole("dialog", { name: "Establish connection" });
+
+    // Close asks for the connection instead of opening the close sheet; dismissing it leaves the position alone.
+    await page
+      .getByRole("button", { name: new RegExp(`^Close ${MARKET}`) })
+      .first()
+      .click();
+    await expect(prompt).toBeVisible();
+    await expect(page.getByRole("dialog", { name: new RegExp(`^Close ${MARKET}`) })).toHaveCount(0);
+    await prompt.getByRole("button", { name: "Close" }).click();
+    await expect(prompt).toHaveCount(0);
+    expect(await positionSize(wallet.address)).toBeGreaterThan(0n);
+
+    // TP/SL asks too; connecting from the prompt opens the TP/SL sheet it was asked for.
+    await tpslButton(page).click();
+    await expect(prompt).toBeVisible();
+    await prompt.getByRole("button", { name: "Establish connection" }).click();
+    await expect(toast(page, /Connection established/)).toBeVisible();
+    await expect(prompt).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: `TP/SL for ${MARKET} long` })).toBeVisible();
+  });
+});
+
 test.describe("TP/SL on a position", () => {
   test("sets a take-profit and stop-loss, then the stop fires and cancels the take-profit", async ({
     page,

@@ -33,14 +33,15 @@ export const test = base.extend<Fixtures & { pageErrors: void; termsAccepted: vo
     async ({ page, autoStartTrading }, use) => {
       if (autoStartTrading)
         await page.addLocatorHandler(
-          page.getByRole("button", { name: "Start trading", exact: true }),
+          // Start trading on trading screens; Establish connection in the prompt a trading action opens.
+          page.getByRole("button", { name: /^(Start trading|Establish connection)$/ }),
           async (button) => {
             // Behind an open sheet (Add funds, a confirmation) or with a menu open, the button is not what the test
             // is reaching for, and clicking it would close what is open: leave it, and let the action go ahead.
             // One inside the sheet (TP/SL) is clicked as usual.
             const covered = await button.evaluate((element) => {
-              const sheet = document.querySelector("dialog[open]");
-              if (sheet) return !sheet.contains(element);
+              const sheets = [...document.querySelectorAll("dialog[open]")];
+              if (sheets.length) return !sheets.some((sheet) => sheet.contains(element));
               return document.querySelector('[aria-expanded="true"]') !== null;
             });
             if (covered) return;

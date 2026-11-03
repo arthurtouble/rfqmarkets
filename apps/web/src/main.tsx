@@ -7,6 +7,7 @@ import "@fontsource-variable/geist/wght.css";
 import "@fontsource/geist-mono/500.css";
 import { MarketFeedProvider } from "./data/market-feed.js";
 import { TradingProvider } from "./data/actions.js";
+import { ConnectionPrompt } from "./trade/ConnectionPrompt.js";
 import { router } from "./router.js";
 import { PrefsProvider } from "./ui/prefs.js";
 import { ToastProvider } from "./ui/toasts.js";
@@ -44,6 +45,7 @@ function App() {
               <MarketFeedProvider>
                 <PrefsProvider>
                   <RouterProvider router={router} />
+                  <ConnectionPrompt />
                 </PrefsProvider>
               </MarketFeedProvider>
             </TradingProvider>

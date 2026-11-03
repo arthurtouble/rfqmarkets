@@ -143,6 +143,16 @@ type Trading = {
    * connects again with one wallet signature first. False means nothing should be placed (the wallet declined).
    */
   readyQuick(market: Market, amountMicro: bigint): Promise<boolean>;
+  /**
+   * Runs `action` once this browser is connected for trading. Without a live connection it asks for one first
+   * (the Establish connection prompt) and runs `action` only after connecting; dismissed, it resolves undefined.
+   * Every trading action (trades, orders, TP/SL, cancels, closes, returning margin) goes through it.
+   */
+  requireConnection<T>(action: () => T | Promise<T>): Promise<T | undefined>;
+  /** The Establish connection prompt is open, waiting for the trader to connect. */
+  connectionPrompt: boolean;
+  /** Closes the prompt without connecting; the action that asked for it does not run. */
+  dismissConnectionPrompt(): void;
 };
 
 /** The price and fee a close settled at (USDC 1e6). */
@@ -208,6 +218,28 @@ export function TradingProvider({ children }: { children: ReactNode }) {
   // re-renders: two signing flows must never overlap.
   const busyRef = useRef<string | null>(null);
   const lastFirmQuoteAt = useRef(0);
+  const [connectionPrompt, setConnectionPrompt] = useState(false);
+  // Resolves the open prompt: true once connected, false when dismissed (or replaced by a newer prompt).
+  const promptRef = useRef<((connected: boolean) => void) | null>(null);
+  const settlePrompt = (connected: boolean) => {
+    const resolve = promptRef.current;
+    promptRef.current = null;
+    setConnectionPrompt(false);
+    resolve?.(connected);
+  };
+  /**
+   * Connected for trading: this browser holds a live trading key. With no wallet there is nothing to connect yet,
+   * so the action goes ahead and asks for a wallet itself.
+   */
+  const connected = () => !trader.address || sessionCovers(sessionRef.current, 0n);
+  function requireConnection<T>(action: () => T | Promise<T>): Promise<T | undefined> {
+    if (connected()) return Promise.resolve(action());
+    promptRef.current?.(false);
+    return new Promise<boolean>((resolve) => {
+      promptRef.current = resolve;
+      setConnectionPrompt(true);
+    }).then((ok) => (ok && connected() ? action() : undefined));
+  }
   const api = <T,>(path: string, body: unknown) => postJson<T>(`${API}${path}`, body);
   /** `api` for the step that carries out a signed write: a lost answer is reported as maybe sent, not failed. */
   const send = <T,>(path: string, body: unknown) =>
@@ -1194,7 +1226,33 @@ export function TradingProvider({ children }: { children: ReactNode }) {
     readyQuick: async (market, amountMicro) =>
       quickCovers(market, amountMicro) ||
       ((await value.enableQuickTrading()) && quickCovers(market, amountMicro)),
+
+    requireConnection,
+    connectionPrompt,
+    dismissConnectionPrompt: () => settlePrompt(false),
   };
+
+  // Every trading action needs the connection: without it, the trader is asked to connect first, and the action
+  // runs once connected. Funding (deposit, bridge, withdraw) is wallet-signed and stays open. A paused venue's
+  // oracle-price exit stays open too: it is the way out when the approvers or API are unavailable.
+  const direct = { ...value };
+  value.enableQuickTrading = async () => {
+    const ok = await direct.enableQuickTrading();
+    // An action waiting on the Establish connection prompt goes ahead now.
+    if (ok) settlePrompt(true);
+    return ok;
+  };
+  value.marketOrder = async (order, quote) =>
+    (await requireConnection(() => direct.marketOrder(order, quote))) ?? false;
+  value.limitOrder = async (order) => (await requireConnection(() => direct.limitOrder(order))) ?? false;
+  value.triggerOrder = (order) => requireConnection(() => direct.triggerOrder(order));
+  value.placeTpsl = (input) => requireConnection(() => direct.placeTpsl(input));
+  value.cancelOrder = async (order) => void (await requireConnection(() => direct.cancelOrder(order)));
+  value.closePosition = (market, fractionBps, isolated) =>
+    requireConnection(() => direct.closePosition(market, fractionBps, isolated));
+  value.closeAll = (fractionBps) => requireConnection(() => direct.closeAll(fractionBps));
+  value.returnMargin = async (market) =>
+    (await requireConnection(() => direct.returnMargin(market))) ?? false;
 
   return <TradingContext.Provider value={value}>{children}</TradingContext.Provider>;
 }
