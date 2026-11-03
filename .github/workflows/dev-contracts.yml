@@ -21,9 +21,10 @@ on:
             verify,
             basescan,
             risk-operator,
+            market-leverage,
           ]
       amount:
-        description: USDC for fund-maker (default 100), ETH for fund-sponsor (default 0.003), operator address for risk-operator
+        description: USDC for fund-maker (default 100), ETH for fund-sponsor (default 0.003), operator address for risk-operator, SYMBOL=LEVERAGE[,...] for market-leverage (e.g. BTC=40,ETH=40)
         required: false
         type: string
 permissions:

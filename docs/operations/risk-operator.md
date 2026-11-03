@@ -80,5 +80,9 @@ and `npm run dev:admin` offers **Use local operator** (development builds only).
    acts at once.
 3. Optionally set spreads with `setSpread(market, bps)` and `setSpread(255, bps)` for the default.
 
+On the dev deployment the owner key can also set a market's max leverage without the console: run the
+`dev-contracts.yml` workflow with action `market-leverage` and amount `BTC=40,ETH=40` (1x to 40x per market).
+It keeps each market's impact K and stress shock and does not pause the venue.
+
 Use a hardware wallet or a Safe owner key for the operator. To rotate it, governance appoints the new address;
 to stop it, governance or the emergency council calls `setRiskOperator(0x0)`.

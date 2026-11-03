@@ -70,7 +70,7 @@ export function devManifestFor(
 /** Confirmation string base-mainnet-cli expects for a dev action. */
 export function devConfirmation(action: string, owner: string, record?: DeploymentRecord, operator?: string) {
   const suffix =
-    action === "dev-configure"
+    action === "dev-configure" || action === "dev-market-leverage"
       ? record!.contracts.clearingProxy.slice(2, 10).toLowerCase()
       : action === "dev-risk-operator"
         ? operator!.slice(2, 10).toLowerCase()
@@ -147,7 +147,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       const confirmation = devConfirmation(
         action,
         new Wallet(ownerKey()).address,
-        action === "dev-configure" ? loadRecord() : undefined,
+        action === "dev-configure" || action === "dev-market-leverage" ? loadRecord() : undefined,
         flags[0],
       );
       execFileSync(

@@ -175,6 +175,53 @@ export async function configureDev(
 }
 
 /**
+ * Parses "BTC=40,ETH=25" into each market's target max leverage (1x to 40x, the contract's range).
+ */
+export function parseLeverageTargets(text: string): Array<{ symbol: string; leverage: number }> {
+  const targets = text.split(",").map((item) => {
+    const [symbol, value] = item.split("=").map((part) => part.trim());
+    const leverage = Number(value);
+    if (!symbol || !Number.isFinite(leverage) || leverage < 1 || leverage > 40)
+      throw new Error(`expected SYMBOL=LEVERAGE (1 to 40), got "${item}"`);
+    return { symbol, leverage };
+  });
+  if (!targets.length) throw new Error("expected SYMBOL=LEVERAGE[,SYMBOL=LEVERAGE...]");
+  return targets;
+}
+
+/** The margin multiplier for a target leverage, rounded up so it never allows more than asked (40x is 1,250). */
+export const marginScaleForLeverage = (leverage: number) => Math.ceil(50_000 / leverage);
+
+/**
+ * Sets each named market's max leverage (its margin multiplier) from the owner key, keeping its impact K and
+ * stress shock. A raise takes effect at once; a cut raises margin on open positions at once too. No pause.
+ */
+export async function setMarketLeverageDev(
+  owner: Signer,
+  record: DeploymentRecord,
+  targets: Array<{ symbol: string; leverage: number }>,
+  confirmations = 2,
+) {
+  const clearing = new Contract(record.contracts.clearingProxy, artifact("RFQClearing").abi, owner),
+    listed = Number(await clearing.marketCount()),
+    bySymbol = new Map<string, number>();
+  for (let market = 0; market < listed; market++)
+    bySymbol.set(decodeBytes32String((await clearing.marketParams(market)).symbol), market);
+  const transactions: string[] = [];
+  for (const { symbol, leverage } of targets) {
+    const market = bySymbol.get(symbol);
+    if (market === undefined) throw new Error(`${symbol} is not listed`);
+    const params = await clearing.marketParams(market),
+      scale = marginScaleForLeverage(leverage);
+    if (Number(params.marginScaleBps) === scale) continue;
+    transactions.push(
+      await confirmed(clearing.setMarketRisk(market, params.impactK, params.shockBps, scale), confirmations),
+    );
+  }
+  return transactions;
+}
+
+/**
  * Appoints the risk operator (v1.2) with the dev ceilings as its envelope, so the operations console can list
  * and tune markets from the operator's wallet without the owner key. Floors are the contract's own.
  */
